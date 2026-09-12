@@ -1,0 +1,32 @@
+American Express Platinum Card
+Monatsrechnung
+Datum Rechnungsdatum
+10.08.26 10.09.26
+Umsatz vom Buchung am Details Betrag in Fremdwährung Betrag in EUR
+17.07 17.07 ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK
+3.628,70
+CR
+Neue Belastungen für HERRN JANNIS
+11.07 16.07 LSG SKY CHEFS DUBLIN
+10,10
+Ticketnummer: 00000000000000 Passagiername:
+12.07 13.07 AMAZON.DE*XX45X5A65 AMAZON.DE
+25,20
+12.07 12.07 McDonalds 42 McDonalds Villach 9,80
+12.07 12.07 Spar Fil. 6345 Spar Fil St. Kanzian
+7,86
+01.08 01.08 AMZN MKTP DE AMZN.COM/BILL
+16,13
+CR
+Summe Belastungen für HERRN JANNIS 36,83
+Neue Belastungen für HERRN RAPHAEL
+14.07 14.07 SUMUP*TANTE HERTA VILLACH
+12,30
+20.07 20.07 BILLA 07665 FINKENSTEIN
+15,93
+Summe Belastungen für HERRN RAPHAEL 28,23
+Sonstige Transaktionen
+12.07 12.07 Entertainment Gutschrift
+4,00
+CR
+Saldo sonstige Transaktionen HERRN JANNIS 4,00

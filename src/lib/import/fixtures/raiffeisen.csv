@@ -1,0 +1,8 @@
+sep=;
+Buchungsdatum;Verwendungszweck/Text;Valuta;Betrag;EUR;timestamp
+12.09.2026;TeamTalentSolutions Gehalt;12.09.2026;2.576,43;EUR;2026-09-12T08:00:00
+12.09.2026;Porsche Bank;12.09.2026;-1.529,58;EUR;2026-09-12T08:01:00
+13.09.2026;BIPA;13.09.2026;-0,47;EUR;2026-09-13T12:00:00
+13.09.2026;Unbekannter Händler;13.09.2026;-12,34;EUR;2026-09-13T12:01:00
+Gesamt;;;1.034,04;;
+31.02.2026;Ungültige Buchung;31.02.2026;-2,00;EUR;

@@ -1,0 +1,482 @@
+"use client";
+
+import { useEffect, useReducer, useRef, useState } from "react";
+import { FileUp, LoaderCircle } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useFinance } from "@/components/finance-provider";
+import { classify } from "@/lib/calc";
+import { currency, monthLabel } from "@/lib/format";
+import {
+  fixedCategories,
+  variableCategories,
+  transactionSchema,
+  type Category,
+  type Transaction,
+} from "@/lib/types";
+import {
+  parseStatementFile,
+  type StatementDraft,
+  type StatementResult,
+} from "@/lib/import/statements";
+import {
+  prepareStatementImport,
+  type FixedDecision,
+  type ImportMetadata,
+  type ReviewItem,
+} from "@/lib/import/review";
+import { cn } from "@/lib/utils";
+
+type Pending = {
+  requestId: string;
+  removeId?: string;
+  rows: Transaction[];
+  decisions: FixedDecision[];
+};
+type ImportUI = {
+  review: ReviewItem[];
+  open: boolean;
+  busy: boolean;
+  dragging: boolean;
+  pending: Pending | null;
+};
+
+function BookingReview({
+  item,
+  disabled,
+  save,
+  skip,
+}: {
+  item: Extract<ReviewItem, { kind: "booking" }>;
+  disabled: boolean;
+  save: (row: Transaction) => void;
+  skip: () => void;
+}) {
+  const [draft, setDraft] = useState<StatementDraft>(item.draft);
+  const [kind, setKind] = useState(
+    fixedCategories.includes(item.draft.category) ? "fixed" : "variable",
+  );
+  const choices = kind === "fixed" ? fixedCategories : variableCategories;
+  const candidate = {
+    ...draft,
+    categoryOverride: true,
+    includeInPlan: true,
+  };
+  const parsed = transactionSchema.safeParse(candidate);
+  return (
+    <section
+      className="panel space-y-3 p-4"
+      aria-label={`Buchung prüfen: ${item.draft.description}`}
+    >
+      <p className="text-xs text-muted-foreground break-words">
+        {item.message}
+      </p>
+      <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
+        <label className="space-y-1 text-xs">
+          Datum
+          <Input aria-label="Datum" type="date" value={draft.date} readOnly />
+        </label>
+        <label className="space-y-1 text-xs">
+          Text
+          <Input
+            aria-label="Text"
+            maxLength={1000}
+            value={draft.description}
+            readOnly
+          />
+        </label>
+        <label className="space-y-1 text-xs">
+          Betrag (€)
+          <Input
+            aria-label="Betrag"
+            value={draft.amount === null ? "" : currency(draft.amount)}
+            readOnly
+          />
+        </label>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 text-xs">
+          Bank
+          <Input aria-label="Bank" value={draft.bank} readOnly />
+        </label>
+        <label className="space-y-1 text-xs">
+          Pocket
+          <Input
+            aria-label="Pocket"
+            value={draft.pocket ?? "Hauptkonto"}
+            readOnly
+          />
+        </label>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="space-y-1 text-xs">
+          Art
+          <select
+            aria-label="Art"
+            className="select-input editable w-full"
+            value={kind}
+            disabled={disabled}
+            onChange={(event) => {
+              setKind(event.target.value);
+              setDraft({ ...draft, category: "Prüfen" });
+            }}
+          >
+            <option value="fixed">Fix</option>
+            <option value="variable">Variabel</option>
+          </select>
+        </label>
+        <label className="space-y-1 text-xs">
+          Kategorie
+          <select
+            aria-label="Kategorie"
+            className="select-input editable w-full"
+            value={draft.category}
+            disabled={disabled}
+            onChange={(e) =>
+              setDraft({ ...draft, category: e.target.value as Category })
+            }
+          >
+            <option value="Prüfen" disabled>
+              Kategorie wählen
+            </option>
+            {choices.map((category) => (
+              <option key={category} value={category}>
+                {category === "Mobilität"
+                  ? "Tanken"
+                  : category === "Freizeit"
+                    ? "G2A"
+                    : category === "Handyvertrag"
+                      ? "Handy"
+                      : category}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={skip}>
+          Überspringen
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={
+            disabled ||
+            !parsed.success ||
+            !choices.some((category) => category === draft.category)
+          }
+          onClick={() => {
+            if (parsed.success)
+              save({
+                ...parsed.data,
+                includeInPlan: classify(parsed.data).includeInPlan,
+              });
+          }}
+        >
+          Speichern
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+export function StatementImport() {
+  const { state, ready, storageError, appendStatements, statementImport } =
+    useFinance();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
+  const busyRef = useRef(false);
+  const importMetadata = useRef<ImportMetadata>({});
+  const [ui, setUI] = useReducer(
+    (previous: ImportUI, patch: Partial<ImportUI>) => ({
+      ...previous,
+      ...patch,
+    }),
+    {
+      review: [],
+      open: false,
+      busy: false,
+      dragging: false,
+      pending: null,
+    },
+  );
+  const latestState = useRef(state);
+  useEffect(() => {
+    latestState.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    if (!ui.pending || statementImport?.requestId !== ui.pending.requestId)
+      return;
+    if (statementImport.error) {
+      toast.error(statementImport.error);
+      const retry: ReviewItem[] = ui.pending.removeId
+        ? []
+        : ui.pending.rows.map((draft) => ({
+            kind: "booking",
+            id: draft.id,
+            draft,
+            message:
+              "Automatisches Speichern fehlgeschlagen – bitte erneut speichern.",
+          }));
+      setUI({ pending: null, review: [...ui.review, ...retry], open: true });
+    } else {
+      toast.success(
+        ui.pending.decisions.length
+          ? "Monatsbetrag geprüft – keine doppelte Buchung"
+          : `${statementImport.added} neu, ${statementImport.duplicates} Duplikate ignoriert`,
+      );
+      const review: ReviewItem[] = ui.review.filter(
+        (item) => item.id !== ui.pending?.removeId,
+      );
+      for (const change of statementImport.changes ?? [])
+        if (!review.some((item) => item.id === change.id))
+          review.push({ kind: "fixed", id: change.id, change });
+      setUI({ review, open: review.length > 0, pending: null });
+    }
+  }, [statementImport, ui.pending, ui.review]);
+
+  function commit(
+    rows: Transaction[],
+    duplicates = 0,
+    removeId?: string,
+    decisions: FixedDecision[] = [],
+  ) {
+    const requestId = crypto.randomUUID();
+    setUI({ pending: { requestId, rows, removeId, decisions } });
+    appendStatements(
+      rows,
+      duplicates,
+      requestId,
+      decisions,
+      importMetadata.current,
+    );
+  }
+  function skip(id: string) {
+    const review = ui.review.filter((item) => item.id !== id);
+    setUI({ review, open: review.length > 0 });
+  }
+
+  async function selectFiles(files: File[]) {
+    if (
+      !files.length ||
+      busyRef.current ||
+      ui.pending ||
+      ui.review.length ||
+      !ready ||
+      storageError
+    )
+      return;
+    busyRef.current = true;
+    setUI({ busy: true, dragging: false });
+    const results: StatementResult[] = [];
+    try {
+      for (const file of files) {
+        try {
+          results.push(await parseStatementFile(file));
+        } catch (error) {
+          results.push({
+            file: file.name,
+            source: null,
+            rows: [],
+            skipped: 1,
+            issues: [
+              {
+                file: file.name,
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Datei konnte nicht gelesen werden.",
+              },
+            ],
+          });
+        }
+      }
+      const prepared = prepareStatementImport(results, latestState.current);
+      importMetadata.current = prepared.metadata;
+      if (prepared.issues.length) toast.error(prepared.issues.join("\n"));
+      setUI({ review: prepared.review, open: prepared.review.length > 0 });
+      commit(prepared.automatic, prepared.duplicates);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Import fehlgeschlagen.",
+      );
+    } finally {
+      busyRef.current = false;
+      setUI({ busy: false });
+    }
+  }
+  return (
+    <>
+      <section
+        aria-label="Kontoauszüge importieren"
+        className={cn(
+          "panel mb-4 flex flex-wrap items-center justify-between gap-3 border-dashed px-4 py-3",
+          ui.dragging && "border-primary bg-primary/5",
+        )}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          dragDepth.current++;
+          setUI({ dragging: true });
+        }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "copy";
+        }}
+        onDragLeave={(event) => {
+          event.preventDefault();
+          dragDepth.current--;
+          if (dragDepth.current <= 0) setUI({ dragging: false });
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          dragDepth.current = 0;
+          void selectFiles(Array.from(event.dataTransfer.files));
+        }}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <FileUp className="size-5 shrink-0 text-muted-foreground" />
+          <div>
+            <p className="text-sm font-medium">Kontoauszüge hier ablegen</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Raiffeisen, Revolut oder Amex · CSV/XLSX/PDF · sichere Buchungen
+              automatisch · max. 20 MB je Datei
+            </p>
+          </div>
+        </div>
+        <input
+          ref={fileInput}
+          type="file"
+          multiple
+          accept=".csv,.xlsx,.pdf"
+          className="hidden"
+          aria-label="Kontoauszüge auswählen"
+          onChange={(event) => {
+            const files = Array.from(event.target.files ?? []);
+            event.target.value = "";
+            void selectFiles(files);
+          }}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={
+            !ready ||
+            !!storageError ||
+            ui.busy ||
+            !!ui.pending ||
+            !!ui.review.length
+          }
+          onClick={() => fileInput.current?.click()}
+        >
+          {ui.busy ? (
+            <LoaderCircle className="size-4 animate-spin" />
+          ) : (
+            <FileUp className="size-4" />
+          )}
+          {ui.busy ? "Dateien werden geprüft …" : "Dateien auswählen"}
+        </Button>
+        {!!ui.review.length && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setUI({ open: true })}
+          >
+            {ui.review.length} Einträge prüfen
+          </Button>
+        )}
+      </section>
+      <Dialog
+        open={ui.open && ui.review.length > 0}
+        onOpenChange={(open) => {
+          if (!ui.pending) setUI({ open });
+        }}
+      >
+        <DialogContent
+          className="bg-card sm:max-w-3xl"
+          showCloseButton={!ui.pending}
+        >
+          <DialogHeader>
+            <DialogTitle>Kontoauszüge prüfen</DialogTitle>
+            <DialogDescription>
+              Sichere Buchungen sind automatisch gespeichert. Nur diese{" "}
+              {ui.review.length} Einträge brauchen eine Entscheidung.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[65vh] space-y-3 overflow-auto pr-1">
+            {ui.review.slice(0, 20).map((item) =>
+              item.kind === "booking" ? (
+                <BookingReview
+                  key={item.id}
+                  item={item}
+                  disabled={!!ui.pending}
+                  save={(row) => commit([row], 0, item.id)}
+                  skip={() => skip(item.id)}
+                />
+              ) : (
+                <section
+                  className="panel space-y-3 p-4"
+                  key={item.id}
+                  aria-label={`${item.change.category} prüfen`}
+                >
+                  <p className="text-xs text-muted-foreground">
+                    {monthLabel(item.change.month)}
+                  </p>
+                  <p className="text-sm">
+                    {item.change.category} bisher{" "}
+                    {currency(item.change.previous)}, Auszug{" "}
+                    {currency(item.change.amount)} — neuen Monatsbetrag
+                    übernehmen?
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Ja gilt für diesen und alle folgenden Monate. Es entsteht
+                    keine zweite Buchung.
+                  </p>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!!ui.pending}
+                      onClick={() =>
+                        commit([], 0, item.id, [
+                          { change: item.change, accept: false },
+                        ])
+                      }
+                    >
+                      Nein
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!!ui.pending}
+                      onClick={() =>
+                        commit([], 0, item.id, [
+                          { change: item.change, accept: true },
+                        ])
+                      }
+                    >
+                      Ja
+                    </Button>
+                  </div>
+                </section>
+              ),
+            )}
+            {ui.review.length > 20 && (
+              <p className="text-xs text-muted-foreground">
+                Weitere Einträge folgen nach der Prüfung.
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

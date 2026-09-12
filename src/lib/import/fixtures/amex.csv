@@ -1,0 +1,5 @@
+American Express
+Datum,Beschreibung,Karteninhaber,Kartennummer,Betrag
+12.09.2026,"Pizzeria, Zentrum",Jannis Test,XXXX-1001,"24,90"
+13.09.2026,Sakura,Raphael Test,XXXX-1002,"40,00"
+14.09.2026,"Erstattung ""Bestellung""",Jannis Test,XXXX-1001,"-10,00"

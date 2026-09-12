@@ -1,0 +1,32 @@
+Revolut Kontoauszug
+Persönliches Konto (EUR)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+12.09.2026,BILLA,Lebensmittel,"-10,00","1.339,54"
+Gesamt,,,"-10,00","1.339,54"
+---------
+Mittagessen (EUR)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+13.09.2026,Mensa,Essen,"-5,50","44,50"
+13.09.2026,Auszahlung bei Pocket,Transfer intern,"-0,47","44,03"
+Sparen (EUR)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+13.09.2026,Um EUR Sparen von EUR einzustecken,Transfer intern,"0,47","1.340,01"
+Urlaub 2026 (EUR)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+13.09.2026,Unbekanntes Hotel,Urlaub,"-120,00","880,00"
+Amex Rückzahlung (EUR)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+13.09.2026,Um EUR Amex Rückzahlung von EUR einzustecken,Transfer intern,"100,00","100,00"
+Notgroschen (EUR)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+13.09.2026,Keine Bewegung,,"0,00","4.434,13"
+Persönliches Konto (USD)
+Kontoauszug zu Transaktionen
+Datum,Beschreibung,Kategorie,Geld ein-/ausgezahlt,Guthaben
+13.09.2026,Keine Bewegung,,"0,00","0,00"
