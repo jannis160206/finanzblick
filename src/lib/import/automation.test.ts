@@ -165,10 +165,16 @@ describe("Revolut closing balances", () => {
       parseStatementCsv('Revolut\nSparen (EUR)\nSchlussguthaben,"5,00€"'),
     ).toThrow();
   });
-  it("only imports a Revolut emergency balance if that pocket actually moves, keeping TR interest settings", () => {
+  it("keeps a moving Revolut emergency pocket separate from Trade Republic", () => {
     const source = `${consolidated}\nNotgroschen (EUR)\nKontoauszug zu Transaktionen\nDatum,Beschreibung,Geld ein-/ausgezahlt,Guthaben\n11.09.2026,Auszahlung bei Pocket,-1,0`;
     const state = importResult(stateForTest(), parseStatementCsv(source)).state;
-    expect(actualPockets(state).Notgroschen).toBe(0);
+    expect(actualPockets(state).Notgroschen).toBe(4000);
+    expect(state.accountSnapshots).toContainEqual({
+      bank: "Revolut",
+      name: "Notgroschen",
+      date: "2026-09-11",
+      balance: 0,
+    });
     expect(state.settings.balances.Notgroschen).toBe(4000);
     const october = calculateDashboard(refreshPlanning(state, "2026-10-12"));
     expect(

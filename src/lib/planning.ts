@@ -14,7 +14,11 @@ const automaticLines: { label: string; category: Category; pattern: RegExp }[] =
     },
     { label: "Mittagessen", category: "Mittagessen", pattern: /mittag/i },
     { label: "Tanken", category: "Mobilität", pattern: /tanken/i },
-    { label: "G2A", category: "Freizeit", pattern: /g2a|apple.guthaben/i },
+    {
+      label: "Freizeit",
+      category: "Freizeit",
+      pattern: /g2a|apple.guthaben|^freizeit$/i,
+    },
     {
       label: "Ausgehen",
       category: "Ausgehen",
@@ -63,7 +67,12 @@ export function synchronizePlan(state: AppState): AppState {
       0;
     const values = { ...row.values };
     for (const month of months) values[month] = row.overrides?.[month] ?? total;
-    const updated = { ...row, planCategory: line.category, values };
+    const updated = {
+      ...row,
+      label: /^g2a$/i.test(row.label) ? "Freizeit" : row.label,
+      planCategory: line.category,
+      values,
+    };
     if (index < 0) financeRows.push(updated);
     else financeRows[index] = updated;
   }

@@ -65,16 +65,16 @@ export function Overview() {
     .map((pocket) => `${pocket} ${currency(rates![pocket])}`);
   const kpis = [
     {
-      label: "Gesamtvermögen",
+      label: "Ersparnisse gesamt",
       value: d.totalAssets,
       note: "Ist · alle vier Pockets",
       icon: Wallet,
       color: "text-primary",
     },
     {
-      label: "Einnahmen",
+      label: "Einnahmen · Plan",
       value: d.current.income,
-      note: monthLabel(d.currentMonth),
+      note: `Erhalten: ${currency(d.current.received)}`,
       icon: ArrowDownLeft,
       color: "text-primary",
     },
@@ -102,7 +102,7 @@ export function Overview() {
       <PageHeading
         eyebrow="DEIN FINANZCOCKPIT"
         title="Übersicht"
-        description={`Stand ${dateLabel(state.settings.asOf)} · Alle Beträge in Euro`}
+        description={`Berechnet für ${dateLabel(state.settings.asOf)} · Alle Beträge in Euro`}
       >
         <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
           <CalendarDays className="size-4 text-muted-foreground" />
@@ -124,12 +124,20 @@ export function Overview() {
           {monthSplit.join(" · ")}
         </section>
       )}
-      {d.missingFixed.length > 0 && (
+      {(d.missingFixed.length > 0 ||
+        state.importStatus ||
+        state.reviewQueue?.length) && (
         <p
           className="mb-5 text-xs text-muted-foreground"
-          aria-label="Fixkosten-Abgleich"
+          aria-label="Auszugsstatus"
         >
-          {d.missingFixed[0]} noch nicht im Auszug
+          <Link href="/umsaetze">
+            Auszugsstatus: Übernommen {state.importStatus?.imported ?? 0} ·
+            offen {state.reviewQueue?.length ?? 0} · nicht lesbar{" "}
+            {state.importStatus?.issues.length ?? 0}
+          </Link>
+          {d.missingFixed.length > 0 &&
+            ` · ${d.missingFixed.length} Fixkosten ohne Auszugsbeleg`}
         </p>
       )}
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -176,13 +184,21 @@ export function Overview() {
                         className="size-4"
                         style={{ color: pocketColors[pocket] }}
                       />
-                      {pocket}
+                      {pocket === "Notgroschen"
+                        ? "Notgroschen · Trade Republic"
+                        : pocket}
                     </span>
                     <ArrowUpRight className="size-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
                   </div>
                   <p className="text-xl font-semibold tabular-nums">
                     {currency(d.actual[pocket])}
                   </p>
+                  {pocket === "Sparkonto" && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Round-up · {monthLabel(d.currentMonth, true)}: +{" "}
+                      {currency(d.currentRoundUp)}
+                    </p>
+                  )}
                   <div className="mt-4 h-1 rounded-full bg-muted">
                     <div
                       className="h-full w-full rounded-full opacity-70"
@@ -192,15 +208,6 @@ export function Overview() {
                 </Link>
               );
             })}
-          </div>
-          <div className="mt-4 flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">
-              Round-up · {monthLabel(d.currentMonth, true)}
-            </span>
-            <span className="font-mono text-amber-500 dark:text-amber-300">
-              + {currency(d.currentRoundUp)}{" "}
-              <span className="text-muted-foreground">→ Sparkonto</span>
-            </span>
           </div>
         </section>
         <section className="panel relative overflow-hidden p-5 sm:p-6">
@@ -290,7 +297,7 @@ export function Overview() {
             </div>
           </div>
           <Link
-            href="/einstellungen"
+            href="/einstellungen#motorrad"
             className="mt-5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Sparziel anpassen <ArrowRight className="size-3" />
@@ -301,7 +308,7 @@ export function Overview() {
         <div className="px-5 pt-5 sm:px-6">
           <SectionHeading
             title="Die nächsten 90 Tage"
-            subtitle="Einnahmen − Fixkosten − variabler Plan − Motorradrate"
+            subtitle="Einnahmen − Fixkosten − Alltagsbudget − Motorradrate"
           >
             <span className="status-pill border text-muted-foreground">
               Prognose
@@ -315,9 +322,9 @@ export function Overview() {
                 <th>Monat</th>
                 <th className="text-right">Einnahmen</th>
                 <th className="text-right">Fixkosten</th>
-                <th className="text-right">Variabler Plan</th>
+                <th className="text-right">Alltagsbudget</th>
                 <th className="text-right">Motorrad</th>
-                <th className="text-right">Verfügbar</th>
+                <th className="text-right">Rest nach Motorradrate</th>
               </tr>
             </thead>
             <tbody>
@@ -490,7 +497,7 @@ export function Overview() {
               </span>
               <span>
                 <i className="mr-1.5 inline-block size-2 rounded-sm bg-amber-400" />
-                Variabel
+                Alltagsbudget
               </span>
             </div>
           </SectionHeading>
@@ -545,7 +552,7 @@ export function Overview() {
                 />
                 <Bar
                   dataKey="variablePlan"
-                  name="Variabel"
+                  name="Alltagsbudget"
                   stackId="cost"
                   fill="#fbbf24"
                   radius={[3, 3, 0, 0]}

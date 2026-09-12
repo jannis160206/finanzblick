@@ -1,5 +1,6 @@
 import {
   classify,
+  actualBookings,
   classifyStatementRows,
   monthKey,
   monthsForYear,
@@ -7,13 +8,17 @@ import {
 } from "@/lib/calc";
 import {
   fixedCategories,
+  durableCategories,
   type AppState,
-  type Category,
   type FinanceRow,
   type FixedReceipt,
   type PocketSnapshot,
   type Transaction,
+  type FixedChange,
+  type ReviewItem,
 } from "@/lib/types";
+export type { FixedChange, ReviewItem } from "@/lib/types";
+import { legacyFingerprint, numberStatementRows } from "./identity";
 import {
   matchingFixedRow as matchingGridRow,
   isIncomeCategory as isIncome,
@@ -27,26 +32,16 @@ import {
   appendStatementRows,
   deduplicateStatements,
   statementFingerprint,
-  type StatementDraft,
   type StatementResult,
 } from "./statements";
 
 export type ImportMetadata = {
   pocketSnapshots?: PocketSnapshot[];
   fixedReceipts?: FixedReceipt[];
+  accountSnapshots?: AppState["accountSnapshots"];
+  reviewQueue?: ReviewItem[];
+  issues?: string[];
 };
-export type FixedChange = {
-  id: string;
-  category: Category;
-  month: string;
-  previous: number;
-  amount: number;
-  rowId?: string;
-  bookings: Transaction[];
-};
-export type ReviewItem =
-  | { kind: "booking"; id: string; draft: StatementDraft; message: string }
-  | { kind: "fixed"; id: string; change: FixedChange };
 export type FixedDecision = { change: FixedChange; accept: boolean };
 
 function receipt(row: Transaction, rowId?: string): FixedReceipt {
@@ -56,6 +51,7 @@ function receipt(row: Transaction, rowId?: string): FixedReceipt {
     date: row.date,
     category: row.category,
     amount: row.amount,
+    booking: row,
     ...(rowId ? { rowId } : {}),
   };
 }
@@ -71,9 +67,33 @@ function mergeMetadata(state: AppState, metadata: ImportMetadata): AppState {
   const receipts = new Map(
     (state.fixedReceipts ?? []).map((item) => [item.key, item]),
   );
-  for (const item of metadata.fixedReceipts ?? []) receipts.set(item.key, item);
+  for (const item of metadata.fixedReceipts ?? []) {
+    const legacyKey = item.booking ? legacyFingerprint(item.booking) : item.key;
+    const existing = receipts.get(item.key) ?? receipts.get(legacyKey);
+    if (legacyKey !== item.key) receipts.delete(legacyKey);
+    receipts.set(
+      item.key,
+      existing
+        ? {
+            ...item,
+            ...existing,
+            key: item.key,
+            booking: existing.booking ?? item.booking,
+          }
+        : item,
+    );
+  }
+  const accounts = new Map(
+    (state.accountSnapshots ?? []).map((item) => [
+      `${item.name}|${item.date}`,
+      item,
+    ]),
+  );
+  for (const item of metadata.accountSnapshots ?? [])
+    accounts.set(`${item.name}|${item.date}`, item);
   return {
     ...state,
+    ...(accounts.size ? { accountSnapshots: [...accounts.values()] } : {}),
     ...(snapshots.size
       ? {
           pocketSnapshots: [...snapshots.values()].sort(
@@ -127,7 +147,10 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
     const isFixed =
       fixedCategories.includes(category) &&
       (isIncome(category) ? row.amount > 0 : row.amount < 0);
-    if (ignored.has(statementFingerprint(row))) {
+    if (
+      ignored.has(statementFingerprint(row)) ||
+      ignored.has(legacyFingerprint(row))
+    ) {
       if (isFixed)
         receipts.push(receipt(row, matchingGridRow(state, category)?.id));
       duplicates++;
@@ -150,9 +173,27 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       continue;
     }
     const amount = Math.abs(row.amount);
+    const remembered = [...(state.fixedAmountDecisions ?? [])]
+      .reverse()
+      .find(
+        (item) =>
+          item.category === category &&
+          item.merchantKey === merchantRuleKey(row) &&
+          item.month <= month,
+      );
+    if (remembered?.amount === amount) {
+      receipts.push(receipt(row, grid?.id));
+      duplicates++;
+      continue;
+    }
     if (Math.abs(round(amount - previous)) <= 0.05) {
       receipts.push(receipt(row, grid?.id));
       duplicates++;
+      continue;
+    }
+    if (!durableCategories.includes(category)) {
+      rows.push(row);
+      receipts.push(receipt(row, grid?.id));
       continue;
     }
     const id = `${key}|${amount.toFixed(2)}`;
@@ -183,8 +224,20 @@ export function prepareStatementImport(
   state: AppState,
 ) {
   const split = splitFixedBookings(
-    state,
-    results.flatMap((result) => result.rows),
+    {
+      ...state,
+      transactions: [
+        ...state.transactions,
+        ...(state.reviewQueue ?? []).flatMap((item) =>
+          item.kind === "fixed"
+            ? item.change.bookings
+            : item.draft.amount !== null
+              ? [item.draft as Transaction]
+              : [],
+        ),
+      ],
+    },
+    results.flatMap((result) => numberStatementRows(result.rows)),
   );
   const automatic: Transaction[] = [];
   const review: ReviewItem[] = split.changes.map((change) => ({
@@ -214,6 +267,11 @@ export function prepareStatementImport(
     duplicates: split.duplicates,
     issues,
     metadata: {
+      reviewQueue: review,
+      issues,
+      accountSnapshots: results.flatMap(
+        (result) => result.accountSnapshots ?? [],
+      ),
       pocketSnapshots: results.flatMap(
         (result) => result.pocketSnapshots ?? [],
       ),
@@ -228,11 +286,41 @@ export function applyFixedDecisions(
 ): AppState {
   const ignored = new Set(state.ignoredStatementKeys ?? []);
   let financeRows = state.financeRows;
+  const fixedAmountDecisions = [...(state.fixedAmountDecisions ?? [])];
   for (const { change, accept } of [...decisions].sort((a, b) =>
     a.change.month.localeCompare(b.change.month),
   )) {
     change.bookings.forEach((row) => ignored.add(statementFingerprint(row)));
-    if (!accept) continue;
+    for (const booking of change.bookings) {
+      const merchantKey = merchantRuleKey(booking);
+      if (
+        !fixedAmountDecisions.some(
+          (item) =>
+            item.month === change.month &&
+            item.merchantKey === merchantKey &&
+            item.category === change.category &&
+            item.amount === change.amount &&
+            item.accept === accept,
+        )
+      )
+        fixedAmountDecisions.push({
+          merchantKey,
+          category: change.category,
+          amount: change.amount,
+          month: change.month,
+          accept,
+        });
+    }
+    if (
+      !accept ||
+      !durableCategories.includes(change.category) ||
+      change.bookings.some((row) =>
+        /13\.?\s*(?:gehalt|lohn)|bonus|sonderzahlung|rufbereitschaft|urlaub|holiday/i.test(
+          row.description,
+        ),
+      )
+    )
+      continue;
     const existing =
       financeRows.find((row) => row.id === change.rowId) ??
       matchingGridRow({ ...state, financeRows }, change.category);
@@ -253,6 +341,7 @@ export function applyFixedDecisions(
   return {
     ...state,
     financeRows,
+    ...(fixedAmountDecisions.length ? { fixedAmountDecisions } : {}),
     ...(ignored.size ? { ignoredStatementKeys: [...ignored] } : {}),
   };
 }
@@ -264,25 +353,131 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  const queueMap = new Map(
+    (state.reviewQueue ?? []).map((item) => [item.id, item]),
+  );
+  for (const item of metadata.reviewQueue ?? []) queueMap.set(item.id, item);
+  const queue = [...queueMap.values()];
+  const related = queue.flatMap((item) => {
+    if (item.kind !== "fixed") return [];
+    const decision = decisions.find(
+      ({ change }) =>
+        change.category === item.change.category &&
+        change.amount === item.change.amount &&
+        change.bookings.some((row) =>
+          item.change.bookings.some(
+            (other) => merchantRuleKey(row) === merchantRuleKey(other),
+          ),
+        ),
+    );
+    return decision ? [{ change: item.change, accept: decision.accept }] : [];
+  });
+  decisions = [
+    ...new Map(
+      [...decisions, ...related].map((item) => [item.change.id, item]),
+    ).values(),
+  ];
+  const choices = new Map(
+    rows
+      .filter((row) => row.categoryOverride)
+      .map((row) => [merchantRuleKey(row), row.category]),
+  );
+  const selected = new Map(
+    numberStatementRows(rows).map((row) => [statementFingerprint(row), row]),
+  );
+  for (const item of queue) {
+    if (item.kind !== "booking" || item.draft.amount === null) continue;
+    const category = choices.get(merchantRuleKey(item.draft as Transaction));
+    if (category) {
+      const row = {
+        ...item.draft,
+        amount: item.draft.amount,
+        category,
+        categoryOverride: true,
+        includeInPlan: true,
+      };
+      selected.set(statementFingerprint(row), row);
+    }
+  }
+  rows = [...selected.values()];
   const learned = rememberMerchants(state, [
-    ...rows,
+    ...rows.filter(
+      (row) => row.amount < 0 || fixedCategories.includes(row.category),
+    ),
     ...decisions.flatMap(({ change }) => change.bookings),
   ]);
   const current = applyFixedDecisions(learned, decisions);
   const split = splitFixedBookings(current, rows);
   const appended = appendStatementRows(current, split.rows);
+  for (const row of split.rows) {
+    const category = classify(row).category;
+    const month = monthKey(row.date);
+    const grid = matchingGridRow(appended.state, category);
+    if (
+      durableCategories.includes(category) &&
+      grid?.values[month] == null &&
+      (isIncome(category) ? row.amount > 0 : row.amount < 0)
+    ) {
+      appended.state = applyFixedDecisions(appended.state, [
+        {
+          accept: true,
+          change: {
+            id: `initial-${row.id}`,
+            category,
+            month,
+            previous: 0,
+            amount: Math.abs(row.amount),
+            rowId: grid?.id,
+            bookings: [row],
+          },
+        },
+      ]);
+    }
+  }
+  const resolved = new Set(rows.map(statementFingerprint));
+  const resolvedChanges = new Set(decisions.map(({ change }) => change.id));
+  const pending = queue.filter((item) =>
+    item.kind === "fixed"
+      ? !resolvedChanges.has(item.id)
+      : item.draft.amount === null ||
+        !resolved.has(statementFingerprint(item.draft as Transaction)),
+  );
+  for (const change of split.changes)
+    if (!pending.some((item) => item.id === change.id))
+      pending.push({ kind: "fixed", id: change.id, change });
+  const merged = mergeMetadata(appended.state, {
+    ...metadata,
+    fixedReceipts: [
+      ...(metadata.fixedReceipts ?? []),
+      ...split.receipts,
+      ...decisions.flatMap(({ change }) =>
+        change.bookings.map((row) => receipt(row, change.rowId)),
+      ),
+    ],
+  });
+  const importedCount =
+    actualBookings(merged).length - actualBookings(state).length;
   return {
     ...appended,
-    state: mergeMetadata(appended.state, {
-      ...metadata,
-      fixedReceipts: [
-        ...(metadata.fixedReceipts ?? []),
-        ...split.receipts,
-        ...decisions.flatMap(({ change }) =>
-          change.bookings.map((row) => receipt(row, change.rowId)),
-        ),
-      ],
-    }),
+    state: {
+      ...merged,
+      ...(pending.length || state.reviewQueue ? { reviewQueue: pending } : {}),
+      ...(metadata.issues !== undefined || state.importStatus
+        ? {
+            importStatus: {
+              imported:
+                (state.importStatus?.imported ?? 0) +
+                Math.max(0, importedCount),
+              issues: [
+                ...new Set([
+                  ...(state.importStatus?.issues ?? []),
+                  ...(metadata.issues ?? []),
+                ]),
+              ],
+            },
+          }
+        : {}),
+    },
     duplicates: appended.duplicates + split.duplicates,
     changes: split.changes,
   };

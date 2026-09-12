@@ -34,6 +34,7 @@ test.beforeEach(async ({ page }) => {
   );
   await page.goto("/monate");
   await stored(page);
+  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
 });
 
 test("focus and blur never turn an automatic amount into an override; editing and clearing still work", async ({
@@ -82,6 +83,7 @@ test("focus and blur never turn an automatic amount into an override; editing an
   await heading.click();
   await expect(input).toHaveValue("100,00");
   await page.reload();
+  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
   await expect(input).toHaveValue("100,00");
 });
 

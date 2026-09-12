@@ -37,7 +37,7 @@ const navigation = [
   { href: "/umsaetze", label: "Umsätze", icon: ArrowLeftRight },
   { href: "/monate", label: "Monate", icon: CalendarRange },
   { href: "/pockets", label: "Pockets", icon: Wallet },
-  { href: "/plan", label: "Variabler Plan", icon: ChartNoAxesCombined },
+  { href: "/plan", label: "Budgetdetails", icon: ChartNoAxesCombined },
   { href: "/einstellungen", label: "Einstellungen", icon: Settings2 },
 ];
 export function AppShell({

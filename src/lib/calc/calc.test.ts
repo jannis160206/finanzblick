@@ -54,11 +54,11 @@ describe("merchant classification", () => {
     "classifies %s as dining out",
     (name) => expect(classify(transaction(name)).category).toBe("Ausgehen"),
   );
-  it("routes Amazon and AMZ as savings transfers", () => {
+  it("routes Amazon and AMZ as extra expenses funded from savings", () => {
     for (const name of ["Amazon", "AMZ Marketplace"])
       expect(classify(transaction(name))).toMatchObject({
         pocket: "Sparkonto",
-        isTransfer: true,
+        isTransfer: false,
         includeInPlan: false,
       });
   });
@@ -177,7 +177,7 @@ describe("savings and interest", () => {
     ];
     expect(actualPockets(state).Sparkonto).toBe(1782.59);
     state.settings.asOf = "2026-09-12";
-    expect(actualPockets(state).Sparkonto).toBe(1802.59);
+    expect(actualPockets(state).Sparkonto).toBe(1762.59);
   });
   it("computes the ninety-day strip from the shared monthly engine", () => {
     const state = createSeed();

@@ -95,7 +95,7 @@ test("headerless Raiffeisen drop auto-saves, dedupes and has no manual creation 
   );
 });
 
-test("unknown merchants use locked facts and kind-filtered categories; invalid amounts only notify", async ({
+test("unknown merchants use locked facts and category only; invalid amounts remain in status", async ({
   page,
 }) => {
   await seed(page);
@@ -120,52 +120,28 @@ test("unknown merchants use locked facts and kind-filtered categories; invalid a
     name: "Buchung prüfen: Unbekannter Händler",
     exact: true,
   });
-  await expect(unknown.locator(".editable")).toHaveCount(2);
-  await expect(unknown.getByRole("combobox")).toHaveCount(2);
-  for (const field of ["Datum", "Text", "Betrag", "Bank", "Pocket"])
+  await expect(unknown.locator(".editable")).toHaveCount(1);
+  await expect(unknown.getByRole("combobox")).toHaveCount(1);
+  for (const field of ["Datum", "Text", "Betrag", "Konto/Pocket"])
     await expect(unknown.getByLabel(field, { exact: true })).toHaveJSProperty(
       "readOnly",
       true,
     );
-  await expect(unknown.getByLabel("Bank", { exact: true })).toHaveValue(
-    "Raiffeisen",
+  await expect(unknown.getByLabel("Konto/Pocket", { exact: true })).toHaveValue(
+    "Raiffeisen · Raiffeisen Giro",
   );
-  await expect(unknown.getByLabel("Pocket", { exact: true })).toHaveValue(
-    "Raiffeisen Giro",
-  );
-  const kind = unknown.getByLabel("Art", { exact: true });
   const category = unknown.getByLabel("Kategorie", { exact: true });
-  await expect(kind).toHaveValue("variable");
-  await expect(category.locator("option")).toHaveText([
-    "Kategorie wählen",
-    "Mittagessen",
-    "Lebensmittel",
-    "Ausgehen",
-    "Tanken",
-    "Shopping",
-    "Gesundheit",
-    "G2A",
-    "Sonstiges",
-  ]);
-  await kind.selectOption("fixed");
-  await expect(category.locator("option")).toContainText([
-    "Kategorie wählen",
-    "Gehalt",
-    "Rufbereitschaft",
-    "Leasing",
-    "Vollkasko",
-    "Haftpflicht",
-    "Handy",
-    "Apple Care",
-    "Barber",
-  ]);
-  await category.selectOption("Apple Care");
-  await kind.selectOption("variable");
+  await expect(unknown.getByLabel("Art", { exact: true })).toHaveCount(0);
+  expect(await category.locator("option").allTextContents()).toEqual(
+    expect.arrayContaining(["Freizeit", "Handy", "Apple Care", "Shopping"]),
+  );
   await expect(category).toHaveValue("Prüfen");
   await unknown
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Shopping");
-  await unknown.getByRole("button", { name: "Speichern", exact: true }).click();
+  await unknown
+    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
+    .click();
   await expect(unknown).toHaveCount(0);
   await expect(dialog).toHaveCount(0);
   const after = await ledger(page);
@@ -219,10 +195,15 @@ for (const accept of [true, false])
       dialog.getByRole("region", { name: "Buchung prüfen: Noch unbekannt" }),
     ).toBeVisible();
     await dialog
-      .getByRole("button", { name: accept ? "Ja" : "Nein", exact: true })
+      .getByRole("button", {
+        name: accept
+          ? "Neuen Dauerbetrag übernehmen"
+          : "Bisherigen Dauerbetrag behalten",
+        exact: true,
+      })
       .click();
     await dialog
-      .getByRole("button", { name: "Überspringen", exact: true })
+      .getByRole("button", { name: "Später prüfen", exact: true })
       .click();
     await expect(dialog).toHaveCount(0);
     const after = await ledger(page);
@@ -266,16 +247,18 @@ test("Amex auto-saves clear rows; invalid files notify without joining merchant 
     },
   ]);
   const dialog = page.getByRole("dialog");
-  await expect(page.getByText(/Dateityp nicht erkannt/)).toBeVisible();
+  await expect(
+    page
+      .locator("[data-sonner-toast]")
+      .filter({ hasText: /Dateityp nicht erkannt/ }),
+  ).toBeVisible();
   await expect(dialog.getByText(/Dateityp nicht erkannt/)).toHaveCount(0);
-  await expect(dialog.getByLabel("Bank", { exact: true })).toHaveValue("Amex");
-  await expect(dialog.getByLabel("Pocket", { exact: true })).toHaveValue(
-    "AMEX Jannis",
+  await expect(dialog.getByLabel("Konto/Pocket", { exact: true })).toHaveValue(
+    "Amex · AMEX Jannis",
   );
-  await expect(dialog.getByLabel("Pocket", { exact: true })).toHaveJSProperty(
-    "readOnly",
-    true,
-  );
+  await expect(
+    dialog.getByLabel("Konto/Pocket", { exact: true }),
+  ).toHaveJSProperty("readOnly", true);
   await expect(
     page.getByText("2 neu, 0 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
@@ -336,7 +319,9 @@ test("a second tab's booking is deduped again before saving an unsure row", asyn
   await dialog
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Shopping");
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
+    .click();
   await expect(
     page.getByText("0 neu, 1 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
@@ -472,38 +457,34 @@ test("all Revolut statement pockets are locked including personal accounts", asy
     name: "Buchung prüfen: Unbekannt im Pocket",
     exact: true,
   });
-  await expect(locked.getByLabel("Bank", { exact: true })).toHaveValue(
-    "Revolut",
+  await expect(locked.getByLabel("Konto/Pocket", { exact: true })).toHaveValue(
+    "Revolut · Mittagessen",
   );
-  await expect(locked.getByLabel("Pocket", { exact: true })).toHaveValue(
-    "Mittagessen",
-  );
-  await expect(locked.getByLabel("Pocket", { exact: true })).toHaveJSProperty(
-    "readOnly",
-    true,
-  );
-  await locked.getByLabel("Art", { exact: true }).selectOption("fixed");
+  await expect(
+    locked.getByLabel("Konto/Pocket", { exact: true }),
+  ).toHaveJSProperty("readOnly", true);
   await locked
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Apple Care");
-  await locked.getByRole("button", { name: "Speichern", exact: true }).click();
+  await locked
+    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
+    .click();
   await expect(locked).toHaveCount(0);
   const personal = dialog.getByRole("region", {
     name: "Buchung prüfen: Unbekannt persönlich",
     exact: true,
   });
-  await expect(personal.getByLabel("Pocket", { exact: true })).toHaveValue(
-    "Persönliches Konto",
-  );
-  await expect(personal.getByLabel("Pocket", { exact: true })).toHaveJSProperty(
-    "readOnly",
-    true,
-  );
+  await expect(
+    personal.getByLabel("Konto/Pocket", { exact: true }),
+  ).toHaveValue("Revolut · Persönliches Konto");
+  await expect(
+    personal.getByLabel("Konto/Pocket", { exact: true }),
+  ).toHaveJSProperty("readOnly", true);
   await personal
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Shopping");
   await personal
-    .getByRole("button", { name: "Speichern", exact: true })
+    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
     .click();
   await expect(dialog).toHaveCount(0);
   const saved = await ledger(page);
@@ -532,7 +513,9 @@ test("only unreadable rows produce a toast, not a review popup", async ({
     .getByLabel("Kontoauszüge auswählen")
     .setInputFiles(csv("03.09.2026;BIPA;03.09.2026;unlesbar"));
   await expect(
-    page.getByText(/Ungültiger oder fehlender Betrag/),
+    page
+      .locator("[data-sonner-toast]")
+      .filter({ hasText: /Ungültiger oder fehlender Betrag/ }),
   ).toBeVisible();
   await expect(
     page.getByText("0 neu, 0 Duplikate ignoriert", { exact: true }),
@@ -591,18 +574,18 @@ for (const source of ["Raiffeisen", "Revolut", "Amex"])
       );
       expect(saved.pocketSnapshots).toHaveLength(3);
       await page.goto("/pockets");
-      await expect(page.getByLabel("Sparkonto Ist laut Auszug")).toHaveValue(
+      await expect(page.getByLabel("Sparkonto Kontostand")).toContainText(
         /1\.782,59/,
       );
-      await expect(page.getByLabel("Urlaub Ist laut Auszug")).toHaveValue(
+      await expect(page.getByLabel("Urlaub Kontostand")).toContainText(
         /1\.312,06/,
       );
-      await expect(page.getByLabel("Motorrad Ist laut Auszug")).toHaveValue(
+      await expect(page.getByLabel("Motorrad Kontostand")).toContainText(
         /0,00/,
       );
-      await expect(page.locator("form")).toHaveCount(0);
+      await expect(page.locator("form:visible")).toHaveCount(0);
       await page.reload();
-      await expect(page.getByLabel("Sparkonto Ist laut Auszug")).toHaveValue(
+      await expect(page.getByLabel("Sparkonto Kontostand")).toContainText(
         /1\.782,59/,
       );
       expect((await ledger(page)).transactions).toHaveLength(
@@ -635,7 +618,9 @@ test("merchant category choices survive reload and auto-save the next statement"
   await dialog
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Shopping");
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await dialog
+    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
+    .click();
   await expect(dialog).toHaveCount(0);
   expect((await ledger(page)).merchantRules).toHaveLength(1);
   await page.reload();
@@ -670,8 +655,8 @@ test("matching fixed receipts dismiss the quiet missing-cost hint without adding
   ];
   await seed(page, state);
   await page.goto("/");
-  await expect(page.getByLabel("Fixkosten-Abgleich")).toHaveText(
-    "Haftpflicht noch nicht im Auszug",
+  await expect(page.getByLabel("Auszugsstatus")).toContainText(
+    "1 Fixkosten ohne Auszugsbeleg",
   );
   await page.goto("/umsaetze");
   await page
@@ -685,13 +670,17 @@ test("matching fixed receipts dismiss the quiet missing-cost hint without adding
   expect(saved.transactions).toHaveLength(0);
   expect(saved.fixedReceipts).toHaveLength(1);
   await page.goto("/");
-  await expect(page.getByLabel("Fixkosten-Abgleich")).toHaveCount(0);
+  await expect(page.getByLabel("Auszugsstatus")).not.toContainText(
+    "Fixkosten ohne Auszugsbeleg",
+  );
   await page.reload();
   await ledger(page);
-  await expect(page.getByLabel("Fixkosten-Abgleich")).toHaveCount(0);
+  await expect(page.getByLabel("Auszugsstatus")).not.toContainText(
+    "Fixkosten ohne Auszugsbeleg",
+  );
   await page.clock.setFixedTime(new Date("2026-10-06T12:00:00Z"));
   await page.reload();
-  await expect(page.getByLabel("Fixkosten-Abgleich")).toHaveText(
-    "Haftpflicht noch nicht im Auszug",
+  await expect(page.getByLabel("Auszugsstatus")).toContainText(
+    "1 Fixkosten ohne Auszugsbeleg",
   );
 });

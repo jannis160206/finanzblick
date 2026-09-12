@@ -35,6 +35,14 @@ export const categories = [
   "Spotify",
 ] as const;
 export type Category = (typeof categories)[number];
+export const durableCategories: readonly Category[] = [
+  "Gehalt",
+  "Leasing",
+  "Vollkasko",
+  "Haftpflicht",
+  "Handyvertrag",
+  "Apple Care",
+];
 export const fixedCategories: readonly Category[] = [
   "Gehalt",
   "Rufbereitschaft",
@@ -92,6 +100,8 @@ export const transactionSchema = z.object({
   afterBaseline: z.boolean().optional(),
   categoryOverride: z.boolean().optional(),
   sourceCategory: z.string().max(200).optional(),
+  bankReference: z.string().max(500).optional(),
+  occurrence: z.number().int().positive().optional(),
 });
 export type Transaction = z.infer<typeof transactionSchema>;
 export const pocketSnapshotSchema = z.object({
@@ -106,14 +116,49 @@ export const merchantRuleSchema = z.object({
   category: z.enum(categories),
 });
 export const fixedReceiptSchema = z.object({
-  key: z.string().max(500),
+  key: z.string().max(2000),
   merchantKey: z.string().max(1200).optional(),
   date: dateSchema,
   category: z.enum(categories),
   rowId: z.string().optional(),
   amount: moneySchema,
+  booking: transactionSchema.optional(),
 });
 export type FixedReceipt = z.infer<typeof fixedReceiptSchema>;
+export const accountSnapshotSchema = z.object({
+  bank: z.literal("Revolut"),
+  name: z.string().min(1).max(100),
+  date: dateSchema,
+  balance: moneySchema,
+});
+export const trBalanceSchema = z.object({
+  date: dateSchema,
+  balance: moneySchema.nonnegative(),
+});
+export const fixedChangeSchema = z.object({
+  id: z.string(),
+  category: z.enum(categories),
+  month: z.string(),
+  previous: moneySchema,
+  amount: moneySchema,
+  rowId: z.string().optional(),
+  bookings: z.array(transactionSchema),
+});
+export const reviewItemSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("booking"),
+    id: z.string(),
+    draft: transactionSchema.extend({ amount: moneySchema.nullable() }),
+    message: z.string(),
+  }),
+  z.object({
+    kind: z.literal("fixed"),
+    id: z.string(),
+    change: fixedChangeSchema,
+  }),
+]);
+export type ReviewItem = z.infer<typeof reviewItemSchema>;
+export type FixedChange = z.infer<typeof fixedChangeSchema>;
 export const financeRowSchema = z.object({
   id: z.string().min(1),
   label: z.string().trim().min(1).max(100),
@@ -170,6 +215,9 @@ export const settingsSchema = z
     rateChangeDate: dateSchema,
     taxRate: z.number().min(0).max(1),
     interestStart: dateSchema,
+    interestRates: z
+      .array(z.object({ date: dateSchema, rate: z.number().min(0).max(1) }))
+      .optional(),
   })
   .refine((value) => value.asOf >= value.baselineDate, {
     message: "Stichtag darf nicht vor dem Ist-Datum liegen",
@@ -184,10 +232,28 @@ export const appStateSchema = z.object({
     .optional(),
   settings: settingsSchema,
   transactions: z.array(transactionSchema).max(100_000),
-  ignoredStatementKeys: z.array(z.string().max(500)).max(100_000).optional(),
+  ignoredStatementKeys: z.array(z.string().max(2000)).max(100_000).optional(),
   pocketSnapshots: z.array(pocketSnapshotSchema).max(10_000).optional(),
   merchantRules: z.array(merchantRuleSchema).max(100_000).optional(),
   fixedReceipts: z.array(fixedReceiptSchema).max(100_000).optional(),
+  fixedAmountDecisions: z
+    .array(
+      z.object({
+        merchantKey: z.string(),
+        category: z.enum(categories),
+        amount: moneySchema,
+        month: z.string(),
+        accept: z.boolean(),
+      }),
+    )
+    .max(100_000)
+    .optional(),
+  accountSnapshots: z.array(accountSnapshotSchema).max(100_000).optional(),
+  trBalances: z.array(trBalanceSchema).max(10_000).optional(),
+  reviewQueue: z.array(reviewItemSchema).max(100_000).optional(),
+  importStatus: z
+    .object({ imported: z.number().nonnegative(), issues: z.array(z.string()) })
+    .optional(),
   financeRows: z.array(financeRowSchema).max(200),
   months: z.record(
     z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),

@@ -11,6 +11,11 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { fixedRowCategory } from "@/lib/fixed";
+import {
+  legacyFingerprint,
+  numberStatementRows,
+  statementFingerprint,
+} from "@/lib/import/identity";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -85,8 +90,8 @@ export function merchantName(description: string) {
 }
 export function savingsPocket(account: string | null): Pocket | null {
   if (!account) return null;
-  if (/^notgroschen(?:\s|$)/i.test(account)) return "Notgroschen";
-  if (/^urlaub(?:\s|$)/i.test(account)) return "Urlaub";
+  if (/^notgroschen$/i.test(account)) return "Notgroschen";
+  if (/^urlaub(?: 2026)?$/i.test(account)) return "Urlaub";
   if (/^(sparkonto|sparen)$/i.test(account)) return "Sparkonto";
   if (/^motorrad(?:konto|[- ]konto)?$/i.test(account)) return "Motorrad";
   return null;
@@ -99,6 +104,10 @@ export function classify(
     Partial<Pick<Transaction, "bank" | "categoryOverride" | "sourceCategory">>,
 ) {
   const { description, amount } = transaction;
+  const specialIncome =
+    /(?:13\.?\s*(?:monats)?(?:gehalt|lohn)|bonus|sonderzahlung|weihnachtsgeld|urlaubsgeld|holiday|rufbereitschaft)/i.test(
+      description,
+    );
   const absolute = Math.abs(amount);
   const sourceCategory = transaction.sourceCategory ?? "";
   const isCardSettlement =
@@ -124,10 +133,15 @@ export function classify(
     isCashWithdrawal ||
     transaction.category === "Transfer intern" ||
     /transfer intern/i.test(transaction.sourceCategory ?? "");
-  const detectedTransfer = isRoundUp || isAmazon || isInternal;
+  const detectedTransfer = isRoundUp || (isInternal && !isAmazon);
   let category: Category = transaction.category;
-  if (isRoundUp || isAmazon) category = "Transfer";
+  if (isAmazon) category = "Shopping";
+  else if (isRoundUp) category = "Transfer";
   else if (isInternal) category = "Transfer intern";
+  else if (specialIncome && amount > 0)
+    category = /rufbereitschaft/i.test(description)
+      ? "Rufbereitschaft"
+      : "Einkommen";
   else if (/rufbereitschaft/i.test(description)) category = "Rufbereitschaft";
   else if (/gehalt|team\s*talent\s*solutions/i.test(description))
     category = absolute < 500 ? "Rufbereitschaft" : "Gehalt";
@@ -174,7 +188,15 @@ export function classify(
     category = "Ausgehen";
   else if (/\batm\b|bankomat/i.test(description) && absolute === 20)
     category = "Barber";
-  if (transaction.categoryOverride) category = transaction.category;
+  if (
+    transaction.categoryOverride &&
+    !(isAmazon && /Transfer/.test(transaction.category))
+  )
+    category = transaction.category;
+  if (amount > 0 && specialIncome && !detectedTransfer)
+    category = /rufbereitschaft/i.test(description)
+      ? "Rufbereitschaft"
+      : "Einkommen";
   const isTransfer =
     detectedTransfer ||
     category === "Transfer" ||
@@ -182,16 +204,18 @@ export function classify(
   const pocket =
     isRoundUp || isAmazon ? "Sparkonto" : savingsPocket(transaction.pocket);
   const exclusion =
+    isAmazon ||
+    /amex raphael/i.test(transaction.pocket ?? "") ||
     excluded.test(`${description} ${transaction.sourceCategory ?? ""}`) ||
     savingsPocket(transaction.pocket) === "Urlaub";
   const fixedOrIncome = fixedCategories.includes(category);
   const includeInPlan =
-    amount < 0 &&
+    amount !== 0 &&
     !isTransfer &&
     !exclusion &&
     !fixedOrIncome &&
     category !== "Prüfen" &&
-    transaction.includeInPlan;
+    (transaction.includeInPlan || amount > 0);
   return {
     category,
     planCategory: isRoundUp
@@ -205,19 +229,23 @@ export function classify(
     isAmazon,
     includeInPlan,
     merchant: merchantName(description),
-    reason: isTransfer
-      ? "Umbuchung"
-      : exclusion
-        ? "Ausgeschlossen"
-        : amount >= 0
-          ? "Eingang"
-          : category === "Prüfen"
-            ? "Zuordnung prüfen"
-            : fixedOrIncome
-              ? "Fixkosten / Einkommen"
-              : !transaction.includeInPlan
-                ? "Manuell ausgeschlossen"
-                : "",
+    reason: isAmazon
+      ? "Amazon: Extraausgabe"
+      : /amex raphael/i.test(transaction.pocket ?? "")
+        ? "Amex Raphael: nicht im Budget"
+        : isTransfer
+          ? "Umbuchung"
+          : exclusion
+            ? "Ausgeschlossen"
+            : amount >= 0
+              ? "Eingang"
+              : category === "Prüfen"
+                ? "Zuordnung prüfen"
+                : fixedOrIncome
+                  ? "Fixkosten / Einkommen"
+                  : !transaction.includeInPlan
+                    ? "Manuell ausgeschlossen"
+                    : "",
   };
 }
 
@@ -225,6 +253,18 @@ export function classifyStatementRows(
   rows: Transaction[],
   existing: Transaction[] = [],
 ): Transaction[] {
+  const refundMerchant = (row: Transaction) =>
+    `${row.bank.toLowerCase()}|${row.pocket ?? ""}|${merchantName(row.description.replace(/rückerstattung|erstattung|refund|gutschrift|retoure/gi, ""))}`;
+  const debits = new Map<string, Transaction[]>();
+  for (const row of [...existing, ...rows].sort((a, b) =>
+    b.date.localeCompare(a.date),
+  )) {
+    if (row.amount >= 0 || classify(row).isTransfer) continue;
+    const key = refundMerchant(row);
+    const matches = debits.get(key) ?? [];
+    matches.push(row);
+    debits.set(key, matches);
+  }
   const paypalMonths = new Map<string, Set<string>>();
   for (const row of [...existing, ...rows]) {
     if (
@@ -243,16 +283,33 @@ export function classifyStatementRows(
     const recurring =
       /paypal/i.test(row.description) &&
       (paypalMonths.get(paypalKey)?.size ?? 0) >= 2;
+    const original =
+      row.amount > 0 && !row.categoryOverride && !classify(row).isTransfer
+        ? debits
+            .get(refundMerchant(row))
+            ?.find(
+              (item) =>
+                item.date <= row.date && Math.abs(item.amount) >= row.amount,
+            )
+        : undefined;
+    const refund =
+      original && !fixedCategories.includes(classify(original).category)
+        ? {
+            ...row,
+            category: classify(original).category,
+            categoryOverride: true,
+          }
+        : row;
     const result = classify(
       recurring && !row.categoryOverride
         ? {
             ...row,
             sourceCategory: `${row.sourceCategory ?? ""} wiederkehrend`,
           }
-        : row,
+        : refund,
     );
     return {
-      ...row,
+      ...refund,
       category: result.category,
       includeInPlan: result.includeInPlan,
     };
@@ -293,9 +350,9 @@ export function calculatePlan(transactions: Transaction[], asOf: string) {
       current: 0,
       seen: new Set<string>(),
     };
-    if (key === currentMonth) group.current += Math.abs(transaction.amount);
+    if (key === currentMonth) group.current -= transaction.amount;
     else {
-      group.values[months.indexOf(key)] += Math.abs(transaction.amount);
+      group.values[months.indexOf(key)] -= transaction.amount;
       group.seen.add(key);
     }
     groups.set(groupKey, group);
@@ -323,7 +380,9 @@ export function calculatePlan(transactions: Transaction[], asOf: string) {
         eligible,
         historical,
         currentContribution,
-        planned: eligible ? round(historical + currentContribution) : 0,
+        planned: eligible
+          ? Math.max(0, round(historical + currentContribution))
+          : 0,
       };
     })
     .sort(
@@ -370,12 +429,18 @@ export function monthlyInterest(
       : 1;
   let effectiveRate = 0;
   for (let day = startDay; day <= days; day++) {
+    const historicalRate = settings.interestRates
+      ?.filter(
+        (item) => item.date <= `${month}-${String(day).padStart(2, "0")}`,
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0]?.rate;
     const rate =
-      month < changeMonth ||
+      historicalRate ??
+      (month < changeMonth ||
       (month === changeMonth &&
         day < Number(settings.rateChangeDate.slice(8, 10)))
         ? settings.oldRate
-        : settings.newRate;
+        : settings.newRate);
     effectiveRate += rate / days;
   }
   return round(((previousEnd * effectiveRate) / 12) * (1 - settings.taxRate));
@@ -433,6 +498,8 @@ function pocketMovements(
       continue;
     const classified = classify(transaction);
     if (!classified.pocket) continue;
+    if (transaction.bank === "Revolut" && classified.pocket === "Notgroschen")
+      continue;
     const pairKey = `${transaction.date}|${transaction.bank}|${transaction.amount}`;
     if (
       transaction.amount > 0 &&
@@ -442,10 +509,9 @@ function pocketMovements(
       roundUpPairs.set(pairKey, roundUpPairs.get(pairKey)! - 1);
       continue;
     }
-    movements[classified.pocket] +=
-      classified.isRoundUp || classified.isAmazon
-        ? Math.abs(transaction.amount)
-        : transaction.amount;
+    movements[classified.pocket] += classified.isRoundUp
+      ? Math.abs(transaction.amount)
+      : transaction.amount;
   }
   pocketNames.forEach((pocket) => {
     movements[pocket] = round(movements[pocket]);
@@ -457,6 +523,7 @@ export function latestPocketSnapshot(
   pocket: Pocket,
   date = state.settings.asOf,
 ) {
+  if (pocket === "Notgroschen") return undefined;
   return state.pocketSnapshots
     ?.filter(
       (item) =>
@@ -466,6 +533,11 @@ export function latestPocketSnapshot(
     )
     .sort((a, b) => b.date.localeCompare(a.date))[0];
 }
+export function latestTRBalance(state: AppState, date = state.settings.asOf) {
+  return state.trBalances
+    ?.filter((item) => item.date <= date)
+    .sort((a, b) => b.date.localeCompare(a.date))[0];
+}
 function revolutMovement(
   state: AppState,
   pocket: Pocket,
@@ -473,18 +545,36 @@ function revolutMovement(
   to: string,
   transfersOnly = false,
 ) {
-  return sum(
-    state.transactions
-      .filter(
-        (row) =>
-          row.bank === "Revolut" &&
-          savingsPocket(row.pocket) === pocket &&
-          row.date > from &&
-          row.date <= to &&
-          (!transfersOnly || classify(row).isTransfer),
-      )
-      .map((row) => row.amount),
+  const native = state.transactions.filter(
+    (row) =>
+      row.bank === "Revolut" &&
+      savingsPocket(row.pocket) === pocket &&
+      row.date > from &&
+      row.date <= to &&
+      (!transfersOnly || classify(row).isTransfer),
   );
+  if (pocket !== "Sparkonto" || transfersOnly)
+    return sum(native.map((row) => row.amount));
+  const covered = new Map<string, number>();
+  for (const row of native.filter((row) => classify(row).isTransfer)) {
+    const key = `${row.date}|${row.amount}`;
+    covered.set(key, (covered.get(key) ?? 0) + 1);
+  }
+  const extra = state.transactions
+    .filter(
+      (row) =>
+        row.date > from &&
+        row.date <= to &&
+        classify(row).isAmazon &&
+        !native.includes(row),
+    )
+    .filter((row) => {
+      const key = `${row.date}|${row.amount}`;
+      if (!(covered.get(key)! > 0)) return true;
+      covered.set(key, covered.get(key)! - 1);
+      return false;
+    });
+  return sum([...native, ...extra].map((row) => row.amount));
 }
 export function actualPockets(state: AppState, date = state.settings.asOf) {
   const movements = pocketMovements(
@@ -495,6 +585,8 @@ export function actualPockets(state: AppState, date = state.settings.asOf) {
   );
   return Object.fromEntries(
     pocketNames.map((pocket) => {
+      if (pocket === "Notgroschen" && latestTRBalance(state, date))
+        return [pocket, latestTRBalance(state, date)!.balance];
       const snapshot = latestPocketSnapshot(state, pocket, date);
       return [
         pocket,
@@ -618,23 +710,64 @@ export function calculateMonthTotals(
       ? sum(variableRows.map((row) => financeRowValue(row, month, plan)))
       : plan.total);
   const actualSpending = sum(
-    state.transactions
+    actualBookings(state)
       .filter(
         (t) =>
           monthKey(t.date) === month &&
           t.date <= state.settings.asOf &&
-          t.amount < 0 &&
+          !["Einkommen", "Gehalt", "Rufbereitschaft"].includes(
+            classify(t).category,
+          ) &&
           !classify(t).isTransfer,
       )
       .map((t) => -t.amount),
   );
   return {
     income,
+    received: sum(
+      actualBookings(state)
+        .filter(
+          (t) =>
+            monthKey(t.date) === month &&
+            t.date <= state.settings.asOf &&
+            ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(
+              classify(t).category,
+            ) &&
+            !classify(t).isTransfer,
+        )
+        .map((t) => t.amount),
+    ),
     fixed,
     variablePlan,
     actualSpending,
     surplus: round(income - fixed - variablePlan),
   };
+}
+export function actualBookings(state: AppState): Transaction[] {
+  const known = new Set(
+    numberStatementRows(state.transactions).flatMap((row) => [
+      statementFingerprint(row),
+      legacyFingerprint(row),
+    ]),
+  );
+  const receipts: Transaction[] = [];
+  for (const item of state.fixedReceipts ?? []) {
+    if (known.has(item.key)) continue;
+    known.add(item.key);
+    receipts.push({
+      bank: "Auszugsbeleg",
+      pocket: null,
+      description: item.category,
+      ...item.booking,
+      id: item.key,
+      date: item.date,
+      amount: item.amount,
+      category: item.category,
+      categoryOverride: true,
+      includeInPlan: false,
+    });
+  }
+  return [...state.transactions, ...receipts];
 }
 export function calculateDashboard(state: AppState) {
   const plan = calculatePlan(state.transactions, state.settings.asOf);
@@ -644,7 +777,6 @@ export function calculateDashboard(state: AppState) {
   const historicalOpening = state.months["2026-01"]?.openingBalances;
   let previous = { ...(historicalOpening ?? state.settings.balances) };
   let bikeFunded = previous.Motorrad >= state.settings.bikeTarget;
-  let trBalance = state.settings.balances.Notgroschen;
   const timeline = [...monthsForYear(2026), ...monthsForYear(2027)].map(
     (month) => {
       const totals = calculateMonthTotals(state, month, plan);
@@ -700,14 +832,13 @@ export function calculateDashboard(state: AppState) {
           actual.Motorrad - settled.Motorrad >= state.settings.bikeTarget;
       const interest = available
         ? monthlyInterest(
-            latestPocketSnapshot(state, "Notgroschen", snapshotDate)
-              ? trBalance
+            month === currentMonth && latestTRBalance(state, snapshotDate)
+              ? latestTRBalance(state, snapshotDate)!.balance
               : start.Notgroschen,
             month,
             state.settings,
           )
         : 0;
-      if (month >= baselineMonth) trBalance = round(trBalance + interest);
       const manualTotal = sum(Object.values(input.pocketIn));
       const bikeBeforeWithdrawal =
         start.Motorrad -
@@ -745,6 +876,12 @@ export function calculateDashboard(state: AppState) {
           latestPocketSnapshot(state, pocket, monthEnd)
         )
           end[pocket] = actualPockets(state, monthEnd)[pocket];
+        if (
+          pocket === "Notgroschen" &&
+          month <= currentMonth &&
+          latestTRBalance(state, snapshotDate)
+        )
+          end[pocket] = latestTRBalance(state, snapshotDate)!.balance;
       }
       if (available) previous = end;
       const bikeTransfer = rates.Motorrad;
@@ -794,12 +931,12 @@ export function calculateDashboard(state: AppState) {
     return { month, ...totals, bikeTransfer: 0, remaining: totals.surplus };
   });
   const categorySpending = new Map<string, number>();
-  for (const transaction of state.transactions) {
+  for (const transaction of actualBookings(state)) {
     const result = classify(transaction);
     if (
       monthKey(transaction.date) !== currentMonth ||
       transaction.date > state.settings.asOf ||
-      transaction.amount >= 0 ||
+      ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) ||
       result.isTransfer
     )
       continue;

@@ -306,7 +306,7 @@ describe("classification uses the existing engine", () => {
 });
 
 describe("dedupe and append", () => {
-  it("dedupes by day, bank, cents and first 25 description characters only", () => {
+  it("keeps different pockets and full descriptions distinct", () => {
     const row = transaction("Ein Händler mit langem Namen Referenz A", -12.34);
     const same = {
       ...row,
@@ -325,7 +325,7 @@ describe("dedupe and append", () => {
         ],
         [row],
       ),
-    ).toMatchObject({ duplicates: 1, rows: expect.any(Array) });
+    ).toMatchObject({ duplicates: 0, rows: expect.any(Array) });
     expect(
       deduplicateStatements(
         [
@@ -336,7 +336,7 @@ describe("dedupe and append", () => {
         ],
         [row],
       ).rows,
-    ).toHaveLength(3);
+    ).toHaveLength(4);
   });
   it("handles mixed files, repeated drops, and already imported rows", () => {
     const raiffeisen = parseStatementCsv(fixture("raiffeisen"));

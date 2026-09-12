@@ -85,34 +85,41 @@ export function ExcelActions() {
           if (file) void upload(file);
         }}
       />
-      <Button
-        size="sm"
-        variant="ghost"
-        disabled={!!busy}
-        onClick={() => fileInput.current?.click()}
-        aria-label="Excel hochladen"
-      >
-        {busy === "import" ? (
-          <LoaderCircle className="size-4 animate-spin" />
-        ) : (
-          <Upload className="size-4" />
-        )}
-        <span className="hidden sm:inline">Importieren</span>
-      </Button>
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={!!busy}
-        onClick={() => void download()}
-        aria-label="Excel herunterladen"
-      >
-        {busy === "export" ? (
-          <LoaderCircle className="size-4 animate-spin" />
-        ) : (
-          <Download className="size-4" />
-        )}
-        <span className="hidden sm:inline">Excel exportieren</span>
-      </Button>
+      <details className="relative">
+        <summary className="cursor-pointer rounded-md border px-3 py-2 text-xs">
+          Sicherung
+        </summary>
+        <div className="absolute right-0 z-40 mt-2 flex min-w-64 flex-col gap-2 rounded-lg border bg-card p-3 shadow-lg">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!!busy}
+            onClick={() => fileInput.current?.click()}
+            aria-label="Sicherung wiederherstellen"
+          >
+            {busy === "import" ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Upload className="size-4" />
+            )}
+            <span>Sicherung wiederherstellen</span>
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!!busy}
+            onClick={() => void download()}
+            aria-label="Excel herunterladen"
+          >
+            {busy === "export" ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Download className="size-4" />
+            )}
+            <span>Sicherung herunterladen</span>
+          </Button>
+        </div>
+      </details>
       <Dialog
         open={!!preview}
         onOpenChange={(open) => {
@@ -121,7 +128,7 @@ export function ExcelActions() {
       >
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Excel-Import prüfen</DialogTitle>
+            <DialogTitle>Sicherung wiederherstellen</DialogTitle>
             <DialogDescription className="break-all">
               {filename}
             </DialogDescription>
@@ -133,7 +140,7 @@ export function ExcelActions() {
                 <div>
                   <p className="text-sm font-medium">{preview.source}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Ist-Basis {dateLabel(preview.state.settings.baselineDate)}
+                    Berechnungsdatum {dateLabel(preview.state.settings.asOf)}
                   </p>
                 </div>
               </div>
@@ -144,8 +151,8 @@ export function ExcelActions() {
                     count: preview.state.transactions.length,
                   },
                   {
-                    label: "Positionen",
-                    count: preview.state.financeRows.length,
+                    label: "Offen",
+                    count: preview.state.reviewQueue?.length ?? 0,
                   },
                   { label: "Übersprungen", count: preview.skipped },
                 ].map((item) => (
@@ -193,7 +200,7 @@ export function ExcelActions() {
                     setPreview(null);
                   }}
                 >
-                  Daten ersetzen
+                  Sicherung wiederherstellen und aktuelle Daten ersetzen
                 </Button>
               </DialogFooter>
             </>

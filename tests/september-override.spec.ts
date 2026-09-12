@@ -77,6 +77,7 @@ test("the confirmed stale September override repairs itself on load exactly once
   await page.reload();
   await expect(surplus).toContainText("1.189,67");
   await page.goto("/monate");
+  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
   const cell = page.getByRole("textbox", {
     name: "Sonstiges September 2026",
     exact: true,
@@ -86,5 +87,6 @@ test("the confirmed stale September override repairs itself on load exactly once
   await cell.press("Enter");
   await stored(page);
   await page.reload();
+  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
   await expect(cell).toHaveValue("2.027,75");
 });

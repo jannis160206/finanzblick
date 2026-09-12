@@ -7,6 +7,7 @@ import {
   financeRowSchema,
   fixedReceiptSchema,
   merchantRuleSchema,
+  settingsSchema,
   pocketNames,
   pocketSnapshotSchema,
   transactionSchema,
@@ -157,7 +158,12 @@ export async function parseWorkbook(
     dashboard.eachRow((row, index) => {
       if (index < 3) return;
       const key = text(row.getCell(1));
-      if (!(key in state.settings) || key === "balances") return;
+      if (
+        !(key in state.settings) ||
+        key === "balances" ||
+        key === "interestRates"
+      )
+        return;
       const original = state.settings[key as keyof Settings];
       const next =
         typeof original === "number"
@@ -235,6 +241,12 @@ export async function parseWorkbook(
         category: normalizeCategory(text(get("Kategorie", "Category"))),
         includeInPlan:
           isFormula(planCell) || !/^(nein|false|0)$/i.test(text(planCell)),
+        ...(native && text(get("Bankreferenz"))
+          ? { bankReference: text(get("Bankreferenz")) }
+          : {}),
+        ...(native && numeric(get("Vorkommen")) !== null
+          ? { occurrence: numeric(get("Vorkommen")) }
+          : {}),
         ...(native && text(get("Nach Ist-Basis"))
           ? {
               afterBaseline: /^(ja|true|1)$/i.test(text(get("Nach Ist-Basis"))),
@@ -435,6 +447,23 @@ export async function parseWorkbook(
       const kind = text(row.getCell(1));
       try {
         const data = JSON.parse(text(row.getCell(2)));
+        if (kind === "ux") {
+          Object.assign(
+            state,
+            appStateSchema
+              .pick({
+                accountSnapshots: true,
+                trBalances: true,
+                reviewQueue: true,
+                importStatus: true,
+                fixedAmountDecisions: true,
+              })
+              .parse(data),
+          );
+          if (data.interestRates !== undefined)
+            state.settings.interestRates =
+              settingsSchema.shape.interestRates.parse(data.interestRates);
+        }
         if (kind === "pocket")
           (state.pocketSnapshots ??= []).push(pocketSnapshotSchema.parse(data));
         if (kind === "merchant")
@@ -475,7 +504,10 @@ export async function parseWorkbook(
   };
 }
 
-const settingLabels: Record<Exclude<keyof Settings, "balances">, string> = {
+const settingLabels: Record<
+  Exclude<keyof Settings, "balances" | "interestRates">,
+  string
+> = {
   asOf: "Stichtag",
   baselineDate: "Ist-Datum",
   emergencyTarget: "Ziel Notgroschen",
@@ -505,7 +537,9 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     dashboard.addRow([
       key,
       label,
-      state.settings[key as Exclude<keyof Settings, "balances">],
+      state.settings[
+        key as Exclude<keyof Settings, "balances" | "interestRates">
+      ],
     ]);
   dashboard.addRow([]);
   dashboard.addRow(["Berechnet", "Gesamtvermögen", d.totalAssets]);
@@ -609,6 +643,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Nach Ist-Basis",
     "Kategorie manuell",
     "Quellkategorie",
+    "Bankreferenz",
+    "Vorkommen",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -631,6 +667,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
           ? "Ja"
           : "Nein",
       row.sourceCategory ?? "",
+      row.bankReference ?? "",
+      row.occurrence ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {
@@ -739,12 +777,37 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.pocketSnapshots?.length ||
     state.merchantRules?.length ||
     state.fixedReceipts?.length ||
-    state.planningRepairs?.length
+    state.planningRepairs?.length ||
+    state.accountSnapshots ||
+    state.trBalances ||
+    state.reviewQueue ||
+    state.importStatus ||
+    state.settings.interestRates ||
+    state.fixedAmountDecisions
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
       state: "hidden",
     });
     automation.addRow(["Typ", "Auszugsdaten"]);
+    if (
+      state.accountSnapshots ||
+      state.trBalances ||
+      state.reviewQueue ||
+      state.importStatus ||
+      state.settings.interestRates ||
+      state.fixedAmountDecisions
+    )
+      automation.addRow([
+        "ux",
+        JSON.stringify({
+          accountSnapshots: state.accountSnapshots,
+          trBalances: state.trBalances,
+          reviewQueue: state.reviewQueue,
+          importStatus: state.importStatus,
+          interestRates: state.settings.interestRates,
+          fixedAmountDecisions: state.fixedAmountDecisions,
+        }),
+      ]);
     state.pocketSnapshots?.forEach((item) =>
       automation.addRow(["pocket", JSON.stringify(item)]),
     );

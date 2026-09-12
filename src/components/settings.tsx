@@ -1,6 +1,6 @@
 "use client";
 
-import { Controller, useForm } from "react-hook-form";
+import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -8,12 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFinance } from "@/components/finance-provider";
-import {
-  InputLegend,
-  PageHeading,
-  SectionHeading,
-} from "@/components/finance-ui";
+import { PageHeading, SectionHeading } from "@/components/finance-ui";
 import { settingsSchema, type Settings as SettingsData } from "@/lib/types";
+import { localToday } from "@/lib/planning";
 
 type NumericKey =
   | "emergencyTarget"
@@ -22,21 +19,27 @@ type NumericKey =
   | "bikeTarget"
   | "bikeShare"
   | "afterBikeSavingsShare"
-  | "oldRate"
-  | "newRate"
   | "taxRate";
-type DateKey =
-  | "asOf"
-  | "baselineDate"
-  | "bikePurchaseDate"
-  | "allocationStart"
-  | "rateChangeDate"
-  | "interestStart";
+type DateKey = "bikePurchaseDate";
+const withRateHistory = (settings: SettingsData): SettingsData => ({
+  ...settings,
+  interestRates: settings.interestRates ?? [
+    { date: "2026-01-01", rate: settings.oldRate },
+    { date: settings.rateChangeDate, rate: settings.newRate },
+  ],
+});
 export function Settings() {
   const { state, update } = useFinance();
   const form = useForm<SettingsData>({
     resolver: zodResolver(settingsSchema),
-    defaultValues: state.settings,
+    defaultValues: withRateHistory(state.settings),
+  });
+  const rates =
+    useWatch({ control: form.control, name: "interestRates" }) ?? [];
+  const bikeShare = useWatch({ control: form.control, name: "bikeShare" });
+  const savingsShare = useWatch({
+    control: form.control,
+    name: "afterBikeSavingsShare",
   });
   const numericField = (
     name: NumericKey,
@@ -110,41 +113,39 @@ export function Settings() {
         eyebrow="KONFIGURATION"
         title="Einstellungen"
         description="Ziele, Termine und die Regeln für deinen Sparplan."
-      >
-        <InputLegend />
-      </PageHeading>
+      />
       <form
         onSubmit={form.handleSubmit((settings) => {
-          update((current) => ({ ...current, settings }));
+          settings.interestRates = [...new Map(settings.interestRates?.map((item) => [item.date, item])).values()].sort((a, b) => a.date.localeCompare(b.date));
+          update((current) => ({ ...current, settings: { ...settings, asOf: current.settings.asOf, baselineDate: current.settings.baselineDate, balances: current.settings.balances } }));
           form.reset(settings);
           toast.success("Einstellungen gespeichert");
         })}
         className="space-y-5"
       >
         <div className="grid gap-5 xl:grid-cols-2">
-          <section className="panel p-5 sm:p-6">
+          <section id="motorrad" className="panel p-5 sm:p-6">
             <SectionHeading
-              title="Sparziele"
+              title="Motorrad"
               subtitle="Alle Zielbeträge in Euro"
             />
             <div className="grid gap-5 sm:grid-cols-2">
               {numericField("bikeTarget", "Motorrad")}
-              {numericField("emergencyTarget", "Notgroschen")}
-              {numericField("vacationTarget", "Urlaub")}
-              {numericField("savingsTarget", "Sparkonto")}
-            </div>
-          </section>
-          <section className="panel p-5 sm:p-6">
-            <SectionHeading
-              title="Termine & Stichtag"
-              subtitle="Der Stichtag steuert Ist-Auswertung und Planfenster."
-            />
-            <div className="grid gap-5 sm:grid-cols-2">
-              {dateField("asOf", "Auswertungsstichtag")}
-              {dateField("baselineDate", "Datum der Ist-Basis")}
               {dateField("bikePurchaseDate", "Motorrad kaufen am")}
-              {dateField("allocationStart", "Sparverteilung ab")}
             </div>
+            <details id="sparziele" className="mt-5">
+              <summary className="cursor-pointer text-sm">
+                Weitere Sparziele
+              </summary>
+              <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                {numericField(
+                  "emergencyTarget",
+                  "Notgroschen · Trade Republic",
+                )}
+                {numericField("vacationTarget", "Urlaub")}
+                {numericField("savingsTarget", "Sparkonto")}
+              </div>
+            </details>
           </section>
           <section className="panel p-5 sm:p-6">
             <SectionHeading
@@ -154,7 +155,7 @@ export function Settings() {
             <div className="space-y-5">
               {numericField("bikeShare", "Bis zum Ziel → Motorrad", true)}
               <p className="-mt-3 text-xs text-muted-foreground">
-                Rest → Sparkonto
+                Rest {Number(((1 - bikeShare) * 100).toFixed(2))} % → Sparkonto
               </p>
               {numericField(
                 "afterBikeSavingsShare",
@@ -162,46 +163,112 @@ export function Settings() {
                 true,
               )}
               <p className="-mt-3 text-xs text-muted-foreground">
-                Rest → Urlaub
+                Rest {Number(((1 - savingsShare) * 100).toFixed(2))} % → Urlaub
               </p>
             </div>
           </section>
-          <section className="panel p-5 sm:p-6">
+          <section id="tr-zinsen" className="panel p-5 sm:p-6">
             <SectionHeading
               title="Trade Republic & KESt"
               subtitle="Notgroschen · monatliche Nettoverzinsung"
             />
             <div className="grid gap-5 sm:grid-cols-2">
-              {numericField("oldRate", "Zins vor dem Wechsel", true)}
-              {numericField("newRate", "Zins nach dem Wechsel", true)}
-              {dateField("rateChangeDate", "Neuer Zinssatz ab")}
               {numericField("taxRate", "Kapitalertragsteuer", true)}
-              {dateField("interestStart", "Verzinsung ab")}
+            </div>
+            <div className="mt-5 space-y-3">
+              {rates.map((_, index) => (
+                <div className="grid grid-cols-2 gap-3" key={index}>
+                  <label className="text-xs">
+                    Gültig ab
+                    <Input
+                      type="date"
+                      aria-label={`Zinssatz ${index + 1} gültig ab`}
+                      {...form.register(`interestRates.${index}.date`)}
+                    />
+                  </label>
+                  <label className="text-xs">
+                    Zinssatz (%)
+                    <Controller
+                      name={`interestRates.${index}.rate`}
+                      control={form.control}
+                      render={({ field }) => (
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          aria-label={`Zinssatz ${index + 1}`}
+                          value={
+                            field.value === undefined ||
+                            Number.isNaN(field.value)
+                              ? ""
+                              : Number((field.value * 100).toFixed(6))
+                          }
+                          onChange={(event) =>
+                            field.onChange(
+                              event.target.value === ""
+                                ? NaN
+                                : Number(event.target.value) / 100,
+                            )
+                          }
+                        />
+                      )}
+                    />
+                  </label>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  form.setValue(
+                    "interestRates",
+                    [
+                      ...rates,
+                      {
+                        date: localToday(),
+                        rate: rates.at(-1)?.rate ?? state.settings.newRate,
+                      },
+                    ],
+                    { shouldDirty: true },
+                  )
+                }
+              >
+                Zinsänderung hinzufügen
+              </Button>
+              {form.formState.errors.interestRates && (
+                <p role="alert" className="text-xs text-destructive">
+                  Zinssatz und Datum prüfen.
+                </p>
+              )}
             </div>
           </section>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4">
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <ShieldCheck className="size-4 text-primary" />
-            {form.formState.isDirty
-              ? "Ungespeicherte Änderungen"
-              : "Einstellungen sind gespeichert"}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              type="button"
-              disabled={!form.formState.isDirty}
-              onClick={() => form.reset(state.settings)}
-            >
-              Verwerfen
-            </Button>
-            <Button type="submit" disabled={!form.formState.isDirty}>
-              <Save className="size-4" />
-              Einstellungen speichern
-            </Button>
+        {form.formState.isDirty && (
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4">
+            <span className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ShieldCheck className="size-4 text-primary" />
+              {form.formState.isDirty
+                ? "Ungespeicherte Änderungen"
+                : "Einstellungen sind gespeichert"}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                type="button"
+                disabled={!form.formState.isDirty}
+                onClick={() => form.reset(withRateHistory(state.settings))}
+              >
+                Verwerfen
+              </Button>
+              <Button type="submit" disabled={!form.formState.isDirty}>
+                <Save className="size-4" />
+                Einstellungen speichern
+              </Button>
+            </div>
           </div>
-        </div>
+        )}
       </form>
     </>
   );

@@ -1,9 +1,10 @@
 "use client";
 
 import { Fragment, useState } from "react";
+import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -139,8 +140,7 @@ export function Months() {
   );
   const [editor, setEditor] = useState<FinanceRow | "new" | null>(null);
   const [deleting, setDeleting] = useState<FinanceRow | null>(null);
-  const [filling, setFilling] = useState<FinanceRow | null>(null);
-  const [fillAmount, setFillAmount] = useState(0);
+  const [repair, setRepair] = useState(false);
   const months = monthsForYear(year);
   const timeline = d.timeline.filter((row) =>
     row.month.startsWith(String(year)),
@@ -182,9 +182,20 @@ export function Months() {
       <PageHeading
         eyebrow="JAHRESPLANUNG"
         title="Monate"
-        description="Eingaben direkt im Raster · Speichern mit Enter oder beim Verlassen des Feldes"
+        description="Automatische Monatsvorschau"
       >
-        <InputLegend />
+        {repair && <InputLegend />}
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setRepair(!repair)}
+          aria-pressed={repair}
+        >
+          Ausnahmebearbeitung
+        </Button>
+        <Button size="sm" variant="ghost" asChild>
+          <Link href="/plan">Budgetdetails</Link>
+        </Button>
         <div className="flex rounded-lg border bg-card p-1">
           {[2026, 2027].map((value) => (
             <Button
@@ -198,10 +209,12 @@ export function Months() {
             </Button>
           ))}
         </div>
-        <Button size="sm" onClick={() => setEditor("new")}>
-          <Plus className="size-4" />
-          Position
-        </Button>
+        {repair && (
+          <Button size="sm" onClick={() => setEditor("new")}>
+            <Plus className="size-4" />
+            Position
+          </Button>
+        )}
       </PageHeading>
       <div className="mb-5 grid gap-4 sm:grid-cols-3">
         {[
@@ -272,76 +285,76 @@ export function Months() {
                             >
                               {row.label}
                             </span>
-                            <span className="flex">
-                              <Button
-                                className="size-6"
-                                size="icon"
-                                variant="ghost"
-                                aria-label={`${row.label} bearbeiten`}
-                                onClick={() => setEditor(row)}
-                              >
-                                <Pencil className="size-3" />
-                              </Button>
-                              <Button
-                                className="size-6"
-                                size="icon"
-                                variant="ghost"
-                                aria-label={`${row.label} Jahr befüllen`}
-                                onClick={() => {
-                                  setFilling(row);
-                                  setFillAmount(0);
-                                }}
-                              >
-                                <Copy className="size-3" />
-                              </Button>
-                              <Button
-                                className="size-6 text-muted-foreground hover:text-destructive"
-                                size="icon"
-                                variant="ghost"
-                                aria-label={`${row.label} löschen`}
-                                onClick={() => setDeleting(row)}
-                              >
-                                <Trash2 className="size-3" />
-                              </Button>
-                            </span>
+                            {repair && (
+                              <span className="flex">
+                                <Button
+                                  className="size-6"
+                                  size="icon"
+                                  variant="ghost"
+                                  aria-label={`${row.label} bearbeiten`}
+                                  onClick={() => setEditor(row)}
+                                >
+                                  <Pencil className="size-3" />
+                                </Button>
+                                <Button
+                                  className="size-6 text-muted-foreground hover:text-destructive"
+                                  size="icon"
+                                  variant="ghost"
+                                  aria-label={`${row.label} löschen`}
+                                  onClick={() => setDeleting(row)}
+                                >
+                                  <Trash2 className="size-3" />
+                                </Button>
+                              </span>
+                            )}
                           </div>
                         </th>
                         {months.map((month) => (
                           <td key={month}>
-                            <MoneyInput
-                              label={`${row.label} ${monthLabel(month)}`}
-                              value={
-                                row.values[month] ??
-                                (kind === "variable" ? null : 0)
-                              }
-                              nullable={kind === "variable"}
-                              onCommit={(value) =>
-                                update((current) => ({
-                                  ...current,
-                                  financeRows: current.financeRows.map(
-                                    (item) =>
-                                      item.id === row.id
-                                        ? {
-                                            ...item,
-                                            ...(item.kind === "variable"
-                                              ? {
-                                                  overrides: {
-                                                    ...item.overrides,
-                                                    [month]: value,
-                                                  },
-                                                }
-                                              : {}),
-                                            values: {
-                                              ...item.values,
-                                              [month]: value,
-                                            },
-                                          }
-                                        : item,
-                                  ),
-                                }))
-                              }
-                            />
-                            {kind === "variable" &&
+                            {repair ? (
+                              <MoneyInput
+                                label={`${row.label} ${monthLabel(month)}`}
+                                value={
+                                  row.values[month] ??
+                                  (kind === "variable" ? null : 0)
+                                }
+                                nullable={kind === "variable"}
+                                onCommit={(value) =>
+                                  update((current) => ({
+                                    ...current,
+                                    financeRows: current.financeRows.map(
+                                      (item) =>
+                                        item.id === row.id
+                                          ? {
+                                              ...item,
+                                              ...(item.kind === "variable"
+                                                ? {
+                                                    overrides: {
+                                                      ...item.overrides,
+                                                      [month]: value,
+                                                    },
+                                                  }
+                                                : {}),
+                                              values: {
+                                                ...item.values,
+                                                [month]: value,
+                                              },
+                                            }
+                                          : item,
+                                    ),
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <span
+                                className="block text-right font-mono text-xs"
+                                aria-label={`${row.label} ${monthLabel(month)}`}
+                              >
+                                {number(financeRowValue(row, month, d.plan))}
+                              </span>
+                            )}
+                            {repair &&
+                              kind === "variable" &&
                               row.values[month] == null && (
                                 <p className="mt-1 text-right font-mono text-[10px] text-muted-foreground">
                                   {number(financeRowValue(row, month, d.plan))}
@@ -351,7 +364,7 @@ export function Months() {
                         ))}
                       </tr>
                     ))}
-                  {kind === "variable" && (
+                  {repair && kind === "variable" && (
                     <tr>
                       <th className="sticky-label text-xs font-normal">
                         Gesamtbudget ersetzen
@@ -439,66 +452,6 @@ export function Months() {
               }}
             >
               Position löschen
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog
-        open={!!filling}
-        onOpenChange={(open) => {
-          if (!open) setFilling(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Jahr {year} befüllen</DialogTitle>
-            <DialogDescription>
-              Ersetzt alle zwölf Monatswerte von „{filling?.label}“ durch
-              denselben Betrag.
-            </DialogDescription>
-          </DialogHeader>
-          <MoneyInput
-            label="Betrag für alle Monate"
-            value={fillAmount}
-            onCommit={(value) => setFillAmount(value ?? 0)}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFilling(null)}>
-              Abbrechen
-            </Button>
-            <Button
-              onClick={() => {
-                update((current) => ({
-                  ...current,
-                  financeRows: current.financeRows.map((row) =>
-                    row.id === filling?.id
-                      ? {
-                          ...row,
-                          ...(row.kind === "variable"
-                            ? {
-                                overrides: {
-                                  ...row.overrides,
-                                  ...Object.fromEntries(
-                                    months.map((month) => [month, fillAmount]),
-                                  ),
-                                },
-                              }
-                            : {}),
-                          values: {
-                            ...row.values,
-                            ...Object.fromEntries(
-                              months.map((month) => [month, fillAmount]),
-                            ),
-                          },
-                        }
-                      : row,
-                  ),
-                }));
-                setFilling(null);
-                toast.success("Jahreswerte übernommen");
-              }}
-            >
-              Zwölf Werte ersetzen
             </Button>
           </DialogFooter>
         </DialogContent>

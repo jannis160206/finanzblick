@@ -18,7 +18,7 @@ test("all six screens render without runtime errors and theme persists", async (
     ["/umsaetze", "Umsätze"],
     ["/monate", "Monate"],
     ["/pockets", "Deine Pockets"],
-    ["/plan", "Dein variabler Plan"],
+    ["/plan", "Alltagsbudget"],
     ["/einstellungen", "Einstellungen"],
   ]) {
     await page.goto(route);
@@ -92,28 +92,37 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
   await review
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Shopping");
-  await review.getByRole("button", { name: "Speichern", exact: true }).click();
+  await review
+    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
+    .click();
   await page.getByLabel("Umsätze durchsuchen").fill("Browserprüfung");
   await expect(
     page.getByRole("cell", { name: "Browserprüfung Einkauf", exact: true }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Bearbeiten: Browserprüfung Einkauf" })
+    .getByRole("button", { name: "Zuordnung ändern: Browserprüfung Einkauf" })
     .click();
+  await expect(
+    page.getByLabel("Beschreibung", { exact: true }),
+  ).toHaveJSProperty("readOnly", true);
   await page
-    .getByLabel("Beschreibung", { exact: true })
-    .fill("Browserprüfung geändert");
-  await page.getByRole("button", { name: "Umsatz speichern" }).click();
+    .getByLabel("Kategorie", { exact: true })
+    .selectOption("Gesundheit");
+  await page.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(
     page.getByText("Lokal gespeichert", { exact: true }),
   ).toBeVisible();
   await page.reload();
   await page.getByLabel("Umsätze durchsuchen").fill("Browserprüfung");
   await expect(
-    page.getByRole("cell", { name: "Browserprüfung geändert", exact: true }),
+    page.getByRole("cell", { name: "Browserprüfung Einkauf", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Gesundheit", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Weitere Aktionen: Browserprüfung Einkauf").click();
   await page
-    .getByRole("button", { name: "Löschen: Browserprüfung geändert" })
+    .getByRole("button", { name: "Löschen: Browserprüfung Einkauf" })
     .click();
   await page.getByRole("button", { name: "Endgültig löschen" }).click();
   await expect(
@@ -123,6 +132,7 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
 
 test("month inputs update and survive reload", async ({ page }) => {
   await page.goto("/monate");
+  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
   const input = page.getByRole("textbox", {
     name: "Nettogehalt September 2026",
     exact: true,
@@ -134,6 +144,7 @@ test("month inputs update and survive reload", async ({ page }) => {
     page.getByText("Lokal gespeichert", { exact: true }),
   ).toBeVisible();
   await page.reload();
+  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
   await expect(input).toHaveValue("3.123,45");
 });
 
@@ -213,6 +224,7 @@ test("transactions default to this month with transfers hidden but retained", as
     await expect(
       page.getByRole("cell", { name: description, exact: true }),
     ).toHaveCount(0);
+  await page.getByText("Weitere Filter", { exact: true }).click();
   await page.getByLabel("Transfers anzeigen").check();
   await expect(
     page.getByRole("cell", { name: "Um EUR Sparen einzustecken", exact: true }),
@@ -260,7 +272,7 @@ test("months omit pocket chains and Revolut pots have no manual movement form", 
   await expect(
     grid.getByText("Variable Ausgaben", { exact: true }),
   ).toBeVisible();
-  await expect(grid.locator("input.editable").first()).toBeVisible();
+  await expect(grid.locator("input")).toHaveCount(0);
   await page.goto("/pockets");
   await expect(
     page.getByText(/Historische Startstände|01\.01\.2026|unabhängig/),
@@ -271,21 +283,21 @@ test("months omit pocket chains and Revolut pots have no manual movement form", 
       exact: true,
     }),
   ).toHaveCount(0);
-  await expect(page.locator("form")).toHaveCount(0);
+  await expect(page.locator("form:visible")).toHaveCount(0);
   const savings = page.locator("section").filter({
     has: page.getByRole("heading", { name: "Sparkonto", exact: true }),
   });
   await expect(savings).toContainText("1.782,59");
   for (const pocket of ["Sparkonto", "Urlaub", "Motorrad"])
     await expect(
-      page.getByLabel(`${pocket} Ist laut Auszug`, { exact: true }),
-    ).toHaveJSProperty("readOnly", true);
+      page.getByLabel(`${pocket} Kontostand`, { exact: true }),
+    ).toBeVisible();
   await expect(
     page.getByText("Lokal gespeichert", { exact: true }),
   ).toBeVisible();
   await page.reload();
   await expect(savings).toContainText("1.782,59");
-  await expect(page.locator("form")).toHaveCount(0);
+  await expect(page.locator("form:visible")).toHaveCount(0);
 });
 
 test("Excel download reimports through preview", async ({ page }) => {
@@ -294,6 +306,7 @@ test("Excel download reimports through preview", async ({ page }) => {
     page.getByRole("heading", { name: "Übersicht", exact: true }),
   ).toBeVisible();
   const downloading = page.waitForEvent("download");
+  await page.getByText("Sicherung", { exact: true }).click();
   await page.getByRole("button", { name: "Excel herunterladen" }).click();
   const file = await downloading;
   const path = await file.path();
@@ -305,13 +318,22 @@ test("Excel download reimports through preview", async ({ page }) => {
     buffer: await (await import("node:fs/promises")).readFile(path!),
   });
   await expect(
-    page.getByRole("heading", { name: "Excel-Import prüfen" }),
+    page.getByRole("heading", {
+      name: "Sicherung wiederherstellen",
+      exact: true,
+    }),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: "Daten ersetzen", exact: true })
+    .getByRole("button", {
+      name: "Sicherung wiederherstellen und aktuelle Daten ersetzen",
+      exact: true,
+    })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Excel-Import prüfen" }),
+    page.getByRole("heading", {
+      name: "Sicherung wiederherstellen",
+      exact: true,
+    }),
   ).not.toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Übersicht", exact: true }),

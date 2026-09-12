@@ -213,6 +213,21 @@ describe("automatic import and fixed-cost review", () => {
       expect(
         commitStatementImport(state, [transaction(description, amount)]),
       ).toMatchObject({ added: 0, duplicates: 1, changes: [] });
+      if (category === "Barber" || category === "Rufbereitschaft") {
+        const changed = transaction(
+          description,
+          amount + Math.sign(amount) * 10,
+        );
+        const saved = commitStatementImport(state, [changed]);
+        expect(saved.changes).toEqual([]);
+        expect(saved.state.financeRows).toEqual(state.financeRows);
+        expect(saved.state.transactions).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ amount: changed.amount }),
+          ]),
+        );
+        return;
+      }
       expect(
         splitFixedBookings(state, [
           transaction(description, amount + Math.sign(amount) * 0.05),

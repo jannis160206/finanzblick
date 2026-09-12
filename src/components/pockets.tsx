@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Coins, ShieldCheck } from "lucide-react";
+import { Coins } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import {
   MoneyInput,
@@ -14,15 +15,78 @@ import {
 } from "@/components/finance-ui";
 import {
   latestPocketSnapshot,
+  latestTRBalance,
   monthsForYear,
   roundUpTotal,
   sum,
 } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { pocketNames } from "@/lib/types";
+import { pocketNames, trBalanceSchema } from "@/lib/types";
+
+function TRBalanceEditor() {
+  const { state, update } = useFinance();
+  const [balance, setBalance] = useState(
+    latestTRBalance(state)?.balance ?? state.settings.balances.Notgroschen,
+  );
+  const [date, setDate] = useState(state.settings.asOf);
+  const [saved, setSaved] = useState(false);
+  const valid =
+    trBalanceSchema.safeParse({ balance, date }).success &&
+    date <= state.settings.asOf;
+  return (
+    <form
+      className="mt-3 space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!valid) return;
+        update((current) => ({
+          ...current,
+          trBalances: [
+            ...(current.trBalances ?? []).filter((item) => item.date !== date),
+            { balance, date },
+          ],
+        }));
+        setSaved(true);
+      }}
+    >
+      <label className="block text-xs">
+        Kontostand
+        <MoneyInput
+          label="TR Kontostand"
+          value={balance}
+          onCommit={(value) => {
+            setBalance(value ?? 0);
+            setSaved(false);
+          }}
+        />
+      </label>
+      <label className="block text-xs">
+        Datum
+        <Input
+          aria-label="TR Standdatum"
+          type="date"
+          max={state.settings.asOf}
+          value={date}
+          onChange={(event) => {
+            setDate(event.target.value);
+            setSaved(false);
+          }}
+        />
+      </label>
+      <Button type="submit" size="sm" disabled={!valid}>
+        Kontostand speichern
+      </Button>
+      {saved && (
+        <p className="text-xs" role="status">
+          Kontostand gespeichert
+        </p>
+      )}
+    </form>
+  );
+}
 
 export function Pockets() {
-  const { state, dashboard: d, update } = useFinance();
+  const { state, dashboard: d } = useFinance();
   const [year, setYear] = useState(2026);
   const targets = {
     Notgroschen: state.settings.emergencyTarget,
@@ -34,6 +98,18 @@ export function Pockets() {
     month,
     amount: roundUpTotal(state.transactions, month),
   }));
+  const everyday = [
+    "Mittagessen",
+    "Lebensmittel",
+    "Entertainment & Haushalt",
+    "Tanken",
+  ];
+  const accounts = new Map(
+    [...(state.accountSnapshots ?? [])]
+      .filter((item) => item.date <= state.settings.asOf)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((item) => [item.name, item]),
+  );
   return (
     <>
       <PageHeading
@@ -53,87 +129,76 @@ export function Pockets() {
                     style={{ color: pocketColors[pocket] }}
                   />
                 </span>
-                <h2 className="text-sm font-medium">{pocket}</h2>
+                <h2 className="text-sm font-medium">
+                  {pocket === "Notgroschen"
+                    ? "Notgroschen · Trade Republic"
+                    : pocket}
+                </h2>
               </div>
-              <p className="mt-6 text-[27px] font-semibold tracking-tight tabular-nums">
+              <p
+                aria-label={`${pocket} Kontostand`}
+                className="mt-6 text-[27px] font-semibold tracking-tight tabular-nums"
+              >
                 {currency(d.actual[pocket])}
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
-                Ziel {currency(targets[pocket])}
+                <Link
+                  href={
+                    pocket === "Motorrad"
+                      ? "/einstellungen#motorrad"
+                      : "/einstellungen#sparziele"
+                  }
+                >
+                  Ziel {currency(targets[pocket])}
+                </Link>
               </p>
-              <div className="mt-5 flex justify-between border-t pt-4 text-[11px] text-muted-foreground">
-                <span>Dezember 2027 · Plan</span>
-                <span className="font-mono text-foreground">
-                  {currency(d.timeline.at(-1)!.end[pocket])}
-                </span>
-              </div>
+              <p className="mt-3 text-[11px] text-muted-foreground">
+                {pocket === "Notgroschen"
+                  ? `Trade Republic · Stand ${dateLabel(latestTRBalance(state)?.date ?? state.settings.baselineDate)}`
+                  : latestPocketSnapshot(state, pocket)
+                    ? `Revolut · Auszug ${dateLabel(latestPocketSnapshot(state, pocket)!.date)}`
+                    : "Revolut · Startstand, noch kein Auszug"}
+              </p>
+              {pocket === "Notgroschen" && (
+                <details className="mt-4">
+                  <summary className="cursor-pointer text-xs">
+                    Kontostand aktualisieren
+                  </summary>
+                  <TRBalanceEditor />
+                </details>
+              )}
             </section>
           );
         })}
       </div>
-      <section className="panel mb-6 p-5 sm:p-6">
-        <SectionHeading
-          title="Ist-Basis"
-          subtitle="Revolut laut Auszug · Trade Republic laut Einstellungen"
-        />
+      <section className="mb-6" aria-label="Revolut Alltagspockets">
+        <SectionHeading title="Revolut · Alltagspockets" />
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          {pocketNames.map((pocket) => (
-            <div key={pocket}>
-              <label className="mb-2 block text-xs text-muted-foreground">
-                {pocket}
-                {pocket !== "Notgroschen" ||
-                latestPocketSnapshot(state, pocket) ? (
-                  <>
-                    <Input
-                      aria-label={`${pocket} Ist laut Auszug`}
-                      className="mt-2 h-10 text-sm"
-                      value={currency(d.actual[pocket])}
-                      readOnly
-                    />
-                    <span className="mt-1 block text-[11px]">
-                      {latestPocketSnapshot(state, pocket)
-                        ? dateLabel(latestPocketSnapshot(state, pocket)!.date)
-                        : `Basis ${dateLabel(state.settings.baselineDate)}`}
-                    </span>
-                  </>
-                ) : (
-                  <MoneyInput
-                    className="mt-2 h-10 text-sm"
-                    label={`${pocket} Ist-Basis`}
-                    value={state.settings.balances[pocket]}
-                    onCommit={(value) =>
-                      update((current) => ({
-                        ...current,
-                        settings: {
-                          ...current.settings,
-                          balances: {
-                            ...current.settings.balances,
-                            [pocket]: value ?? 0,
-                          },
-                        },
-                      }))
-                    }
-                  />
-                )}
-              </label>
-            </div>
-          ))}
+          {everyday.map((name) => {
+            const snapshot = accounts.get(name);
+            return (
+              <section key={name} className="panel p-5">
+                <h2 className="text-sm font-medium">{name}</h2>
+                <p className="mt-4 text-xl font-semibold">
+                  {snapshot ? currency(snapshot.balance) : "—"}
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {snapshot
+                    ? `Revolut · Auszug ${dateLabel(snapshot.date)}`
+                    : "Noch kein Schlussstand importiert"}
+                </p>
+              </section>
+            );
+          })}
         </div>
-        <Link
-          href="/einstellungen"
-          className="mt-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-        >
-          Ist-Datum oder Ziele ändern
-          <ArrowRight className="size-3" />
-        </Link>
       </section>
       <div className="grid items-start gap-5 xl:grid-cols-[1.6fr_1fr]">
-        <section className="panel overflow-hidden">
+        <details className="panel overflow-hidden">
+          <summary className="cursor-pointer p-5 text-sm font-medium">
+            Prognosedetails
+          </summary>
           <div className="p-5 pb-0">
-            <SectionHeading
-              title="Kontenverlauf & Prognose"
-              subtitle="Start + Rate + Buchungen − Entnahme + Nettozinsen"
-            />
+            <SectionHeading title="Kontenverlauf & Prognose" />
           </div>
           <div className="max-h-[600px] overflow-auto">
             <table className="data-table w-full">
@@ -168,8 +233,11 @@ export function Pockets() {
               </tbody>
             </table>
           </div>
-        </section>
-        <section className="panel overflow-hidden">
+        </details>
+        <details className="panel overflow-hidden">
+          <summary className="cursor-pointer p-5 text-sm font-medium">
+            Sparkonto-Details
+          </summary>
           <div className="p-5 pb-0">
             <SectionHeading
               title="Round-up → Sparkonto"
@@ -210,11 +278,7 @@ export function Pockets() {
               ))}
             </tbody>
           </table>
-          <p className="flex items-center gap-2 border-t p-4 text-[11px] text-muted-foreground">
-            <ShieldCheck className="size-4 shrink-0 text-primary" />
-            Historische Round-ups sind in der Ist-Basis enthalten.
-          </p>
-        </section>
+        </details>
       </div>
     </>
   );

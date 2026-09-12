@@ -35,25 +35,16 @@ import {
 } from "@/components/ui/dialog";
 import { useFinance } from "@/components/finance-provider";
 import { EmptyState, PageHeading } from "@/components/finance-ui";
-import { classify, monthKey, sum } from "@/lib/calc";
+import { actualBookings, classify, monthKey, sum } from "@/lib/calc";
+import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import {
-  categories,
-  pocketNames,
-  transactionSchema,
-  type Transaction,
-} from "@/lib/types";
+import { categories, transactionSchema, type Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
+import { rememberMerchants } from "@/lib/import/merchant-rules";
 
-function availablePockets(transactions: Transaction[]) {
-  return [
-    ...new Set([
-      ...pocketNames,
-      ...transactions.flatMap((row) => (row.pocket ? [row.pocket] : [])),
-    ]),
-  ].sort();
-}
+const accountLabel = (row: Transaction) =>
+  `${row.bank} · ${row.pocket ?? "Hauptkonto"}`;
 
 function TransactionForm({
   transaction,
@@ -62,7 +53,7 @@ function TransactionForm({
   transaction: Transaction;
   onClose: () => void;
 }) {
-  const { state, update } = useFinance();
+  const { update } = useFinance();
   const form = useForm<Transaction>({
     resolver: zodResolver(transactionSchema),
     defaultValues: transaction,
@@ -79,12 +70,34 @@ function TransactionForm({
     bank: values.bank,
   });
   function save(value: Transaction) {
-    update((current) => ({
-      ...current,
-      transactions: current.transactions.map((row) =>
-        row.id === transaction.id ? value : row,
+    update((current) =>
+      rememberMerchants(
+        {
+          ...current,
+          transactions: current.transactions.map((row) =>
+            row.id === transaction.id
+              ? {
+                  ...row,
+                  category: value.category,
+                  categoryOverride: true,
+                  includeInPlan: true,
+                }
+              : row,
+          ),
+          ...(current.fixedReceipts
+            ? {
+                fixedReceipts: current.fixedReceipts.map((receipt) =>
+                  receipt.key === transaction.id ||
+                  receipt.key === statementFingerprint(transaction)
+                    ? { ...receipt, category: value.category }
+                    : receipt,
+                ),
+              }
+            : {}),
+        },
+        [{ ...transaction, category: value.category, categoryOverride: true }],
       ),
-    }));
+    );
     toast.success("Umsatz aktualisiert");
     onClose();
   }
@@ -103,9 +116,9 @@ function TransactionForm({
     >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Umsatz bearbeiten</DialogTitle>
+          <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            Ausgaben negativ, Einnahmen positiv. Gelbe Felder sind editierbar.
+            {preview.reason || "Im Alltagsbudget berücksichtigt"}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={form.handleSubmit(save)} className="space-y-4">
@@ -114,8 +127,9 @@ function TransactionForm({
               <Label htmlFor="tx-date">Datum</Label>
               <Input
                 id="tx-date"
+                readOnly
                 type="date"
-                className="editable mt-2"
+                className="mt-2"
                 {...form.register("date")}
               />
               {error("date")}
@@ -124,9 +138,10 @@ function TransactionForm({
               <Label htmlFor="tx-amount">Betrag (€)</Label>
               <Input
                 id="tx-amount"
+                readOnly
                 type="number"
                 step="0.01"
-                className="editable mt-2"
+                className="mt-2"
                 placeholder="−24,90"
                 {...form.register("amount", { valueAsNumber: true })}
               />
@@ -137,8 +152,8 @@ function TransactionForm({
             <Label htmlFor="tx-description">Beschreibung</Label>
             <Input
               id="tx-description"
-              autoFocus
-              className="editable mt-2"
+              readOnly
+              className="mt-2"
               placeholder="Händler oder Verwendungszweck"
               {...form.register("description")}
             />
@@ -146,41 +161,13 @@ function TransactionForm({
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="tx-bank">Bank</Label>
+              <Label htmlFor="tx-bank">Konto/Pocket</Label>
               <Input
                 id="tx-bank"
-                className="editable mt-2"
-                list="banks"
-                {...form.register("bank")}
+                className="mt-2"
+                readOnly
+                value={accountLabel(transaction)}
               />
-              <datalist id="banks">
-                {[
-                  ...new Set([
-                    "N26",
-                    "Trade Republic",
-                    "Bargeld",
-                    ...state.transactions.map((row) => row.bank),
-                  ]),
-                ].map((bank) => (
-                  <option key={bank} value={bank} />
-                ))}
-              </datalist>
-              {error("bank")}
-            </div>
-            <div>
-              <Label htmlFor="tx-pocket">Pocket</Label>
-              <select
-                id="tx-pocket"
-                className="select-input editable mt-2 w-full"
-                {...form.register("pocket", {
-                  setValueAs: (value) => value || null,
-                })}
-              >
-                <option value="">Hauptkonto</option>
-                {availablePockets(state.transactions).map((pocket) => (
-                  <option key={pocket}>{pocket}</option>
-                ))}
-              </select>
             </div>
           </div>
           <div>
@@ -200,29 +187,11 @@ function TransactionForm({
               ))}
             </select>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="size-4 accent-amber-400"
-              {...form.register("includeInPlan")}
-            />
-            Im variablen Plan berücksichtigen
-          </label>
-          <div className="rounded-lg border bg-muted/40 p-3 text-xs">
-            <p className="mb-1 text-muted-foreground">Automatische Zuordnung</p>
-            <p className="font-medium">
-              {preview.category}
-              {preview.pocket ? ` → ${preview.pocket}` : ""}
-              <span className="ml-2 font-normal text-muted-foreground">
-                {preview.reason || "Planrelevant"}
-              </span>
-            </p>
-          </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Abbrechen
             </Button>
-            <Button type="submit">Umsatz speichern</Button>
+            <Button type="submit">Speichern</Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -233,6 +202,7 @@ function TransactionForm({
 export function Transactions() {
   "use no memo";
   const { state, dashboard, update } = useFinance();
+  const ledger = useMemo(() => actualBookings(state), [state]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const [query, setQuery] = useState("");
@@ -240,8 +210,7 @@ export function Transactions() {
   const month = selectedMonth ?? dashboard.currentMonth;
   const [showTransfers, setShowTransfers] = useState(false);
   const [category, setCategory] = useState("");
-  const [bank, setBank] = useState("");
-  const [pocket, setPocket] = useState("");
+  const [account, setAccount] = useState("");
   const [plan, setPlan] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -250,7 +219,7 @@ export function Transactions() {
   ]);
   const data = useMemo(
     () =>
-      state.transactions.filter((row) => {
+      ledger.filter((row) => {
         const result = classify(row);
         return (
           (showTransfers || !result.isTransfer) &&
@@ -260,25 +229,13 @@ export function Transactions() {
               .includes(query.toLocaleLowerCase("de"))) &&
           (!month || monthKey(row.date) === month) &&
           (!category || result.category === category) &&
-          (!bank || row.bank === bank) &&
-          (!pocket || (row.pocket ?? "Hauptkonto") === pocket) &&
+          (!account || accountLabel(row) === account) &&
           (!plan || result.includeInPlan === (plan === "yes")) &&
           (!from || row.date >= from) &&
           (!to || row.date <= to)
         );
       }),
-    [
-      state.transactions,
-      query,
-      month,
-      category,
-      bank,
-      pocket,
-      plan,
-      from,
-      to,
-      showTransfers,
-    ],
+    [ledger, query, month, category, account, plan, from, to, showTransfers],
   );
   const columns: ColumnDef<Transaction>[] = [
     {
@@ -288,23 +245,6 @@ export function Transactions() {
         <span className="whitespace-nowrap text-muted-foreground">
           {dateLabel(row.original.date)}
         </span>
-      ),
-    },
-    {
-      accessorKey: "bank",
-      header: "Bank",
-      cell: ({ getValue }) => (
-        <span className="text-xs text-muted-foreground">
-          {getValue<string>()}
-        </span>
-      ),
-    },
-    {
-      id: "pocket",
-      accessorFn: (row) => row.pocket ?? "Hauptkonto",
-      header: "Pocket",
-      cell: ({ getValue }) => (
-        <span className="whitespace-nowrap text-xs">{getValue<string>()}</span>
       ),
     },
     {
@@ -344,71 +284,38 @@ export function Transactions() {
       ),
     },
     {
-      id: "month",
-      accessorFn: (row) => monthKey(row.date),
-      header: "Monat",
-      cell: ({ getValue }) => (
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {monthLabel(getValue<string>(), true)}
-        </span>
-      ),
-    },
-    {
-      id: "planCategory",
-      accessorFn: (row) => classify(row).planCategory,
-      header: "Plan-Kat",
-      cell: ({ getValue }) => (
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {getValue<string>()}
-        </span>
-      ),
-    },
-    {
-      id: "plan",
-      accessorFn: (row) => classify(row).includeInPlan,
-      header: "Im Plan",
-      cell: ({ row }) => {
-        const result = classify(row.original);
-        return (
-          <span
-            title={
-              result.reason ||
-              "Für Durchschnitt zugelassen; mindestens zwei historische Monate erforderlich"
-            }
-            className={cn(
-              "text-xs",
-              result.includeInPlan ? "text-primary" : "text-muted-foreground",
-            )}
-          >
-            {result.includeInPlan ? "Ja" : "Nein"}
-          </span>
-        );
-      },
-    },
-    {
-      id: "actions",
-      header: "",
-      enableSorting: false,
+      id: "account",
+      accessorFn: accountLabel,
+      header: "Konto/Pocket",
       cell: ({ row }) => (
-        <div className="flex justify-end gap-1">
+        <div className="flex items-center justify-end gap-1">
+          <span className="mr-2 text-xs">{accountLabel(row.original)}</span>
           <Button
             size="icon"
             variant="ghost"
             className="size-7"
-            aria-label={`Bearbeiten: ${row.original.description}`}
+            aria-label={`Zuordnung ändern: ${row.original.description}`}
             onClick={() => setEditor(row.original)}
           >
             <Pencil className="size-3.5" />
           </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-7 text-muted-foreground hover:text-destructive"
-            aria-label={`Löschen: ${row.original.description}`}
-            onClick={() => setDeleting(row.original)}
-          >
-            <Trash2 className="size-3.5" />
-          </Button>
+          <details>
+            <summary
+              className="cursor-pointer text-xs"
+              aria-label={`Weitere Aktionen: ${row.original.description}`}
+            >
+              Weitere Aktionen
+            </summary>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7 text-muted-foreground hover:text-destructive"
+              aria-label={`Löschen: ${row.original.description}`}
+              onClick={() => setDeleting(row.original)}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </details>
         </div>
       ),
     },
@@ -429,8 +336,7 @@ export function Transactions() {
     query ||
     month !== dashboard.currentMonth ||
     category ||
-    bank ||
-    pocket ||
+    account ||
     plan ||
     from ||
     to ||
@@ -440,7 +346,7 @@ export function Transactions() {
       <PageHeading
         eyebrow="BUCHUNGEN"
         title="Umsätze"
-        description={`${state.transactions.length.toLocaleString("de-AT")} Buchungen · Alle Konten an einem Ort`}
+        description={`${ledger.length.toLocaleString("de-AT")} Buchungen · Alle Konten an einem Ort`}
       />
       <StatementImport />
       <section className="panel overflow-hidden">
@@ -465,7 +371,7 @@ export function Transactions() {
             {[
               ...new Set([
                 dashboard.currentMonth,
-                ...state.transactions.map((row) => monthKey(row.date)),
+                ...ledger.map((row) => monthKey(row.date)),
               ]),
             ]
               .sort()
@@ -488,70 +394,60 @@ export function Transactions() {
             ))}
           </select>
           <select
-            aria-label="Bank filtern"
+            aria-label="Konto/Pocket filtern"
             className="select-input"
-            value={bank}
-            onChange={(e) => setBank(e.target.value)}
+            value={account}
+            onChange={(e) => setAccount(e.target.value)}
           >
-            <option value="">Alle Banken</option>
-            {[...new Set(state.transactions.map((row) => row.bank))]
-              .sort()
-              .map((value) => (
-                <option key={value}>{value}</option>
-              ))}
+            <option value="">Alle Konten/Pockets</option>
+            {[...new Set(ledger.map(accountLabel))].sort().map((value) => (
+              <option key={value}>{value}</option>
+            ))}
           </select>
-          <select
-            aria-label="Pocket filtern"
-            className="select-input"
-            value={pocket}
-            onChange={(e) => setPocket(e.target.value)}
-          >
-            <option value="">Alle Pockets</option>
-            {["Hauptkonto", ...availablePockets(state.transactions)].map(
-              (value) => (
-                <option key={value}>{value}</option>
-              ),
-            )}
-          </select>
-          <select
-            aria-label="Planrelevanz filtern"
-            className="select-input"
-            value={plan}
-            onChange={(e) => setPlan(e.target.value)}
-          >
-            <option value="">Plan: alle</option>
-            <option value="yes">Im Plan</option>
-            <option value="no">Nicht im Plan</option>
-          </select>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            Von
-            <Input
-              type="date"
-              aria-label="Datum von"
-              className="w-36"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-            />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            Bis
-            <Input
-              type="date"
-              aria-label="Datum bis"
-              className="w-36"
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-            />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              className="accent-amber-400"
-              checked={showTransfers}
-              onChange={(event) => setShowTransfers(event.target.checked)}
-            />
-            Transfers anzeigen
-          </label>
+          <details>
+            <summary className="cursor-pointer text-xs">Weitere Filter</summary>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <select
+                aria-label="Planrelevanz filtern"
+                className="select-input"
+                value={plan}
+                onChange={(e) => setPlan(e.target.value)}
+              >
+                <option value="">Plan: alle</option>
+                <option value="yes">Im Plan</option>
+                <option value="no">Nicht im Plan</option>
+              </select>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                Von
+                <Input
+                  type="date"
+                  aria-label="Datum von"
+                  className="w-36"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                Bis
+                <Input
+                  type="date"
+                  aria-label="Datum bis"
+                  className="w-36"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  className="accent-amber-400"
+                  checked={showTransfers}
+                  onChange={(event) => setShowTransfers(event.target.checked)}
+                />
+                Transfers anzeigen
+              </label>
+            </div>
+          </details>
           {filtersActive && (
             <Button
               size="sm"
@@ -561,8 +457,7 @@ export function Transactions() {
                 setMonth(null);
                 setShowTransfers(false);
                 setCategory("");
-                setBank("");
-                setPocket("");
+                setAccount("");
                 setPlan("");
                 setFrom("");
                 setTo("");
@@ -648,18 +543,6 @@ export function Transactions() {
             </span>
           </div>
           <div className="flex items-center gap-3">
-            <select
-              className="select-input h-8"
-              aria-label="Zeilen pro Seite"
-              value={table.getState().pagination.pageSize}
-              onChange={(e) => table.setPageSize(Number(e.target.value))}
-            >
-              {[25, 50, 100].map((value) => (
-                <option key={value} value={value}>
-                  {value} Zeilen
-                </option>
-              ))}
-            </select>
             <span className="text-muted-foreground">
               Seite {table.getState().pagination.pageIndex + 1} /{" "}
               {Math.max(1, table.getPageCount())}
@@ -713,11 +596,29 @@ export function Transactions() {
               onClick={() => {
                 if (!deleting) return;
                 const removed = deleting;
+                const stored = state.transactions.some(
+                  (row) => row.id === removed.id,
+                );
+                const keys = new Set([
+                  removed.id,
+                  statementFingerprint(removed),
+                  legacyFingerprint(removed),
+                ]);
+                const receipts =
+                  state.fixedReceipts?.filter((item) => keys.has(item.key)) ??
+                  [];
                 update((current) => ({
                   ...current,
                   transactions: current.transactions.filter(
                     (row) => row.id !== removed.id,
                   ),
+                  ...(current.fixedReceipts
+                    ? {
+                        fixedReceipts: current.fixedReceipts.filter(
+                          (item) => !keys.has(item.key),
+                        ),
+                      }
+                    : {}),
                 }));
                 setDeleting(null);
                 toast("Umsatz gelöscht", {
@@ -726,7 +627,17 @@ export function Transactions() {
                     onClick: () =>
                       update((current) => ({
                         ...current,
-                        transactions: [...current.transactions, removed],
+                        transactions: stored
+                          ? [...current.transactions, removed]
+                          : current.transactions,
+                        ...(receipts.length
+                          ? {
+                              fixedReceipts: [
+                                ...(current.fixedReceipts ?? []),
+                                ...receipts,
+                              ],
+                            }
+                          : {}),
                       })),
                   },
                 });

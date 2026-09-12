@@ -16,8 +16,7 @@ import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
 import { currency, monthLabel } from "@/lib/format";
 import {
-  fixedCategories,
-  variableCategories,
+  categories,
   transactionSchema,
   type Category,
   type Transaction,
@@ -61,10 +60,7 @@ function BookingReview({
   skip: () => void;
 }) {
   const [draft, setDraft] = useState<StatementDraft>(item.draft);
-  const [kind, setKind] = useState(
-    fixedCategories.includes(item.draft.category) ? "fixed" : "variable",
-  );
-  const choices = kind === "fixed" ? fixedCategories : variableCategories;
+  const choices = categories.filter((category) => category !== "Prüfen");
   const candidate = {
     ...draft,
     categoryOverride: true,
@@ -104,35 +100,15 @@ function BookingReview({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="space-y-1 text-xs">
-          Bank
-          <Input aria-label="Bank" value={draft.bank} readOnly />
-        </label>
-        <label className="space-y-1 text-xs">
-          Pocket
+          Konto/Pocket
           <Input
-            aria-label="Pocket"
-            value={draft.pocket ?? "Hauptkonto"}
+            aria-label="Konto/Pocket"
+            value={`${draft.bank} · ${draft.pocket ?? "Hauptkonto"}`}
             readOnly
           />
         </label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-xs">
-          Art
-          <select
-            aria-label="Art"
-            className="select-input editable w-full"
-            value={kind}
-            disabled={disabled}
-            onChange={(event) => {
-              setKind(event.target.value);
-              setDraft({ ...draft, category: "Prüfen" });
-            }}
-          >
-            <option value="fixed">Fix</option>
-            <option value="variable">Variabel</option>
-          </select>
-        </label>
         <label className="space-y-1 text-xs">
           Kategorie
           <select
@@ -151,11 +127,9 @@ function BookingReview({
               <option key={category} value={category}>
                 {category === "Mobilität"
                   ? "Tanken"
-                  : category === "Freizeit"
-                    ? "G2A"
-                    : category === "Handyvertrag"
-                      ? "Handy"
-                      : category}
+                  : category === "Handyvertrag"
+                    ? "Handy"
+                    : category}
               </option>
             ))}
           </select>
@@ -163,7 +137,7 @@ function BookingReview({
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="ghost" size="sm" disabled={disabled} onClick={skip}>
-          Überspringen
+          Später prüfen
         </Button>
         <Button
           variant="outline"
@@ -181,7 +155,7 @@ function BookingReview({
               });
           }}
         >
-          Speichern
+          Zuordnung übernehmen
         </Button>
       </div>
     </section>
@@ -195,7 +169,7 @@ export function StatementImport() {
   const dragDepth = useRef(0);
   const busyRef = useRef(false);
   const importMetadata = useRef<ImportMetadata>({});
-  const [ui, setUI] = useReducer(
+  const [localUI, setUI] = useReducer(
     (previous: ImportUI, patch: Partial<ImportUI>) => ({
       ...previous,
       ...patch,
@@ -208,6 +182,7 @@ export function StatementImport() {
       pending: null,
     },
   );
+  const ui = { ...localUI, review: state.reviewQueue ?? [] };
   const latestState = useRef(state);
   useEffect(() => {
     latestState.current = state;
@@ -234,15 +209,14 @@ export function StatementImport() {
           ? "Monatsbetrag geprüft – keine doppelte Buchung"
           : `${statementImport.added} neu, ${statementImport.duplicates} Duplikate ignoriert`,
       );
-      const review: ReviewItem[] = ui.review.filter(
-        (item) => item.id !== ui.pending?.removeId,
-      );
-      for (const change of statementImport.changes ?? [])
-        if (!review.some((item) => item.id === change.id))
-          review.push({ kind: "fixed", id: change.id, change });
-      setUI({ review, open: review.length > 0, pending: null });
+      setUI({
+        open: ui.pending.removeId
+          ? ui.review.length > 0
+          : localUI.open || !!statementImport.changes?.length,
+        pending: null,
+      });
     }
-  }, [statementImport, ui.pending, ui.review]);
+  }, [statementImport, ui.pending, ui.review, localUI.open]);
 
   function commit(
     rows: Transaction[],
@@ -259,10 +233,10 @@ export function StatementImport() {
       decisions,
       importMetadata.current,
     );
+    importMetadata.current = {};
   }
-  function skip(id: string) {
-    const review = ui.review.filter((item) => item.id !== id);
-    setUI({ review, open: review.length > 0 });
+  function skip() {
+    setUI({ open: false });
   }
 
   async function selectFiles(files: File[]) {
@@ -270,7 +244,6 @@ export function StatementImport() {
       !files.length ||
       busyRef.current ||
       ui.pending ||
-      ui.review.length ||
       !ready ||
       storageError
     )
@@ -368,13 +341,7 @@ export function StatementImport() {
         <Button
           size="sm"
           variant="outline"
-          disabled={
-            !ready ||
-            !!storageError ||
-            ui.busy ||
-            !!ui.pending ||
-            !!ui.review.length
-          }
+          disabled={!ready || !!storageError || ui.busy || !!ui.pending}
           onClick={() => fileInput.current?.click()}
         >
           {ui.busy ? (
@@ -394,6 +361,23 @@ export function StatementImport() {
           </Button>
         )}
       </section>
+      {state.importStatus && (
+        <div
+          className="mb-4 text-xs text-muted-foreground"
+          aria-label="Importstatus"
+        >
+          Übernommen {state.importStatus.imported} · offen {ui.review.length} ·
+          nicht lesbar {state.importStatus.issues.length}
+          {!!state.importStatus.issues.length && (
+            <details className="mt-2">
+              <summary>Importhinweise</summary>
+              {state.importStatus.issues.map((issue) => (
+                <p key={issue}>{issue}</p>
+              ))}
+            </details>
+          )}
+        </div>
+      )}
       <Dialog
         open={ui.open && ui.review.length > 0}
         onOpenChange={(open) => {
@@ -419,7 +403,7 @@ export function StatementImport() {
                   item={item}
                   disabled={!!ui.pending}
                   save={(row) => commit([row], 0, item.id)}
-                  skip={() => skip(item.id)}
+                  skip={skip}
                 />
               ) : (
                 <section
@@ -437,8 +421,8 @@ export function StatementImport() {
                     übernehmen?
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Ja gilt für diesen und alle folgenden Monate. Es entsteht
-                    keine zweite Buchung.
+                    Ab {monthLabel(item.change.month)}. Die Auszugsbuchung
+                    bleibt erhalten.
                   </p>
                   <div className="flex justify-end gap-2">
                     <Button
@@ -451,7 +435,7 @@ export function StatementImport() {
                         ])
                       }
                     >
-                      Nein
+                      Bisherigen Dauerbetrag behalten
                     </Button>
                     <Button
                       variant="outline"
@@ -463,7 +447,7 @@ export function StatementImport() {
                         ])
                       }
                     >
-                      Ja
+                      Neuen Dauerbetrag übernehmen
                     </Button>
                   </div>
                 </section>

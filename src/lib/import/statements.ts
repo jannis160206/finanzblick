@@ -7,6 +7,8 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "@/lib/import/limits";
+import { numberStatementRows, statementFingerprint } from "./identity";
+export { statementFingerprint } from "./identity";
 
 export type StatementSource = "Raiffeisen" | "Revolut" | "Amex";
 export type StatementDraft = Omit<Transaction, "amount"> & {
@@ -25,6 +27,7 @@ export type StatementResult = {
   skipped: number;
   issues: StatementIssue[];
   pocketSnapshots?: PocketSnapshot[];
+  accountSnapshots?: AppState["accountSnapshots"];
 };
 export type StatementPreview = {
   rows: Transaction[];
@@ -43,6 +46,7 @@ type Header = {
   category: number;
   holder: number;
   currency: number;
+  reference: number;
 };
 const normalized = (text: string) =>
   text
@@ -254,6 +258,14 @@ function headerFor(cells: string[]): Header | null {
       "name",
     ),
     currency: index("wahrung", "currency"),
+    reference: index(
+      "referenz",
+      "reference",
+      "transactionid",
+      "transaktionsid",
+      "buchungsreferenz",
+      "id",
+    ),
   };
 }
 
@@ -277,6 +289,7 @@ const raiffeisenHeader: Header = {
   outgoing: -1,
   category: -1,
   holder: -1,
+  reference: 5,
 };
 
 export function detectStatementSource(
@@ -399,6 +412,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         description = "",
         amount: number | null = null,
         sourceCategory = "",
+        bankReference = "",
         holder = "",
         currency = sectionCurrency;
       if (source === "Amex" && nonempty.length === 1) {
@@ -454,6 +468,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         dateText = get(header.date);
         description = clean(get(header.description));
         sourceCategory = clean(get(header.category));
+        bankReference = clean(get(header.reference));
         holder = get(header.holder);
         currency = get(header.currency) || sectionCurrency;
         if (header.amount >= 0) {
@@ -518,6 +533,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         amount,
         includeInPlan: true,
         ...(sourceCategory ? { sourceCategory } : {}),
+        ...(bankReference ? { bankReference } : {}),
       });
       if (!candidate.success) {
         report(
@@ -534,10 +550,15 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         );
     }
   }
-  result.rows = classifyStatementRows(result.rows);
+  result.rows = numberStatementRows(classifyStatementRows(result.rows));
   if (source === "Revolut")
-    result.pocketSnapshots = readRevolutBalances(tables, file, result.rows);
-  if (!result.rows.length && !result.skipped && !result.pocketSnapshots?.length)
+    Object.assign(result, readRevolutBalances(tables, file, result.rows));
+  if (
+    !result.rows.length &&
+    !result.skipped &&
+    !result.pocketSnapshots?.length &&
+    !result.accountSnapshots?.length
+  )
     throw new Error(
       "Format erkannt, aber keine lesbaren Transaktionszeilen gefunden. Bitte den vollständigen CSV- oder XLSX-Kontoauszug verwenden.",
     );
@@ -548,7 +569,7 @@ function readRevolutBalances(
   tables: TableRow[][],
   file: string,
   transactions: Transaction[],
-): PocketSnapshot[] {
+): Pick<StatementResult, "pocketSnapshots" | "accountSnapshots"> {
   const dates = (text: string) =>
     [
       ...text.matchAll(/\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4}/g),
@@ -566,11 +587,12 @@ function readRevolutBalances(
       .map((row) => row.date)
       .sort()
       .at(-1);
-  if (!statementDate) return [];
+  if (!statementDate) return {};
   const accounts = new Map<
     string,
     {
-      pocket: PocketSnapshot["pocket"];
+      pocket: PocketSnapshot["pocket"] | null;
+      name: string;
       closing?: number;
       last?: { date: string; balance: number };
     }
@@ -586,15 +608,11 @@ function readRevolutBalances(
       if (section) {
         const name = clean(section[1]);
         const pocket = savingsPocket(name);
-        const eligible =
-          /^(sparen|sparkonto|urlaub(?: 2026)?|notgroschen|motorrad)$/i.test(
-            name,
-          );
         account =
-          section[2] === "EUR" && eligible && pocket
-            ? (accounts.get(normalized(name)) ?? { pocket })
+          section[2] === "EUR"
+            ? (accounts.get(name) ?? { pocket, name })
             : undefined;
-        if (account) accounts.set(normalized(name), account);
+        if (account) accounts.set(name, account);
         header = null;
         balanceColumn = closingColumn = -1;
         continue;
@@ -634,28 +652,31 @@ function readRevolutBalances(
     }
   }
   const balances = new Map<PocketSnapshot["pocket"], number>();
+  const accountSnapshots: NonNullable<AppState["accountSnapshots"]> = [];
   for (const account of accounts.values()) {
     const balance = account.closing ?? account.last?.balance;
     if (balance === undefined) continue;
-    if (
-      account.pocket === "Notgroschen" &&
-      !transactions.some(
-        (row) =>
-          savingsPocket(row.pocket) === "Notgroschen" && row.amount !== 0,
-      )
-    )
-      continue;
+    accountSnapshots.push({
+      name: account.name,
+      bank: "Revolut",
+      date: statementDate,
+      balance,
+    });
+    if (!account.pocket || account.pocket === "Notgroschen") continue;
     balances.set(
       account.pocket,
       round((balances.get(account.pocket) ?? 0) + balance),
     );
   }
-  return [...balances].map(([pocket, balance]) => ({
-    pocket,
-    balance,
-    date: statementDate,
-    bank: "Revolut",
-  }));
+  return {
+    accountSnapshots,
+    pocketSnapshots: [...balances].map(([pocket, balance]) => ({
+      pocket,
+      balance,
+      date: statementDate,
+      bank: "Revolut" as const,
+    })),
+  };
 }
 
 export function parseStatementCsv(
@@ -758,28 +779,14 @@ export async function parseStatementFile(
   return parseTables(tables, file.name);
 }
 
-export function statementFingerprint(
-  row: Pick<Transaction, "date" | "bank" | "amount" | "description">,
-): string {
-  const bank = clean(row.bank)
-    .toLowerCase()
-    .replace(/^american express$/, "amex");
-  return JSON.stringify([
-    row.date.slice(0, 10),
-    bank,
-    round(row.amount).toFixed(2),
-    clean(row.description).slice(0, 25).toLowerCase(),
-  ]);
-}
-
 export function deduplicateStatements<T extends Transaction>(
   rows: T[],
   existing: Transaction[],
 ): { rows: T[]; duplicates: number } {
-  const seen = new Set(existing.map(statementFingerprint));
+  const seen = new Set(numberStatementRows(existing).map(statementFingerprint));
   const unique: T[] = [];
   let duplicates = 0;
-  for (const row of rows) {
+  for (const row of numberStatementRows(rows)) {
     const key = statementFingerprint(row);
     if (seen.has(key)) duplicates++;
     else {
