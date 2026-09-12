@@ -27,6 +27,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
+import { SeasonalAtmosphere } from "@/components/seasonal-atmosphere";
 import {
   EmptyState,
   PageHeading,
@@ -46,12 +47,12 @@ const chartTooltip = {
   fontSize: 12,
 };
 const chartColors = [
-  "#34d399",
-  "#38bdf8",
-  "#fbbf24",
-  "#fb923c",
-  "#a3a3a3",
-  "#f87171",
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+  "var(--chart-6)",
 ];
 const tooltipCurrency = (value: unknown) => currency(Number(value));
 
@@ -83,7 +84,7 @@ export function Overview() {
       value: d.current.actualSpending,
       note: "Ohne Umbuchungen",
       icon: ArrowUpRight,
-      color: "text-orange-400",
+      color: "text-chart-4",
     },
     {
       label: "Überschuss · Plan",
@@ -99,22 +100,25 @@ export function Overview() {
     .map((row) => ({ ...row, label: monthLabel(row.month, true) }));
   return (
     <>
-      <PageHeading
-        eyebrow="DEIN FINANZCOCKPIT"
-        title="Übersicht"
-        description={`Berechnet für ${dateLabel(state.settings.asOf)} · Alle Beträge in Euro`}
-      >
-        <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
-          <CalendarDays className="size-4 text-muted-foreground" />
-          {monthLabel(d.currentMonth)}
-        </span>
-        <Button asChild size="sm">
-          <Link href="/umsaetze">
-            Kontoauszüge importieren
-            <ArrowRight className="size-4" />
-          </Link>
-        </Button>
-      </PageHeading>
+      <div className="seasonal-hero relative isolate">
+        <SeasonalAtmosphere placement="hero" />
+        <PageHeading
+          eyebrow="DEIN FINANZCOCKPIT"
+          title="Übersicht"
+          description={`Berechnet für ${dateLabel(state.settings.asOf)} · Alle Beträge in Euro`}
+        >
+          <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
+            <CalendarDays className="size-4 text-muted-foreground" />
+            {monthLabel(d.currentMonth)}
+          </span>
+          <Button asChild size="sm">
+            <Link href="/umsaetze">
+              Kontoauszüge importieren
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+        </PageHeading>
+      </div>
       {monthSplit.length > 0 && (
         <section
           className="panel mb-5 px-4 py-3 text-sm"
@@ -210,13 +214,14 @@ export function Overview() {
             })}
           </div>
         </section>
-        <section className="panel relative overflow-hidden p-5 sm:p-6">
+        <section className="panel seasonal-bike relative overflow-hidden p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-semibold">
-              <Bike className="size-5 text-orange-400" />
+              <Bike className="size-5 text-chart-4" />
               Projekt Motorrad
             </span>
             <span
+              data-status={d.countdown.onTrack ? "positive" : "warning"}
               className={cn(
                 "status-pill",
                 d.countdown.onTrack
@@ -265,7 +270,7 @@ export function Overview() {
             aria-valuemax={100}
           >
             <div
-              className="h-full rounded-full bg-orange-400 transition-all"
+              className="h-full rounded-full bg-chart-4 transition-all"
               style={{ width: `${d.countdown.progress}%` }}
             />
           </div>
@@ -289,7 +294,7 @@ export function Overview() {
               <p
                 className={cn(
                   "mt-1 text-lg font-semibold tabular-nums",
-                  d.countdown.onTrack ? "text-primary" : "text-orange-400",
+                  d.countdown.onTrack ? "text-primary" : "text-chart-4",
                 )}
               >
                 {currency(d.nextTransfer)}
@@ -347,7 +352,7 @@ export function Overview() {
                   <td className="text-right font-mono text-muted-foreground">
                     {currency(row.variablePlan)}
                   </td>
-                  <td className="text-right font-mono text-orange-400">
+                  <td className="text-right font-mono text-chart-4">
                     {currency(row.bikeTransfer)}
                   </td>
                   <td
@@ -406,8 +411,8 @@ export function Overview() {
                   type="monotone"
                   dataKey="total"
                   name="Vermögen"
-                  stroke="#34d399"
-                  fill="#34d399"
+                  stroke="var(--chart-1)"
+                  fill="var(--chart-1)"
                   fillOpacity={0.08}
                   strokeWidth={2}
                   isAnimationActive={false}
@@ -488,15 +493,15 @@ export function Overview() {
           >
             <div className="flex gap-4 text-[11px] text-muted-foreground">
               <span>
-                <i className="mr-1.5 inline-block size-2 rounded-sm bg-emerald-400" />
+                <i className="mr-1.5 inline-block size-2 rounded-sm bg-chart-1" />
                 Einnahmen
               </span>
               <span>
-                <i className="mr-1.5 inline-block size-2 rounded-sm bg-slate-500" />
+                <i className="mr-1.5 inline-block size-2 rounded-sm bg-chart-7" />
                 Fixkosten
               </span>
               <span>
-                <i className="mr-1.5 inline-block size-2 rounded-sm bg-amber-400" />
+                <i className="mr-1.5 inline-block size-2 rounded-sm bg-chart-3" />
                 Alltagsbudget
               </span>
             </div>
@@ -537,7 +542,7 @@ export function Overview() {
                 <Bar
                   dataKey="income"
                   name="Einnahmen"
-                  fill="#34d399"
+                  fill="var(--chart-1)"
                   radius={[3, 3, 0, 0]}
                   maxBarSize={30}
                   isAnimationActive={false}
@@ -546,7 +551,7 @@ export function Overview() {
                   dataKey="fixed"
                   name="Fixkosten"
                   stackId="cost"
-                  fill="#64748b"
+                  fill="var(--chart-7)"
                   maxBarSize={30}
                   isAnimationActive={false}
                 />
@@ -554,7 +559,7 @@ export function Overview() {
                   dataKey="variablePlan"
                   name="Alltagsbudget"
                   stackId="cost"
-                  fill="#fbbf24"
+                  fill="var(--chart-3)"
                   radius={[3, 3, 0, 0]}
                   maxBarSize={30}
                   isAnimationActive={false}

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Save, ShieldCheck } from "lucide-react";
@@ -9,9 +10,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading, SectionHeading } from "@/components/finance-ui";
-import { settingsSchema, type Settings as SettingsData } from "@/lib/types";
+import {
+  settingsSchema,
+  seasonalPreferenceSchema,
+  type Settings as SettingsData,
+} from "@/lib/types";
+import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
+import {
+  defaultSeasonalPreference,
+  seasonalLabels,
+  seasonalThemes,
+  type SeasonalPreference,
+} from "@/lib/seasonal-theme";
 import { localToday } from "@/lib/planning";
 
+const settingsFormSchema = settingsSchema.safeExtend({
+  seasonalTheme: seasonalPreferenceSchema,
+});
+type SettingsForm = SettingsData & { seasonalTheme: SeasonalPreference };
 type NumericKey =
   | "emergencyTarget"
   | "vacationTarget"
@@ -30,10 +46,15 @@ const withRateHistory = (settings: SettingsData): SettingsData => ({
 });
 export function Settings() {
   const { state, update } = useFinance();
-  const form = useForm<SettingsData>({
-    resolver: zodResolver(settingsSchema),
-    defaultValues: withRateHistory(state.settings),
+  const { setPreview } = useSeasonalTheme();
+  const form = useForm<SettingsForm>({
+    resolver: zodResolver(settingsFormSchema),
+    defaultValues: {
+      ...withRateHistory(state.settings),
+      seasonalTheme: state.seasonalTheme ?? defaultSeasonalPreference,
+    },
   });
+  useEffect(() => () => setPreview(null), [setPreview]);
   const rates =
     useWatch({ control: form.control, name: "interestRates" }) ?? [];
   const bikeShare = useWatch({ control: form.control, name: "bikeShare" });
@@ -115,10 +136,37 @@ export function Settings() {
         description="Ziele, Termine und die Regeln für deinen Sparplan."
       />
       <form
-        onSubmit={form.handleSubmit((settings) => {
-          settings.interestRates = [...new Map(settings.interestRates?.map((item) => [item.date, item])).values()].sort((a, b) => a.date.localeCompare(b.date));
-          update((current) => ({ ...current, settings: { ...settings, asOf: current.settings.asOf, baselineDate: current.settings.baselineDate, balances: current.settings.balances } }));
-          form.reset(settings);
+        onSubmit={form.handleSubmit(({ seasonalTheme, ...settings }) => {
+          const appearanceChanged = form.getFieldState("seasonalTheme").isDirty;
+          const financeChanged = Object.keys(form.formState.dirtyFields).some(
+            (key) => key !== "seasonalTheme",
+          );
+          settings.interestRates = [
+            ...new Map(
+              settings.interestRates?.map((item) => [item.date, item]),
+            ).values(),
+          ].sort((a, b) => a.date.localeCompare(b.date));
+          update((current) => ({
+            ...current,
+            seasonalTheme: appearanceChanged
+              ? seasonalTheme
+              : current.seasonalTheme,
+            settings: financeChanged
+              ? {
+                  ...settings,
+                  asOf: current.settings.asOf,
+                  baselineDate: current.settings.baselineDate,
+                  balances: current.settings.balances,
+                }
+              : current.settings,
+          }));
+          form.reset({
+            ...withRateHistory(financeChanged ? settings : state.settings),
+            seasonalTheme: appearanceChanged
+              ? seasonalTheme
+              : (state.seasonalTheme ?? defaultSeasonalPreference),
+          });
+          setPreview(null);
           toast.success("Einstellungen gespeichert");
         })}
         className="space-y-5"
@@ -245,6 +293,70 @@ export function Settings() {
             </div>
           </section>
         </div>
+        <details id="jahreszeit" className="panel p-5 sm:p-6">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Jahreszeit
+          </summary>
+          <Controller
+            name="seasonalTheme"
+            control={form.control}
+            render={({ field }) => {
+              const change = (value: SeasonalPreference) => {
+                field.onChange(value);
+                setPreview(value);
+              };
+              return (
+                <div className="mt-5 grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="seasonal-mode">Modus</Label>
+                    <select
+                      id="seasonal-mode"
+                      ref={field.ref}
+                      onBlur={field.onBlur}
+                      className="select-input mt-2 w-full"
+                      value={field.value.mode}
+                      onChange={(event) =>
+                        change({
+                          ...field.value,
+                          mode: event.target
+                            .value as SeasonalPreference["mode"],
+                        })
+                      }
+                    >
+                      <option value="auto">Automatisch</option>
+                      <option value="default">Immer Standard</option>
+                      <option value="fixed">Festes Theme</option>
+                    </select>
+                  </div>
+                  {field.value.mode === "fixed" && (
+                    <div>
+                      <Label htmlFor="seasonal-theme">Theme</Label>
+                      <select
+                        id="seasonal-theme"
+                        className="select-input mt-2 w-full"
+                        value={field.value.theme}
+                        onBlur={field.onBlur}
+                        onChange={(event) =>
+                          change({
+                            ...field.value,
+                            theme: event.target
+                              .value as SeasonalPreference["theme"],
+                          })
+                        }
+                      >
+                        {seasonalThemes.map((theme) => (
+                          <option key={theme} value={theme}>
+                            {seasonalLabels[theme]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              );
+            }}
+          />
+        </details>
         {form.formState.isDirty && (
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4">
             <span className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -258,7 +370,14 @@ export function Settings() {
                 variant="outline"
                 type="button"
                 disabled={!form.formState.isDirty}
-                onClick={() => form.reset(withRateHistory(state.settings))}
+                onClick={() => {
+                  form.reset({
+                    ...withRateHistory(state.settings),
+                    seasonalTheme:
+                      state.seasonalTheme ?? defaultSeasonalPreference,
+                  });
+                  setPreview(null);
+                }}
               >
                 Verwerfen
               </Button>

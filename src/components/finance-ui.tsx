@@ -21,10 +21,10 @@ export const pocketIcons: Record<Pocket, LucideIcon> = {
   Motorrad: Bike,
 };
 export const pocketColors: Record<Pocket, string> = {
-  Notgroschen: "#34d399",
-  Urlaub: "#38bdf8",
-  Sparkonto: "#fbbf24",
-  Motorrad: "#fb923c",
+  Notgroschen: "var(--chart-1)",
+  Urlaub: "var(--chart-2)",
+  Sparkonto: "var(--chart-3)",
+  Motorrad: "var(--chart-4)",
 };
 export function PageHeading({
   eyebrow,

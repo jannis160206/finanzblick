@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { seasonalModes, seasonalThemes } from "@/lib/seasonal-theme";
 
 z.config(z.locales.de());
 
@@ -224,8 +225,13 @@ export const settingsSchema = z
     path: ["asOf"],
   });
 export type Settings = z.infer<typeof settingsSchema>;
+export const seasonalPreferenceSchema = z.object({
+  mode: z.enum(seasonalModes),
+  theme: z.enum(seasonalThemes),
+});
 export const appStateSchema = z.object({
   version: z.literal(1),
+  seasonalTheme: seasonalPreferenceSchema.optional(),
   planningRepairs: z
     .array(z.literal("september-2026-sonstiges-focus-override"))
     .max(1)

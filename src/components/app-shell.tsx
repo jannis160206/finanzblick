@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ExcelActions } from "@/components/excel-actions";
+import { SeasonalAtmosphere } from "@/components/seasonal-atmosphere";
 import { useFinance } from "@/components/finance-provider";
 import { cn } from "@/lib/utils";
 
@@ -78,7 +79,11 @@ export function AppShell({
     </nav>
   );
   return (
-    <div className="min-h-screen">
+    <div
+      className="app-shell relative isolate min-h-screen"
+      data-seasonal-atmosphere={pathname === "/" ? "overview" : "none"}
+    >
+      {pathname === "/" && <SeasonalAtmosphere placement="shell" />}
       <a
         href="#main-content"
         className="sr-only z-50 rounded bg-primary p-3 text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
@@ -114,8 +119,9 @@ export function AppShell({
         </div>
       </aside>
       <div className="lg:pl-[224px]">
-        <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur-sm sm:px-7 xl:px-9">
-          <div className="flex items-center gap-3">
+        <header className="isolate sticky top-0 z-20 flex h-[76px] items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur-sm sm:px-7 xl:px-9">
+          {pathname === "/" && <SeasonalAtmosphere placement="header" />}
+          <div className="relative z-10 flex items-center gap-3">
             <Button
               size="icon"
               variant="ghost"
@@ -131,7 +137,7 @@ export function AppShell({
               <span>{current?.label ?? "Seite"}</span>
             </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-2">
+          <div className="relative z-10 flex items-center gap-1 sm:gap-2">
             {ready && (
               <>
                 <span

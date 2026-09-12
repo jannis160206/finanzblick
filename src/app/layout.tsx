@@ -3,6 +3,8 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { FinanceProvider } from "@/components/finance-provider";
 import { AppShell } from "@/components/app-shell";
+import { SeasonalThemeProvider } from "@/components/seasonal-theme-provider";
+import { seasonalThemeBootstrap } from "@/lib/seasonal-theme";
 import { getInitialData } from "@/lib/bootstrap";
 import "./globals.css";
 
@@ -24,15 +26,19 @@ export default async function RootLayout({
   return (
     <html
       lang="de"
+      data-theme="default"
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable} h-full antialiased`}
     >
       <head>
         <meta name="darkreader-lock" content="true" />
+        <script dangerouslySetInnerHTML={{ __html: seasonalThemeBootstrap }} />
       </head>
       <body className="min-h-full">
         <FinanceProvider initialState={initial.state}>
-          <AppShell initialWarning={initial.warning}>{children}</AppShell>
+          <SeasonalThemeProvider>
+            <AppShell initialWarning={initial.warning}>{children}</AppShell>
+          </SeasonalThemeProvider>
         </FinanceProvider>
       </body>
     </html>
