@@ -85,6 +85,7 @@ function isoDate(cell: ExcelJS.Cell, date1904 = false): string {
     : "";
 }
 function normalizeCategory(raw: string): Category {
+  if (!raw.trim()) return "Prüfen";
   if (categories.includes(raw as Category)) return raw as Category;
   if (/(?:amex|american express).*(?:abrechnung|sammel|ausgleich)/i.test(raw))
     return "Transfer intern";
@@ -268,13 +269,7 @@ export async function parseWorkbook(
       };
       const parsed = transactionSchema.safeParse(candidate);
       if (parsed.success) state.transactions.push(parsed.data);
-      else {
-        skipped++;
-        if (warnings.length < 20)
-          warnings.push(
-            `Umsätze, Zeile ${index}: ${parsed.error.issues.map((issue) => issue.message).join(", ")}`,
-          );
-      }
+      else skipped++;
     });
     if (
       new Set(state.transactions.map((row) => row.id)).size !==

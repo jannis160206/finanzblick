@@ -274,7 +274,7 @@ test("Amex auto-saves clear rows; invalid files notify without joining merchant 
       (row: Transaction) => row.description === "Pizzeria, Zentrum",
     ).pocket,
   ).toBe("AMEX Jannis");
-  await page.getByRole("button", { name: "1 Einträge prüfen" }).click();
+  await page.getByRole("button", { name: /^Zuordnung prüfen/ }).click();
   await expect(dialog).toBeVisible();
 });
 
@@ -316,15 +316,8 @@ test("a second tab's booking is deduped again before saving an unsure row", asyn
       includeHidden: true,
     }),
   ).toHaveCount(1);
-  await dialog
-    .getByLabel("Kategorie", { exact: true })
-    .selectOption("Shopping");
-  await dialog
-    .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
-    .click();
-  await expect(
-    page.getByText("0 neu, 1 Duplikate ignoriert", { exact: true }),
-  ).toBeVisible();
+  // A confirmed twin from another tab resolves this stale review immediately.
+  await expect(dialog).toHaveCount(0);
   const state = await ledger(page);
   expect(
     state.transactions.filter(

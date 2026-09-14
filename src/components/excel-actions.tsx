@@ -16,6 +16,7 @@ import { useFinance } from "@/components/finance-provider";
 import { dateLabel } from "@/lib/format";
 import { type ImportResult } from "@/lib/excel";
 import { MAX_IMPORT_BYTES } from "@/lib/import/limits";
+import { openReviewCount, queueLedgerReview } from "@/lib/import/review";
 
 export function ExcelActions({ compact = false }: { compact?: boolean }) {
   const { state, replace } = useFinance();
@@ -151,7 +152,7 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                   </p>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="grid grid-cols-2 gap-3 text-center">
                 {[
                   {
                     label: "Umsätze",
@@ -159,9 +160,8 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                   },
                   {
                     label: "Offen",
-                    count: preview.state.reviewQueue?.length ?? 0,
+                    count: openReviewCount(queueLedgerReview(preview.state).reviewQueue ?? []),
                   },
-                  { label: "Übersprungen", count: preview.skipped },
                 ].map((item) => (
                   <div className="rounded-lg border p-3" key={item.label}>
                     <p className="text-2xl font-semibold">{item.count}</p>

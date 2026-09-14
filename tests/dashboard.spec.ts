@@ -89,12 +89,15 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
     ),
   });
   const review = page.getByRole("dialog");
-  await review
+  const imported = review.getByRole("region", { name: "Buchung prüfen: Browserprüfung Einkauf", exact: true });
+  await imported
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Shopping");
-  await review
+  await imported
     .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
     .click();
+  await expect(imported).toHaveCount(0);
+  await review.getByRole("button", { name: "Später prüfen" }).first().click();
   await page.getByLabel("Umsätze durchsuchen").fill("Browserprüfung");
   await expect(
     page.getByRole("cell", { name: "Browserprüfung Einkauf", exact: true }),
@@ -301,13 +304,12 @@ test("months omit pocket chains and Revolut pots have no manual movement form", 
 });
 
 test("Excel download reimports through preview", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/einstellungen");
   await expect(
-    page.getByRole("heading", { name: "Übersicht", exact: true }),
+    page.getByRole("heading", { name: "Einstellungen", exact: true }),
   ).toBeVisible();
   const downloading = page.waitForEvent("download");
-  await page.getByText("Sicherung", { exact: true }).click();
-  await page.getByRole("button", { name: "Excel herunterladen" }).click();
+  await page.getByRole("button", { name: "Exportieren", exact: true }).click();
   const file = await downloading;
   const path = await file.path();
   expect(path).toBeTruthy();
@@ -336,7 +338,7 @@ test("Excel download reimports through preview", async ({ page }) => {
     }),
   ).not.toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Übersicht", exact: true }),
+    page.getByRole("heading", { name: "Einstellungen", exact: true }),
   ).toBeVisible();
 });
 

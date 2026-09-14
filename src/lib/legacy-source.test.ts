@@ -80,8 +80,9 @@ describe("legacy Excel source categories", () => {
       includeInPlan: false,
     });
     expect(results[1]).toMatchObject({
+      category: "Urlaub",
       includeInPlan: false,
-      reason: "Ausgeschlossen",
+      reason: "Urlaub: 50 % Eigenanteil, 50 % Forderung",
     });
     expect(results[2]).toMatchObject({
       category: "AMEX Monatsgebühr",

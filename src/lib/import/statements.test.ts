@@ -86,7 +86,7 @@ describe("Raiffeisen CSV", () => {
     });
     expect(result.rows[2]).toMatchObject({
       amount: -0.47,
-      category: "Gesundheit",
+      category: "Mittagessen",
       includeInPlan: true,
     });
     expect(result.rows[3]).toMatchObject({
@@ -269,7 +269,7 @@ describe("classification uses the existing engine", () => {
   });
   it("preserves preview category/pocket edits and plan choice", () => {
     const edited = {
-      ...transaction("BIPA"),
+      ...transaction("dm drogerie"),
       category: "Shopping" as const,
       categoryOverride: true,
       pocket: "AMEX Jannis",

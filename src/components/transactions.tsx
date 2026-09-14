@@ -35,7 +35,8 @@ import {
 } from "@/components/ui/dialog";
 import { useFinance } from "@/components/finance-provider";
 import { EmptyState, PageHeading } from "@/components/finance-ui";
-import { actualBookings, classify, monthKey, sum } from "@/lib/calc";
+import { actualBookings, bookingMonth, classify, monthKey, sum } from "@/lib/calc";
+import { personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { categories, transactionSchema, type Transaction } from "@/lib/types";
@@ -203,6 +204,7 @@ export function Transactions() {
   "use no memo";
   const { state, dashboard, update } = useFinance();
   const ledger = useMemo(() => actualBookings(state), [state]);
+  const holiday = useMemo(() => reconcileSharedHoliday(ledger), [ledger]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const [query, setQuery] = useState("");
@@ -227,7 +229,7 @@ export function Transactions() {
             `${row.description} ${row.bank} ${result.merchant}`
               .toLocaleLowerCase("de")
               .includes(query.toLocaleLowerCase("de"))) &&
-          (!month || monthKey(row.date) === month) &&
+          (!month || bookingMonth(row) === month) &&
           (!category || result.category === category) &&
           (!account || accountLabel(row) === account) &&
           (!plan || result.includeInPlan === (plan === "yes")) &&
@@ -237,7 +239,7 @@ export function Transactions() {
       }),
     [ledger, query, month, category, account, plan, from, to, showTransfers],
   );
-  const columns: ColumnDef<Transaction>[] = [
+  const columns: ColumnDef<AccountedTransaction>[] = [
     {
       accessorKey: "date",
       header: "Datum",
@@ -272,7 +274,7 @@ export function Transactions() {
     {
       accessorKey: "amount",
       header: "Betrag",
-      cell: ({ getValue }) => (
+      cell: ({ getValue, row }) => (
         <span
           className={cn(
             "block text-right font-mono font-medium whitespace-nowrap",
@@ -280,6 +282,12 @@ export function Transactions() {
           )}
         >
           {currency(getValue<number>())}
+          {holiday.receivables.filter((item) => item.bookingId === row.original.id).map((item) => (
+            <span key={item.bookingId} className="mt-1 block font-sans text-[10px] font-normal text-muted-foreground">
+              Eigenanteil {currency(item.ownSpend)} · {item.repaymentId ? "Forderung ausgeglichen" : `offen ${currency(item.outstanding)}`}
+            </span>
+          ))}
+          {row.original.holidayReimbursementFor && <span className="mt-1 block font-sans text-[10px] font-normal text-muted-foreground">Urlaubsforderung ausgeglichen · kein Einkommen</span>}
         </span>
       ),
     },
@@ -371,6 +379,7 @@ export function Transactions() {
             {[
               ...new Set([
                 dashboard.currentMonth,
+                ...ledger.map(bookingMonth),
                 ...ledger.map((row) => monthKey(row.date)),
               ]),
             ]
@@ -538,7 +547,7 @@ export function Transactions() {
             <span>
               Summe{" "}
               <strong className="ml-1 font-mono font-medium text-foreground">
-                {currency(sum(data.map((row) => row.amount)))}
+                {currency(sum(data.map(personalAmount)))}
               </strong>
             </span>
           </div>

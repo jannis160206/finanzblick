@@ -33,16 +33,31 @@ export function rememberMerchants(
   const rules = new Map(
     (state.merchantRules ?? []).map((rule) => [rule.key, rule.category]),
   );
+  const choices = new Map<string, Transaction["category"]>();
   for (const row of rows)
     if (
       row.categoryOverride &&
       row.category !== "Prüfen" &&
       !classify(row).isTransfer
-    )
+    ) {
       rules.set(merchantRuleKey(row), row.category);
+      choices.set(merchantRuleKey(row), row.category);
+    }
+  const applyChoice = (row: Transaction): Transaction => {
+    const category = choices.get(merchantRuleKey(row));
+    if (!category) return row;
+    const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
+    const result = classify(updated);
+    return { ...updated, category: result.category, includeInPlan: result.includeInPlan };
+  };
   return rules.size
     ? {
         ...state,
+        transactions: state.transactions.map(applyChoice),
+        ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
+          const category = item.merchantKey ? choices.get(item.merchantKey) : undefined;
+          return category ? { ...item, category, ...(item.booking ? { booking: applyChoice(item.booking) } : {}) } : item;
+        }) } : {}),
         merchantRules: [...rules].map(([key, category]) => ({ key, category })),
       }
     : state;

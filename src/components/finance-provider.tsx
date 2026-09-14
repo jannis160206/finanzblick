@@ -14,6 +14,8 @@ import { calculateDashboard, type Dashboard } from "@/lib/calc";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import {
   commitStatementImport,
+  queueLedgerReview,
+  openReviewCount,
   type FixedChange,
   type FixedDecision,
   type ImportMetadata,
@@ -68,7 +70,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
         );
         return {
           ...store,
-          data: appStateSchema.parse(refreshPlanning(result.state)),
+          data: appStateSchema.parse(refreshPlanning(queueLedgerReview(result.state))),
           saved: false,
           statementImport: {
             requestId: action.requestId,
@@ -95,7 +97,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
     case "hydrate":
       return {
         data: refreshPlanning(
-          restoreLegacySourceCategories(action.data, action.reference),
+          queueLedgerReview(restoreLegacySourceCategories(action.data, action.reference)),
         ),
         ready: true,
         error: action.error ?? null,
@@ -105,7 +107,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
     case "update":
       return {
         ...store,
-        data: appStateSchema.parse(synchronizePlan(action.updater(store.data))),
+        data: appStateSchema.parse(synchronizePlan(queueLedgerReview(action.updater(store.data)))),
         saved: false,
       };
     case "saved":
@@ -119,6 +121,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
 type FinanceContextValue = {
   state: AppState;
   dashboard: Dashboard;
+  openReviewCount: number;
   ready: boolean;
   saved: boolean;
   storageError: string | null;
@@ -234,6 +237,7 @@ export function FinanceProvider({
   const value: FinanceContextValue = {
     state: store.data,
     dashboard,
+    openReviewCount: openReviewCount(store.data.reviewQueue ?? []),
     ready: store.ready,
     saved: store.saved,
     storageError: store.error,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer, useRef, useState } from "react";
-import { FileUp, LoaderCircle, ListChecks } from "lucide-react";
+import { FileUp, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,6 @@ import {
 } from "@/lib/import/statements";
 import {
   prepareStatementImport,
-  queueLedgerReview,
   type FixedDecision,
   type ImportMetadata,
   type ReviewItem,
@@ -165,7 +164,7 @@ function BookingReview({
 }
 
 export function StatementImport() {
-  const { state, ready, storageError, appendStatements, statementImport, update } =
+  const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -357,36 +356,25 @@ export function StatementImport() {
           )}
           {ui.busy ? "Dateien werden geprüft …" : "Dateien auswählen"}
         </Button>
-        <Button
-          size="sm"
-          variant="outline"
+        <button
+          type="button"
+          className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
           disabled={!ready || !!storageError || ui.busy || !!ui.pending}
           onClick={() => {
-            const pending = state.transactions.some((row) => classify(row).category === "Prüfen");
-            if (!pending) { toast.success("Alle bestehenden Umsätze sind zugeordnet"); return; }
-            update(queueLedgerReview);
-            setUI({ open: true, ledgerOnly: true });
+            if (!openReviewCount) { toast.success("Alle Umsätze sind zugeordnet"); return; }
+            setUI({ open: true, ledgerOnly: false });
           }}
         >
-          <ListChecks className="size-4" />
           Zuordnung prüfen
-        </Button>
-        {!!ui.review.length && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setUI({ open: true, ledgerOnly: false })}
-          >
-            {ui.review.length} Einträge prüfen
-          </Button>
-        )}
+          {openReviewCount > 0 && <span aria-label={`${openReviewCount} offene Zuordnungen`} className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">{openReviewCount}</span>}
+        </button>
       </section>
       {state.importStatus && (
         <div
           className="mb-4 text-xs text-muted-foreground"
           aria-label="Importstatus"
         >
-          Übernommen {state.importStatus.imported} · offen {ui.review.length} ·
+          Übernommen {state.importStatus.imported} · offen {openReviewCount} ·
           nicht lesbar {state.importStatus.issues.length}
           {!!state.importStatus.issues.length && (
             <details className="mt-2">

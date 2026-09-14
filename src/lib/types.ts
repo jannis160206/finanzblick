@@ -19,6 +19,7 @@ export const categories = [
   "Shopping",
   "Gesundheit",
   "Freizeit",
+  "Urlaub",
   "Sonstiges",
   "Einkommen",
   "Transfer",
@@ -93,7 +94,7 @@ export const transactionSchema = z.object({
   bank: z.string().trim().min(1, "Bank erforderlich").max(100),
   pocket: z.string().trim().min(1).max(100).nullable(),
   description: z.string().trim().min(1, "Beschreibung erforderlich").max(1000),
-  category: z.enum(categories),
+  category: z.enum(categories).catch("Prüfen"),
   amount: moneySchema.refine(
     (value) => value !== 0,
     "Betrag darf nicht 0 sein",

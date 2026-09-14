@@ -16,9 +16,7 @@ async function loadInitialData() {
     const result = await parseWorkbook(Uint8Array.from(file).buffer);
     return {
       state: result.state,
-      warning: result.skipped
-        ? `${result.skipped} ungültige Excel-Zeilen wurden nicht übernommen. Die Originaldatei ist unverändert.`
-        : undefined,
+      warning: undefined,
     };
   } catch (error) {
     const missing =

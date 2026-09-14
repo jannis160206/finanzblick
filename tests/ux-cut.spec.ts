@@ -47,7 +47,7 @@ test("review survives reload, permits another file and bulk-assigns a merchant",
   expect((await stored(page)).reviewQueue).toHaveLength(2);
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "2 Einträge prüfen" }),
+    page.getByRole("button", { name: /^Zuordnung prüfen/ }),
   ).toBeVisible();
   await page
     .getByLabel("Kontoauszüge auswählen")
@@ -60,7 +60,7 @@ test("review survives reload, permits another file and bulk-assigns a merchant",
     page.getByText("1 neu, 0 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
   await expect(dialog).toHaveCount(0);
-  await page.getByRole("button", { name: "2 Einträge prüfen" }).click();
+  await page.getByRole("button", { name: /^Zuordnung prüfen/ }).click();
   await dialog
     .getByLabel("Kategorie", { exact: true })
     .first()

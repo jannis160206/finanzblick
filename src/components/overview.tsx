@@ -57,7 +57,7 @@ const chartColors = [
 const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function Overview() {
-  const { state, dashboard: d } = useFinance();
+  const { state, dashboard: d, openReviewCount } = useFinance();
   const monthSplit = d.monthlyFunding;
   const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
   const kpis = [
@@ -136,14 +136,14 @@ export function Overview() {
       )}
       {(d.missingFixed.length > 0 ||
         state.importStatus ||
-        state.reviewQueue?.length) && (
+        openReviewCount > 0) && (
         <p
           className="mb-5 text-xs text-muted-foreground"
           aria-label="Auszugsstatus"
         >
           <Link href="/umsaetze">
             Auszugsstatus: Übernommen {state.importStatus?.imported ?? 0} ·
-            offen {state.reviewQueue?.length ?? 0} · nicht lesbar{" "}
+            offen {openReviewCount} · nicht lesbar{" "}
             {state.importStatus?.issues.length ?? 0}
           </Link>
           {d.missingFixed.length > 0 &&

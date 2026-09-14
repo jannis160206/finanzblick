@@ -2,6 +2,7 @@ import {
   classify,
   actualBookings,
   classifyStatementRows,
+  bookingMonth,
   monthKey,
   monthsForYear,
   round,
@@ -28,6 +29,8 @@ import {
   merchantRuleKey,
   rememberMerchants,
 } from "./merchant-rules";
+import { isWorkingDay, statementTime } from "@/lib/holidays-at-kaernten";
+import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import {
   appendStatementRows,
   deduplicateStatements,
@@ -44,14 +47,44 @@ export type ImportMetadata = {
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
 
+export function bookingReviewReason(state: AppState, row: AccountedTransaction): string | undefined {
+  if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor) return;
+  const result = classify(row);
+  if (!row.category || row.category === "Prüfen" || result.category === "Prüfen") return "Kategorie noch offen.";
+  const rules = (state.merchantRules ?? []).filter((rule) => rule.key === merchantRuleKey(row));
+  if (new Set(rules.map((rule) => rule.category)).size > 1 || rules.some((rule) => rule.category !== result.category))
+    return "Widersprüchliche Händlerregel: Zuordnung prüfen.";
+  if (row.category === "Mittagessen" && result.category !== "Mittagessen") return "Mittagessen: Datum oder Uhrzeit passt nicht zur Regel.";
+  if (row.categoryOverride || result.isTransfer) return;
+  if (isWorkingDay(row.date) && !statementTime(row.time, row.description) &&
+    (/trafik/i.test(row.description) || (/billa|\bspar\b|interspar|eurospar/i.test(row.description) && Math.abs(row.amount) <= 10)))
+    return "Mittagessen unklar: keine Uhrzeit im Auszug.";
+  if (classify({ ...row, category: "Prüfen", sourceCategory: undefined }).category === "Prüfen")
+    return "Händler noch nicht sicher zugeordnet.";
+}
+
+export function openReviewCount(items: ReviewItem[]): number {
+  return items.reduce((total, item) => total + (item.kind === "fixed" ? item.change.bookings.length : 1), 0);
+}
+
 export function queueLedgerReview(state: AppState): AppState {
-  const queue = new Map((state.reviewQueue ?? []).map((item) => [item.id, item]));
-  for (const draft of state.transactions) {
-    if (classify(draft).category !== "Prüfen") continue;
-    if ([...queue.values()].some((item) => item.kind === "booking" && item.draft.id === draft.id)) continue;
-    queue.set(draft.id, { kind: "booking", id: draft.id, draft, message: "Bestehende Buchung: Händler noch nicht sicher zugeordnet." });
+  const pending = (state.reviewQueue ?? []).flatMap((item) =>
+    item.kind === "booking" && item.draft.amount !== null ? [item.draft as Transaction] : []);
+  const accounted = reconcileSharedHoliday([...actualBookings(state), ...pending]).bookings;
+  const safePending = accounted.slice(accounted.length - pending.length).filter((row) =>
+    alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor);
+  if (safePending.length) state = appendStatementRows(state, safePending.map((row) => ({ ...row, category: classify(row).category, includeInPlan: classify(row).includeInPlan }))).state;
+  const ledger = actualBookings(state);
+  const byId = new Map(ledger.map((row) => [row.id, row]));
+  const keys = new Set(ledger.map(statementFingerprint));
+  const queue: ReviewItem[] = (state.reviewQueue ?? []).filter((item) => item.kind === "fixed" ||
+    (!byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction)))));
+  for (const draft of ledger) {
+    const message = bookingReviewReason(state, draft);
+    if (!message) continue;
+    queue.push({ kind: "booking", id: draft.id, draft, message });
   }
-  return { ...state, reviewQueue: [...queue.values()] };
+  return { ...state, reviewQueue: queue };
 }
 
 function receipt(row: Transaction, rowId?: string): FixedReceipt {
@@ -144,14 +177,17 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       };
     return row;
   });
-  const deduped = deduplicateStatements(classified, state.transactions);
+  const existing = actualBookings(state);
+  const accounted = reconcileSharedHoliday([...existing, ...classified]).bookings.slice(existing.length)
+    .map((row) => row.holidayReimbursementFor ? { ...row, category: "Urlaub" as const, includeInPlan: false } : row);
+  const deduped = deduplicateStatements(accounted, state.transactions);
   const rows: Transaction[] = [];
   const receipts: FixedReceipt[] = [];
   const changes = new Map<string, FixedChange>();
   let duplicates = deduped.duplicates;
   const monthly = new Map<string, Transaction>();
   for (const row of state.transactions)
-    monthly.set(`${monthKey(row.date)}|${classify(row).category}`, row);
+    monthly.set(`${bookingMonth(row)}|${classify(row).category}`, row);
   for (const row of deduped.rows) {
     const category = row.category;
     const isFixed =
@@ -170,7 +206,7 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       rows.push(row);
       continue;
     }
-    const month = monthKey(row.date);
+    const month = bookingMonth(row);
     const key = `${month}|${category}`;
     const grid = matchingGridRow(state, category);
     const booked = monthly.get(key);
@@ -256,12 +292,13 @@ export function prepareStatementImport(
     change,
   }));
   for (const row of split.rows) {
-    if (row.category === "Prüfen")
+    const message = bookingReviewReason(state, row);
+    if (message)
       review.push({
         kind: "booking",
         id: row.id,
         draft: row,
-        message: "Händler noch nicht sicher zugeordnet.",
+        message,
       });
     else automatic.push(row);
   }
@@ -420,7 +457,7 @@ export function commitStatementImport(
   const current = applyFixedDecisions({ ...learned,
     transactions: learned.transactions.map((row) => {
       const category = choices.get(merchantRuleKey(row));
-      if (!category || classify(row).category !== "Prüfen") return row;
+      if (!category) return row;
       const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
       const result = classify(updated);
       return { ...updated, category: result.category, includeInPlan: result.includeInPlan };
@@ -431,7 +468,7 @@ export function commitStatementImport(
   const appended = appendStatementRows(current, split.rows);
   for (const row of split.rows) {
     const category = classify(row).category;
-    const month = monthKey(row.date);
+    const month = bookingMonth(row);
     const grid = matchingGridRow(appended.state, category);
     if (
       durableCategories.includes(category) &&

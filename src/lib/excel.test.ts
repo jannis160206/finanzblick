@@ -75,7 +75,7 @@ describe("Excel import/export", () => {
       const buffer = await readFile(original);
       const result = await parseWorkbook(Uint8Array.from(buffer).buffer);
       expect(result.skipped).toBe(1);
-      expect(result.warnings[0]).toContain("261");
+      expect(result.warnings).toEqual([]);
       expect(result.state.transactions.length).toBeGreaterThan(2000);
       expect(result.state.settings.balances).toEqual(
         createSeed().settings.balances,

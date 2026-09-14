@@ -27,7 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { ExcelActions } from "@/components/excel-actions";
 import { FinanzblickMark, SeasonalIcon } from "@/components/seasonal-icons";
 import { useFinance } from "@/components/finance-provider";
 import { cn } from "@/lib/utils";
@@ -49,7 +48,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
-  const { ready, saved, storageError, retrySave } = useFinance();
+  const { ready, saved, storageError, retrySave, openReviewCount } = useFinance();
   const [menuOpen, setMenuOpen] = useState(false);
   const current = navigation.find((item) => item.href === pathname);
   const links = (
@@ -78,7 +77,12 @@ export function AppShell({
             <item.icon className="size-[18px]" />
           )}
           {item.label}
-          {pathname === item.href && (
+          {item.href === "/umsaetze" && ready && openReviewCount > 0 && (
+            <span aria-label={`${openReviewCount} offene Zuordnungen`} className="ml-auto rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+              {openReviewCount}
+            </span>
+          )}
+          {pathname === item.href && item.href !== "/umsaetze" && (
             <span className="ml-auto size-1.5 rounded-full bg-primary" />
           )}
         </Link>
@@ -114,8 +118,6 @@ export function AppShell({
           </div>
           <p className="mt-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
             Daten bleiben in diesem Browser.
-            <br />
-            Excel als lokale Sicherung.
           </p>
         </div>
       </aside>
@@ -157,7 +159,6 @@ export function AppShell({
                       ? "Lokal gespeichert"
                       : "Speichert …"}
                 </span>
-                <ExcelActions />
               </>
             )}
             <div className="mx-1 h-5 border-l" />

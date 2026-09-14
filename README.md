@@ -21,7 +21,9 @@ http://localhost:3000
 - Unter **Umsätze** CSV-/XLSX-Dateien oder Amex-PDFs ablegen. Raiffeisen-Umsatzlisten ohne Kopfzeile und konsolidierte Revolut-Auszüge werden erkannt.
 - Sicher zugeordnete Buchungen werden automatisch gespeichert. Nur unklare Zeilen und Fixkostenänderungen erscheinen in der Prüfliste. Schließen der Prüfliste macht bereits gespeicherte Buchungen nicht rückgängig.
 - Originaldatum, Text, Betrag und Konto bleiben unverändert. Kategorie auswählen und **Zuordnung übernehmen** oder **Später prüfen**. Offene Einträge bleiben auch nach dem Neuladen erreichbar. **Zuordnung prüfen** nimmt unklare bereits gespeicherte Umsätze in die Prüfliste auf; gleiche Händler werden gemeinsam zugeordnet, ohne neue Buchungen anzulegen.
+- Der kleine Textschalter **Zuordnung prüfen** und die Navigation zählen jede offene Buchung: fehlende Kategorie, Prüfen, unbekannter Händler, Regelkonflikt oder unklare Mittagszeit. Bei null verschwindet die Zählerblase. Excel-Sicherung und Wiederherstellung gibt es ausschließlich unter **Einstellungen → Sicherung**; ungültige Excel-Umsatzzeilen werden still übersprungen.
 - Gehalt, Leasing, Vollkasko, Haftpflicht und Handyvertrag werden mit dem Monatsraster abgeglichen, nicht doppelt gebucht. Abweichungen über 0,05 € benötigen **Ja/Nein**. Ja übernimmt den Betrag ab dem Buchungsmonat bis Ende 2027; Nein behält die Monatswerte. Entscheidungen bleiben auch in Excel-Sicherungen erhalten.
+- Reguläres **Gehalt am 26.–30.** gehört zum Folgemonat, auch im Monatsraster, Monatsfilter und in der Umsatzsumme. Sonderzahlungen bleiben im Buchungsmonat. Interne Transfers zählen nur bei aktiviertem Transferfilter zur Umsatzsumme.
 - PDF-Text wird lokal im Browser extrahiert; keine Kontoauszüge werden hochgeladen. Versetzte Beträge und CR-Gutschriften werden unterstützt. Unklare Textzeilen kommen in die Prüfliste. Für reine Scans ist keine OCR enthalten.
 
 ## Automatische Planung
@@ -32,7 +34,9 @@ Unter **Einstellungen → Sparziele** lassen sich Ziele hinzufügen, bearbeiten 
 
 Lebensmittel, Mittagessen, Tanken, G2A und Ausgehen werden ab dem aktuellen Monat automatisch berechnet. Manuelle Einzelwerte im Monatsraster sind explizite Overrides; ein leeres Feld aktiviert wieder „Auto“. Gesamtbudget-Overrides bleiben ebenfalls erhalten. Der unterstützte Planungshorizont bleibt 2026–2027.
 
-**Mittagessen** setzt einen Werktag außerhalb der österreichischen Feiertage einschließlich 10. Oktober in Kärnten und eine belegte Uhrzeit zwischen **11:00 und 14:00 Uhr einschließlich** voraus. Auszüge ohne Uhrzeit erhalten keine erfundene Mittagszeit. AMEX-Kartenabrechnungen auf Giro/Revolut sind Umbuchungen, keine zweite Ausgabe; die eigentlichen Käufe und Mitgliedsgebühren bleiben Ausgaben.
+**BIPA, Hotspot und Mensa sind immer Mittagessen**, unabhängig von Großschreibung, Datum, Uhrzeit oder alten Händlerentscheidungen. Andere Mittagshändler bleiben an Werktage außerhalb der österreichischen Feiertage einschließlich 10. Oktober in Kärnten und **11:00–14:00 Uhr einschließlich** gebunden. Ohne belegte Uhrzeit bleibt eine mögliche Mittagszuordnung offen. AMEX-Kartenabrechnungen auf Giro/Revolut sind Umbuchungen, keine zweite Ausgabe; die eigentlichen Käufe und Mitgliedsgebühren bleiben Ausgaben.
+
+**Gemeinsamer Urlaub:** Airlines und Buchungsplattformen wie Swiss, Ryanair, easyJet, Booking.com und Airbnb zählen mit **50 % Eigenanteil** unter Urlaub; die andere Hälfte bleibt als Forderung sichtbar. Ein späterer Eingang mit dem bestätigten Partnernamen und höchstens **5 € Abweichung** gleicht genau eine passende offene Hälfte aus. Es gibt keine starre Zwei-Wochen-Frist. Bei mehreren Treffern gilt zuerst der passendste Betrag, dann die älteste offene Buchung. Der Eingang ist kein Planeinkommen und verändert den Eigenanteil nicht. Bankbeträge bleiben unverändert; Rückzahlungen werden nach Neuladen, Importen und Löschungen neu zugeordnet. Gewöhnliche Einkäufe und Mittagessen werden nicht geteilt.
 
 **Einstellungen → Trade Republic** speichert Kontostand und jährlichen Zinssatz mit Datum. Die Zinsprognose berücksichtigt fest **27,5 % KESt**, unabhängig von alten Sicherungsfeldern.
 

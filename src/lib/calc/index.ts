@@ -18,6 +18,7 @@ import {
 } from "@/lib/import/identity";
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
+import { alwaysLunch, isSharedHoliday, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -103,9 +104,12 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<Transaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor">>,
 ) {
   const { description, amount } = transaction;
+  const forcedLunch = alwaysLunch(description);
+  const sharedHoliday = isSharedHoliday(transaction);
+  const reimbursement = !!transaction.holidayReimbursementFor;
   const specialIncome =
     /(?:13\.?\s*(?:monats)?(?:gehalt|lohn)|bonus|sonderzahlung|weihnachtsgeld|urlaubsgeld|holiday|rufbereitschaft)/i.test(
       description,
@@ -134,7 +138,7 @@ export function classify(
     isCashWithdrawal ||
     transaction.category === "Transfer intern" ||
     /transfer intern/i.test(transaction.sourceCategory ?? "");
-  const detectedTransfer = isRoundUp || (isInternal && !isAmazon);
+  const detectedTransfer = !forcedLunch && !sharedHoliday && !reimbursement && (isRoundUp || (isInternal && !isAmazon));
   let category: Category = transaction.category;
   if (isAmazon) category = "Shopping";
   else if (isRoundUp) category = "Transfer";
@@ -177,8 +181,9 @@ export function classify(
     /\bpace\s*pay\b|\bomv\b|\bshell\b|tankstelle|tanken/i.test(description)
   )
     category = "Mobilität";
-  else if (/bipa|hotspot|mensa|mensen|trafik/i.test(description))
-    category = lunchAllowed ? "Mittagessen" : /bipa/i.test(description) ? "Gesundheit" : /trafik/i.test(description) ? "Sonstiges" : "Ausgehen";
+  else if (forcedLunch) category = "Mittagessen";
+  else if (/trafik/i.test(description))
+    category = lunchAllowed ? "Mittagessen" : "Sonstiges";
   else if (/billa|\bspar\b|interspar|eurospar/i.test(description))
     category = lunchAllowed && absolute <= 10 ? "Mittagessen" : "Lebensmittel";
   else if (
@@ -201,6 +206,9 @@ export function classify(
     category = /rufbereitschaft/i.test(description)
       ? "Rufbereitschaft"
       : "Einkommen";
+  // These explicit rules outrank remembered categories and calendar filters.
+  if (sharedHoliday || reimbursement) category = "Urlaub";
+  if (forcedLunch) category = "Mittagessen";
   const isTransfer =
     detectedTransfer ||
     category === "Transfer" ||
@@ -216,6 +224,8 @@ export function classify(
   const includeInPlan =
     amount !== 0 &&
     !isTransfer &&
+    !sharedHoliday &&
+    !reimbursement &&
     !exclusion &&
     !fixedOrIncome &&
     category !== "Prüfen" &&
@@ -233,7 +243,11 @@ export function classify(
     isAmazon,
     includeInPlan,
     merchant: merchantName(description),
-    reason: isAmazon
+    reason: sharedHoliday
+      ? "Urlaub: 50 % Eigenanteil, 50 % Forderung"
+      : reimbursement
+        ? "Ausgleich der Urlaubsforderung, kein Einkommen"
+        : isAmazon
       ? "Amazon: Extraausgabe"
       : /amex raphael/i.test(transaction.pocket ?? "")
         ? "Amex Raphael: nicht im Budget"
@@ -251,6 +265,15 @@ export function classify(
                     ? "Manuell ausgeschlossen"
                     : "",
   };
+}
+
+// Payroll received on the 26th–30th funds the following month, not both months.
+export function bookingMonth(row: Transaction): string {
+  const month = monthKey(row.date);
+  const day = Number(row.date.slice(8, 10));
+  return row.amount > 0 && classify(row).category === "Gehalt" && day >= 26 && day <= 30
+    ? addMonths(month, 1)
+    : month;
 }
 
 export function classifyStatementRows(
@@ -337,7 +360,7 @@ export function calculatePlan(transactions: Transaction[], asOf: string) {
       seen: Set<string>;
     }
   >();
-  for (const transaction of transactions) {
+  for (const transaction of reconcileSharedHoliday(transactions).bookings) {
     const result = classify(transaction);
     const key = monthKey(transaction.date);
     if (
@@ -354,9 +377,9 @@ export function calculatePlan(transactions: Transaction[], asOf: string) {
       current: 0,
       seen: new Set<string>(),
     };
-    if (key === currentMonth) group.current -= transaction.amount;
+    if (key === currentMonth) group.current -= personalAmount(transaction);
     else {
-      group.values[months.indexOf(key)] -= transaction.amount;
+      group.values[months.indexOf(key)] -= personalAmount(transaction);
       group.seen.add(key);
     }
     groups.set(groupKey, group);
@@ -673,7 +696,7 @@ export function calculateMonthTotals(
   state: AppState,
   month: string,
   plan: ReturnType<typeof calculatePlan>,
-  bookings: Transaction[] = actualBookings(state),
+  bookings: AccountedTransaction[] = actualBookings(state),
 ) {
   const income = sum(
     state.financeRows
@@ -697,14 +720,14 @@ export function calculateMonthTotals(
     bookings
       .filter(
         (t) =>
-          monthKey(t.date) === month &&
+          bookingMonth(t) === month &&
           t.date <= state.settings.asOf &&
           !["Einkommen", "Gehalt", "Rufbereitschaft"].includes(
             classify(t).category,
           ) &&
           !classify(t).isTransfer,
       )
-      .map((t) => -t.amount),
+      .map((t) => -personalAmount(t)),
   );
   return {
     income,
@@ -712,14 +735,14 @@ export function calculateMonthTotals(
       bookings
         .filter(
           (t) =>
-            monthKey(t.date) === month &&
+            bookingMonth(t) === month &&
             t.date <= state.settings.asOf &&
             ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(
               classify(t).category,
             ) &&
             !classify(t).isTransfer,
         )
-        .map((t) => t.amount),
+        .map((t) => personalAmount(t)),
     ),
     fixed,
     variablePlan,
@@ -727,8 +750,8 @@ export function calculateMonthTotals(
     surplus: round(income - fixed - variablePlan),
   };
 }
-export function actualBookings(state: AppState): Transaction[] {
-  if (!state.fixedReceipts?.length) return state.transactions;
+export function actualBookings(state: AppState): AccountedTransaction[] {
+  if (!state.fixedReceipts?.length) return reconcileSharedHoliday(state.transactions).bookings;
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [
       statementFingerprint(row),
@@ -752,7 +775,7 @@ export function actualBookings(state: AppState): Transaction[] {
       includeInPlan: false,
     });
   }
-  return [...state.transactions, ...receipts];
+  return reconcileSharedHoliday([...state.transactions, ...receipts]).bookings;
 }
 export function incomingPocketTransfers(state: AppState, pocket: string, month: string, aliases: string[] = []): number {
   const keys = new Set([pocket, ...aliases].map(pocketKey));
@@ -829,7 +852,7 @@ export function calculateDashboard(state: AppState) {
   for (const transaction of bookings) {
     const result = classify(transaction);
     if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf || ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer) continue;
-    categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - transaction.amount);
+    categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - personalAmount(transaction));
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);
   return { plan, goals, actualGoals,
