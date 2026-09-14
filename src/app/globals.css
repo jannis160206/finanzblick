@@ -57,8 +57,9 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: #087c58;
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: var(--user-accent, #5bddad);
+  --primary-foreground: var(--user-accent-foreground, #000000);
+  --accent-ink: var(--user-accent-light, #087c58);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -68,25 +69,26 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: #34d399;
-  --chart-1: #34d399;
+  --ring: var(--accent-ink);
+  --chart-1: var(--accent-ink);
   --chart-2: #38bdf8;
   --chart-3: #fbbf24;
   --chart-4: #fb923c;
   --chart-5: #a3a3a3;
   --chart-6: #f87171;
   --chart-7: #64748b;
-  --accent-muted: var(--accent);
-  --glow: transparent;
+  --accent-muted: color-mix(in srgb, var(--primary) 8%, var(--card));
+  --season-tint: transparent;
+  --season-decoration: var(--accent-ink);
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: var(--ring);
 }
 
 .dark {
@@ -96,8 +98,7 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: #1d2320;
   --popover-foreground: oklch(0.985 0 0);
-  --primary: #5bddad;
-  --primary-foreground: #09251b;
+  --accent-ink: var(--user-accent-dark, #5bddad);
   --secondary: #272e2b;
   --secondary-foreground: oklch(0.985 0 0);
   --muted: #252b28;
@@ -107,144 +108,30 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: #2a322e;
   --input: #38423c;
-  --ring: #5bddad;
   --sidebar: #141817;
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: #5bddad;
-  --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* The default light/dark UI is unchanged. Seasonal palettes only replace tokens. */
+/* Season changes shell tint and small decorations only, never the user's accent. */
 :root[data-theme="halloween"] {
-  --background: #f4eee5;
-  --card: #fffaf2;
-  --foreground: #302722;
-  --primary: #945019;
-  --primary-foreground: #fffaf2;
-  --muted: #e8dfd2;
-  --muted-foreground: #75614f;
-  --border: #d2baa0;
-  --glow: #d9a36b;
-  --chart-1: #a45c2f;
-  --chart-2: #686061;
-  --chart-3: #aa803e;
-  --chart-4: #98613b;
-  --chart-5: #8c8482;
-  --chart-6: #a46662;
-  --chart-7: #6f6967;
+  --season-tint: #b67842;
+  --season-decoration: #99612e;
 }
 :root.dark[data-theme="halloween"] {
-  --background: #100f10;
-  --card: #211d1a;
-  --foreground: #f1ece6;
-  --primary: #e6ab79;
-  --primary-foreground: #261910;
-  --muted: #302923;
-  --muted-foreground: #afaaa3;
-  --border: #524536;
-  --chart-1: #dba16b;
-  --chart-2: #aaa6a2;
-  --chart-3: #c4b28a;
-  --chart-4: #dab48b;
-  --chart-5: #8f9297;
-  --chart-6: #bd918b;
-  --chart-7: #92908e;
+  --season-decoration: #d9aa77;
 }
 :root[data-theme="christmas"] {
-  --background: #edf0e8;
-  --card: #fafbf3;
-  --foreground: #202e28;
-  --primary: #806325;
-  --primary-foreground: #fafbf3;
-  --muted: #dfe7dc;
-  --muted-foreground: #596d61;
-  --border: #b9c7b9;
-  --glow: #d6bb81;
-  --destructive: #a34f63;
-  --chart-1: #977324;
-  --chart-2: #46715b;
-  --chart-3: #849077;
-  --chart-4: #8a6931;
-  --chart-5: #6f827a;
-  --chart-6: #985465;
-  --chart-7: #617a70;
+  --season-tint: #7a896a;
+  --season-decoration: #6f7946;
 }
 :root.dark[data-theme="christmas"] {
-  --background: #10191e;
-  --card: #192722;
-  --foreground: #eef0e7;
-  --primary: #d5c08e;
-  --primary-foreground: #24241b;
-  --muted: #29362d;
-  --muted-foreground: #a6b6ae;
-  --border: #3c5146;
-  --destructive: #de8d98;
-  --chart-1: #c5ae78;
-  --chart-2: #8dac9a;
-  --chart-3: #c0c2af;
-  --chart-4: #d8c19a;
-  --chart-5: #8e9f9b;
-  --chart-6: #b88991;
-  --chart-7: #719080;
+  --season-decoration: #c9bd8d;
 }
 :root[data-theme="newyear"] {
-  --background: #eef0f4;
-  --card: #fafaf7;
-  --foreground: #263340;
-  --primary: #76642f;
-  --primary-foreground: #fafaf7;
-  --muted: #dfe4e6;
-  --muted-foreground: #62717e;
-  --border: #bbc2c9;
-  --glow: #d1c7a3;
-  --chart-1: #877133;
-  --chart-2: #4c7388;
-  --chart-3: #707f8e;
-  --chart-4: #806b35;
-  --chart-5: #7b738d;
-  --chart-6: #97667c;
-  --chart-7: #61798b;
-}
-:root.dark[data-theme="newyear"] {
-  --background: #131923;
-  --card: #1f2730;
-  --foreground: #edf0f3;
-  --primary: #d1c7a3;
-  --primary-foreground: #242832;
-  --muted: #2b3540;
-  --muted-foreground: #b0bac4;
-  --border: #424d59;
-  --chart-1: #d1c7a3;
-  --chart-2: #8eabba;
-  --chart-3: #b5bdc6;
-  --chart-4: #dccfab;
-  --chart-5: #9f9dae;
-  --chart-6: #b792a3;
-  --chart-7: #8b9fad;
-}
-:root[data-theme]:not([data-theme="default"]) {
-  --card-foreground: var(--foreground);
-  --popover: var(--card);
-  --popover-foreground: var(--foreground);
-  --secondary: var(--muted);
-  --secondary-foreground: var(--foreground);
-  --accent-muted: color-mix(in srgb, var(--primary) 9%, var(--card));
-  --accent: var(--accent-muted);
-  --accent-foreground: var(--foreground);
-  --input: var(--border);
-  --ring: var(--primary);
-  --sidebar: color-mix(in srgb, var(--background) 80%, var(--card));
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+  --season-tint: #b3a576;
 }
 
 @layer base {
@@ -272,7 +159,7 @@
     outline-offset: 3px;
   }
   ::selection {
-    background: #34d39940;
+    background: color-mix(in srgb, var(--primary) 25%, transparent);
   }
 }
 
@@ -387,149 +274,71 @@ body {
   scrollbar-color: var(--border) transparent;
 }
 
-/* No decoration on working pages. All atmospheric layers are inert and behind content. */
-:root[data-theme]:not([data-theme="default"])
-  .app-shell[data-seasonal-atmosphere="overview"]::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: radial-gradient(
-    ellipse at 78% 0%,
-    color-mix(in srgb, var(--glow) 10%, transparent),
-    transparent 60%
-  );
-  box-shadow: inset 0 0 16vw
-    color-mix(in srgb, var(--background) 75%, transparent);
+:root[data-theme]:not([data-theme="default"]) .app-sidebar {
+  background-color: color-mix(in srgb, var(--season-tint) 4%, var(--sidebar));
 }
-.seasonal-atmosphere {
-  pointer-events: none;
-  user-select: none;
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-}
-.seasonal-hero-light {
-  z-index: -1;
-  inset: -24px -12px -8px;
-  border-radius: 24px;
-  background: radial-gradient(
-    ellipse at 80% 0%,
-    color-mix(in srgb, var(--glow) 16%, transparent),
-    transparent 70%
+:root[data-theme]:not([data-theme="default"]) .app-header {
+  background-color: color-mix(
+    in srgb,
+    var(--season-tint) 3%,
+    var(--background)
   );
 }
-:root[data-theme="halloween"] .seasonal-hero-light {
-  background:
-    radial-gradient(
-      ellipse at 76% 110%,
-      color-mix(in srgb, var(--chart-2) 10%, transparent),
-      transparent 64%
-    ),
-    radial-gradient(
-      ellipse at 80% 0%,
-      color-mix(in srgb, var(--glow) 12%, transparent),
-      transparent 68%
-    );
+.text-primary {
+  color: var(--accent-ink);
 }
-:root[data-theme="christmas"] .seasonal-hero-light {
-  background:
-    radial-gradient(
-      circle at 82% 20%,
-      color-mix(in srgb, var(--glow) 18%, transparent),
-      transparent 6%
-    ),
-    radial-gradient(
-      circle at 89% 35%,
-      color-mix(in srgb, var(--glow) 12%, transparent),
-      transparent 4%
-    ),
-    radial-gradient(
-      ellipse at 80% 0%,
-      color-mix(in srgb, var(--glow) 15%, transparent),
-      transparent 68%
-    );
+[data-slot="button"][data-variant="default"]:hover {
+  background-color: var(--user-accent-hover, var(--primary));
 }
-.seasonal-header {
-  z-index: 0;
-}
-.seasonal-shell {
-  position: fixed;
-  z-index: -1;
-}
-.seasonal-particles span {
-  --particle-x: 50%;
-  --particle-duration: 25s;
-  --particle-delay: 0s;
+.logo-season-detail {
   position: absolute;
-  left: var(--particle-x);
-  top: -6px;
-  width: 2px;
-  height: 2px;
-  border-radius: 50%;
-  background: var(--foreground);
-  opacity: 0;
-  animation: seasonal-snow var(--particle-duration) linear infinite;
-  animation-delay: var(--particle-delay);
-}
-.seasonal-header span {
-  top: auto;
+  right: -5px;
   bottom: -4px;
-  background: var(--chart-1);
-  animation-name: seasonal-ember;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--sidebar);
+  color: var(--season-decoration);
+  pointer-events: none;
 }
-.seasonal-particles[data-paused="true"] span {
-  animation-play-state: paused;
+.seasonal-detail {
+  color: var(--season-decoration);
 }
-:root[data-theme]:not([data-theme="default"]) .seasonal-bike {
-  border-color: color-mix(in srgb, var(--glow) 38%, var(--border));
+.accent-swatch {
+  position: relative;
+  display: block;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+}
+.accent-swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.accent-swatch span {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+.accent-swatch input:checked + span {
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--glow) 18%, transparent),
-    0 0 24px color-mix(in srgb, var(--glow) 5%, transparent);
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--ring);
 }
-:root[data-theme]:not([data-theme="default"])
-  .seasonal-bike
-  [data-status="positive"] {
-  background: var(--accent-muted);
-  color: var(--primary);
-}
-@keyframes seasonal-ember {
-  0%,
-  100% {
-    opacity: 0;
-    transform: translate(0, 0);
-  }
-  35% {
-    opacity: 0.28;
-  }
-  90% {
-    opacity: 0;
-    transform: translate(12px, -80px);
-  }
-}
-@keyframes seasonal-snow {
-  0%,
-  100% {
-    opacity: 0;
-    transform: translate(0, 0);
-  }
-  20%,
-  70% {
-    opacity: 0.12;
-  }
-  95% {
-    opacity: 0;
-    transform: translate(24px, 100vh);
-  }
+.accent-swatch input:focus-visible + span {
+  outline: 2px solid var(--ring);
+  outline-offset: 5px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .seasonal-particles {
-    display: none !important;
-  }
-  .seasonal-particles span {
-    animation: none !important;
-  }
   *,
   *::before,
   *::after {

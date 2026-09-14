@@ -86,7 +86,12 @@ describe("pre-paint bootstrap", () => {
   ])("uses the local calendar for old or unreadable storage: %s", (stored) => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 11, 1));
-    const document = { documentElement: { dataset: { theme: "default" } } };
+    const document = {
+      documentElement: {
+        dataset: { theme: "default" },
+        style: { setProperty: vi.fn() },
+      },
+    };
     runInNewContext(seasonalThemeBootstrap, {
       document,
       Date,
@@ -97,7 +102,12 @@ describe("pre-paint bootstrap", () => {
   it("works when storage is blocked and honors saved overrides", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 31));
-    const document = { documentElement: { dataset: { theme: "default" } } };
+    const document = {
+      documentElement: {
+        dataset: { theme: "default" },
+        style: { setProperty: vi.fn() },
+      },
+    };
     runInNewContext(seasonalThemeBootstrap, {
       document,
       Date,

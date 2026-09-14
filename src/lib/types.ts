@@ -228,6 +228,10 @@ export type Settings = z.infer<typeof settingsSchema>;
 export const seasonalPreferenceSchema = z.object({
   mode: z.enum(seasonalModes),
   theme: z.enum(seasonalThemes),
+  accentColor: z
+    .string()
+    .regex(/^#[\da-f]{6}$/i, "Gültige Akzentfarbe erforderlich")
+    .optional(),
 });
 export const appStateSchema = z.object({
   version: z.literal(1),

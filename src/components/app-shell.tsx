@@ -11,7 +11,6 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
-  Landmark,
   LayoutDashboard,
   LockKeyhole,
   Menu,
@@ -29,7 +28,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ExcelActions } from "@/components/excel-actions";
-import { SeasonalAtmosphere } from "@/components/seasonal-atmosphere";
+import { FinanzblickMark, SeasonalIcon } from "@/components/seasonal-icons";
 import { useFinance } from "@/components/finance-provider";
 import { cn } from "@/lib/utils";
 
@@ -69,7 +68,15 @@ export function AppShell({
             index === 5 && "mt-8",
           )}
         >
-          <item.icon className="size-[18px]" />
+          {item.href === "/" || item.href === "/pockets" ? (
+            <SeasonalIcon
+              slot={item.href === "/" ? "navigation" : "pockets"}
+              className="size-[18px]"
+              fallback={<item.icon className="size-[18px]" />}
+            />
+          ) : (
+            <item.icon className="size-[18px]" />
+          )}
           {item.label}
           {pathname === item.href && (
             <span className="ml-auto size-1.5 rounded-full bg-primary" />
@@ -79,22 +86,16 @@ export function AppShell({
     </nav>
   );
   return (
-    <div
-      className="app-shell relative isolate min-h-screen"
-      data-seasonal-atmosphere={pathname === "/" ? "overview" : "none"}
-    >
-      {pathname === "/" && <SeasonalAtmosphere placement="shell" />}
+    <div className="app-shell min-h-screen">
       <a
         href="#main-content"
         className="sr-only z-50 rounded bg-primary p-3 text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
       >
         Zum Inhalt springen
       </a>
-      <aside className="fixed inset-y-0 left-0 z-30 hidden w-[224px] flex-col border-r bg-sidebar lg:flex">
+      <aside className="app-sidebar fixed inset-y-0 left-0 z-30 hidden w-[224px] flex-col border-r bg-sidebar lg:flex">
         <Link href="/" className="flex h-[76px] items-center gap-2.5 px-6">
-          <span className="rounded-lg bg-primary p-2 text-primary-foreground">
-            <Landmark className="size-4" />
-          </span>
+          <FinanzblickMark />
           <span className="text-[16px] font-semibold tracking-tight">
             Finanz
             <span className="font-normal text-muted-foreground">blick</span>
@@ -119,8 +120,7 @@ export function AppShell({
         </div>
       </aside>
       <div className="lg:pl-[224px]">
-        <header className="isolate sticky top-0 z-20 flex h-[76px] items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur-sm sm:px-7 xl:px-9">
-          {pathname === "/" && <SeasonalAtmosphere placement="header" />}
+        <header className="app-header sticky top-0 z-20 flex h-[76px] items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur-sm sm:px-7 xl:px-9">
           <div className="relative z-10 flex items-center gap-3">
             <Button
               size="icon"

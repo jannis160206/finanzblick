@@ -1,14 +1,22 @@
+import { accentTokens } from "@/lib/appearance";
+
 export const seasonalThemes = [
   "default",
   "halloween",
   "christmas",
   "newyear",
 ] as const;
+export const selectableSeasonalThemes = [
+  "default",
+  "halloween",
+  "christmas",
+] as const;
 export const seasonalModes = ["auto", "default", "fixed"] as const;
 export type SeasonalTheme = (typeof seasonalThemes)[number];
 export type SeasonalPreference = {
   mode: (typeof seasonalModes)[number];
   theme: SeasonalTheme;
+  accentColor?: string;
 };
 export const defaultSeasonalPreference: SeasonalPreference = {
   mode: "auto",
@@ -43,7 +51,9 @@ export function resolveSeasonalTheme(
 
 export const seasonalThemeBootstrap = `(()=>{
   const resolve = ${resolveSeasonalTheme.toString()};
+  const accent = ${accentTokens.toString()};
   let preference;
   try { preference = JSON.parse(localStorage.getItem("finanzdashboard.v1") || "null")?.seasonalTheme; } catch {}
   document.documentElement.dataset.theme = resolve(preference);
+  for (const [token, value] of Object.entries(accent(preference?.accentColor))) document.documentElement.style.setProperty(token, value);
 })();`;

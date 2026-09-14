@@ -16,10 +16,9 @@ import {
   type Settings as SettingsData,
 } from "@/lib/types";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
+import { AppearanceControls } from "@/components/appearance-controls";
 import {
   defaultSeasonalPreference,
-  seasonalLabels,
-  seasonalThemes,
   type SeasonalPreference,
 } from "@/lib/seasonal-theme";
 import { localToday } from "@/lib/planning";
@@ -171,6 +170,33 @@ export function Settings() {
         })}
         className="space-y-5"
       >
+        <section
+          id="jahreszeit"
+          className="panel p-5 sm:p-6"
+          aria-labelledby="appearance-heading"
+        >
+          <h2
+            id="appearance-heading"
+            className="mb-5 font-semibold tracking-tight"
+          >
+            Jahreszeit / Erscheinungsbild
+          </h2>
+          <Controller
+            name="seasonalTheme"
+            control={form.control}
+            render={({ field }) => (
+              <AppearanceControls
+                value={field.value}
+                inputRef={field.ref}
+                onBlur={field.onBlur}
+                onChange={(value) => {
+                  field.onChange(value);
+                  setPreview(value);
+                }}
+              />
+            )}
+          />
+        </section>
         <div className="grid gap-5 xl:grid-cols-2">
           <section id="motorrad" className="panel p-5 sm:p-6">
             <SectionHeading
@@ -293,70 +319,6 @@ export function Settings() {
             </div>
           </section>
         </div>
-        <details id="jahreszeit" className="panel p-5 sm:p-6">
-          <summary className="cursor-pointer text-sm font-semibold">
-            Jahreszeit
-          </summary>
-          <Controller
-            name="seasonalTheme"
-            control={form.control}
-            render={({ field }) => {
-              const change = (value: SeasonalPreference) => {
-                field.onChange(value);
-                setPreview(value);
-              };
-              return (
-                <div className="mt-5 grid gap-5 sm:grid-cols-2">
-                  <div>
-                    <Label htmlFor="seasonal-mode">Modus</Label>
-                    <select
-                      id="seasonal-mode"
-                      ref={field.ref}
-                      onBlur={field.onBlur}
-                      className="select-input mt-2 w-full"
-                      value={field.value.mode}
-                      onChange={(event) =>
-                        change({
-                          ...field.value,
-                          mode: event.target
-                            .value as SeasonalPreference["mode"],
-                        })
-                      }
-                    >
-                      <option value="auto">Automatisch</option>
-                      <option value="default">Immer Standard</option>
-                      <option value="fixed">Festes Theme</option>
-                    </select>
-                  </div>
-                  {field.value.mode === "fixed" && (
-                    <div>
-                      <Label htmlFor="seasonal-theme">Theme</Label>
-                      <select
-                        id="seasonal-theme"
-                        className="select-input mt-2 w-full"
-                        value={field.value.theme}
-                        onBlur={field.onBlur}
-                        onChange={(event) =>
-                          change({
-                            ...field.value,
-                            theme: event.target
-                              .value as SeasonalPreference["theme"],
-                          })
-                        }
-                      >
-                        {seasonalThemes.map((theme) => (
-                          <option key={theme} value={theme}>
-                            {seasonalLabels[theme]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-              );
-            }}
-          />
-        </details>
         {form.formState.isDirty && (
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4">
             <span className="flex items-center gap-2 text-xs text-muted-foreground">

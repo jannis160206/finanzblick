@@ -27,7 +27,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
-import { SeasonalAtmosphere } from "@/components/seasonal-atmosphere";
+import { SeasonalIcon } from "@/components/seasonal-icons";
 import {
   EmptyState,
   PageHeading,
@@ -100,15 +100,20 @@ export function Overview() {
     .map((row) => ({ ...row, label: monthLabel(row.month, true) }));
   return (
     <>
-      <div className="seasonal-hero relative isolate">
-        <SeasonalAtmosphere placement="hero" />
+      <div className="overview-heading">
         <PageHeading
           eyebrow="DEIN FINANZCOCKPIT"
           title="Übersicht"
           description={`Berechnet für ${dateLabel(state.settings.asOf)} · Alle Beträge in Euro`}
         >
           <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
-            <CalendarDays className="size-4 text-muted-foreground" />
+            <SeasonalIcon
+              slot="overview"
+              className="seasonal-detail size-4"
+              fallback={
+                <CalendarDays className="size-4 text-muted-foreground" />
+              }
+            />
             {monthLabel(d.currentMonth)}
           </span>
           <Button asChild size="sm">
@@ -151,7 +156,15 @@ export function Overview() {
               <p className="text-xs font-medium text-muted-foreground">
                 {kpi.label}
               </p>
-              <kpi.icon className={cn("size-4", kpi.color)} />
+              {kpi.label === "Ausgaben · Ist" ? (
+                <SeasonalIcon
+                  slot="expense"
+                  className="seasonal-detail size-4"
+                  fallback={<kpi.icon className={cn("size-4", kpi.color)} />}
+                />
+              ) : (
+                <kpi.icon className={cn("size-4", kpi.color)} />
+              )}
             </div>
             <p className="mt-5 text-[28px] font-semibold tracking-tight tabular-nums">
               {currency(kpi.value)}
@@ -214,7 +227,7 @@ export function Overview() {
             })}
           </div>
         </section>
-        <section className="panel seasonal-bike relative overflow-hidden p-5 sm:p-6">
+        <section className="panel relative overflow-hidden p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-semibold">
               <Bike className="size-5 text-chart-4" />

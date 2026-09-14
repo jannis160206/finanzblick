@@ -12,6 +12,7 @@ import {
 } from "react";
 import { usePathname } from "next/navigation";
 import { useFinance } from "@/components/finance-provider";
+import { accentTokens } from "@/lib/appearance";
 import {
   resolveSeasonalTheme,
   type SeasonalPreference,
@@ -65,8 +66,14 @@ export function SeasonalThemeProvider({ children }: { children: ReactNode }) {
     day === null ? "default" : resolveSeasonalTheme(preference, new Date(day));
   useLayoutEffect(() => {
     // Keep the pre-paint bootstrap until the finance store has hydrated.
-    if (ready && day !== null) document.documentElement.dataset.theme = theme;
-  }, [ready, day, theme]);
+    if (!ready || day === null) return;
+    document.documentElement.dataset.theme = theme;
+    for (const [token, value] of Object.entries(
+      accentTokens(preference?.accentColor),
+    )) {
+      document.documentElement.style.setProperty(token, value);
+    }
+  }, [ready, day, theme, preference?.accentColor]);
   return (
     <SeasonalContext.Provider value={{ theme, setPreview }}>
       {children}
