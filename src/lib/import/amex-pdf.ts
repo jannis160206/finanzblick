@@ -1,6 +1,7 @@
 import { classifyStatementRows } from "@/lib/calc";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { transactionSchema } from "@/lib/types";
+import { numberStatementRows } from "./identity";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "./limits";
 import { hasTerminalText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import {
@@ -44,12 +45,25 @@ export function parseAmexText(
   let pendingLine = 0;
   let lineNumber = 0;
   let messy = false;
+  let descriptionHasAmount = false;
+  let foreignAmount: RegExpMatchArray | null = null;
+  let foreignCurrency = "";
+  let foreignRate = false;
+  const detail = (line: string) => {
+    if (pending)
+      pending.rawDetails = [...(pending.rawDetails ?? []), line.slice(0, 1000)].slice(0, 20);
+  };
   const flush = () => {
     if (!pending) return;
+    const confirmedForeign = foreignAmount && foreignCurrency && foreignRate;
+    if (confirmedForeign) {
+      pending.description = foreignAmount![1];
+      detail(`Originalbetrag: ${foreignAmount![2]} ${foreignCurrency}`);
+    }
     const time = statementTime(pending.time, pending.rawDescription, pending.description);
     if (time) pending.time = time;
     const parsed = transactionSchema.safeParse(recoverMerchant(pending));
-    if (parsed.success && !messy) result.rows.push(parsed.data);
+    if (parsed.success && !messy && (!descriptionHasAmount || confirmedForeign)) result.rows.push(parsed.data);
     else {
       result.skipped++;
       result.issues.push({
@@ -62,6 +76,10 @@ export function parseAmexText(
     }
     pending = null;
     messy = false;
+    descriptionHasAmount = false;
+    foreignAmount = null;
+    foreignCurrency = "";
+    foreignRate = false;
     if (result.rows.length + result.issues.length > MAX_STATEMENT_ROWS)
       throw new Error("Ein Import darf höchstens 100.000 Buchungen enthalten.");
   };
@@ -106,8 +124,13 @@ export function parseAmexText(
           category: "Prüfen",
           includeInPlan: true,
         };
-        // Foreign-currency figures in the description need manual confirmation of the EUR column.
-        messy = /\d[\d.]*,\d{2}/.test(pending.description) && !hasTerminalText(pending.description);
+        // A second amount is only safe with the statement's currency/rate details.
+        foreignAmount = tail && !hasTerminalText(tail[1])
+          ? tail[1].match(/^(.*?)\s+(\d[\d.,]*[.,]\d{2})$/)
+          : null;
+        descriptionHasAmount = !hasTerminalText(pending.description) &&
+          (!!foreignAmount || /\d[\d.]*,\d{2}/.test(pending.description));
+        messy = !!foreignAmount && /\d[\d.,]*[.,]\d{2}/.test(foreignAmount[1]);
         pendingLine = lineNumber;
       } else if (pending && /^(?:(?:Uhrzeit|Time):?\s*)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:Uhr|AM|PM))?$/i.test(line)) {
         const time = statementTime(line);
@@ -137,6 +160,21 @@ export function parseAmexText(
         };
         pendingLine = lineNumber;
         messy = true;
+      } else if (pending && foreignAmount && /^(?:UNITED STATES DOLLAR|US DOLLAR|USD|POUND STERLING|BRITISH POUND|SWISS FRANC|SCHWEIZER FRANKEN|CANADIAN DOLLAR|AUSTRALIAN DOLLAR|JAPANESE YEN)$/i.test(line)) {
+        foreignCurrency = line;
+        detail(line);
+      } else if (pending && foreignCurrency && /^Referenzwechselkurs\s+\d+(?:[.,]\d+)?\s*\+\s*Entgelt in EUR\s+\d[\d.]*,\d{2}$/i.test(line)) {
+        // The fee is already included in the EUR charge, not a second movement.
+        foreignRate = true;
+        detail(line);
+      } else if (pending && (
+        (/\b(?:OEBB|ÖBB)\b/i.test(pending.description) && /^\d+\s+(?:OEBB|ÖBB) TICKET\s+\d+$/i.test(line)) ||
+        /^Flugstrecke:\s*Von:\s*\S.+$/i.test(line) ||
+        /^Nach:\s*.+\s+Fluglinie:\s*\w+\s+Klasse:\s*\w+$/i.test(line) ||
+        /^(?:Autovermietung Ort|Rückgabe):\s*.+\s+Datum:\s*\d{2}\/\d{2}\/\d{2}(?:\d{2})?$/i.test(line) ||
+        /^Kilometer(?:\s+\d+)?\s+Vertragsnummer:\s*[\w-]+$/i.test(line)
+      )) {
+        detail(line);
       } else if (pending && unresolvedTerminal(pending.description) && line) {
         pending.rawDetails = [...(pending.rawDetails ?? []), line.slice(0, 1000)].slice(0, 20);
         pending = recoverMerchant<StatementDraft>(pending);
@@ -160,7 +198,7 @@ export function parseAmexText(
     }
     flush();
   }
-  result.rows = classifyStatementRows(result.rows);
+  result.rows = numberStatementRows(classifyStatementRows(result.rows));
   if (!result.rows.length && !result.issues.length)
     result.issues.push({
       file,

@@ -47,6 +47,7 @@ export type ImportMetadata = {
   accountSnapshots?: AppState["accountSnapshots"];
   reviewQueue?: ReviewItem[];
   issues?: string[];
+  reparsedFiles?: string[];
   merchantRepairs?: Transaction[];
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
@@ -378,6 +379,7 @@ export function prepareStatementImport(
       merchantRepairs: candidates.filter((row) => !!row.rawDescription),
       reviewQueue: review,
       issues,
+      reparsedFiles: [...new Set(results.filter((result) => result.source !== null).map((result) => result.file))],
       accountSnapshots: results.flatMap(
         (result) => result.accountSnapshots ?? [],
       ),
@@ -590,7 +592,12 @@ export function commitStatementImport(
                 Math.max(0, importedCount),
               issues: [
                 ...new Set([
-                  ...(state.importStatus?.issues ?? []),
+                  ...(state.importStatus?.issues ?? []).filter((issue) =>
+                    !(metadata.reparsedFiles ?? []).some((file) =>
+                      issue.startsWith(`${file}: `) ||
+                      (issue.startsWith(`${file}, Zeile `) && /^\d+: /.test(issue.slice(file.length + 8))),
+                    ),
+                  ),
                   ...(metadata.issues ?? []),
                 ]),
               ],

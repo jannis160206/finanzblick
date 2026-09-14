@@ -45,6 +45,7 @@ type Header = {
   description: number;
   details: number[];
   amount: number;
+  amountColumns: number[];
   incoming: number;
   outgoing: number;
   category: number;
@@ -217,11 +218,13 @@ function headerFor(cells: string[]): Header | null {
     "umsatzbeschreibung",
     "transaktionsdetails",
   );
-  const amount = headers.findIndex(
-    (name) =>
+  const amountColumns = headers.flatMap(
+    (name, index) =>
       amountHeaders.includes(name) ||
-      (name.startsWith("geld") && name.includes("ein") && name.includes("aus")),
+      (name.startsWith("geld") && name.includes("ein") && name.includes("aus"))
+        ? [index] : [],
   );
+  const amount = amountColumns[0] ?? -1;
   const incoming = index(
     "geldeingezahlt",
     "eingezahlt",
@@ -255,6 +258,7 @@ function headerFor(cells: string[]): Header | null {
     details: headers.flatMap((name, index) => index !== description &&
       /verwendungszweck|beschreibung|buchungstext|details|zusatz|merchant|haendler|empfaenger|zahlungsempfaenger/.test(name) ? [index] : []),
     amount,
+    amountColumns,
     incoming,
     outgoing,
     category: index("kategorie", "category"),
@@ -278,6 +282,16 @@ function headerFor(cells: string[]): Header | null {
   };
 }
 
+function isRevolutTaxDetailHeader(cells: string[]): boolean {
+  const labels = cells.map(normalized);
+  const has = (...names: string[]) => names.every((name) => labels.includes(name));
+  // Lot valuations/cost bases are not additional cash movements. Never infer
+  // spending or income from unit prices, gross values or capital gains.
+  return (has("datumdesverkaufs", "datumdeskaufs", "wertdesverkaufs", "wertdeskaufs", "kapitalertrage") &&
+    (labels.includes("unitssold") || labels.includes("verkaufteeinheiten"))) ||
+    has("datum", "beschreibungundsymbol", "isin", "anzahl", "bruttowert", "nettowert");
+}
+
 // Actual Umsatzliste export: booking date; text; value date; amount; currency; timestamp.
 function isRaiffeisenRecord(cells: string[]) {
   return (
@@ -295,6 +309,7 @@ const raiffeisenHeader: Header = {
   description: 1,
   details: [],
   amount: 3,
+  amountColumns: [3],
   currency: 4,
   incoming: -1,
   outgoing: -1,
@@ -374,6 +389,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
           ? raiffeisenHeader
           : null;
     let seenTransactionBlock = false;
+    let taxDetails = false;
     for (const row of table) {
       const nonempty = row.cells.filter((cell) => cell.trim());
       if (!nonempty.length || /^sep=/i.test(nonempty[0])) continue;
@@ -381,6 +397,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
       if (source === "Revolut") {
         const section = nonempty[0].match(/^(.+?)\s*\(([A-Z]{3})\)$/);
         if (section) {
+          taxDetails = false;
           pocket = clean(section[1]);
           sectionCurrency = section[2];
           active = !hasTransactionBlocks;
@@ -388,10 +405,26 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
           continue;
         }
         if (/kontoauszug zu transaktionen/i.test(lineText)) {
+          taxDetails = false;
           active = true;
           seenTransactionBlock = true;
           header = null;
           continue;
+        }
+        if (isRevolutTaxDetailHeader(row.cells)) {
+          taxDetails = true;
+          active = false;
+          header = null;
+          continue;
+        }
+        if (taxDetails) {
+          if (parseStatementDate(nonempty[0])) {
+            result.skipped++;
+            continue;
+          }
+          // A new heading/separator ends the known table. Do not hide later
+          // unknown layouts just because they follow a tax report.
+          taxDetails = false;
         }
         if (
           /saldoübersicht|kontoübersicht|kontodaten|zusammenfassung/i.test(
@@ -428,6 +461,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         sourceCategory = "",
         bankReference = "",
         holder = "",
+        originalCurrency = "",
         currency = sectionCurrency;
       if (source === "Amex" && nonempty.length === 1) {
         const match = nonempty[0].match(
@@ -481,7 +515,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
           index < 0 ? "" : (row.cells[index] ?? "");
         dateText = get(header.date);
         description = clean(get(header.description));
-        const reserved = new Set([header.date, header.time, header.description, header.amount, header.incoming,
+        const reserved = new Set([header.date, header.time, header.description, ...header.amountColumns, header.incoming,
           header.outgoing, header.category, header.holder, header.currency, header.reference]);
         rawDetails = [...new Set([...header.details, ...row.cells.map((_, index) => index).filter((index) =>
           index > header!.description && !reserved.has(index))])]
@@ -493,6 +527,27 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         currency = get(header.currency) || sectionCurrency;
         if (header.amount >= 0) {
           amount = parseStatementAmount(get(header.amount));
+          if (source === "Revolut" && currency.trim().toUpperCase() !== "EUR" &&
+            header.amountColumns.length === 2) {
+            // Consolidated tax exports repeat the movement header: original
+            // currency, then its reported EUR valuation. Balances/fees are not
+            // candidates, and an unlabelled/ambiguous amount is never converted.
+            const euros = header.amountColumns.filter((index) => /€|\bEUR\b/i.test(get(index)));
+            if (euros.length === 1) {
+              const euro = parseStatementAmount(get(euros[0]));
+              if (euro !== null) {
+                const original = header.amountColumns.find((index) => index !== euros[0])!;
+                rawDetails = [
+                  `Originalbetrag (${currency}): ${get(original)}`.slice(0, 1000),
+                  `Eurogegenwert laut Auszug: ${get(euros[0])}`.slice(0, 1000),
+                  ...rawDetails,
+                ].slice(0, 20);
+                amount = euro;
+                originalCurrency = currency.trim().toUpperCase();
+                currency = "EUR";
+              }
+            }
+          }
           if (amount !== null && source === "Amex") amount = -amount;
         } else {
           const incoming =
@@ -515,12 +570,13 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
       }
       const date = parseStatementDate(dateText);
       time ??= statementTime(description, dateText);
+      const bookingPocket = originalCurrency ? `${pocket} (${originalCurrency})` : pocket;
       const draft: StatementDraft = {
         id: crypto.randomUUID(),
         date: date ?? "",
         ...(time ? { time } : {}),
         bank: source,
-        pocket,
+        pocket: bookingPocket,
         description,
         ...(rawDetails.length ? { rawDetails } : {}),
         amount,
@@ -551,7 +607,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         pocket:
           source === "Amex" && /\braphael\b/i.test(`${holder} ${description}`)
             ? "AMEX Raphael"
-            : pocket,
+            : bookingPocket,
         description,
         ...(rawDetails.length ? { rawDetails } : {}),
         category: "Prüfen",

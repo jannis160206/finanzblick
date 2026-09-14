@@ -136,12 +136,15 @@ export function classify(
     /auszahlung bei pocket/i.test(description) &&
     absolute < 2;
   const isAmazon = !explicitInternal && /amazon|amz/i.test(description);
+  const isCurrencyExchange = /^revolut$/i.test(transaction.bank ?? "") &&
+    /^umtausch$/i.test(sourceCategory) && /^umgetauscht (?:in|von) [a-z]{3}$/i.test(description);
   const isInternal =
     /einzustecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\/überweisung erhalten/i.test(
       description,
     ) ||
     isCardSettlement ||
     isCashWithdrawal ||
+    isCurrencyExchange ||
     transaction.category === "Transfer intern" ||
     /transfer intern/i.test(transaction.sourceCategory ?? "");
   const detectedTransfer = !forcedLunch && !sharedHoliday && !reimbursement && (isRoundUp || (isInternal && !isAmazon));
