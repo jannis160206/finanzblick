@@ -137,9 +137,11 @@ test("settings contain only rare controls and save actions only appear after cha
   await expect(
     page.getByRole("button", { name: "Einstellungen speichern" }),
   ).toHaveCount(0);
-  await page.getByLabel("Motorrad", { exact: true }).fill("9000");
-  await expect(page.getByRole("button", { name: "Verwerfen" })).toBeVisible();
-  await page.getByRole("button", { name: "Einstellungen speichern" }).click();
+  await page.getByRole("button", { name: "Motorrad bearbeiten" }).click();
+  const goal = page.getByRole("dialog");
+  await goal.getByLabel("Betrag", { exact: true }).fill("9000");
+  await goal.getByRole("button", { name: "Speichern", exact: true }).click();
+  await expect(goal).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Einstellungen speichern" }),
   ).toHaveCount(0);
@@ -157,23 +159,15 @@ test("settings contain only rare controls and save actions only appear after cha
   await expect(page.getByText(/Round-up/)).toHaveCount(1);
 });
 
-test("settings deduplicate and sort rates without overwriting newer hidden balances and dates", async ({
+test("TR settings deduplicate and sort rates without overwriting newer balances and dates", async ({
   page,
 }) => {
   await page.goto("/einstellungen");
   const initial = await stored(page);
-  await expect(page.getByLabel("Zinssatz 1", { exact: true })).toHaveValue(
-    "2.25",
-  );
-  await expect(page.getByLabel("Zinssatz 2", { exact: true })).toHaveValue(
-    "2.5",
-  );
-  await page.getByRole("button", { name: "Zinsänderung hinzufügen" }).click();
-  await page.getByLabel("Zinssatz 3 gültig ab").fill("2026-09-17");
-  await page.getByLabel("Zinssatz 3", { exact: true }).fill("3.5");
-  await page.getByRole("button", { name: "Zinsänderung hinzufügen" }).click();
-  await page.getByLabel("Zinssatz 4 gültig ab").fill("2026-06-01");
-  await page.getByLabel("Zinssatz 4", { exact: true }).fill("2.75");
+  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveValue("2.25");
+  await page.getByLabel("TR Kontostand", { exact: true }).fill("5500");
+  await page.getByLabel("TR Standdatum").fill("2026-09-12");
+  await page.getByLabel("Zinssatz p.a.", { exact: true }).fill("3.5");
 
   // Another tab updates hidden fields while this form still has old defaults.
   await page.clock.setFixedTime(new Date("2026-09-13T12:00:00Z"));
@@ -182,6 +176,12 @@ test("settings deduplicate and sort rates without overwriting newer hidden balan
     asOf: "2026-09-13",
     baselineDate: "2026-09-10",
     balances: { Notgroschen: 6123.45, Urlaub: 2100, Sparkonto: 3200, Motorrad: 400 },
+    interestRates: [
+      { date: "2026-01-01", rate: 0.0225 },
+      { date: "2026-06-01", rate: 0.0275 },
+      { date: "2026-09-12", rate: 0.03 },
+      { date: "2026-09-13", rate: 0.04 },
+    ],
   };
   await page.evaluate(
     ({ key, state }) => {
@@ -192,39 +192,42 @@ test("settings deduplicate and sort rates without overwriting newer hidden balan
         }),
       );
     },
-    { key, state: { ...initial, settings: latestSettings } },
+    { key, state: { ...initial, settings: latestSettings, trBalances: [{ date: "2026-09-13", balance: 6123.45 }] } },
   );
   await expect
     .poll(async () => (await stored(page)).settings)
     .toMatchObject(latestSettings);
-  await expect(page.getByLabel("Zinssatz 4", { exact: true })).toHaveValue(
-    "2.75",
+  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveValue(
+    "3.5",
   );
 
-  await page.getByRole("button", { name: "Einstellungen speichern" }).click();
+  await page.getByRole("button", { name: "Trade Republic speichern" }).click();
   await expect(
-    page.getByRole("button", { name: "Einstellungen speichern" }),
+    page.getByRole("button", { name: "Trade Republic speichern" }),
   ).toHaveCount(0);
   const expectedSettings = {
     ...latestSettings,
     interestRates: [
       { date: "2026-01-01", rate: 0.0225 },
       { date: "2026-06-01", rate: 0.0275 },
-      { date: "2026-09-17", rate: 0.035 },
+      { date: "2026-09-12", rate: 0.035 },
+      { date: "2026-09-13", rate: 0.04 },
     ],
   };
   expect((await stored(page)).settings).toEqual(expectedSettings);
   await page.reload();
-  expect((await stored(page)).settings).toEqual(expectedSettings);
-  await expect(page.getByLabel("Zinssatz 2 gültig ab")).toHaveValue(
-    "2026-06-01",
-  );
-  await expect(page.getByLabel("Zinssatz 3", { exact: true })).toHaveValue(
-    "3.5",
-  );
-  await expect(page.getByLabel("Zinssatz 4 gültig ab")).toHaveCount(0);
+  const restored = await stored(page);
+  expect(restored.settings).toEqual(expectedSettings);
+  expect(restored.trBalances).toEqual(expect.arrayContaining([
+    { date: "2026-09-12", balance: 5500 },
+    { date: "2026-09-13", balance: 6123.45 },
+  ]));
+  expect(restored.trBalances).toHaveLength(2);
+  await expect(page.getByLabel("TR Standdatum")).toHaveValue("2026-09-13");
+  await expect(page.getByLabel("TR Kontostand", { exact: true })).toHaveValue("6123.45");
+  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveValue("4");
   await expect(
-    page.getByRole("button", { name: "Einstellungen speichern" }),
+    page.getByRole("button", { name: "Trade Republic speichern" }),
   ).toHaveCount(0);
 });
 

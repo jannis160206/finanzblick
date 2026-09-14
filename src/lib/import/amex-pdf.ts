@@ -1,4 +1,5 @@
 import { classifyStatementRows } from "@/lib/calc";
+import { statementTime } from "@/lib/holidays-at-kaernten";
 import { transactionSchema } from "@/lib/types";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "./limits";
 import {
@@ -44,6 +45,8 @@ export function parseAmexText(
   let messy = false;
   const flush = () => {
     if (!pending) return;
+    const time = statementTime(pending.time, pending.description);
+    if (time) pending.time = time;
     const parsed = transactionSchema.safeParse(pending);
     if (parsed.success && !messy) result.rows.push(parsed.data);
     else {
@@ -105,6 +108,10 @@ export function parseAmexText(
         // Foreign-currency figures in the description need manual confirmation of the EUR column.
         messy = /\d[\d.]*,\d{2}/.test(pending.description);
         pendingLine = lineNumber;
+      } else if (pending && /^(?:(?:Uhrzeit|Time):?\s*)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:Uhr|AM|PM))?$/i.test(line)) {
+        const time = statementTime(line);
+        if (time) pending.time = time;
+        else messy = true;
       } else if (pending && /^CR$/i.test(line)) {
         if (pending.amount !== null) pending.amount = Math.abs(pending.amount);
         else messy = true;

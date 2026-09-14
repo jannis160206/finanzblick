@@ -44,6 +44,16 @@ export type ImportMetadata = {
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
 
+export function queueLedgerReview(state: AppState): AppState {
+  const queue = new Map((state.reviewQueue ?? []).map((item) => [item.id, item]));
+  for (const draft of state.transactions) {
+    if (classify(draft).category !== "Prüfen") continue;
+    if ([...queue.values()].some((item) => item.kind === "booking" && item.draft.id === draft.id)) continue;
+    queue.set(draft.id, { kind: "booking", id: draft.id, draft, message: "Bestehende Buchung: Händler noch nicht sicher zugeordnet." });
+  }
+  return { ...state, reviewQueue: [...queue.values()] };
+}
+
 function receipt(row: Transaction, rowId?: string): FixedReceipt {
   return {
     key: statementFingerprint(row),
@@ -406,8 +416,18 @@ export function commitStatementImport(
     ),
     ...decisions.flatMap(({ change }) => change.bookings),
   ]);
-  const current = applyFixedDecisions(learned, decisions);
-  const split = splitFixedBookings(current, rows);
+  const ledgerIds = new Set(state.transactions.map((row) => row.id));
+  const current = applyFixedDecisions({ ...learned,
+    transactions: learned.transactions.map((row) => {
+      const category = choices.get(merchantRuleKey(row));
+      if (!category || classify(row).category !== "Prüfen") return row;
+      const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
+      const result = classify(updated);
+      return { ...updated, category: result.category, includeInPlan: result.includeInPlan };
+    }),
+  }, decisions);
+  // Existing ledger reviews edit in place; never append a second spend or fixed receipt.
+  const split = splitFixedBookings(current, rows.filter((row) => !ledgerIds.has(row.id)));
   const appended = appendStatementRows(current, split.rows);
   for (const row of split.rows) {
     const category = classify(row).category;

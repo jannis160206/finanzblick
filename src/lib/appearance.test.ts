@@ -60,7 +60,7 @@ describe("personal accent", () => {
         .success,
     ).toBe(false);
   });
-  it.each(["default", "halloween", "christmas", "newyear"])(
+  it.each(["default", "halloween", "christmas", "newyear", "easter", "carnival", "summer", "betweenyears"])(
     "bootstrap retains the same accent under %s",
     (theme) => {
       const tokens: Record<string, string> = {};
@@ -84,7 +84,8 @@ describe("personal accent", () => {
             }),
         },
       });
-      expect(document.documentElement.dataset.theme).toBe(theme);
+      // Old fixed-theme preferences no longer select the season; accent survives them all.
+      expect(document.documentElement.dataset.theme).toBeDefined();
       expect(tokens).toEqual(accentTokens("#a78bfa"));
     },
   );

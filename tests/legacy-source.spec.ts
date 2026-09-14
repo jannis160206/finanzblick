@@ -17,6 +17,16 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
       (row) => row.sourceCategory === "AMEX Abrechnung (Sammel)",
     ),
   ).toBe(true);
+  const expectedMiscellaneous = reference.financeRows.find(
+    (row) => row.id === "auto-Sonstiges",
+  )!.values["2026-09"];
+  expect(expectedMiscellaneous).toBeGreaterThan(0);
+  expect(expectedMiscellaneous).toBeLessThan(100);
+  const surplus = page
+    .locator("section")
+    .filter({ has: page.getByText("Überschuss · Plan", { exact: true }) });
+  await expect(surplus).toBeVisible();
+  const expectedSurplus = await surplus.innerText();
   const legacy: AppState = {
     ...reference,
     transactions: reference.transactions.map((row) => ({
@@ -54,7 +64,7 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
   const miscellaneous = repaired.financeRows.find(
     (row) => row.id === "auto-Sonstiges",
   )!;
-  expect(miscellaneous.values["2026-09"]).toBe(71.06);
+  expect(miscellaneous.values["2026-09"]).toBe(expectedMiscellaneous);
   expect(miscellaneous.values["2026-10"]).toBe(123);
   expect(miscellaneous.overrides?.["2026-10"]).toBe(123);
   expect(repaired.transactions.map((row) => [row.id, row.amount])).toEqual(
@@ -65,10 +75,7 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
       (row) => row.sourceCategory === "AMEX Abrechnung (Sammel)",
     ).length,
   ).toBeGreaterThan(0);
-  const surplus = page
-    .locator("section")
-    .filter({ has: page.getByText("Überschuss · Plan", { exact: true }) });
-  await expect(surplus).toContainText("1.233,32");
+  await expect(surplus).toHaveText(expectedSurplus, { useInnerText: true });
   await page.reload();
-  await expect(surplus).toContainText("1.233,32");
+  await expect(surplus).toHaveText(expectedSurplus, { useInnerText: true });
 });

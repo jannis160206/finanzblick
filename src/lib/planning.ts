@@ -1,4 +1,4 @@
-import { calculatePlan, monthKey, monthsForYear } from "@/lib/calc";
+import { calculatePlan, monthKey, monthsForYear, synchronizeGoals } from "@/lib/calc";
 import { variableCategories, type AppState, type Category } from "@/lib/types";
 import { repairKnownPlanningOverrides } from "@/lib/legacy-source";
 
@@ -27,7 +27,7 @@ const automaticLines: { label: string; category: Category; pattern: RegExp }[] =
   ];
 
 export function synchronizePlan(state: AppState): AppState {
-  state = repairKnownPlanningOverrides(state);
+  state = synchronizeGoals(repairKnownPlanningOverrides(state));
   const plan = calculatePlan(state.transactions, state.settings.asOf);
   const months = [...monthsForYear(2026), ...monthsForYear(2027)].filter(
     (month) => month >= monthKey(state.settings.asOf),

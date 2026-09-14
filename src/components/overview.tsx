@@ -58,12 +58,8 @@ const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function Overview() {
   const { state, dashboard: d } = useFinance();
-  const rates = d.timeline.find((row) => row.month === d.currentMonth)?.rates;
-  const monthSplit = (
-    ["Motorrad", "Sparkonto", "Urlaub", "Notgroschen"] as const
-  )
-    .filter((pocket) => (rates?.[pocket] ?? 0) !== 0)
-    .map((pocket) => `${pocket} ${currency(rates![pocket])}`);
+  const monthSplit = d.monthlyFunding;
+  const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
   const kpis = [
     {
       label: "Ersparnisse gesamt",
@@ -130,7 +126,12 @@ export function Overview() {
           aria-label="Pocket-Verteilung diesen Monat"
         >
           <span className="font-medium">Diesen Monat:</span>{" "}
-          {monthSplit.join(" · ")}
+          {monthSplit.map((item, index) => <span key={item.id} className="inline-flex items-center gap-1" data-funding-pot={item.pocket}>
+            {index > 0 && <span aria-hidden="true" className="mx-1">·</span>}
+            {item.name}{" "}
+            {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
+            {currency(item.amount)}
+          </span>)}
         </section>
       )}
       {(d.missingFixed.length > 0 ||
@@ -227,11 +228,11 @@ export function Overview() {
             })}
           </div>
         </section>
-        <section className="panel relative overflow-hidden p-5 sm:p-6">
+        {motorcycle ? <section className="panel relative overflow-hidden p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-semibold">
               <Bike className="size-5 text-chart-4" />
-              Projekt Motorrad
+              {motorcycle.name}
             </span>
             <span
               data-status={d.countdown.onTrack ? "positive" : "warning"}
@@ -289,7 +290,7 @@ export function Overview() {
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
             <span>{currency(d.actual.Motorrad)} angespart</span>
-            <span>{d.countdown.progress.toFixed(1)} %</span>
+            <span>Ziel {currency(motorcycle.target)}</span>
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4 border-t pt-5">
             <div>
@@ -315,12 +316,22 @@ export function Overview() {
             </div>
           </div>
           <Link
-            href="/einstellungen#motorrad"
+            href="/einstellungen#sparziele"
             className="mt-5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Sparziel anpassen <ArrowRight className="size-3" />
           </Link>
-        </section>
+        </section> : <section className="panel p-5 sm:p-6">
+          <SectionHeading title="Sparziele" />
+          <div className="space-y-3">
+            {d.goals.map((goal) => <div key={goal.id} className="flex justify-between gap-3 text-sm">
+              <span>{goal.name}<span className="block text-xs text-muted-foreground">Bis {dateLabel(goal.date)}</span></span>
+              <span>{currency(d.actualGoals[goal.id])} / {currency(goal.target)}</span>
+            </div>)}
+            {!d.goals.length && <p className="text-sm text-muted-foreground">Sparkonto zuerst, Rest an Urlaub.</p>}
+          </div>
+          <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
+        </section>}
       </div>
       <section className="panel mb-6 overflow-hidden">
         <div className="px-5 pt-5 sm:px-6">

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useReducer, useRef, useState } from "react";
-import { FileUp, LoaderCircle } from "lucide-react";
+import { FileUp, LoaderCircle, ListChecks } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,7 @@ import {
 } from "@/lib/import/statements";
 import {
   prepareStatementImport,
+  queueLedgerReview,
   type FixedDecision,
   type ImportMetadata,
   type ReviewItem,
@@ -46,6 +47,7 @@ type ImportUI = {
   busy: boolean;
   dragging: boolean;
   pending: Pending | null;
+  ledgerOnly: boolean;
 };
 
 function BookingReview({
@@ -163,7 +165,7 @@ function BookingReview({
 }
 
 export function StatementImport() {
-  const { state, ready, storageError, appendStatements, statementImport } =
+  const { state, ready, storageError, appendStatements, statementImport, update } =
     useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -180,9 +182,13 @@ export function StatementImport() {
       busy: false,
       dragging: false,
       pending: null,
+      ledgerOnly: false,
     },
   );
-  const ui = { ...localUI, review: state.reviewQueue ?? [] };
+  const ledgerIds = new Set(state.transactions.map((row) => row.id));
+  const ui = { ...localUI, review: (state.reviewQueue ?? []).filter((item) =>
+    !localUI.ledgerOnly || (item.kind === "booking" && ledgerIds.has(item.draft.id)),
+  ) };
   const latestState = useRef(state);
   useEffect(() => {
     latestState.current = state;
@@ -249,7 +255,7 @@ export function StatementImport() {
     )
       return;
     busyRef.current = true;
-    setUI({ busy: true, dragging: false });
+    setUI({ busy: true, dragging: false, ledgerOnly: false });
     const results: StatementResult[] = [];
     try {
       for (const file of files) {
@@ -351,11 +357,25 @@ export function StatementImport() {
           )}
           {ui.busy ? "Dateien werden geprüft …" : "Dateien auswählen"}
         </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!ready || !!storageError || ui.busy || !!ui.pending}
+          onClick={() => {
+            const pending = state.transactions.some((row) => classify(row).category === "Prüfen");
+            if (!pending) { toast.success("Alle bestehenden Umsätze sind zugeordnet"); return; }
+            update(queueLedgerReview);
+            setUI({ open: true, ledgerOnly: true });
+          }}
+        >
+          <ListChecks className="size-4" />
+          Zuordnung prüfen
+        </Button>
         {!!ui.review.length && (
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setUI({ open: true })}
+            onClick={() => setUI({ open: true, ledgerOnly: false })}
           >
             {ui.review.length} Einträge prüfen
           </Button>

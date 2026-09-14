@@ -15,6 +15,22 @@ describe("local seasonal calendar", () => {
     [2026, 1, 1, "newyear"],
     [2026, 1, 5, "newyear"],
     [2026, 1, 6, "default"],
+    [2026, 2, 10, "default"],
+    [2026, 2, 11, "carnival"],
+    [2026, 2, 12, "carnival"],
+    [2026, 2, 17, "carnival"],
+    [2026, 2, 18, "default"],
+    [2026, 3, 31, "default"],
+    [2026, 4, 1, "easter"],
+    [2026, 4, 2, "easter"],
+    [2026, 4, 6, "easter"],
+    [2026, 4, 10, "easter"],
+    [2026, 4, 11, "default"],
+    [2026, 6, 20, "default"],
+    [2026, 6, 21, "summer"],
+    [2026, 7, 1, "summer"],
+    [2026, 8, 31, "summer"],
+    [2026, 9, 1, "default"],
     [2026, 9, 12, "default"],
     [2026, 10, 24, "default"],
     [2026, 10, 25, "halloween"],
@@ -24,10 +40,17 @@ describe("local seasonal calendar", () => {
     [2026, 11, 30, "default"],
     [2026, 12, 1, "christmas"],
     [2026, 12, 26, "christmas"],
-    [2026, 12, 27, "newyear"],
-    [2026, 12, 31, "newyear"],
+    [2026, 12, 27, "betweenyears"],
+    [2026, 12, 31, "betweenyears"],
     [2027, 1, 5, "newyear"],
     [2027, 1, 6, "default"],
+    [2027, 2, 4, "carnival"],
+    [2027, 2, 9, "carnival"],
+    [2027, 2, 10, "default"],
+    [2027, 3, 25, "easter"],
+    [2027, 3, 29, "easter"],
+    [2027, 4, 2, "easter"],
+    [2027, 4, 3, "default"],
   ] as const)(
     "%i-%i-%i resolves to %s at local midnight",
     (year, month, day, expected) => {
@@ -39,18 +62,18 @@ describe("local seasonal calendar", () => {
     },
   );
 
-  it.each(seasonalThemes)("fixed %s overrides the calendar", (theme) => {
+  it.each(seasonalThemes)("legacy fixed %s cannot override the calendar", (theme) => {
     expect(
       resolveSeasonalTheme({ mode: "fixed", theme }, new Date(2026, 11, 24)),
-    ).toBe(theme);
+    ).toBe("christmas");
   });
-  it("always-standard wins during seasonal windows", () => {
+  it("legacy always-standard also follows the calendar", () => {
     expect(
       resolveSeasonalTheme(
         { mode: "default", theme: "christmas" },
         new Date(2026, 11, 24),
       ),
-    ).toBe("default");
+    ).toBe("christmas");
   });
 });
 
@@ -99,7 +122,7 @@ describe("pre-paint bootstrap", () => {
     });
     expect(document.documentElement.dataset.theme).toBe("christmas");
   });
-  it("works when storage is blocked and honors saved overrides", () => {
+  it("works when storage is blocked and ignores legacy overrides", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 31));
     const document = {
@@ -128,6 +151,6 @@ describe("pre-paint bootstrap", () => {
           }),
       },
     });
-    expect(document.documentElement.dataset.theme).toBe("default");
+    expect(document.documentElement.dataset.theme).toBe("halloween");
   });
 });

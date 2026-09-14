@@ -456,7 +456,7 @@ describe("silent planning", () => {
       });
       for (const month of ["05", "06", "07", "08"])
         state.transactions.push(
-          transaction(description, -100, `2026-${month}-02`),
+          { ...transaction(description, -100, `2026-${month}-${month === "05" ? "04" : month === "08" ? "03" : "02"}`), time: "12:00:00" },
         );
     }
     return state;

@@ -244,6 +244,7 @@ export async function parseWorkbook(
         ...(native && text(get("Bankreferenz"))
           ? { bankReference: text(get("Bankreferenz")) }
           : {}),
+        ...(native && text(get("Uhrzeit")) ? { time: text(get("Uhrzeit")) } : {}),
         ...(native && numeric(get("Vorkommen")) !== null
           ? { occurrence: numeric(get("Vorkommen")) }
           : {}),
@@ -457,6 +458,8 @@ export async function parseWorkbook(
                 reviewQueue: true,
                 importStatus: true,
                 fixedAmountDecisions: true,
+                savingsGoals: true,
+                seasonalTheme: true,
               })
               .parse(data),
           );
@@ -645,6 +648,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Quellkategorie",
     "Bankreferenz",
     "Vorkommen",
+    "Uhrzeit",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -669,6 +673,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.sourceCategory ?? "",
       row.bankReference ?? "",
       row.occurrence ?? "",
+      row.time ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {
@@ -783,7 +788,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.reviewQueue ||
     state.importStatus ||
     state.settings.interestRates ||
-    state.fixedAmountDecisions
+    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
       state: "hidden",
@@ -795,7 +800,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       state.reviewQueue ||
       state.importStatus ||
       state.settings.interestRates ||
-      state.fixedAmountDecisions
+      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme
     )
       automation.addRow([
         "ux",
@@ -806,6 +811,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
           importStatus: state.importStatus,
           interestRates: state.settings.interestRates,
           fixedAmountDecisions: state.fixedAmountDecisions,
+          savingsGoals: state.savingsGoals,
+          seasonalTheme: state.seasonalTheme,
         }),
       ]);
     state.pocketSnapshots?.forEach((item) =>

@@ -143,11 +143,7 @@ export function Pockets() {
               </p>
               <p className="mt-2 text-xs text-muted-foreground">
                 <Link
-                  href={
-                    pocket === "Motorrad"
-                      ? "/einstellungen#motorrad"
-                      : "/einstellungen#sparziele"
-                  }
+                  href="/einstellungen#sparziele"
                 >
                   Ziel {currency(targets[pocket])}
                 </Link>

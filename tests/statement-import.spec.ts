@@ -392,8 +392,9 @@ test("reload advances the plan and pocket split without visiting plan", async ({
     name: "Pocket-Verteilung diesen Monat",
   });
   await expect(split).toContainText("Diesen Monat:");
-  await expect(split).toContainText(/Motorrad.*1\.711,80/);
-  await expect(split).toContainText(/Sparkonto.*190,20/);
+  // 2,000 income - 65 groceries - 33 lunch - 180 savings floor.
+  await expect(split).toContainText(/Motorrad.*1\.722,00/);
+  await expect(split).toContainText(/Sparkonto.*180,00/);
   await expect(split).not.toContainText(/Urlaub|Notgroschen/);
   await page.goto("/umsaetze");
   await page
@@ -403,8 +404,9 @@ test("reload advances the plan and pocket split without visiting plan", async ({
     page.getByText("1 neu, 0 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
   await page.goto("/");
-  await expect(split).toContainText(/Motorrad.*1\.680,30/);
-  await expect(split).toContainText(/Sparkonto.*186,70/);
+  // September adds 35 to the groceries budget, not to savings.
+  await expect(split).toContainText(/Motorrad.*1\.687,00/);
+  await expect(split).toContainText(/Sparkonto.*180,00/);
 });
 
 test("zero allocations and matching Apple Care never open extra UI", async ({

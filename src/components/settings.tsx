@@ -1,356 +1,100 @@
 "use client";
 
-import { useEffect } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Save, ShieldCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Save } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading, SectionHeading } from "@/components/finance-ui";
-import {
-  settingsSchema,
-  seasonalPreferenceSchema,
-  type Settings as SettingsData,
-} from "@/lib/types";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 import { AppearanceControls } from "@/components/appearance-controls";
-import {
-  defaultSeasonalPreference,
-  type SeasonalPreference,
-} from "@/lib/seasonal-theme";
-import { localToday } from "@/lib/planning";
+import { SavingsGoals } from "@/components/savings-goals";
+import { ExcelActions } from "@/components/excel-actions";
+import { latestTRBalance } from "@/lib/calc";
+import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
+import { defaultSeasonalPreference, seasonalThemes, seasonalLabels, type SeasonalPreference, type SeasonalTheme } from "@/lib/seasonal-theme";
 
-const settingsFormSchema = settingsSchema.safeExtend({
-  seasonalTheme: seasonalPreferenceSchema,
-});
-type SettingsForm = SettingsData & { seasonalTheme: SeasonalPreference };
-type NumericKey =
-  | "emergencyTarget"
-  | "vacationTarget"
-  | "savingsTarget"
-  | "bikeTarget"
-  | "bikeShare"
-  | "afterBikeSavingsShare"
-  | "taxRate";
-type DateKey = "bikePurchaseDate";
-const withRateHistory = (settings: SettingsData): SettingsData => ({
-  ...settings,
-  interestRates: settings.interestRates ?? [
-    { date: "2026-01-01", rate: settings.oldRate },
-    { date: settings.rateChangeDate, rate: settings.newRate },
-  ],
-});
+function TradeRepublicSettings() {
+  const { state, update } = useFinance();
+  const latest = latestTRBalance(state);
+  const savedDate = latest?.date ?? state.settings.asOf;
+  const savedBalance = latest?.balance ?? state.settings.balances.Notgroschen;
+  const savedRate = state.settings.interestRates?.filter((entry) => entry.date <= state.settings.asOf).sort((a, b) => b.date.localeCompare(a.date))[0]?.rate
+    ?? (state.settings.asOf < state.settings.rateChangeDate ? state.settings.oldRate : state.settings.newRate);
+  const [draft, setDraft] = useState<{ balance: string; date: string; rate: string } | null>(null);
+  const initial = { balance: String(savedBalance), date: savedDate, rate: String(Number((savedRate * 100).toFixed(6))) };
+  const value = draft ?? initial;
+  const valid = value.balance !== "" && value.rate !== "" && trBalanceSchema.safeParse({ balance: Number(value.balance), date: value.date }).success &&
+    value.date <= state.settings.asOf && Number.isFinite(Number(value.rate)) && Number(value.rate) >= 0 && Number(value.rate) <= 100;
+  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(initial);
+  return <section id="tr-zinsen" className="panel p-4" aria-label="Trade Republic">
+    <SectionHeading title="Trade Republic" subtitle="Kontostand und jährlicher Zinssatz ab dem angegebenen Datum." />
+    <form className="space-y-3" onSubmit={(event) => {
+      event.preventDefault(); if (!valid) return;
+      update((current) => {
+        const history = current.settings.interestRates ?? [
+          { date: "2026-01-01", rate: current.settings.oldRate },
+          { date: current.settings.rateChangeDate, rate: current.settings.newRate },
+        ];
+        return { ...current,
+          trBalances: [...(current.trBalances ?? []).filter((entry) => entry.date !== value.date), { date: value.date, balance: Number(value.balance) }],
+          settings: { ...current.settings, interestRates: [...new Map([...history, { date: value.date, rate: Number(value.rate) / 100 }].map((entry) => [entry.date, entry])).values()].sort((a, b) => a.date.localeCompare(b.date)) },
+        };
+      });
+      setDraft(null); toast.success("Trade Republic gespeichert");
+    }}>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="text-xs">Kontostand (€)<Input aria-label="TR Kontostand" className="editable mt-1" type="number" min="0" max="1000000000" step="0.01" value={value.balance} onChange={(event) => setDraft({ ...value, balance: event.target.value })} required /></label>
+        <label className="text-xs">Datum<Input aria-label="TR Standdatum" className="editable mt-1" type="date" max={state.settings.asOf} value={value.date} onChange={(event) => setDraft({ ...value, date: event.target.value })} required /></label>
+        <label className="text-xs">Zinssatz p.a.<Input aria-label="Zinssatz p.a." className="editable mt-1" type="number" min="0" max="100" step="0.01" value={value.rate} onChange={(event) => setDraft({ ...value, rate: event.target.value })} required /></label>
+      </div>
+      {dirty && <div className="flex justify-end gap-2"><Button variant="outline" type="button" size="sm" onClick={() => setDraft(null)}>Abbrechen</Button><Button type="submit" size="sm" disabled={!valid}>Trade Republic speichern</Button></div>}
+    </form>
+  </section>;
+}
+
 export function Settings() {
   const { state, update } = useFinance();
-  const { setPreview } = useSeasonalTheme();
-  const form = useForm<SettingsForm>({
-    resolver: zodResolver(settingsFormSchema),
-    defaultValues: {
-      ...withRateHistory(state.settings),
-      seasonalTheme: state.seasonalTheme ?? defaultSeasonalPreference,
-    },
-  });
-  useEffect(() => () => setPreview(null), [setPreview]);
-  const rates =
-    useWatch({ control: form.control, name: "interestRates" }) ?? [];
-  const bikeShare = useWatch({ control: form.control, name: "bikeShare" });
-  const savingsShare = useWatch({
-    control: form.control,
-    name: "afterBikeSavingsShare",
-  });
-  const numericField = (
-    name: NumericKey,
-    label: string,
-    percentage = false,
-  ) => (
-    <div key={name}>
-      <Label htmlFor={name}>{label}</Label>
-      <Controller
-        name={name}
-        control={form.control}
-        render={({ field }) => (
-          <div className="relative mt-2">
-            <Input
-              id={name}
-              className="editable pr-10"
-              type="number"
-              min={0}
-              max={percentage ? 100 : 1_000_000_000}
-              step="0.01"
-              name={field.name}
-              ref={field.ref}
-              onBlur={field.onBlur}
-              value={
-                Number.isNaN(field.value)
-                  ? ""
-                  : percentage
-                    ? Number((field.value * 100).toFixed(6))
-                    : field.value
-              }
-              onChange={(event) =>
-                field.onChange(
-                  event.target.value === ""
-                    ? NaN
-                    : Number(event.target.value) / (percentage ? 100 : 1),
-                )
-              }
-            />
-            <span className="pointer-events-none absolute top-2.5 right-3 text-xs text-muted-foreground">
-              {percentage ? "%" : "€"}
-            </span>
-          </div>
-        )}
-      />
-      {form.formState.errors[name] && (
-        <p role="alert" className="mt-1 text-xs text-destructive">
-          {form.formState.errors[name]?.message}
-        </p>
-      )}
+  const { setPreview, testTheme, setTestTheme } = useSeasonalTheme();
+  const [draft, setDraft] = useState<SeasonalPreference | null>(null);
+  const saved = state.seasonalTheme ?? defaultSeasonalPreference;
+  const value = draft ?? saved;
+  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
+  useEffect(() => () => { setPreview(null); setTestTheme(null); }, [setPreview, setTestTheme]);
+  return <>
+    <PageHeading eyebrow="KONFIGURATION" title="Einstellungen" description="Erscheinungsbild, Sparziele und Trade Republic." />
+    <div className="space-y-4">
+      <section id="jahreszeit" className="panel p-4" aria-labelledby="appearance-heading">
+        <h2 id="appearance-heading" className="mb-4 text-sm font-semibold">Erscheinungsbild</h2>
+        <form onSubmit={(event) => {
+          event.preventDefault(); const parsed = seasonalPreferenceSchema.safeParse(value); if (!parsed.success) return;
+          update((current) => ({ ...current, seasonalTheme: parsed.data }));
+          setDraft(null); setPreview(null); toast.success("Einstellungen gespeichert");
+        }}>
+          <AppearanceControls value={value} inputRef={null} onBlur={() => {}} onChange={(next) => { setDraft(next); setPreview(next); }} />
+          {dirty && <div className="mt-4 flex justify-end gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => { setDraft(null); setPreview(null); }}>Verwerfen</Button>
+            <Button type="submit" size="sm"><Save className="size-4" />Einstellungen speichern</Button>
+          </div>}
+        </form>
+        <details className="mt-4 border-t pt-3 text-xs" onToggle={(event) => { if (!event.currentTarget.open) setTestTheme(null); }}>
+          <summary className="cursor-pointer text-muted-foreground">Saisonvorschau</summary>
+          <label className="mt-3 flex flex-wrap items-center gap-3">Vorschau
+            <select aria-label="Saisonvorschau" className="rounded border bg-card p-2" value={testTheme ?? ""} onChange={(event) => setTestTheme((event.target.value || null) as SeasonalTheme | null)}>
+              <option value="">Aktueller Kalender</option>
+              {seasonalThemes.map((theme) => <option key={theme} value={theme}>{seasonalLabels[theme]}</option>)}
+            </select>
+          </label>
+          <p className="mt-2 text-muted-foreground">Nur ansehen – wird nicht gespeichert.</p>
+        </details>
+      </section>
+      <SavingsGoals />
+      <TradeRepublicSettings />
+      <section className="panel flex flex-wrap items-center justify-between gap-3 p-4" aria-label="Sicherung">
+        <h2 className="text-sm font-semibold">Sicherung</h2>
+        <ExcelActions compact />
+      </section>
     </div>
-  );
-  const dateField = (name: DateKey, label: string) => (
-    <div key={name}>
-      <Label htmlFor={name}>{label}</Label>
-      <Input
-        id={name}
-        className="editable mt-2"
-        type="date"
-        {...form.register(name)}
-      />
-      {form.formState.errors[name] && (
-        <p role="alert" className="mt-1 text-xs text-destructive">
-          {form.formState.errors[name]?.message}
-        </p>
-      )}
-    </div>
-  );
-  return (
-    <>
-      <PageHeading
-        eyebrow="KONFIGURATION"
-        title="Einstellungen"
-        description="Ziele, Termine und die Regeln für deinen Sparplan."
-      />
-      <form
-        onSubmit={form.handleSubmit(({ seasonalTheme, ...settings }) => {
-          const appearanceChanged = form.getFieldState("seasonalTheme").isDirty;
-          const financeChanged = Object.keys(form.formState.dirtyFields).some(
-            (key) => key !== "seasonalTheme",
-          );
-          settings.interestRates = [
-            ...new Map(
-              settings.interestRates?.map((item) => [item.date, item]),
-            ).values(),
-          ].sort((a, b) => a.date.localeCompare(b.date));
-          update((current) => ({
-            ...current,
-            seasonalTheme: appearanceChanged
-              ? seasonalTheme
-              : current.seasonalTheme,
-            settings: financeChanged
-              ? {
-                  ...settings,
-                  asOf: current.settings.asOf,
-                  baselineDate: current.settings.baselineDate,
-                  balances: current.settings.balances,
-                }
-              : current.settings,
-          }));
-          form.reset({
-            ...withRateHistory(financeChanged ? settings : state.settings),
-            seasonalTheme: appearanceChanged
-              ? seasonalTheme
-              : (state.seasonalTheme ?? defaultSeasonalPreference),
-          });
-          setPreview(null);
-          toast.success("Einstellungen gespeichert");
-        })}
-        className="space-y-5"
-      >
-        <section
-          id="jahreszeit"
-          className="panel p-5 sm:p-6"
-          aria-labelledby="appearance-heading"
-        >
-          <h2
-            id="appearance-heading"
-            className="mb-5 font-semibold tracking-tight"
-          >
-            Jahreszeit / Erscheinungsbild
-          </h2>
-          <Controller
-            name="seasonalTheme"
-            control={form.control}
-            render={({ field }) => (
-              <AppearanceControls
-                value={field.value}
-                inputRef={field.ref}
-                onBlur={field.onBlur}
-                onChange={(value) => {
-                  field.onChange(value);
-                  setPreview(value);
-                }}
-              />
-            )}
-          />
-        </section>
-        <div className="grid gap-5 xl:grid-cols-2">
-          <section id="motorrad" className="panel p-5 sm:p-6">
-            <SectionHeading
-              title="Motorrad"
-              subtitle="Alle Zielbeträge in Euro"
-            />
-            <div className="grid gap-5 sm:grid-cols-2">
-              {numericField("bikeTarget", "Motorrad")}
-              {dateField("bikePurchaseDate", "Motorrad kaufen am")}
-            </div>
-            <details id="sparziele" className="mt-5">
-              <summary className="cursor-pointer text-sm">
-                Weitere Sparziele
-              </summary>
-              <div className="mt-4 grid gap-5 sm:grid-cols-2">
-                {numericField(
-                  "emergencyTarget",
-                  "Notgroschen · Trade Republic",
-                )}
-                {numericField("vacationTarget", "Urlaub")}
-                {numericField("savingsTarget", "Sparkonto")}
-              </div>
-            </details>
-          </section>
-          <section className="panel p-5 sm:p-6">
-            <SectionHeading
-              title="Verteilung des Überschusses"
-              subtitle="Der verbleibende Anteil wird automatisch zugeordnet."
-            />
-            <div className="space-y-5">
-              {numericField("bikeShare", "Bis zum Ziel → Motorrad", true)}
-              <p className="-mt-3 text-xs text-muted-foreground">
-                Rest {Number(((1 - bikeShare) * 100).toFixed(2))} % → Sparkonto
-              </p>
-              {numericField(
-                "afterBikeSavingsShare",
-                "Nach dem Ziel → Sparkonto",
-                true,
-              )}
-              <p className="-mt-3 text-xs text-muted-foreground">
-                Rest {Number(((1 - savingsShare) * 100).toFixed(2))} % → Urlaub
-              </p>
-            </div>
-          </section>
-          <section id="tr-zinsen" className="panel p-5 sm:p-6">
-            <SectionHeading
-              title="Trade Republic & KESt"
-              subtitle="Notgroschen · monatliche Nettoverzinsung"
-            />
-            <div className="grid gap-5 sm:grid-cols-2">
-              {numericField("taxRate", "Kapitalertragsteuer", true)}
-            </div>
-            <div className="mt-5 space-y-3">
-              {rates.map((_, index) => (
-                <div className="grid grid-cols-2 gap-3" key={index}>
-                  <label className="text-xs">
-                    Gültig ab
-                    <Input
-                      type="date"
-                      aria-label={`Zinssatz ${index + 1} gültig ab`}
-                      {...form.register(`interestRates.${index}.date`)}
-                    />
-                  </label>
-                  <label className="text-xs">
-                    Zinssatz (%)
-                    <Controller
-                      name={`interestRates.${index}.rate`}
-                      control={form.control}
-                      render={({ field }) => (
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          step="0.01"
-                          aria-label={`Zinssatz ${index + 1}`}
-                          value={
-                            field.value === undefined ||
-                            Number.isNaN(field.value)
-                              ? ""
-                              : Number((field.value * 100).toFixed(6))
-                          }
-                          onChange={(event) =>
-                            field.onChange(
-                              event.target.value === ""
-                                ? NaN
-                                : Number(event.target.value) / 100,
-                            )
-                          }
-                        />
-                      )}
-                    />
-                  </label>
-                </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  form.setValue(
-                    "interestRates",
-                    [
-                      ...rates,
-                      {
-                        date: localToday(),
-                        rate: rates.at(-1)?.rate ?? state.settings.newRate,
-                      },
-                    ],
-                    { shouldDirty: true },
-                  )
-                }
-              >
-                Zinsänderung hinzufügen
-              </Button>
-              {form.formState.errors.interestRates && (
-                <p role="alert" className="text-xs text-destructive">
-                  Zinssatz und Datum prüfen.
-                </p>
-              )}
-            </div>
-          </section>
-        </div>
-        {form.formState.isDirty && (
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card p-4">
-            <span className="flex items-center gap-2 text-xs text-muted-foreground">
-              <ShieldCheck className="size-4 text-primary" />
-              {form.formState.isDirty
-                ? "Ungespeicherte Änderungen"
-                : "Einstellungen sind gespeichert"}
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                type="button"
-                disabled={!form.formState.isDirty}
-                onClick={() => {
-                  form.reset({
-                    ...withRateHistory(state.settings),
-                    seasonalTheme:
-                      state.seasonalTheme ?? defaultSeasonalPreference,
-                  });
-                  setPreview(null);
-                }}
-              >
-                Verwerfen
-              </Button>
-              <Button type="submit" disabled={!form.formState.isDirty}>
-                <Save className="size-4" />
-                Einstellungen speichern
-              </Button>
-            </div>
-          </div>
-        )}
-      </form>
-    </>
-  );
+  </>;
 }

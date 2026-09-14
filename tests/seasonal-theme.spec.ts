@@ -25,8 +25,9 @@ async function settings(page: Page) {
   await stored(page);
 }
 async function fixed(page: Page, theme: string) {
-  await page.getByLabel("Modus", { exact: true }).selectOption("fixed");
-  await page.getByLabel("Festes Theme", { exact: true }).selectOption(theme);
+  const preview = page.getByLabel("Saisonvorschau", { exact: true });
+  if (!(await preview.isVisible())) await page.locator("summary", { hasText: "Saisonvorschau" }).click();
+  await preview.selectOption(theme);
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 }
 async function save(page: Page) {
@@ -67,7 +68,7 @@ test("personal accent previews immediately, discards and persists without changi
   page.on("pageerror", (error) => errors.push(error.message));
   await settings(page);
   const before = await stored(page);
-  const input = page.getByLabel("Motorrad", { exact: true });
+  const input = page.getByLabel("TR Kontostand", { exact: true });
   const yellow = await input.evaluate(
     (el) => getComputedStyle(el).backgroundColor,
   );
@@ -82,9 +83,8 @@ test("personal accent previews immediately, discards and persists without changi
     "rgb(96, 165, 250)",
   );
   expect((await stored(page)).seasonalTheme).toBeUndefined();
-  await input.fill("9100");
   await page.getByRole("button", { name: "Verwerfen" }).click();
-  await expect(input).toHaveValue(String(before.settings.bikeTarget));
+  await expect(input).toHaveValue(String(before.settings.balances.Notgroschen));
   await accent(page, "#b57edc");
   const after = await save(page);
   expect(after.seasonalTheme).toEqual({
@@ -119,7 +119,8 @@ test("season decorates the same palette and logo instead of replacing the brand"
   await settings(page);
   await accent(page, "#60a5fa");
   const baseline = await palette(page);
-  for (const theme of ["default", "halloween", "christmas"]) {
+  const before = await stored(page);
+  for (const theme of ["default", "halloween", "christmas", "newyear", "carnival", "easter", "summer", "betweenyears"]) {
     await fixed(page, theme);
     expect(await palette(page)).toEqual(baseline);
     await expect(page.getByLabel("Eigene Akzentfarbe")).toHaveValue("#60a5fa");
@@ -141,18 +142,20 @@ test("season decorates the same palette and logo instead of replacing the brand"
     );
   }
   await expect(
-    page.getByLabel("Festes Theme", { exact: true }).locator("option"),
-  ).toHaveText(["Default", "Halloween", "Weihnachten"]);
-  await page.getByLabel("Modus", { exact: true }).selectOption("default");
+    page.getByLabel("Saisonvorschau", { exact: true }).locator("option"),
+  ).toHaveText(["Aktueller Kalender", "Default", "Halloween", "Weihnachten", "Neujahr", "Fasching", "Ostern", "Sommer", "Zwischen den Jahren"]);
+  expect(await stored(page)).toEqual(before);
+  await page.locator("summary", { hasText: "Saisonvorschau" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
   expect(await palette(page)).toEqual(baseline);
 });
 
-test("automatic uses local midnight while always-standard retains the personal accent", async ({
+test("automatic uses local midnight and retains the personal accent after reload", async ({
   page,
 }) => {
   await page.clock.pauseAt(new Date("2026-10-25T06:59:59Z"));
   await page.goto("/einstellungen");
-  await expect(page.getByLabel("Modus", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Eigene Akzentfarbe", { exact: true })).toBeVisible();
   await page.clock.runFor(200);
   await stored(page);
   await accent(page, "#a78bfa");
@@ -161,23 +164,23 @@ test("automatic uses local midnight while always-standard retains the personal a
   await expect(page.locator("html")).toHaveAttribute("data-theme", "halloween");
   expect((await palette(page))["--primary"]).toBe("#a78bfa");
   await page.clock.resume();
-  await page.getByLabel("Modus", { exact: true }).selectOption("default");
   await save(page);
   await page.reload();
   await stored(page);
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "halloween");
   expect((await palette(page))["--primary"]).toBe("#a78bfa");
 });
 
-for (const theme of ["halloween", "christmas"]) {
+for (const [theme, date] of [["halloween", "2026-10-31"], ["christmas", "2026-12-24"], ["carnival", "2026-02-14"], ["easter", "2026-04-05"], ["summer", "2026-07-14"], ["betweenyears", "2026-12-29"], ["newyear", "2027-01-02"]]) {
   test(`${theme} uses sparse static icons under reduced motion with untouched data pages`, async ({
     page,
   }) => {
     test.setTimeout(180_000);
+    await page.clock.setFixedTime(new Date(`${date}T19:00:00Z`));
     await page.emulateMedia({ reducedMotion: "reduce" });
     await settings(page);
     await accent(page, "#a78bfa");
-    await fixed(page, theme);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
     await save(page);
     const base = await palette(page);
     for (const route of ["/", "/umsaetze", "/monate", "/pockets", "/plan"]) {
@@ -225,7 +228,8 @@ test("light/dark and arbitrary extremes keep button and accent text contrast", a
       await page.getByRole("button", { name: "Farbschema wechseln" }).click();
     for (const color of ["#000000", "#ffffff", "#777777", "#ff0000"]) {
       await accent(page, color);
-      const ratios = await page.evaluate(() => {
+      // CSS tokens change immediately; rendered button colors transition.
+      await expect.poll(() => page.evaluate(() => {
         const context = document.createElement("canvas").getContext("2d")!;
         const luminance = (color: string) => {
           context.fillStyle = color;
@@ -256,10 +260,8 @@ test("light/dark and arbitrary extremes keep button and accent text contrast", a
           ),
         ];
         sample.remove();
-        return result;
-      });
-      for (const ratio of ratios)
-        expect(ratio, `${mode}/${color}`).toBeGreaterThanOrEqual(4.5);
+        return Math.min(...result);
+      }), { message: `${mode}/${color}` }).toBeGreaterThanOrEqual(4.5);
     }
   }
 });
@@ -284,8 +286,9 @@ test("another tab's accent survives saving unrelated financial fields", async ({
   await expect
     .poll(async () => (await palette(page))["--primary"])
     .toBe("#60a5fa");
-  await page.getByLabel("Motorrad", { exact: true }).fill("9200");
-  const after = await save(page);
+  await page.getByLabel("TR Kontostand", { exact: true }).fill("9200");
+  await page.getByRole("button", { name: "Trade Republic speichern", exact: true }).click();
+  const after = await stored(page);
   expect(after.seasonalTheme).toEqual(preference);
   await expect(page.getByLabel("Eigene Akzentfarbe")).toHaveValue("#60a5fa");
 });

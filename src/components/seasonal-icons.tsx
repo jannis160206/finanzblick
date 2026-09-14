@@ -9,6 +9,13 @@ import {
   Snowflake,
   Star,
   TreePine,
+  Egg,
+  Flower2,
+  Sun,
+  Leaf,
+  PartyPopper,
+  Music,
+  Moon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
@@ -43,6 +50,19 @@ export function SeasonalIcon({
     return <Icon {...shared} />;
   }
   if (theme === "newyear") return <Star {...shared} />;
+  if (theme === "betweenyears") return <Moon {...shared} />;
+  if (theme === "carnival") {
+    const Icon = { logo: PartyPopper, navigation: Music, pockets: Star, overview: PartyPopper, expense: Music }[slot];
+    return <Icon {...shared} />;
+  }
+  if (theme === "easter") {
+    const Icon = { logo: Egg, navigation: Flower2, pockets: Egg, overview: Leaf, expense: Flower2 }[slot];
+    return <Icon {...shared} />;
+  }
+  if (theme === "summer") {
+    const Icon = { logo: Sun, navigation: Sun, pockets: Leaf, overview: Flower2, expense: Sun }[slot];
+    return <Icon {...shared} />;
+  }
   if (slot === "navigation") return <Ghost {...shared} />;
   if (slot === "expense") return <Skull {...shared} />;
   return (

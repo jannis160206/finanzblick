@@ -20,23 +20,29 @@ http://localhost:3000
 
 - Unter **Umsätze** CSV-/XLSX-Dateien oder Amex-PDFs ablegen. Raiffeisen-Umsatzlisten ohne Kopfzeile und konsolidierte Revolut-Auszüge werden erkannt.
 - Sicher zugeordnete Buchungen werden automatisch gespeichert. Nur unklare Zeilen und Fixkostenänderungen erscheinen in der Prüfliste. Schließen der Prüfliste macht bereits gespeicherte Buchungen nicht rückgängig.
-- Datum, Text und Betrag lassen sich dort korrigieren; Kategorie und Pocket zuordnen, dann **Speichern** oder **Überspringen**. Nicht erledigte Einträge bleiben bis zum Verlassen der Umsatzseite unter „Einträge prüfen“ erreichbar; nach einem Neuladen den Auszug erneut ablegen.
+- Originaldatum, Text, Betrag und Konto bleiben unverändert. Kategorie auswählen und **Zuordnung übernehmen** oder **Später prüfen**. Offene Einträge bleiben auch nach dem Neuladen erreichbar. **Zuordnung prüfen** nimmt unklare bereits gespeicherte Umsätze in die Prüfliste auf; gleiche Händler werden gemeinsam zugeordnet, ohne neue Buchungen anzulegen.
 - Gehalt, Leasing, Vollkasko, Haftpflicht und Handyvertrag werden mit dem Monatsraster abgeglichen, nicht doppelt gebucht. Abweichungen über 0,05 € benötigen **Ja/Nein**. Ja übernimmt den Betrag ab dem Buchungsmonat bis Ende 2027; Nein behält die Monatswerte. Entscheidungen bleiben auch in Excel-Sicherungen erhalten.
 - PDF-Text wird lokal im Browser extrahiert; keine Kontoauszüge werden hochgeladen. Versetzte Beträge und CR-Gutschriften werden unterstützt. Unklare Textzeilen kommen in die Prüfliste. Für reine Scans ist keine OCR enthalten.
 
 ## Automatische Planung
 
-Beim Laden und nach jedem erfolgreichen Import werden Stichtag, variabler Plan und Pocket-Verteilung aktualisiert. Die vier abgeschlossenen Monate verschieben sich automatisch; auch ein geöffneter Tab erkennt den Tageswechsel. Die Übersicht zeigt die Verteilung für Motorrad, Sparkonto, Urlaub und Notgroschen in einer Zeile.
+Beim Laden und nach jedem erfolgreichen Import werden Stichtag, variabler Plan und Pocket-Verteilung aktualisiert. Die vier abgeschlossenen Monate verschieben sich automatisch; auch ein geöffneter Tab erkennt den Tageswechsel. Nach Fixkosten und Alltagsbudget gehen zuerst bis zu **180 € ins Sparkonto**, danach Beträge bis zur Zielhöhe an die **Sparziele nach Termin**, zuletzt der Rest an **Urlaub**. Bei weniger Überschuss bleibt die gesamte verfügbare Summe im Sparkonto; alte Prozent- und Motorradraten überschreiben den Sockel nicht.
+
+Unter **Einstellungen → Sparziele** lassen sich Ziele hinzufügen, bearbeiten und entfernen. Entfernen löscht keine Buchungen. Erreichte Ziele erhalten ab dem Folgemonat keine weitere Rate, auch nach einer Entnahme. Ohne offene Ziele geht der Rest nach dem Sockel an Urlaub. Die Übersicht zeigt nur positive Monatsraten. Häkchen prüfen eingehende Transfers des aktuellen Monats bis zum Stichtag; die Toleranz beträgt **5 € oder 3 %**, je nachdem, was größer ist. Bei 180 € gehören **174,60 € und 185,40 €** noch dazu. Kontostände allein setzen kein Häkchen.
 
 Lebensmittel, Mittagessen, Tanken, G2A und Ausgehen werden ab dem aktuellen Monat automatisch berechnet. Manuelle Einzelwerte im Monatsraster sind explizite Overrides; ein leeres Feld aktiviert wieder „Auto“. Gesamtbudget-Overrides bleiben ebenfalls erhalten. Der unterstützte Planungshorizont bleibt 2026–2027.
 
+**Mittagessen** setzt einen Werktag außerhalb der österreichischen Feiertage einschließlich 10. Oktober in Kärnten und eine belegte Uhrzeit zwischen **11:00 und 14:00 Uhr einschließlich** voraus. Auszüge ohne Uhrzeit erhalten keine erfundene Mittagszeit. AMEX-Kartenabrechnungen auf Giro/Revolut sind Umbuchungen, keine zweite Ausgabe; die eigentlichen Käufe und Mitgliedsgebühren bleiben Ausgaben.
+
+**Einstellungen → Trade Republic** speichert Kontostand und jährlichen Zinssatz mit Datum. Die Zinsprognose berücksichtigt fest **27,5 % KESt**, unabhängig von alten Sicherungsfeldern.
+
 ## Erscheinungsbild
 
-Unter **Einstellungen → Jahreszeit / Erscheinungsbild** stehen sechs Akzentfarben und ein Farbwähler bereit. Die persönliche Farbe gilt für Logo, Navigation, Buttons, Diagrammakzent und Fokusmarkierungen – auch unter saisonalen Themes. Text und Buttons erhalten bei Bedarf kontrastgerechte Farben.
+Unter **Einstellungen → Erscheinungsbild** stehen sechs Akzentfarben, ein Farbwähler und reduzierte Bewegung bereit. Die persönliche Farbe gilt für Logo, Navigation, Buttons, Diagrammakzent und Fokusmarkierungen – auch unter saisonalen Themes. Text und Buttons erhalten bei Bedarf kontrastgerechte Farben.
 
-**Automatisch** folgt dem lokalen Kalender, **Immer Standard** deaktiviert saisonale Details, **Festes Theme** bietet Default, Halloween und Weihnachten. Saisonale Modi ergänzen nur eine leichte Tönung von Header/Sidebar, wenige statische Icons und ein Detail am ursprünglichen Finanzblick-Logo. Tabellen bleiben neutral; es gibt keine Szenen, Overlays oder Partikelanimationen.
+Die Saison folgt dem lokalen Kalender: Fasching, Ostern, Sommer, Halloween, Weihnachten, Zwischen den Jahren und Neujahr. Die aufklappbare **Saisonvorschau** zeigt alle Varianten einschließlich Default, ohne diese Auswahl zu speichern. Saisonale Details ergänzen nur eine leichte Tönung von Header/Sidebar, wenige statische Icons und ein Detail am ursprünglichen Finanzblick-Logo. Tabellen bleiben neutral; es gibt keine Szenen, Overlays oder Partikelanimationen.
 
-Änderungen erscheinen sofort als Vorschau. **Einstellungen speichern** behält sie lokal; **Verwerfen** oder das Verlassen der Seite stellt die gespeicherte Auswahl wieder her. Finanzdaten und Excel-Schema werden dadurch nicht geändert.
+Änderungen an Akzentfarbe und Bewegung erscheinen sofort als Vorschau. **Einstellungen speichern** behält sie lokal; **Verwerfen** oder das Verlassen der Seite stellt die gespeicherte Auswahl wieder her. Sparziele, Auszugsuhrzeiten und Erscheinungsbild bleiben auch in Excel-Sicherungen erhalten.
 
 ## Prüfungen
 

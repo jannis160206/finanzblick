@@ -49,12 +49,15 @@ function subscribeCalendar(notify: () => void) {
 const SeasonalContext = createContext<{
   theme: SeasonalTheme;
   setPreview: Dispatch<SetStateAction<SeasonalPreference | null>>;
+  testTheme: SeasonalTheme | null;
+  setTestTheme: Dispatch<SetStateAction<SeasonalTheme | null>>;
 } | null>(null);
 
 export function SeasonalThemeProvider({ children }: { children: ReactNode }) {
   const { state, ready } = useFinance();
   const pathname = usePathname();
   const [preview, setPreview] = useState<SeasonalPreference | null>(null);
+  const [testTheme, setTestTheme] = useState<SeasonalTheme | null>(null);
   const day = useSyncExternalStore(
     subscribeCalendar,
     localDateSnapshot,
@@ -63,19 +66,21 @@ export function SeasonalThemeProvider({ children }: { children: ReactNode }) {
   const preference =
     pathname === "/einstellungen" && preview ? preview : state.seasonalTheme;
   const theme =
-    day === null ? "default" : resolveSeasonalTheme(preference, new Date(day));
+    pathname === "/einstellungen" && testTheme ? testTheme :
+      day === null ? "default" : resolveSeasonalTheme(preference, new Date(day));
   useLayoutEffect(() => {
     // Keep the pre-paint bootstrap until the finance store has hydrated.
     if (!ready || day === null) return;
     document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.reduceMotion = String(preference?.reduceMotion === true);
     for (const [token, value] of Object.entries(
       accentTokens(preference?.accentColor),
     )) {
       document.documentElement.style.setProperty(token, value);
     }
-  }, [ready, day, theme, preference?.accentColor]);
+  }, [ready, day, theme, preference?.accentColor, preference?.reduceMotion]);
   return (
-    <SeasonalContext.Provider value={{ theme, setPreview }}>
+    <SeasonalContext.Provider value={{ theme, setPreview, testTheme, setTestTheme }}>
       {children}
     </SeasonalContext.Provider>
   );

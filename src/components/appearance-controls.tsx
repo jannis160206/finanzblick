@@ -8,11 +8,7 @@ import {
   accentTokens,
   defaultAccentColor,
 } from "@/lib/appearance";
-import {
-  seasonalLabels,
-  selectableSeasonalThemes,
-  type SeasonalPreference,
-} from "@/lib/seasonal-theme";
+import type { SeasonalPreference } from "@/lib/seasonal-theme";
 
 export function AppearanceControls({
   value,
@@ -23,59 +19,11 @@ export function AppearanceControls({
   value: SeasonalPreference;
   onChange: (value: SeasonalPreference) => void;
   onBlur: () => void;
-  inputRef: Ref<HTMLSelectElement>;
+  inputRef: Ref<HTMLInputElement>;
 }) {
   const color = value.accentColor?.toLowerCase() ?? defaultAccentColor;
   return (
-    <div className="grid items-start gap-6 lg:grid-cols-[1fr_1.4fr]">
-      <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
-        <div>
-          <Label htmlFor="seasonal-mode">Modus</Label>
-          <select
-            id="seasonal-mode"
-            ref={inputRef}
-            onBlur={onBlur}
-            className="select-input mt-2 w-full"
-            value={value.mode}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                mode: event.target.value as SeasonalPreference["mode"],
-              })
-            }
-          >
-            <option value="auto">Automatisch</option>
-            <option value="default">Immer Standard</option>
-            <option value="fixed">Festes Theme</option>
-          </select>
-        </div>
-        {value.mode === "fixed" && (
-          <div>
-            <Label htmlFor="seasonal-theme">Festes Theme</Label>
-            <select
-              id="seasonal-theme"
-              onBlur={onBlur}
-              className="select-input mt-2 w-full"
-              value={value.theme}
-              onChange={(event) =>
-                onChange({
-                  ...value,
-                  theme: event.target.value as SeasonalPreference["theme"],
-                })
-              }
-            >
-              {selectableSeasonalThemes.map((theme) => (
-                <option value={theme} key={theme}>
-                  {seasonalLabels[theme]}
-                </option>
-              ))}
-              {value.theme === "newyear" && (
-                <option value="newyear">Neujahr (bisherige Auswahl)</option>
-              )}
-            </select>
-          </div>
-        )}
-      </div>
+    <div className="grid items-start gap-4 sm:grid-cols-2">
       <fieldset>
         <legend className="text-sm font-medium">Akzentfarbe</legend>
         <div
@@ -116,6 +64,7 @@ export function AppearanceControls({
         <div className="flex items-center gap-3">
           <input
             id="accent-picker"
+            ref={inputRef}
             type="color"
             className="h-10 w-12 cursor-pointer rounded-md border bg-card p-1"
             value={color}
@@ -135,6 +84,20 @@ export function AppearanceControls({
           </div>
         </div>
       </fieldset>
+      <div className="space-y-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={value.reduceMotion ?? false}
+            onBlur={onBlur}
+            onChange={(event) => onChange({ ...value, reduceMotion: event.target.checked })}
+          />
+          Bewegung reduzieren
+        </label>
+        <p className="text-xs text-muted-foreground">
+          Saisonale Details folgen dem Kalender. Deine Akzentfarbe bleibt erhalten.
+        </p>
+      </div>
     </div>
   );
 }

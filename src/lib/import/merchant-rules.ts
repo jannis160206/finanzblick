@@ -16,6 +16,7 @@ export function merchantRuleKey(
           " ",
         )
         .replace(/\b(?:kartenzahlung|pos|zahlung|debit|sepa)\b/g, " ")
+        .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
         .replace(/\b\d{5,}\b/g, " ")
         .replace(/\s+/g, " ")
         .trim();

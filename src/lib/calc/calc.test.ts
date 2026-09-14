@@ -41,12 +41,12 @@ describe("merchant classification", () => {
     );
   });
   it.each(["BIPA", "Hotspot", "Mensa"])("classifies %s as lunch", (name) =>
-    expect(classify(transaction(name)).category).toBe("Mittagessen"),
+    expect(classify({ ...transaction(name), time: "12:00:00" }).category).toBe("Mittagessen"),
   );
   it.each(["BILLA", "SPAR", "INTERSPAR"])(
     "handles the inclusive ten-euro threshold for %s",
     (name) => {
-      expect(classify(transaction(name, -10)).category).toBe("Mittagessen");
+      expect(classify({ ...transaction(name, -10), time: "12:00:00" }).category).toBe("Mittagessen");
       expect(classify(transaction(name, -10.01)).category).toBe("Lebensmittel");
     },
   );
@@ -124,22 +124,22 @@ describe("savings and interest", () => {
       Sparkonto: 0,
       Motorrad: 0,
     }));
-  it("allocates ninety-ten until the target", () =>
+  it("protects 180 euros before funding the target", () =>
     expect(splitSurplus(1000, 0, settings)).toMatchObject({
-      Motorrad: 900,
-      Sparkonto: 100,
+      Motorrad: 820,
+      Sparkonto: 180,
       Urlaub: 0,
     }));
-  it("caps the bike and splits overflow sixty-forty", () => {
+  it("caps the goal and sends overflow to Urlaub after the floor", () => {
     expect(splitSurplus(1000, 8400, settings)).toMatchObject({
       Motorrad: 100,
-      Sparkonto: 540,
-      Urlaub: 360,
+      Sparkonto: 180,
+      Urlaub: 720,
     });
     expect(splitSurplus(1000, 8500, settings)).toMatchObject({
       Motorrad: 0,
-      Sparkonto: 600,
-      Urlaub: 400,
+      Sparkonto: 180,
+      Urlaub: 820,
     });
   });
   it("starts net interest in October and compounds monthly", () => {
@@ -188,8 +188,8 @@ describe("savings and interest", () => {
       income: 3000,
       fixed: 1000,
       surplus: 2000,
-      bikeTransfer: 1800,
-      remaining: 200,
+      bikeTransfer: 1820,
+      remaining: 180,
     });
   });
   it("preserves debit direction for ordinary pocket transfers", () => {
@@ -249,6 +249,6 @@ describe("savings and interest", () => {
     expect(
       calculateDashboard(state).timeline.find((row) => row.month === "2026-11")!
         .rates,
-    ).toMatchObject({ Motorrad: 0, Sparkonto: 600, Urlaub: 400 });
+    ).toMatchObject({ Motorrad: 0, Sparkonto: 180, Urlaub: 820 });
   });
 });

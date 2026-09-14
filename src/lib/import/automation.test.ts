@@ -211,13 +211,13 @@ describe("Revolut closing balances", () => {
     ).state;
     const d = calculateDashboard(state);
     const september = d.timeline.find((month) => month.month === "2026-09")!;
-    expect(september.rates.Motorrad).toBe(900);
+    expect(september.rates.Motorrad).toBe(820);
     expect(september.end.Motorrad).toBe(900); // Already executed.
-    expect(september.end.Sparkonto).toBe(1832.59); // Only 50 of planned 100 remain.
+    expect(september.end.Sparkonto).toBe(1912.59); // Only 130 of planned 180 remain.
     expect(d.countdown.remaining).toBe(7600);
-    expect(d.ninetyDays[1].bikeTransfer).toBe(900);
+    expect(d.ninetyDays[1].bikeTransfer).toBe(820);
   });
-  it("keeps this month's executed motorcycle allocation and switches following months to 60/40", () => {
+  it("keeps this month's instruction and sends the following remainder to vacation after the floor", () => {
     const state = importResult(
       stateForTest(),
       parseStatementCsv(consolidated),
@@ -228,15 +228,15 @@ describe("Revolut closing balances", () => {
     const september = d.timeline.find((month) => month.month === "2026-09")!;
     const october = d.timeline.find((month) => month.month === "2026-10")!;
     expect(september.rates).toMatchObject({
-      Motorrad: 900,
-      Sparkonto: 60,
-      Urlaub: 40,
+      Motorrad: 820,
+      Sparkonto: 180,
+      Urlaub: 0,
     });
     expect(september.end.Motorrad).toBe(8500);
     expect(october.rates).toMatchObject({
       Motorrad: 0,
-      Sparkonto: 600,
-      Urlaub: 400,
+      Sparkonto: 180,
+      Urlaub: 820,
     });
     expect(d.countdown.funded).toBe(true);
   });

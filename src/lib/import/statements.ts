@@ -1,4 +1,5 @@
 import { classifyStatementRows, round, savingsPocket } from "@/lib/calc";
+import { statementTime } from "@/lib/holidays-at-kaernten";
 import {
   dateSchema,
   transactionSchema,
@@ -39,6 +40,7 @@ export type StatementPreview = {
 type TableRow = { line: number; cells: string[] };
 type Header = {
   date: number;
+  time: number;
   description: number;
   amount: number;
   incoming: number;
@@ -200,6 +202,8 @@ function headerFor(cells: string[]): Header | null {
     "date",
     "transaktionsdatum",
     "transactiondate",
+    "starteddate",
+    "completeddate",
   );
   const description = index(
     "verwendungszwecktext",
@@ -244,6 +248,7 @@ function headerFor(cells: string[]): Header | null {
     return null;
   return {
     date,
+    time: index("uhrzeit", "zeit", "time", "transaktionszeit", "transactiontime"),
     description,
     amount,
     incoming,
@@ -282,6 +287,7 @@ function isRaiffeisenRecord(cells: string[]) {
 }
 const raiffeisenHeader: Header = {
   date: 0,
+  time: 5,
   description: 1,
   amount: 3,
   currency: 4,
@@ -310,6 +316,7 @@ export function detectStatementSource(
     )
       return "Amex";
     if (headers.some((h) => h.startsWith("geld"))) return "Revolut";
+    if (headers.includes("starteddate") && headers.includes("state")) return "Revolut";
     if (
       headers.includes("valuta") &&
       headers.some((h) => /verwendungszweck|buchungstext/.test(h))
@@ -409,6 +416,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         continue;
       }
       let dateText = "",
+        time: string | undefined,
         description = "",
         amount: number | null = null,
         sourceCategory = "",
@@ -469,6 +477,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         description = clean(get(header.description));
         sourceCategory = clean(get(header.category));
         bankReference = clean(get(header.reference));
+        time = statementTime(get(header.time), description, dateText);
         holder = get(header.holder);
         currency = get(header.currency) || sectionCurrency;
         if (header.amount >= 0) {
@@ -494,9 +503,11 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         continue;
       }
       const date = parseStatementDate(dateText);
+      time ??= statementTime(description, dateText);
       const draft: StatementDraft = {
         id: crypto.randomUUID(),
         date: date ?? "",
+        ...(time ? { time } : {}),
         bank: source,
         pocket,
         description,
@@ -523,6 +534,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
       const candidate = transactionSchema.safeParse({
         id: crypto.randomUUID(),
         date,
+        ...(time ? { time } : {}),
         bank: source,
         pocket:
           source === "Amex" && /\braphael\b/i.test(`${holder} ${description}`)

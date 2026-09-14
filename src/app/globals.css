@@ -133,6 +133,19 @@
 :root[data-theme="newyear"] {
   --season-tint: #b3a576;
 }
+:root[data-theme="carnival"] { --season-tint: #a888bd; }
+:root[data-theme="easter"] { --season-tint: #9cae73; }
+:root[data-theme="summer"] { --season-tint: #d2b873; }
+:root[data-theme="betweenyears"] { --season-tint: #879bad; }
+
+:root[data-reduce-motion="true"] *,
+:root[data-reduce-motion="true"] *::before,
+:root[data-reduce-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
 
 @layer base {
   * {

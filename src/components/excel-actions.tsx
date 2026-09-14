@@ -17,7 +17,7 @@ import { dateLabel } from "@/lib/format";
 import { type ImportResult } from "@/lib/excel";
 import { MAX_IMPORT_BYTES } from "@/lib/import/limits";
 
-export function ExcelActions() {
+export function ExcelActions({ compact = false }: { compact?: boolean }) {
   const { state, replace } = useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<"import" | "export" | null>(null);
@@ -85,7 +85,14 @@ export function ExcelActions() {
           if (file) void upload(file);
         }}
       />
-      <details className="relative">
+      {compact ? <div className="flex flex-wrap gap-2">
+        <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => void download()}>
+          <Download className="size-4" />Exportieren
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => fileInput.current?.click()}>
+          <Upload className="size-4" />Wiederherstellen
+        </Button>
+      </div> : <details className="relative">
         <summary className="cursor-pointer rounded-md border px-3 py-2 text-xs">
           Sicherung
         </summary>
@@ -119,7 +126,7 @@ export function ExcelActions() {
             <span>Sicherung herunterladen</span>
           </Button>
         </div>
-      </details>
+      </details>}
       <Dialog
         open={!!preview}
         onOpenChange={(open) => {

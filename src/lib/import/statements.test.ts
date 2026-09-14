@@ -86,7 +86,7 @@ describe("Raiffeisen CSV", () => {
     });
     expect(result.rows[2]).toMatchObject({
       amount: -0.47,
-      category: "Mittagessen",
+      category: "Gesundheit",
       includeInPlan: true,
     });
     expect(result.rows[3]).toMatchObject({
@@ -127,7 +127,7 @@ describe("Revolut consolidated CSV", () => {
       "Amex Rückzahlung",
     ]);
     expect(result.rows[0]).toMatchObject({
-      category: "Mittagessen",
+      category: "Lebensmittel",
       amount: -10,
     });
     expect(classify(result.rows[2])).toMatchObject({
@@ -216,7 +216,7 @@ describe("classification uses the existing engine", () => {
     ["A1 Telekom", -25, "Handyvertrag"],
   ] as const)("classifies %s centrally", (description, amount, category) =>
     expect(
-      classifyStatementRows([transaction(description, amount)])[0].category,
+      classifyStatementRows([{ ...transaction(description, amount, "2026-09-14"), time: "12:00:00" }])[0].category,
     ).toBe(category),
   );
   it.each([

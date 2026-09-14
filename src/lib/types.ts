@@ -89,6 +89,7 @@ export type PocketAmounts = z.infer<typeof pocketAmountsSchema>;
 export const transactionSchema = z.object({
   id: z.string().min(1),
   date: dateSchema,
+  time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/).optional(),
   bank: z.string().trim().min(1, "Bank erforderlich").max(100),
   pocket: z.string().trim().min(1).max(100).nullable(),
   description: z.string().trim().min(1, "Beschreibung erforderlich").max(1000),
@@ -225,9 +226,20 @@ export const settingsSchema = z
     path: ["asOf"],
   });
 export type Settings = z.infer<typeof settingsSchema>;
+export const savingsGoalSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: z.string().trim().min(1, "Name erforderlich").max(80),
+  pocket: z.string().trim().min(1).max(100),
+  target: moneySchema.positive("Betrag muss größer als null sein"),
+  date: dateSchema,
+  completedAt: dateSchema.optional(),
+});
+export type SavingsGoal = z.infer<typeof savingsGoalSchema>;
 export const seasonalPreferenceSchema = z.object({
-  mode: z.enum(seasonalModes),
-  theme: z.enum(seasonalThemes),
+  // Legacy choices remain readable, but no longer control the calendar.
+  mode: z.enum(seasonalModes).optional(),
+  theme: z.enum(seasonalThemes).optional(),
+  reduceMotion: z.boolean().optional(),
   accentColor: z
     .string()
     .regex(/^#[\da-f]{6}$/i, "Gültige Akzentfarbe erforderlich")
@@ -236,6 +248,10 @@ export const seasonalPreferenceSchema = z.object({
 export const appStateSchema = z.object({
   version: z.literal(1),
   seasonalTheme: seasonalPreferenceSchema.optional(),
+  savingsGoals: z.array(savingsGoalSchema).max(50).refine(
+    (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,
+    "Sparziele müssen eindeutige IDs haben",
+  ).optional(),
   planningRepairs: z
     .array(z.literal("september-2026-sonstiges-focus-override"))
     .max(1)
