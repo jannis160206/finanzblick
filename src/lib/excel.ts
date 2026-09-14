@@ -246,6 +246,8 @@ export async function parseWorkbook(
           ? { bankReference: text(get("Bankreferenz")) }
           : {}),
         ...(native && text(get("Uhrzeit")) ? { time: text(get("Uhrzeit")) } : {}),
+        ...(text(get("Originalbeschreibung")) ? { rawDescription: text(get("Originalbeschreibung")) } : {}),
+        ...(text(get("Händlerdetails")) ? { rawDetails: text(get("Händlerdetails")).split("\n") } : {}),
         ...(native && numeric(get("Vorkommen")) !== null
           ? { occurrence: numeric(get("Vorkommen")) }
           : {}),
@@ -644,6 +646,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Bankreferenz",
     "Vorkommen",
     "Uhrzeit",
+    "Originalbeschreibung",
+    "Händlerdetails",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -669,6 +673,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.bankReference ?? "",
       row.occurrence ?? "",
       row.time ?? "",
+      row.rawDescription ?? "",
+      row.rawDetails?.join("\n") ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {

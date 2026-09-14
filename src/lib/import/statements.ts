@@ -8,7 +8,8 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "@/lib/import/limits";
-import { numberStatementRows, statementFingerprint } from "./identity";
+import { numberStatementRows, statementBaseKey, statementFingerprint } from "./identity";
+import { hasTerminalText, recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 export { statementFingerprint } from "./identity";
 
 export type StatementSource = "Raiffeisen" | "Revolut" | "Amex";
@@ -42,6 +43,7 @@ type Header = {
   date: number;
   time: number;
   description: number;
+  details: number[];
   amount: number;
   incoming: number;
   outgoing: number;
@@ -250,6 +252,8 @@ function headerFor(cells: string[]): Header | null {
     date,
     time: index("uhrzeit", "zeit", "time", "transaktionszeit", "transactiontime"),
     description,
+    details: headers.flatMap((name, index) => index !== description &&
+      /verwendungszweck|beschreibung|buchungstext|details|zusatz|merchant|haendler|empfaenger|zahlungsempfaenger/.test(name) ? [index] : []),
     amount,
     incoming,
     outgoing,
@@ -277,7 +281,7 @@ function headerFor(cells: string[]): Header | null {
 // Actual Umsatzliste export: booking date; text; value date; amount; currency; timestamp.
 function isRaiffeisenRecord(cells: string[]) {
   return (
-    cells.length === 6 &&
+    cells.length >= 6 &&
     !!parseStatementDate(cells[0]) &&
     !!cells[1] &&
     !!parseStatementDate(cells[2]) &&
@@ -289,6 +293,7 @@ const raiffeisenHeader: Header = {
   date: 0,
   time: 5,
   description: 1,
+  details: [],
   amount: 3,
   currency: 4,
   incoming: -1,
@@ -418,6 +423,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
       let dateText = "",
         time: string | undefined,
         description = "",
+        rawDetails: string[] = [],
         amount: number | null = null,
         sourceCategory = "",
         bankReference = "",
@@ -475,6 +481,11 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
           index < 0 ? "" : (row.cells[index] ?? "");
         dateText = get(header.date);
         description = clean(get(header.description));
+        const reserved = new Set([header.date, header.time, header.description, header.amount, header.incoming,
+          header.outgoing, header.category, header.holder, header.currency, header.reference]);
+        rawDetails = [...new Set([...header.details, ...row.cells.map((_, index) => index).filter((index) =>
+          index > header!.description && !reserved.has(index))])]
+          .map((index) => clean(get(index))).filter(Boolean).slice(0, 20).map((text) => text.slice(0, 1000));
         sourceCategory = clean(get(header.category));
         bankReference = clean(get(header.reference));
         time = statementTime(get(header.time), description, dateText);
@@ -511,6 +522,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         bank: source,
         pocket,
         description,
+        ...(rawDetails.length ? { rawDetails } : {}),
         amount,
         category: "Prüfen",
         includeInPlan: false,
@@ -531,7 +543,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         report(row.line, "Ungültiger oder fehlender Betrag.", draft);
         continue;
       }
-      const candidate = transactionSchema.safeParse({
+      const candidate = transactionSchema.safeParse(recoverMerchant({
         id: crypto.randomUUID(),
         date,
         ...(time ? { time } : {}),
@@ -541,12 +553,13 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
             ? "AMEX Raphael"
             : pocket,
         description,
+        ...(rawDetails.length ? { rawDetails } : {}),
         category: "Prüfen",
         amount,
         includeInPlan: true,
         ...(sourceCategory ? { sourceCategory } : {}),
         ...(bankReference ? { bankReference } : {}),
-      });
+      }));
       if (!candidate.success) {
         report(
           row.line,
@@ -755,7 +768,7 @@ export async function parseStatementFile(
   }
   if (workbook.getWorksheet("Dashboard") && workbook.getWorksheet("Umsätze"))
     throw new Error(
-      "Das ist eine Finanzblick-Sicherung. Dafür bitte den bestehenden Excel-Import in der Kopfzeile verwenden.",
+      "Das ist eine Finanzblick-Sicherung. Dafür bitte Einstellungen → Sicherung verwenden.",
     );
   if (
     workbook.worksheets.length > 50 ||
@@ -795,14 +808,35 @@ export function deduplicateStatements<T extends Transaction>(
   rows: T[],
   existing: Transaction[],
 ): { rows: T[]; duplicates: number } {
-  const seen = new Set(numberStatementRows(existing).map(statementFingerprint));
+  const numbered = numberStatementRows(existing);
+  const seen = new Set(numbered.map(statementFingerprint));
+  // Older Excel/local rows may lack the account or reference that the re-drop
+  // now supplies. Match the full original POS text, never just date + amount.
+  const terminalKey = (row: Transaction) => statementBaseKey({ ...row, pocket: null, bankReference: undefined });
+  const terminalExisting = new Map<string, Transaction[]>();
+  for (const row of numbered) {
+    if (!hasTerminalText(row.rawDescription ?? row.description)) continue;
+    const key = terminalKey(row);
+    const group = terminalExisting.get(key) ?? [];
+    group.push(row);
+    terminalExisting.set(key, group);
+  }
   const unique: T[] = [];
+  const positions = new Map<string, number>();
   let duplicates = 0;
-  for (const row of numberStatementRows(rows)) {
+  for (const row of numberStatementRows(rows.map(recoverMerchant))) {
     const key = statementFingerprint(row);
-    if (seen.has(key)) duplicates++;
+    const legacyDuplicate = (terminalExisting.get(terminalKey(row)) ?? []).some((old) =>
+      sameTerminalBooking(old, row) && ((old.bankReference && row.bankReference) || old.occurrence === row.occurrence));
+    if (seen.has(key) || legacyDuplicate) {
+      duplicates++;
+      const index = positions.get(key);
+      if (index !== undefined && unresolvedTerminal(unique[index].description) && !unresolvedTerminal(row.description))
+        unique[index] = row;
+    }
     else {
       seen.add(key);
+      positions.set(key, unique.length);
       unique.push(row);
     }
   }

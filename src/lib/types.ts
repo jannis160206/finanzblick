@@ -94,6 +94,8 @@ export const transactionSchema = z.object({
   bank: z.string().trim().min(1, "Bank erforderlich").max(100),
   pocket: z.string().trim().min(1).max(100).nullable(),
   description: z.string().trim().min(1, "Beschreibung erforderlich").max(1000),
+  rawDescription: z.string().max(1000).optional(),
+  rawDetails: z.array(z.string().max(1000)).max(20).optional(),
   category: z.enum(categories).catch("Prüfen"),
   amount: moneySchema.refine(
     (value) => value !== 0,

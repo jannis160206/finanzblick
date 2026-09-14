@@ -1,7 +1,7 @@
 import type { Transaction } from "@/lib/types";
 
 type Identity = Pick<Transaction, "date" | "bank" | "amount" | "description"> &
-  Partial<Pick<Transaction, "pocket" | "bankReference" | "occurrence">>;
+  Partial<Pick<Transaction, "pocket" | "bankReference" | "occurrence" | "rawDescription">>;
 const clean = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 const bankName = (bank: string) =>
   clean(bank).replace(/^american express$/, "amex");
@@ -10,7 +10,7 @@ export function legacyFingerprint(row: Identity) {
     row.date.slice(0, 10),
     bankName(row.bank),
     row.amount.toFixed(2),
-    clean(row.description).slice(0, 25),
+    clean(row.rawDescription ?? row.description).slice(0, 25),
   ]);
 }
 export function statementBaseKey(row: Identity) {
@@ -19,7 +19,7 @@ export function statementBaseKey(row: Identity) {
     bankName(row.bank),
     row.pocket ?? "",
     row.amount.toFixed(2),
-    row.bankReference ? `ref:${row.bankReference}` : clean(row.description),
+    row.bankReference ? `ref:${row.bankReference}` : clean(row.rawDescription ?? row.description),
   ]);
 }
 export function statementFingerprint(row: Identity) {

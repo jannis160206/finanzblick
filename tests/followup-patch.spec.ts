@@ -29,7 +29,9 @@ test("small review control and nav share a persisted exact count, then hide zero
   await seed(page, transactions);
   const control = page.getByRole("button", { name: /^Zuordnung prüfen/ });
   const nav = page.locator("aside").getByRole("link", { name: /^Umsätze/ });
-  await expect(control).toHaveCSS("font-size", "12px");
+  await expect(control).toHaveCSS("width", "36px");
+  await expect(control).toHaveCSS("height", "36px");
+  await expect(control).not.toContainText("Zuordnung prüfen");
   await expect(control.getByLabel("3 offene Zuordnungen")).toBeVisible();
   await expect(nav.getByLabel("3 offene Zuordnungen")).toBeVisible();
   await expect(page.getByRole("button", { name: /Einträge prüfen/ })).toHaveCount(0);

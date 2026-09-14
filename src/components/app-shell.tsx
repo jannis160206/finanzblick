@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { FinanzblickMark, SeasonalIcon } from "@/components/seasonal-icons";
 import { useFinance } from "@/components/finance-provider";
+import { ReviewCount } from "@/components/review-count";
 import { cn } from "@/lib/utils";
 
 const navigation = [
@@ -77,11 +78,7 @@ export function AppShell({
             <item.icon className="size-[18px]" />
           )}
           {item.label}
-          {item.href === "/umsaetze" && ready && openReviewCount > 0 && (
-            <span aria-label={`${openReviewCount} offene Zuordnungen`} className="ml-auto rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-              {openReviewCount}
-            </span>
-          )}
+          {item.href === "/umsaetze" && ready && <ReviewCount count={openReviewCount} className="ml-auto" />}
           {pathname === item.href && item.href !== "/umsaetze" && (
             <span className="ml-auto size-1.5 rounded-full bg-primary" />
           )}

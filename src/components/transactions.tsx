@@ -16,6 +16,7 @@ import {
   ArrowDownUp,
   ChevronLeft,
   ChevronRight,
+  ListChecks,
   Pencil,
   Search,
   Trash2,
@@ -42,6 +43,7 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { categories, transactionSchema, type Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
+import { ReviewCount } from "@/components/review-count";
 import { rememberMerchants } from "@/lib/import/merchant-rules";
 
 const accountLabel = (row: Transaction) =>
@@ -202,7 +204,8 @@ function TransactionForm({
 
 export function Transactions() {
   "use no memo";
-  const { state, dashboard, update } = useFinance();
+  const { state, dashboard, update, openReviewCount, storageError } = useFinance();
+  const [reviewRequest, setReviewRequest] = useState(0);
   const ledger = useMemo(() => actualBookings(state), [state]);
   const holiday = useMemo(() => reconcileSharedHoliday(ledger), [ledger]);
   const [editor, setEditor] = useState<Transaction | null>(null);
@@ -356,9 +359,21 @@ export function Transactions() {
         title="Umsätze"
         description={`${ledger.length.toLocaleString("de-AT")} Buchungen · Alle Konten an einem Ort`}
       />
-      <StatementImport />
+      <StatementImport reviewRequest={reviewRequest} />
       <section className="panel overflow-hidden">
         <div className="flex flex-wrap items-center gap-2 border-b p-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="relative mr-2 size-9 shrink-0"
+            aria-label="Zuordnung prüfen"
+            title="Zuordnung prüfen"
+            disabled={!!storageError}
+            onClick={() => setReviewRequest((request) => request + 1)}
+          >
+            <ListChecks className="size-4" />
+            <ReviewCount count={openReviewCount} className="absolute -top-2 -right-2" />
+          </Button>
           <div className="relative min-w-52 flex-1">
             <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
             <Input

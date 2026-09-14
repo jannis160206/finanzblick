@@ -163,7 +163,7 @@ function BookingReview({
   );
 }
 
-export function StatementImport() {
+export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number }) {
   const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -189,6 +189,13 @@ export function StatementImport() {
     !localUI.ledgerOnly || (item.kind === "booking" && ledgerIds.has(item.draft.id)),
   ) };
   const latestState = useRef(state);
+  const lastReviewRequest = useRef(reviewRequest);
+  useEffect(() => {
+    if (lastReviewRequest.current === reviewRequest) return;
+    lastReviewRequest.current = reviewRequest;
+    if (openReviewCount) setUI({ open: true, ledgerOnly: false });
+    else toast.success("Alle Umsätze sind zugeordnet");
+  }, [reviewRequest, openReviewCount]);
   useEffect(() => {
     latestState.current = state;
   }, [state]);
@@ -346,6 +353,7 @@ export function StatementImport() {
         <Button
           size="sm"
           variant="outline"
+          className="ml-auto shrink-0"
           disabled={!ready || !!storageError || ui.busy || !!ui.pending}
           onClick={() => fileInput.current?.click()}
         >
@@ -356,18 +364,6 @@ export function StatementImport() {
           )}
           {ui.busy ? "Dateien werden geprüft …" : "Dateien auswählen"}
         </Button>
-        <button
-          type="button"
-          className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-          disabled={!ready || !!storageError || ui.busy || !!ui.pending}
-          onClick={() => {
-            if (!openReviewCount) { toast.success("Alle Umsätze sind zugeordnet"); return; }
-            setUI({ open: true, ledgerOnly: false });
-          }}
-        >
-          Zuordnung prüfen
-          {openReviewCount > 0 && <span aria-label={`${openReviewCount} offene Zuordnungen`} className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">{openReviewCount}</span>}
-        </button>
       </section>
       {state.importStatus && (
         <div

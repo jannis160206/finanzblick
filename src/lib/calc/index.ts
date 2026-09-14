@@ -19,6 +19,7 @@ import {
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
 import { alwaysLunch, isSharedHoliday, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
+import { recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -49,6 +50,7 @@ export function monthsBetween(from: string, to: string) {
 const excluded =
   /eventim|magazin salzburg|salzburger verkehr|sky chefs|\blsg\b|roof burger|filomena|bravofly|urlaub|führerschein|fuhrerschein/i;
 const merchantPatterns: [RegExp, string][] = [
+  [/\bmartin\s+auer\b/i, "Martin Auer"],
   [/bipa/i, "BIPA"],
   [/hotspot/i, "Hotspot"],
   [/trafik/i, "Trafik"],
@@ -78,6 +80,8 @@ const merchantPatterns: [RegExp, string][] = [
   [/filomena/i, "Filomena"],
 ];
 export function merchantName(description: string) {
+  description = recoverMerchant({ description }).description;
+  if (unresolvedTerminal(description)) return "Händler unbekannt";
   const known = merchantPatterns.find(([pattern]) => pattern.test(description));
   return (
     known?.[1] ??
@@ -104,9 +108,9 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "rawDescription" | "rawDetails">>,
 ) {
-  const { description, amount } = transaction;
+  const { description, amount } = recoverMerchant(transaction);
   const forcedLunch = alwaysLunch(description);
   const sharedHoliday = isSharedHoliday(transaction);
   const reimbursement = !!transaction.holidayReimbursementFor;
@@ -280,6 +284,8 @@ export function classifyStatementRows(
   rows: Transaction[],
   existing: Transaction[] = [],
 ): Transaction[] {
+  rows = rows.map(recoverMerchant);
+  existing = existing.map(recoverMerchant);
   const refundMerchant = (row: Transaction) =>
     `${row.bank.toLowerCase()}|${row.pocket ?? ""}|${merchantName(row.description.replace(/rückerstattung|erstattung|refund|gutschrift|retoure/gi, ""))}`;
   const debits = new Map<string, Transaction[]>();

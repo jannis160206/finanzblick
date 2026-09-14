@@ -2,6 +2,7 @@ import { classifyStatementRows } from "@/lib/calc";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { transactionSchema } from "@/lib/types";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "./limits";
+import { hasTerminalText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import {
   parseStatementAmount,
   parseStatementDate,
@@ -45,9 +46,9 @@ export function parseAmexText(
   let messy = false;
   const flush = () => {
     if (!pending) return;
-    const time = statementTime(pending.time, pending.description);
+    const time = statementTime(pending.time, pending.rawDescription, pending.description);
     if (time) pending.time = time;
-    const parsed = transactionSchema.safeParse(pending);
+    const parsed = transactionSchema.safeParse(recoverMerchant(pending));
     if (parsed.success && !messy) result.rows.push(parsed.data);
     else {
       result.skipped++;
@@ -106,7 +107,7 @@ export function parseAmexText(
           includeInPlan: true,
         };
         // Foreign-currency figures in the description need manual confirmation of the EUR column.
-        messy = /\d[\d.]*,\d{2}/.test(pending.description);
+        messy = /\d[\d.]*,\d{2}/.test(pending.description) && !hasTerminalText(pending.description);
         pendingLine = lineNumber;
       } else if (pending && /^(?:(?:Uhrzeit|Time):?\s*)?\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:Uhr|AM|PM))?$/i.test(line)) {
         const time = statementTime(line);
@@ -136,6 +137,9 @@ export function parseAmexText(
         };
         pendingLine = lineNumber;
         messy = true;
+      } else if (pending && unresolvedTerminal(pending.description) && line) {
+        pending.rawDetails = [...(pending.rawDetails ?? []), line.slice(0, 1000)].slice(0, 20);
+        pending = recoverMerchant<StatementDraft>(pending);
       } else if (
         line &&
         !/^(?:Karten(?:nummer|-Nr\.)|Ticketnummer:|R-[a-f\d-]+|\d[\d.]*,\d{2})/i.test(
