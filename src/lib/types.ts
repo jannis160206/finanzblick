@@ -38,7 +38,6 @@ export const categories = [
 ] as const;
 export type Category = (typeof categories)[number];
 export const durableCategories: readonly Category[] = [
-  "Gehalt",
   "Leasing",
   "Vollkasko",
   "Haftpflicht",

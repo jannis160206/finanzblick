@@ -31,6 +31,7 @@ import {
   storedMerchantKey,
 } from "./merchant-rules";
 import { recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
+import { payrollCategory } from "@/lib/payroll";
 import { isWorkingDay, statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import {
@@ -55,6 +56,7 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction):
   if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor) return;
   const result = classify(row);
   if (!row.category || row.category === "Prüfen" || result.category === "Prüfen") return "Kategorie noch offen.";
+  if (payrollCategory(row) === result.category) return;
   const rules = (state.merchantRules ?? []).filter((rule) => storedMerchantKey(rule.key) === merchantRuleKey(row));
   if (new Set(rules.map((rule) => rule.category)).size > 1 || rules.some((rule) => rule.category !== result.category))
     return "Widersprüchliche Händlerregel: Zuordnung prüfen.";
@@ -98,8 +100,33 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
   };
 }
 
+function repairPayrollBookings(state: AppState): AppState {
+  const repair = (row: Transaction): Transaction => {
+    const payroll = payrollCategory(row);
+    if (!payroll || classify(row).category !== payroll || row.category === payroll) return row;
+    return { ...row, category: payroll, includeInPlan: false };
+  };
+  return { ...state,
+    transactions: state.transactions.map(repair),
+    ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
+      if (!item.booking) return item;
+      const booking = repair(item.booking);
+      const category = classify(booking).category;
+      if (!payrollCategory(booking) || category !== payrollCategory(booking)) return item;
+      return { ...item, booking, category, rowId: matchingGridRow(state, category)?.id };
+    }) } : {}),
+    ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.flatMap((item): ReviewItem[] => {
+      if (item.kind === "fixed" && ["Gehalt", "Rufbereitschaft"].includes(item.change.category))
+        return item.change.bookings.map((row) => ({ kind: "booking", id: row.id, draft: repair(row), message: "Einkommenszuordnung prüfen." }));
+      if (item.kind === "booking" && item.draft.amount !== null)
+        return [{ ...item, draft: repair(item.draft as Transaction) }];
+      return [item];
+    }) } : {}),
+  };
+}
+
 export function queueLedgerReview(state: AppState): AppState {
-  state = repairMerchantBookings(state);
+  state = repairPayrollBookings(repairMerchantBookings(state));
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" && item.draft.amount !== null ? [item.draft as Transaction] : []);
   const accounted = reconcileSharedHoliday([...actualBookings(state), ...pending]).bookings;
@@ -302,7 +329,7 @@ export function prepareStatementImport(
   state: AppState,
 ) {
   const candidates = results.flatMap((result) => numberStatementRows(result.rows.map(recoverMerchant)));
-  state = repairMerchantBookings(state, candidates);
+  state = repairPayrollBookings(repairMerchantBookings(state, candidates));
   const split = splitFixedBookings(
     {
       ...state,
@@ -435,7 +462,7 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
-  state = repairMerchantBookings(state, metadata.merchantRepairs);
+  state = repairPayrollBookings(repairMerchantBookings(state, metadata.merchantRepairs));
   const queueMap = new Map(
     (state.reviewQueue ?? []).map((item) => [item.id, item]),
   );

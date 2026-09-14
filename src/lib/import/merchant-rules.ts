@@ -1,6 +1,7 @@
 import { classify } from "@/lib/calc";
 import { type AppState, type Transaction } from "@/lib/types";
 import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
+import { payrollCategory } from "@/lib/payroll";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -43,6 +44,7 @@ export function rememberMerchants(
     if (
       row.categoryOverride &&
       row.category !== "Prüfen" &&
+      !payrollCategory(row) &&
       !unresolvedTerminal(row.description) &&
       !classify(row).isTransfer
     ) {
@@ -87,6 +89,7 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
   );
   return rows.map(recoverMerchant).map((row) => {
     const detected = classify(row);
+    if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const key = merchantRuleKey(row);
     const category =
       rules.get(key) ??

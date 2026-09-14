@@ -213,7 +213,7 @@ describe("automatic import and fixed-cost review", () => {
       expect(
         commitStatementImport(state, [transaction(description, amount)]),
       ).toMatchObject({ added: 0, duplicates: 1, changes: [] });
-      if (category === "Barber" || category === "Rufbereitschaft") {
+      if (category === "Barber" || category === "Rufbereitschaft" || category === "Gehalt") {
         const changed = transaction(
           description,
           amount + Math.sign(amount) * 10,

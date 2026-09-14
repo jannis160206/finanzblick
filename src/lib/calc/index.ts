@@ -20,6 +20,7 @@ import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
 import { alwaysLunch, isSharedHoliday, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
+import { earlySpecialSalary, payrollCategory, payrollText } from "@/lib/payroll";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -114,9 +115,10 @@ export function classify(
   const forcedLunch = alwaysLunch(description);
   const sharedHoliday = isSharedHoliday(transaction);
   const reimbursement = !!transaction.holidayReimbursementFor;
+  const payroll = payrollCategory(transaction);
   const specialIncome =
-    /(?:13\.?\s*(?:monats)?(?:gehalt|lohn)|bonus|sonderzahlung|weihnachtsgeld|urlaubsgeld|holiday|rufbereitschaft)/i.test(
-      description,
+    amount > 0 && /(?:13\.?\s*(?:monats)?(?:gehalt|lohn)|bonus|sonderzahlung|weihnachtsgeld|urlaubsgeld|holiday|rufbereitschaft)/i.test(
+      payrollText(transaction),
     );
   const absolute = Math.abs(amount);
   const sourceCategory = transaction.sourceCategory ?? "";
@@ -147,13 +149,7 @@ export function classify(
   if (isAmazon) category = "Shopping";
   else if (isRoundUp) category = "Transfer";
   else if (isInternal) category = "Transfer intern";
-  else if (specialIncome && amount > 0)
-    category = /rufbereitschaft/i.test(description)
-      ? "Rufbereitschaft"
-      : "Einkommen";
-  else if (/rufbereitschaft/i.test(description)) category = "Rufbereitschaft";
-  else if (/gehalt|team\s*talent\s*solutions/i.test(description))
-    category = absolute < 500 ? "Rufbereitschaft" : "Gehalt";
+  else if (payroll) category = payroll;
   else if (/leasing|porsche\s*bank/i.test(description)) category = "Leasing";
   else if (/vollkasko/i.test(description)) category = "Vollkasko";
   else if (/haftpflicht|allianz/i.test(description)) category = "Haftpflicht";
@@ -207,9 +203,12 @@ export function classify(
   if (category === "Mittagessen" && !lunchAllowed)
     category = /billa|\bspar\b|interspar|eurospar/i.test(description) ? "Lebensmittel" : /bipa/i.test(description) ? "Gesundheit" : /hotspot|mensa|mensen/i.test(description) ? "Ausgehen" : "Sonstiges";
   if (amount > 0 && specialIncome && !detectedTransfer)
-    category = /rufbereitschaft/i.test(description)
-      ? "Rufbereitschaft"
-      : "Einkommen";
+    category = payroll ?? "Einkommen";
+  // Old imported receipts and learned employer rules can incorrectly force
+  // every payroll payment to Gehalt. Keep unrelated manual choices intact.
+  if (payroll && !detectedTransfer &&
+    (!transaction.categoryOverride || ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(transaction.category)))
+    category = payroll;
   // These explicit rules outrank remembered categories and calendar filters.
   if (sharedHoliday || reimbursement) category = "Urlaub";
   if (forcedLunch) category = "Mittagessen";
@@ -275,8 +274,10 @@ export function classify(
 export function bookingMonth(row: Transaction): string {
   const month = monthKey(row.date);
   const day = Number(row.date.slice(8, 10));
-  return row.amount > 0 && classify(row).category === "Gehalt" && day >= 26 && day <= 30
-    ? addMonths(month, 1)
+  const nextMonth = addMonths(month, 1);
+  return row.amount > 0 && classify(row).category === "Gehalt" &&
+    ((day >= 26 && day <= 30) || earlySpecialSalary(row, nextMonth))
+    ? nextMonth
     : month;
 }
 
