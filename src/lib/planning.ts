@@ -28,7 +28,7 @@ const automaticLines: { label: string; category: Category; pattern: RegExp }[] =
 
 export function synchronizePlan(state: AppState): AppState {
   state = synchronizeGoals(repairKnownPlanningOverrides(state));
-  const plan = calculatePlan(state.transactions, state.settings.asOf);
+  const plan = calculatePlan(state.transactions, state.settings.asOf, state.holidayRanges);
   const months = [...monthsForYear(2026), ...monthsForYear(2027)].filter(
     (month) => month >= monthKey(state.settings.asOf),
   );

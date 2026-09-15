@@ -69,6 +69,11 @@ export const pocketAmountsSchema = z.object({
   Motorrad: moneySchema,
 });
 export type PocketAmounts = z.infer<typeof pocketAmountsSchema>;
+export const holidayRangeSchema = z.object({ from: dateSchema, to: dateSchema }).refine(
+  ({ from, to }) => to >= from && (Date.parse(to) - Date.parse(from)) / 86_400_000 < 25,
+  "Urlaub: Von–bis mit höchstens 25 Tagen erforderlich.",
+);
+export type HolidayRange = z.infer<typeof holidayRangeSchema>;
 export const transactionSchema = z.object({
   id: z.string().min(1),
   date: dateSchema,
@@ -89,6 +94,8 @@ export const transactionSchema = z.object({
   sourceCategory: z.string().max(200).optional(),
   bankReference: z.string().max(500).optional(),
   occurrence: z.number().int().positive().optional(),
+  sharedWithRaphael: z.boolean().optional(),
+  sharedPaidManually: z.boolean().optional(),
 });
 export type Transaction = z.infer<typeof transactionSchema>;
 export const pocketSnapshotSchema = z.object({
@@ -232,6 +239,13 @@ export const seasonalPreferenceSchema = z.object({
 });
 export const appStateSchema = z.object({
   version: z.literal(1),
+  holidayRanges: z.array(holidayRangeSchema).max(100).refine(
+    (ranges) => {
+      const sorted = [...ranges].sort((a, b) => a.from.localeCompare(b.from));
+      return sorted.every((range, index) => !index || range.from > sorted[index - 1].to);
+    },
+    "Urlaubszeiträume dürfen sich nicht überschneiden.",
+  ).optional(),
   seasonalTheme: seasonalPreferenceSchema.optional(),
   savingsGoals: z.array(savingsGoalSchema).max(50).refine(
     (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,

@@ -1,6 +1,7 @@
 import {
   classify,
   actualBookings,
+  accountHolidayRanges,
   classifyStatementRows,
   bookingMonth,
   monthKey,
@@ -55,7 +56,7 @@ export type FixedDecision = { change: FixedChange; accept: boolean };
 
 export function bookingReviewReason(state: AppState, row: AccountedTransaction): string | undefined {
   if (unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
-  if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor) return;
+  if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
   const result = classify(row);
   if (!row.category || row.category === "Prüfen" || result.category === "Prüfen") return "Kategorie noch offen.";
   if (payrollCategory(row) === result.category) return;
@@ -131,10 +132,11 @@ export function queueLedgerReview(state: AppState): AppState {
   state = repairPayrollBookings(repairMerchantBookings(state));
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" && item.draft.amount !== null ? [item.draft as Transaction] : []);
-  const accounted = reconcileSharedHoliday([...actualBookings(state), ...pending]).bookings;
+  const accounted = accountHolidayRanges(reconcileSharedHoliday([...actualBookings(state), ...pending], state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
   const safePending = accounted.slice(accounted.length - pending.length).filter((row) =>
     !bookingReviewReason(state, row));
-  if (safePending.length) state = appendStatementRows(state, safePending.map((row) => ({ ...row, category: classify(row).category, includeInPlan: classify(row).includeInPlan }))).state;
+  if (safePending.length) state = appendStatementRows(state, safePending.map((row) => row.holidayReimbursementFor || row.holidayRange
+    ? row : { ...row, category: classify(row).category, includeInPlan: classify(row).includeInPlan })).state;
   const ledger = actualBookings(state);
   const byId = new Map(ledger.map((row) => [row.id, row]));
   const keys = new Set(ledger.map(statementFingerprint));
@@ -247,8 +249,7 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
     return row;
   });
   const existing = actualBookings(state);
-  const accounted = reconcileSharedHoliday([...existing, ...classified]).bookings.slice(existing.length)
-    .map((row) => row.holidayReimbursementFor ? { ...row, category: "Urlaub" as const, includeInPlan: false } : row);
+  const accounted = reconcileSharedHoliday([...existing, ...classified], state.settings.asOf).bookings.slice(existing.length);
   const deduped = deduplicateStatements(accounted, state.transactions);
   const rows: Transaction[] = [];
   const receipts: FixedReceipt[] = [];
@@ -266,6 +267,7 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
   for (const row of deduped.rows) {
     const category = row.category;
     const isFixed =
+      !classify(row).isTransfer &&
       fixedCategories.includes(category) &&
       (isIncome(category) ? row.amount > 0 : row.amount < 0);
     if (

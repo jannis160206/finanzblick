@@ -6,6 +6,7 @@ import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { restoreLegacySourceCategories } from "@/lib/legacy-source";
 import { refreshPlanning } from "@/lib/planning";
 import { createSeed } from "@/lib/seed";
+import { personalAmount, reconcileSharedHoliday } from "@/lib/shared-holiday";
 import { type AppState, type Transaction } from "@/lib/types";
 
 const transaction = (id: string, sourceCategory?: string): Transaction => ({
@@ -82,8 +83,10 @@ describe("legacy Excel source categories", () => {
     expect(results[1]).toMatchObject({
       category: "Urlaub",
       includeInPlan: false,
-      reason: "Urlaub: 50 % Eigenanteil, 50 % Forderung",
+      reason: "Ausgeschlossen",
     });
+    expect(personalAmount(state.transactions[1])).toBe(-500);
+    expect(reconcileSharedHoliday(state.transactions).receivables).toEqual([]);
     expect(results[2]).toMatchObject({
       category: "Bankgebühren",
       includeInPlan: false,

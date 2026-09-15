@@ -71,9 +71,14 @@ test("September footer includes August payroll, half travel spend and no repayme
     row("lunch", "BIPA", -8), row("repay", "Überweisung Piber Raphael Urlaub", 203, "2026-09-11"),
     { ...row("internal", "Transfer intern", -100), category: "Transfer intern" }]);
   await expect(page.getByLabel("Monat filtern")).toHaveValue("2026-09");
+  await page.getByRole("button", { name: "Geteilt", exact: true }).click();
+  await page.getByRole("dialog").getByRole("checkbox", { name: "Teilen: Swiss 2026-09-03" }).check();
+  await page.getByRole("button", { name: "Auswahl bestätigen (1)" }).click();
+  await expect(page.getByRole("dialog").getByText("Bezahlt", { exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   await expect(page.getByText("4 Treffer", { exact: true })).toBeVisible();
   await expect(page.locator("strong").filter({ hasText: "2.792,00" })).toBeVisible();
-  await expect(page.getByRole("row").filter({ hasText: "Swiss" })).toContainText(/400,00.*Eigenanteil 200,00.*Forderung ausgeglichen/);
+  await expect(page.getByRole("row").filter({ hasText: "Swiss" })).toContainText(/200,00.*Gesamt 400,00.*Meine Hälfte.*Bezahlt/);
   await expect(page.getByRole("row").filter({ hasText: "Piber Raphael" })).toContainText("kein Einkommen");
   await page.getByLabel("Monat filtern").selectOption("2026-08");
   await expect(page.getByText("0 Treffer", { exact: true })).toBeVisible();

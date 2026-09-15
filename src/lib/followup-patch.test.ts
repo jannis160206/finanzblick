@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { actualBookings, bookingMonth, calculateDashboard, calculatePlan, classify, sum } from "@/lib/calc";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, transactionSchema, type Transaction } from "@/lib/types";
-import { personalAmount, reconcileSharedHoliday } from "@/lib/shared-holiday";
+import { personalAmount, reconcileSharedHoliday, selectSharedBookings } from "@/lib/shared-holiday";
 import { commitStatementImport, openReviewCount, prepareStatementImport, queueLedgerReview } from "@/lib/import/review";
 import { merchantRuleKey } from "@/lib/import/merchant-rules";
 import { parseStatementCsv } from "@/lib/import/statements";
@@ -34,7 +34,7 @@ describe("unconditional lunch names", () => {
 
 describe("shared travel", () => {
   it.each(["Swiss", "Ryanair", "easyJet", "Booking.com", "Airbnb", "Lufthansa", "Austrian Airlines", "Expedia"])("splits %s into personal spend and a receivable", (name) => {
-    const booking = row("travel", name, -401.01);
+    const booking = { ...row("travel", name, -401.01), sharedWithRaphael: true };
     const result = reconcileSharedHoliday([booking]);
     expect(result.receivables[0]).toMatchObject({ ownSpend: 200.51, amount: 200.5, outstanding: 200.5 });
     expect(personalAmount(result.bookings[0])).toBe(-200.51);
@@ -43,14 +43,14 @@ describe("shared travel", () => {
   });
   it("clears a matching later Piber Raphael inbound once and never treats it as income", () => {
     const state = createSeed(); state.settings.asOf = "2026-10-30";
-    const travel = row("travel", "Booking.com", -400);
+    const travel = { ...row("travel", "Booking.com", -400), sharedWithRaphael: true };
     const repayment = row("repayment", "Überweisung von Raphael Piber Urlaub", 203, "2026-10-20");
     state.transactions = [travel, repayment];
     const original = JSON.stringify(state.transactions);
     const result = reconcileSharedHoliday(state.transactions);
     expect(result.receivables[0]).toMatchObject({ outstanding: 0, repaymentId: "repayment", repaymentAmount: 203 });
     expect(result.bookings[1].holidayReimbursementFor).toBe("travel");
-    expect(classify(result.bookings[1])).toMatchObject({ category: "Urlaub", includeInPlan: false });
+    expect(classify(result.bookings[1])).toMatchObject({ category: "Transfer", includeInPlan: false });
     expect(sum(result.bookings.map(personalAmount))).toBe(-200);
     expect(calculateDashboard(state).current.received).toBe(0);
     expect(calculateDashboard(state).current.actualSpending).toBe(0);
@@ -60,11 +60,11 @@ describe("shared travel", () => {
     expect(reconcileSharedHoliday(appStateSchema.parse(JSON.parse(JSON.stringify(state))).transactions).receivables).toEqual(result.receivables);
     expect(reconcileSharedHoliday([travel]).receivables[0].outstanding).toBe(200);
   });
-  it("requires both the partner name and amount, after the charge; never splits ordinary purchases", () => {
-    const travel = row("travel", "Airbnb", -400);
-    for (const incoming of [row("wrong-name", "Other Person", 200), row("early", "Piber Raphael", 200, "2026-09-12"), row("amount", "Piber Raphael", 205.01)])
+  it("requires a partner name and matching amount after the selected charge", () => {
+    const travel = { ...row("travel", "Airbnb", -400), sharedWithRaphael: true };
+    for (const incoming of [row("wrong-name", "Other Person", 200), row("early", "Piber Raphael", 200, "2026-09-12"), row("amount", "Piber Raphael", 206.01)])
       expect(reconcileSharedHoliday([travel, incoming]).receivables[0].outstanding).toBe(200);
-    const result = reconcileSharedHoliday([travel, row("twin", "Ryanair", -400), row("repay", "Piber Raphael", 195)]);
+    const result = reconcileSharedHoliday([travel, { ...row("twin", "Ryanair", -400), sharedWithRaphael: true }, row("repay", "Piber Raphael", 195)]);
     expect(result.receivables.filter((item) => item.outstanding === 0)).toHaveLength(1);
     for (const name of ["BIPA", "Hotspot", "Mensa", "BILLA", "Amazon", "Pizzeria"])
       expect(personalAmount(row(name, name, -400))).toBe(-400);
@@ -72,11 +72,13 @@ describe("shared travel", () => {
   it("matches across separate imports in either order, without duplicated expenses", () => {
     for (const reverse of [false, true]) {
       let state = createSeed();
+      state.settings.asOf = "2026-10-30";
       const files = ["2026-09-13,Swiss,-400", "2026-10-20,Piber Raphael,200"];
       if (reverse) files.reverse();
       for (const line of [...files, ...files]) {
         const prepared = prepareStatementImport([parseStatementCsv(`Revolut\nDatum,Beschreibung,Betrag\n${line}`)], state);
         state = queueLedgerReview(commitStatementImport(state, prepared.automatic, [], prepared.metadata).state);
+        state = queueLedgerReview(selectSharedBookings(state, state.transactions.filter((booking) => booking.description === "Swiss").map((booking) => booking.id)));
       }
       expect(state.reviewQueue).toEqual([]);
       expect(state.transactions).toHaveLength(2);

@@ -5,6 +5,7 @@ import {
   pocketNames,
   type AppState,
   type Category,
+  type HolidayRange,
   type Pocket,
   type PocketAmounts,
   type Settings,
@@ -18,8 +19,8 @@ import {
 } from "@/lib/import/identity";
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
-import { alwaysLunch, isSharedHoliday, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
-import { recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
+import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
+import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, payrollCategory, payrollText } from "@/lib/payroll";
 import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
 
@@ -50,7 +51,7 @@ export function monthsBetween(from: string, to: string) {
 }
 
 const excluded =
-  /eventim|magazin salzburg|salzburger verkehr|sky chefs|\blsg\b|roof burger|filomena|bravofly|urlaub|führerschein|fuhrerschein/i;
+  /eventim|ticketmaster|oeticket|magazin salzburg|salzburger verkehr|sky chefs|\blsg\b|roof burger|filomena|bravofly|urlaub|führerschein|fuhrerschein/i;
 const merchantPatterns: [RegExp, string][] = [
   [/\bmartin\s+auer\b/i, "Martin Auer"],
   [/bipa/i, "BIPA"],
@@ -110,7 +111,7 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "rawDescription" | "rawDetails">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails">>,
 ) {
   const { description, amount } = recoverMerchant(transaction);
   const forcedLunch = alwaysLunch(description);
@@ -214,10 +215,17 @@ export function classify(
   if (payroll && !detectedTransfer &&
     (!transaction.categoryOverride || ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(transaction.category)))
     category = payroll;
-  // These explicit rules outrank remembered categories and calendar filters.
-  if (sharedHoliday || reimbursement) category = "Urlaub";
   if (forcedLunch) category = "Mittagessen";
   category = canonicalCategory(category);
+  // Sharing changes the amount, not the purpose of the purchase. Travel stays
+  // travel even when an older merchant rule calls a hotel/grocer everyday spend.
+  if (!detectedTransfer && !fixedCategories.includes(category) && !isAmazon &&
+    (transaction.category === "Urlaub" || /^urlaub\b/i.test(sourceCategory) ||
+      (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
+  if (unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
+  // A partner transfer must not become a salary receipt before reconciliation.
+  if (isRaphaelPayment(transaction) && ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(category)) category = "Sonstiges";
+  if (reimbursement) category = "Transfer";
   const isTransfer =
     detectedTransfer ||
     category === "Transfer" ||
@@ -226,6 +234,7 @@ export function classify(
     isRoundUp || isAmazon ? "Sparkonto" : savingsPocket(transaction.pocket);
   const exclusion =
     isAmazon ||
+    category === "Urlaub" ||
     /amex raphael/i.test(transaction.pocket ?? "") ||
     excluded.test(`${description} ${transaction.sourceCategory ?? ""}`) ||
     savingsPocket(transaction.pocket) === "Urlaub";
@@ -233,7 +242,6 @@ export function classify(
   const includeInPlan =
     amount !== 0 &&
     !isTransfer &&
-    !sharedHoliday &&
     !reimbursement &&
     !exclusion &&
     !fixedOrIncome &&
@@ -253,9 +261,9 @@ export function classify(
     includeInPlan,
     merchant: merchantName(description),
     reason: sharedHoliday
-      ? "Urlaub: 50 % Eigenanteil, 50 % Forderung"
+      ? "Geteilt: 50 % Eigenanteil, 50 % Raphael"
       : reimbursement
-        ? "Ausgleich der Urlaubsforderung, kein Einkommen"
+        ? "Ausgleich geteilter Kosten, kein Einkommen"
         : isAmazon
       ? "Amazon: Extraausgabe"
       : /amex raphael/i.test(transaction.pocket ?? "")
@@ -357,7 +365,28 @@ export function classifyStatementRows(
 }
 
 export const planWeights = [0.15, 0.2, 0.3, 0.35] as const;
-export function calculatePlan(transactions: Transaction[], asOf: string) {
+// Keep location/merchant words: a foreign burger shop is not the recurring
+// home restaurant just because merchantName groups both under 'Burger'.
+const holidayMerchantKey = (row: Transaction) => merchantKeyText(recoverMerchant(row).description)
+  .replace(/\b\d{1,2}[./]\d{1,2}[./](?:\d{2}|\d{4})\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/g, " ")
+  .replace(/\b(?:kartenzahlung|pos|zahlung|debit|sepa)\b/g, " ")
+  .replace(/\d+/g, " ").replace(/\s+/g, " ").trim();
+
+export function accountHolidayRanges(rows: AccountedTransaction[], ranges: HolidayRange[] = [], asOf = "9999-12-31"): AccountedTransaction[] {
+  const inside = (date: string) => ranges.some((range) => date >= range.from && date <= range.to);
+  const clean = rows.map((row) => { const copy = { ...row }; delete copy.holidayRange; return copy; });
+  if (!ranges.length) return clean;
+  const home = new Set(clean.filter((row) => row.amount < 0 && row.date <= asOf && !inside(row.date) &&
+    !classify(row).isTransfer && classify(row).category !== "Urlaub" && !unresolvedTerminal(row.description)).map(holidayMerchantKey));
+  return clean.map((row) => {
+    const result = classify(row);
+    if (row.amount >= 0 || !inside(row.date) || result.isTransfer || result.isAmazon ||
+      fixedCategories.includes(result.category) || home.has(holidayMerchantKey(row))) return row;
+    return { ...row, holidayRange: true };
+  });
+}
+
+export function calculatePlan(transactions: Transaction[], asOf: string, holidayRanges: HolidayRange[] = []) {
   const currentMonth = monthKey(asOf);
   const months = [-4, -3, -2, -1].map((offset) =>
     addMonths(currentMonth, offset),
@@ -373,7 +402,7 @@ export function calculatePlan(transactions: Transaction[], asOf: string) {
       seen: Set<string>;
     }
   >();
-  for (const transaction of reconcileSharedHoliday(transactions).bookings) {
+  for (const transaction of accountHolidayRanges(reconcileSharedHoliday(transactions, asOf).bookings, holidayRanges, asOf)) {
     const result = classify(transaction);
     const key = monthKey(transaction.date);
     if (
@@ -767,7 +796,9 @@ export function calculateMonthTotals(
   };
 }
 export function actualBookings(state: AppState): AccountedTransaction[] {
-  if (!state.fixedReceipts?.length) return reconcileSharedHoliday(state.transactions).bookings;
+  const account = (rows: Transaction[]) => accountHolidayRanges(
+    reconcileSharedHoliday(rows, state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+  if (!state.fixedReceipts?.length) return account(state.transactions);
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [
       statementFingerprint(row),
@@ -791,7 +822,7 @@ export function actualBookings(state: AppState): AccountedTransaction[] {
       includeInPlan: false,
     });
   }
-  return reconcileSharedHoliday([...state.transactions, ...receipts]).bookings;
+  return account([...state.transactions, ...receipts]);
 }
 export function incomingPocketTransfers(state: AppState, pocket: string, month: string, aliases: string[] = []): number {
   const keys = new Set([pocket, ...aliases].map(pocketKey));
@@ -806,7 +837,7 @@ export function synchronizeGoals(state: AppState): AppState {
   }) };
 }
 export function calculateDashboard(state: AppState) {
-  const plan = calculatePlan(state.transactions, state.settings.asOf);
+  const plan = calculatePlan(state.transactions, state.settings.asOf, state.holidayRanges);
   // Reconcile receipt fingerprints once, not twice for each forecast month.
   const bookings = actualBookings(state);
   const actual = actualPockets(state);

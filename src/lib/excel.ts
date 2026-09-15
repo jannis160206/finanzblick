@@ -247,6 +247,8 @@ export async function parseWorkbook(
           ? { bankReference: text(get("Bankreferenz")) }
           : {}),
         ...(native && text(get("Uhrzeit")) ? { time: text(get("Uhrzeit")) } : {}),
+        ...(native && text(get("Geteilt mit Raphael")) ? { sharedWithRaphael: /^(ja|true|1)$/i.test(text(get("Geteilt mit Raphael"))) } : {}),
+        ...(native && text(get("Geteilt manuell bezahlt")) ? { sharedPaidManually: /^(ja|true|1)$/i.test(text(get("Geteilt manuell bezahlt"))) } : {}),
         ...(text(get("Originalbeschreibung")) ? { rawDescription: text(get("Originalbeschreibung")) } : {}),
         ...(text(get("Händlerdetails")) ? { rawDetails: text(get("Händlerdetails")).split("\n") } : {}),
         ...(native && numeric(get("Vorkommen")) !== null
@@ -458,6 +460,7 @@ export async function parseWorkbook(
                 fixedAmountDecisions: true,
                 savingsGoals: true,
                 seasonalTheme: true,
+                holidayRanges: true,
               })
               .parse(data),
           );
@@ -649,6 +652,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Uhrzeit",
     "Originalbeschreibung",
     "Händlerdetails",
+    "Geteilt mit Raphael",
+    "Geteilt manuell bezahlt",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -676,6 +681,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.time ?? "",
       row.rawDescription ?? "",
       row.rawDetails?.join("\n") ?? "",
+      row.sharedWithRaphael === undefined ? "" : row.sharedWithRaphael ? "Ja" : "Nein",
+      row.sharedPaidManually === undefined ? "" : row.sharedPaidManually ? "Ja" : "Nein",
     ]);
   });
   for (const year of [2026, 2027]) {
@@ -790,7 +797,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.reviewQueue ||
     state.importStatus ||
     state.settings.interestRates ||
-    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme
+    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
       state: "hidden",
@@ -802,7 +809,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       state.reviewQueue ||
       state.importStatus ||
       state.settings.interestRates ||
-      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme
+      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges
     )
       automation.addRow([
         "ux",
@@ -815,6 +822,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
           fixedAmountDecisions: state.fixedAmountDecisions,
           savingsGoals: state.savingsGoals,
           seasonalTheme: state.seasonalTheme,
+          holidayRanges: state.holidayRanges,
         }),
       ]);
     state.pocketSnapshots?.forEach((item) =>

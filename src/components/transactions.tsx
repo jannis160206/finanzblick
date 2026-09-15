@@ -46,6 +46,8 @@ import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { ReviewCount } from "@/components/review-count";
 import { rememberMerchants } from "@/lib/import/merchant-rules";
+import { SharedCosts, SharedOpenList } from "@/components/shared-costs";
+import { HolidayRanges } from "@/components/holiday-ranges";
 
 const accountLabel = (row: Transaction) =>
   `${row.bank} · ${row.pocket ?? "Hauptkonto"}`;
@@ -206,7 +208,7 @@ export function Transactions() {
   const { state, dashboard, update, openReviewCount, storageError } = useFinance();
   const [reviewRequest, setReviewRequest] = useState(0);
   const ledger = useMemo(() => actualBookings(state), [state]);
-  const holiday = useMemo(() => reconcileSharedHoliday(ledger), [ledger]);
+  const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const [query, setQuery] = useState("");
@@ -226,7 +228,7 @@ export function Transactions() {
       ledger.filter((row) => {
         const result = classify(row);
         return (
-          (showTransfers || !result.isTransfer) &&
+          (showTransfers || !result.isTransfer || !!row.holidayReimbursementFor) &&
           (!query ||
             `${row.description} ${row.bank} ${result.merchant}`
               .toLocaleLowerCase("de")
@@ -274,7 +276,8 @@ export function Transactions() {
       ),
     },
     {
-      accessorKey: "amount",
+      id: "amount",
+      accessorFn: (row) => row.sharedWithRaphael ? personalAmount(row) : row.amount,
       header: "Betrag",
       cell: ({ getValue, row }) => (
         <span
@@ -286,10 +289,10 @@ export function Transactions() {
           {currency(getValue<number>())}
           {holiday.receivables.filter((item) => item.bookingId === row.original.id).map((item) => (
             <span key={item.bookingId} className="mt-1 block font-sans text-[10px] font-normal text-muted-foreground">
-              Eigenanteil {currency(item.ownSpend)} · {item.repaymentId ? "Forderung ausgeglichen" : `offen ${currency(item.outstanding)}`}
+              Gesamt {currency(item.fullAmount)} · Meine Hälfte · {item.status}
             </span>
           ))}
-          {row.original.holidayReimbursementFor && <span className="mt-1 block font-sans text-[10px] font-normal text-muted-foreground">Urlaubsforderung ausgeglichen · kein Einkommen</span>}
+          {row.original.holidayReimbursementFor && <span className="mt-1 block font-sans text-[10px] font-normal text-muted-foreground">Geteilt bezahlt · kein Einkommen</span>}
         </span>
       ),
     },
@@ -373,6 +376,8 @@ export function Transactions() {
             <ListChecks className="size-4" />
             <ReviewCount count={openReviewCount} className="absolute -top-2 -right-2" />
           </Button>
+          <SharedCosts bookings={ledger} items={holiday.receivables} />
+          <HolidayRanges />
           <div className="relative min-w-52 flex-1">
             <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
             <Input
@@ -489,6 +494,7 @@ export function Transactions() {
             </Button>
           )}
         </div>
+        <SharedOpenList items={holiday.receivables} />
         <div className="overflow-x-auto">
           <table className="data-table w-full">
             <thead>
