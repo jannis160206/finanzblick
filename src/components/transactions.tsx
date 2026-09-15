@@ -46,7 +46,7 @@ import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { ReviewCount } from "@/components/review-count";
 import { rememberMerchants } from "@/lib/import/merchant-rules";
-import { SharedCosts, SharedOpenList } from "@/components/shared-costs";
+import { SharedCosts, SharedRowAction } from "@/components/shared-costs";
 import { HolidayRanges } from "@/components/holiday-ranges";
 
 const accountLabel = (row: Transaction) =>
@@ -328,6 +328,7 @@ export function Transactions() {
             >
               <Trash2 className="size-3.5" />
             </Button>
+            <SharedRowAction booking={row.original} />
           </details>
         </div>
       ),
@@ -494,7 +495,6 @@ export function Transactions() {
             </Button>
           )}
         </div>
-        <SharedOpenList items={holiday.receivables} />
         <div className="overflow-x-auto">
           <table className="data-table w-full">
             <thead>
