@@ -125,13 +125,13 @@ describe("savings and interest", () => {
       Motorrad: 0,
     }));
   it("protects 180 euros before funding the target", () =>
-    expect(splitSurplus(1000, 0, settings)).toMatchObject({
+    expect(splitSurplus(1000, 0, { ...settings, asOf: "2026-10-01" })).toMatchObject({
       Motorrad: 820,
       Sparkonto: 180,
       Urlaub: 0,
     }));
   it("caps the goal and sends overflow to Urlaub after the floor", () => {
-    expect(splitSurplus(1000, 8400, settings)).toMatchObject({
+    expect(splitSurplus(1000, 8400, { ...settings, asOf: "2026-10-01" })).toMatchObject({
       Motorrad: 100,
       Sparkonto: 180,
       Urlaub: 720,

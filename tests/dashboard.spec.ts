@@ -1,8 +1,75 @@
 import { test, expect } from "@playwright/test";
 import { createSeed } from "../src/lib/seed";
+import { statementFingerprint } from "../src/lib/import/identity";
 
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-09-11T12:00:00Z"));
+});
+
+test("bounded sharing and corrected overview salary", async ({ page }) => {
+  const state = createSeed();
+  state.settings.baselineDate = "2026-09-01";
+  state.savingsGoals = [{ id: "bike", name: "Motorrad", pocket: "Motorrad", target: 100000, date: "2027-04-01" }];
+  const values = Object.fromEntries([2026, 2027].flatMap((year) => Array.from({ length: 12 }, (_, i) => [`${year}-${String(i + 1).padStart(2, "0")}`, 2576.43])));
+  state.financeRows = [{ id: "salary", label: "Nettogehalt", kind: "income", values },
+    { id: "on-call", label: "Rufbereitschaft", kind: "income", values: { "2026-09": 241.83 } }];
+  const salary = { id: "xlsx-150", date: "2026-08-27", bank: "Raiffeisen", pocket: null,
+    description: "TTS TeamTalentSolutions GmbH – Gehalt 8/2026", category: "Gehalt" as const, amount: 2576.43, includeInPlan: false };
+  const onCall = { ...salary, id: "xlsx-49", date: "2026-09-07", category: "Rufbereitschaft" as const, amount: 241.83 };
+  state.transactions = [salary, onCall, ...Array.from({ length: 60 }, (_, index) => ({ ...salary,
+    id: `shopping-${index}`, date: "2026-09-08", description: `Einkauf ${index}`, amount: -10,
+    category: "Shopping" as const, categoryOverride: true,
+  }))];
+  state.fixedReceipts = [salary, onCall].map((row) => {
+    const booking = { ...row, id: `bank-${row.id}`, bankReference: `bank-${row.id}`, pocket: "Raiffeisen Giro",
+      description: "Auftraggeber: TTS TeamTalentSolutions GmbH Verwendungszweck: Gehalt 8/2026" };
+    return { key: statementFingerprint(booking), date: row.date, category: row.category, amount: row.amount, booking };
+  });
+  state.importStatus = { imported: 2, issues: ["Beispiel: nicht lesbar"] };
+  await page.addInitScript((state) => {
+    if (!localStorage.getItem("finanzdashboard.v1")) localStorage.setItem("finanzdashboard.v1", JSON.stringify(state));
+  }, state);
+  await page.goto("/");
+  await expect(page.getByText("Lokal gespeichert", { exact: true })).toBeVisible();
+  const income = page.locator("section").filter({ has: page.getByText("Einnahmen · Plan", { exact: true }) });
+  await expect(income).toContainText(/Erhalten: 2\.576,43/);
+  await expect(income).not.toContainText(/5\.636,52|2\.818,26/);
+  await expect(page.getByLabel("Auszugsstatus")).toHaveCount(0);
+  await expect(page.getByText(/Fixkosten ohne Auszugsbeleg/)).toHaveCount(0);
+  const funding = page.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
+  await expect(funding.locator('[data-funding-pot="Motorrad"]')).toHaveCount(0);
+  for (const [date, count] of [["2026-10-15", 1], ["2027-04-15", 1], ["2027-05-15", 0]] as const) {
+    await page.clock.setFixedTime(new Date(`${date}T12:00:00Z`));
+    await page.reload();
+    await expect(page.getByText("Lokal gespeichert", { exact: true })).toBeVisible();
+    await expect(funding.locator('[data-funding-pot="Motorrad"]')).toHaveCount(count);
+    await expect(funding.locator('[data-funding-pot="Sparkonto"]')).toContainText("180,00");
+  }
+  await expect(funding.locator('[data-funding-pot="Urlaub"]')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/umsaetze");
+  const open = page.getByRole("button", { name: "Geteilt", exact: true });
+  await open.click();
+  const dialog = page.getByRole("dialog");
+  const close = dialog.getByRole("button", { name: "Geteilt schließen" });
+  const save = dialog.getByRole("button", { name: "Speichern", exact: true });
+  await expect(close).toBeInViewport();
+  await expect(save).toBeInViewport();
+  expect((await dialog.boundingBox())!.height).toBeLessThanOrEqual(844 * 0.8 + 1);
+  const list = dialog.getByLabel("Buchungslisten");
+  expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(close).toBeInViewport();
+  await expect(save).toBeInViewport();
+  await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await open.click();
+  await dialog.getByRole("checkbox").first().check();
+  await save.click();
+  await expect(dialog).toHaveCount(0);
+  await open.click();
+  await close.click();
+  await expect(dialog).toHaveCount(0);
 });
 
 test("all six screens render without runtime errors and theme persists", async ({

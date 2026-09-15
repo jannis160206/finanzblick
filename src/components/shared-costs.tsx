@@ -58,7 +58,8 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
       {count > 0 && <span aria-label={`${count} offene Teilungen`} className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">{count}</span>}
     </Button>
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent showCloseButton={false} className="!flex !max-h-[80vh] !flex-col !gap-0 !overflow-hidden !p-0 sm:max-w-2xl">
+      <DialogContent showCloseButton={false} className="sm:max-w-2xl"
+        style={{ display: "flex", flexDirection: "column", maxHeight: "80dvh", gap: 0, overflow: "hidden", padding: 0 }}>
         <div className="sticky top-0 z-10 shrink-0 border-b bg-background p-4">
         <DialogHeader className="relative pr-10">
           <DialogTitle>Geteilt mit Raphael Piber</DialogTitle>

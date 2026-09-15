@@ -21,7 +21,7 @@ import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
 import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
-import { earlySpecialSalary, payrollCategory, payrollText } from "@/lib/payroll";
+import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
 import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetValue } from "@/lib/variable-budgets";
 
@@ -745,6 +745,11 @@ export function calculateMonthTotals(
       .filter((row) => row.kind === "income")
       .map((row) => row.values[month] ?? 0),
   );
+  const salaryPlan = sum(state.financeRows.filter((row) => {
+    const category = payrollCategory({ description: row.label, amount: row.values[month] ?? 0 });
+    return row.kind === "income" && fixedRowCategory(row) === "Gehalt" &&
+      category !== "Einkommen" && category !== "Rufbereitschaft";
+  }).map((row) => row.values[month] ?? 0));
   const fixed = sum(
     state.financeRows
       .filter((row) => row.kind === "fixed")
@@ -771,6 +776,10 @@ export function calculateMonthTotals(
   );
   return {
     income,
+    salaryPlan,
+    salaryReceived: sum(bookings.filter((row) => row.amount > 0 && isTTSPayroll(row) &&
+      row.date <= state.settings.asOf && bookingMonth(row) === month &&
+      classify(row).category === "Gehalt" && !classify(row).isTransfer).map((row) => row.amount)),
     received: sum(
       bookings
         .filter(
@@ -792,7 +801,7 @@ export function calculateMonthTotals(
 }
 export function actualBookings(state: AppState): AccountedTransaction[] {
   const account = (rows: Transaction[]) => accountHolidayRanges(
-    reconcileSharedHoliday(rows, state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+    reconcileSharedHoliday(reconcilePayrollSources(rows), state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
   if (!state.fixedReceipts?.length) return account(state.transactions);
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [

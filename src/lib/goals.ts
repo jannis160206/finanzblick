@@ -48,7 +48,9 @@ export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: R
     // Completion is historical: withdrawing a purchased goal must not restart it.
     // Keep this month's original instruction so its imported transfer can be checked off.
     const complete = goal.completedAt && goal.completedAt.slice(0, 7) < month;
-    const gap = complete ? 0 : cents(goal.target - (balances[goal.id] ?? 0));
+    const outsideBikeWindow = pocketKey(goal.pocket) === "motorrad" &&
+      (month < "2026-10" || month > goal.date.slice(0, 7));
+    const gap = complete || outsideBikeWindow ? 0 : cents(goal.target - (balances[goal.id] ?? 0));
     const amount = Math.min(remaining, gap);
     funding[goal.id] = amount / 100;
     remaining -= amount;

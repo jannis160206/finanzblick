@@ -213,13 +213,13 @@ describe("Revolut closing balances", () => {
     state.financeRows[0].values = { "2026-09": 1917, "2026-10": 1911.5 };
     const d = calculateDashboard(state);
     const september = d.timeline.find((month) => month.month === "2026-09")!;
-    expect(september.rates.Motorrad).toBe(820);
+    expect(september.rates.Motorrad).toBe(0);
     expect(september.end.Motorrad).toBe(900); // Already executed.
     expect(september.end.Sparkonto).toBe(1912.59); // Only 130 of planned 180 remain.
     expect(d.countdown.remaining).toBe(7600);
     expect(d.ninetyDays[1].bikeTransfer).toBe(820);
   });
-  it("keeps this month's instruction and sends the following remainder to vacation after the floor", () => {
+  it("preserves a pre-start funded balance and sends surplus to vacation after the floor", () => {
     const state = importResult(
       stateForTest(),
       parseStatementCsv(consolidated),
@@ -231,9 +231,9 @@ describe("Revolut closing balances", () => {
     const september = d.timeline.find((month) => month.month === "2026-09")!;
     const october = d.timeline.find((month) => month.month === "2026-10")!;
     expect(september.rates).toMatchObject({
-      Motorrad: 820,
+      Motorrad: 0,
       Sparkonto: 180,
-      Urlaub: 0,
+      Urlaub: 820,
     });
     expect(september.end.Motorrad).toBe(8500);
     expect(october.rates).toMatchObject({

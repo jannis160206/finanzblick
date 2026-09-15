@@ -57,7 +57,7 @@ const chartColors = [
 const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function Overview() {
-  const { state, dashboard: d, openReviewCount } = useFinance();
+  const { state, dashboard: d } = useFinance();
   const monthSplit = d.monthlyFunding;
   const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
   const kpis = [
@@ -70,8 +70,8 @@ export function Overview() {
     },
     {
       label: "Einnahmen · Plan",
-      value: d.current.income,
-      note: `Erhalten: ${currency(d.current.received)}`,
+      value: d.current.salaryPlan,
+      note: `Erhalten: ${currency(d.current.salaryReceived)}`,
       icon: ArrowDownLeft,
       color: "text-primary",
     },
@@ -133,22 +133,6 @@ export function Overview() {
             {currency(item.amount)}
           </span>)}
         </section>
-      )}
-      {(d.missingFixed.length > 0 ||
-        state.importStatus ||
-        openReviewCount > 0) && (
-        <p
-          className="mb-5 text-xs text-muted-foreground"
-          aria-label="Auszugsstatus"
-        >
-          <Link href="/umsaetze">
-            Auszugsstatus: Übernommen {state.importStatus?.imported ?? 0} ·
-            offen {openReviewCount} · nicht lesbar{" "}
-            {state.importStatus?.issues.length ?? 0}
-          </Link>
-          {d.missingFixed.length > 0 &&
-            ` · ${d.missingFixed.length} Fixkosten ohne Auszugsbeleg`}
-        </p>
       )}
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {kpis.map((kpi) => (

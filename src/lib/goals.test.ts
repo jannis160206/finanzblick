@@ -53,7 +53,7 @@ describe("automatic savings floor and goals", () => {
     state.financeRows[0].values["2026-09"] = 2000;
     state.financeRows.push({ id: "fixed", label: "Leasing", kind: "fixed", values: { "2026-09": 600 } });
     state.months["2026-09"] = { variableOverride: 500, bikeOverride: null, pocketIn: emptyPockets(), pocketOut: emptyPockets() };
-    expect(calculateDashboard(state).current).toMatchObject({ surplus: 483, rates: { Sparkonto: 180, Motorrad: 303 } });
+    expect(calculateDashboard(state).current).toMatchObject({ surplus: 483, rates: { Sparkonto: 180, Motorrad: 0, Urlaub: 303 } });
   });
   it("uses imported balances for additional goal pockets and never funds a reached goal again", () => {
     let state = stateFor(); state.savingsGoals = [goal("Kamera", 820, "2026-09-30")];
@@ -70,10 +70,29 @@ describe("automatic savings floor and goals", () => {
   });
   it("does not double-count an executed rate in the forecast", () => {
     const state = stateFor();
-    state.transactions = [transfer("Sparen", 180), transfer("Motorrad", 820)];
+    state.settings.asOf = "2026-10-14";
+    state.transactions = [transfer("Sparen", 180, "2026-10-14"), transfer("Motorrad", 820, "2026-10-14")];
     const d = calculateDashboard(state);
     expect(d.monthlyFunding.every((item) => item.done)).toBe(true);
     expect(d.current).toMatchObject({ end: { Sparkonto: 180, Motorrad: 820 } });
+  });
+  it.each([["2026-09", 0], ["2026-10", 820], ["2027-04", 820], ["2027-05", 0]] as const)("limits motorcycle funding in %s without changing the floor", (month, amount) => {
+    const bike = goal("Motorrad", 100000, "2027-04-01");
+    expect(allocateGoals(1000, [bike], {}, month)).toEqual({ savings: 180, goals: { Motorrad: amount }, vacation: 820 - amount });
+  });
+  it("uses the saved goal deadline and shows only positive funding instructions", () => {
+    const state = stateFor();
+    state.savingsGoals = [goal("Motorrad", 100000, "2027-04-01")];
+    state.settings.bikeShare = 1;
+    state.settings.afterBikeSavingsShare = 1;
+    const before = calculateDashboard(state);
+    expect(before.monthlyFunding.map((row) => row.pocket)).toEqual(["Sparkonto", "Urlaub"]);
+    expect(before.timeline.find((row) => row.month === "2026-10")?.bikeTransfer).toBe(820);
+    state.settings.asOf = "2027-05-15";
+    expect(calculateDashboard(state).current).toMatchObject({ rates: { Sparkonto: 180, Motorrad: 0, Urlaub: 820 } });
+    expect(calculateDashboard(state).monthlyFunding.map((row) => row.pocket)).toEqual(["Sparkonto", "Urlaub"]);
+    state.savingsGoals[0].date = "2027-06-01";
+    expect(calculateDashboard(state).current).toMatchObject({ rates: { Motorrad: 820 } });
   });
   it("hardcodes tax even when an old backup has a different tax field", () => {
     const settings = { ...createSeed().settings, interestStart: "2026-01-01", interestRates: [{ date: "2026-01-01", rate: 0.024 }] };
