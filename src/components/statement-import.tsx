@@ -33,6 +33,7 @@ import {
   type ReviewItem,
 } from "@/lib/import/review";
 import { cn } from "@/lib/utils";
+import { CategoryOptions } from "@/components/category-options";
 
 type Pending = {
   requestId: string;
@@ -124,15 +125,7 @@ function BookingReview({
             <option value="Prüfen" disabled>
               Kategorie wählen
             </option>
-            {choices.map((category) => (
-              <option key={category} value={category}>
-                {category === "Mobilität"
-                  ? "Tanken"
-                  : category === "Handyvertrag"
-                    ? "Handy"
-                    : category}
-              </option>
-            ))}
+            <CategoryOptions excludeReview />
           </select>
         </label>
       </div>

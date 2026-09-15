@@ -27,8 +27,8 @@ function legacyState(reference: AppState) {
         ...row,
         sourceCategory: undefined,
         category:
-          row.category === "Spotify" ||
-          row.category === "AMEX Monatsgebühr" ||
+          row.category === "Abonnements" ||
+          row.category === "Bankgebühren" ||
           row.sourceCategory === "AMEX Abrechnung (Sammel)"
             ? "Sonstiges"
             : row.category,
@@ -85,19 +85,19 @@ describe("legacy Excel source categories", () => {
       reason: "Urlaub: 50 % Eigenanteil, 50 % Forderung",
     });
     expect(results[2]).toMatchObject({
-      category: "AMEX Monatsgebühr",
+      category: "Bankgebühren",
       includeInPlan: false,
       isTransfer: false,
     });
     expect(results[3]).toMatchObject({
-      category: "Spotify",
+      category: "Abonnements",
       includeInPlan: false,
     });
     expect(results[4]).toMatchObject({
       isTransfer: true,
       includeInPlan: false,
     });
-    expect(results[5]).toMatchObject({ category: "Barber", isTransfer: false });
+    expect(results[5]).toMatchObject({ category: "Körperpflege", isTransfer: false });
     expect(results[6].includeInPlan).toBe(true);
   });
   it("restores only exact unedited legacy rows and is idempotent", () => {

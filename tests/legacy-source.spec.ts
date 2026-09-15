@@ -33,8 +33,8 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
       ...row,
       sourceCategory: undefined,
       category:
-        row.category === "Spotify" ||
-        row.category === "AMEX Monatsgebühr" ||
+        row.category === "Abonnements" ||
+        row.category === "Bankgebühren" ||
         row.sourceCategory === "AMEX Abrechnung (Sammel)"
           ? "Sonstiges"
           : row.category,

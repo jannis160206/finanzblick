@@ -32,6 +32,7 @@ import {
 } from "./merchant-rules";
 import { recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 import { payrollCategory } from "@/lib/payroll";
+import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { isWorkingDay, statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import {
@@ -210,6 +211,14 @@ function mergeMetadata(state: AppState, metadata: ImportMetadata): AppState {
 }
 
 export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
+  // An explicit legacy choice still identifies its original contract. Preserve
+  // that intent before classification collapses it into a broader category.
+  const legacyChoices = new Map(candidates.filter((row) => row.categoryOverride &&
+    canonicalCategory(row.category) !== row.category).map((row) => [row.id, row.category]));
+  // Use the reconciled category, including the narrow Apple Care amount match,
+  // rather than reclassifying a PayPal mandate as a generic subscription.
+  const gridFor = (row: Transaction) => matchingGridRow(state,
+    legacyChoices.get(row.id) ?? row.category, row, merchantRuleKey(row));
   const ignored = new Set([
     ...(state.ignoredStatementKeys ?? []),
     ...(state.fixedReceipts ?? []).map((item) => item.key),
@@ -225,14 +234,14 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
     if (
       !row.categoryOverride &&
       row.amount < 0 &&
-      (row.category === "Prüfen" || row.category === "PayPal Abo") &&
+      (row.category === "Prüfen" || row.category === "Abonnements") &&
       /paypal\s+europe|apple\.com\/bill/i.test(row.description) &&
       expected != null &&
       Math.abs(round(Math.abs(row.amount) - expected)) <= 0.05
     )
       return {
         ...row,
-        category: "Apple Care" as const,
+        category: "Versicherungen" as const,
         includeInPlan: false,
       };
     return row;
@@ -246,8 +255,14 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
   const changes = new Map<string, FixedChange>();
   let duplicates = deduped.duplicates;
   const monthly = new Map<string, Transaction>();
+  const scope = (row: Transaction) => {
+    const category = canonicalCategory(row.category);
+    return groupedContractCategories.includes(category)
+      ? `${category}|${gridFor(row)?.id ?? merchantRuleKey(row)}`
+      : category;
+  };
   for (const row of state.transactions)
-    monthly.set(`${bookingMonth(row)}|${classify(row).category}`, row);
+    monthly.set(`${bookingMonth(row)}|${scope({ ...row, category: classify(row).category })}`, row);
   for (const row of deduped.rows) {
     const category = row.category;
     const isFixed =
@@ -258,7 +273,7 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       ignored.has(legacyFingerprint(row))
     ) {
       if (isFixed)
-        receipts.push(receipt(row, matchingGridRow(state, category)?.id));
+        receipts.push(receipt(row, gridFor(row)?.id));
       duplicates++;
       continue;
     }
@@ -267,8 +282,8 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       continue;
     }
     const month = bookingMonth(row);
-    const key = `${month}|${category}`;
-    const grid = matchingGridRow(state, category);
+    const key = `${month}|${scope(row)}`;
+    const grid = gridFor(row);
     const booked = monthly.get(key);
     const previous =
       grid?.values[month] ?? (booked ? Math.abs(booked.amount) : null);
@@ -283,7 +298,7 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       .reverse()
       .find(
         (item) =>
-          item.category === category &&
+          canonicalCategory(item.category) === category &&
           item.merchantKey === merchantRuleKey(row) &&
           item.month <= month,
       );
@@ -434,11 +449,13 @@ export function applyFixedDecisions(
       continue;
     const existing =
       financeRows.find((row) => row.id === change.rowId) ??
-      matchingGridRow({ ...state, financeRows }, change.category);
+      matchingGridRow({ ...state, financeRows }, change.category, change.bookings[0]);
     const row: FinanceRow = existing ?? {
       id: crypto.randomUUID(),
       kind: isIncome(change.category) ? "income" : "fixed",
-      label: change.category,
+      label: groupedContractCategories.includes(change.category)
+        ? change.bookings[0].description.slice(0, 100) : change.category,
+      planCategory: change.category,
       values: {},
     };
     const values = { ...row.values };
@@ -475,6 +492,7 @@ export function commitStatementImport(
     const decision = decisions.find(
       ({ change }) =>
         change.category === item.change.category &&
+        (!change.rowId || !item.change.rowId || change.rowId === item.change.rowId) &&
         change.amount === item.change.amount &&
         change.bookings.some((row) =>
           item.change.bookings.some(
@@ -534,7 +552,7 @@ export function commitStatementImport(
   for (const row of split.rows) {
     const category = classify(row).category;
     const month = bookingMonth(row);
-    const grid = matchingGridRow(appended.state, category);
+    const grid = matchingGridRow(appended.state, category, row, merchantRuleKey(row));
     if (
       durableCategories.includes(category) &&
       grid?.values[month] == null &&

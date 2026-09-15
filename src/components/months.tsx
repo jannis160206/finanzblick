@@ -22,13 +22,13 @@ import { InputLegend, MoneyInput, PageHeading } from "@/components/finance-ui";
 import { financeRowValue, monthsForYear, sum } from "@/lib/calc";
 import { currency, monthLabel, number } from "@/lib/format";
 import {
-  categories,
   emptyMonth,
   financeRowSchema,
   type FinanceRow,
   type MonthInput,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { CategoryOptions } from "@/components/category-options";
 
 function RowEditor({
   row,
@@ -106,7 +106,7 @@ function RowEditor({
           </div>
           <div>
             <Label htmlFor="row-plan">
-              Automatischer Plan (nur variable Positionen)
+              Kategorie / Planverknüpfung
             </Label>
             <select
               id="row-plan"
@@ -116,9 +116,7 @@ function RowEditor({
               })}
             >
               <option value="">Keine Verknüpfung</option>
-              {categories.map((category) => (
-                <option key={category}>{category}</option>
-              ))}
+              <CategoryOptions />
             </select>
           </div>
           <DialogFooter>

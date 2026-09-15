@@ -2,6 +2,7 @@ import { classify } from "@/lib/calc";
 import { type AppState, type Transaction } from "@/lib/types";
 import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import { payrollCategory } from "@/lib/payroll";
+import { canonicalCategory } from "@/lib/categories";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -37,7 +38,7 @@ export function rememberMerchants(
   rows: Transaction[],
 ): AppState {
   const rules = new Map(
-    (state.merchantRules ?? []).map((rule) => [storedMerchantKey(rule.key), rule.category]),
+    (state.merchantRules ?? []).map((rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)]),
   );
   const choices = new Map<string, Transaction["category"]>();
   for (const row of rows)
@@ -48,8 +49,8 @@ export function rememberMerchants(
       !unresolvedTerminal(row.description) &&
       !classify(row).isTransfer
     ) {
-      rules.set(merchantRuleKey(row), row.category);
-      choices.set(merchantRuleKey(row), row.category);
+      rules.set(merchantRuleKey(row), canonicalCategory(row.category));
+      choices.set(merchantRuleKey(row), canonicalCategory(row.category));
     }
   const applyChoice = (row: Transaction): Transaction => {
     const category = choices.get(merchantRuleKey(row));
@@ -78,13 +79,13 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
   const inferred = new Map(
     (state.fixedReceipts ?? []).flatMap((receipt) =>
       receipt.merchantKey
-        ? [[storedMerchantKey(receipt.merchantKey), receipt.category] as const]
+        ? [[storedMerchantKey(receipt.merchantKey), canonicalCategory(receipt.category)] as const]
         : [],
     ),
   );
   const rules = new Map(
     [...(remembered.merchantRules ?? []), ...(state.merchantRules ?? [])].map(
-      (rule) => [storedMerchantKey(rule.key), rule.category],
+      (rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)],
     ),
   );
   return rows.map(recoverMerchant).map((row) => {
@@ -93,7 +94,7 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
     const key = merchantRuleKey(row);
     const category =
       rules.get(key) ??
-      (detected.category === "Prüfen" || detected.category === "PayPal Abo"
+      (detected.category === "Prüfen" || detected.category === "Abonnements"
         ? inferred.get(key)
         : undefined);
     return category && !row.categoryOverride && !detected.isTransfer && !unresolvedTerminal(row.description)

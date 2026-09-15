@@ -205,15 +205,15 @@ describe("classification uses the existing engine", () => {
     ["Trafik", -8, "Mittagessen"],
     ["INTERSPAR", -10, "Mittagessen"],
     ["SPAR", -10.01, "Lebensmittel"],
-    ["dm drogerie", -4, "Ausgehen"],
+    ["dm drogerie", -4, "Drogerie"],
     ["Burgschenke", -20, "Ausgehen"],
-    ["BANKOMAT", -20, "Barber"],
+    ["BANKOMAT", -20, "Körperpflege"],
     ["TeamTalentSolutions", 400, "Rufbereitschaft"],
     ["Gehalt", 2576.43, "Gehalt"],
     ["Porsche Bank", -289, "Leasing"],
-    ["Allianz", -50, "Haftpflicht"],
-    ["Vollkasko Dauerauftrag", -63, "Vollkasko"],
-    ["A1 Telekom", -25, "Handyvertrag"],
+    ["Allianz", -50, "Versicherungen"],
+    ["Vollkasko Dauerauftrag", -63, "Versicherungen"],
+    ["A1 Telekom", -25, "Telefon & Internet"],
   ] as const)("classifies %s centrally", (description, amount, category) =>
     expect(
       classifyStatementRows([{ ...transaction(description, amount, "2026-09-14"), time: "12:00:00" }])[0].category,
@@ -265,7 +265,7 @@ describe("classification uses the existing engine", () => {
         [one],
         [transaction("PayPal Europe", -2.99, "2026-08-03")],
       )[0],
-    ).toMatchObject({ category: "PayPal Abo", includeInPlan: false });
+    ).toMatchObject({ category: "Abonnements", includeInPlan: false });
   });
   it("preserves preview category/pocket edits and plan choice", () => {
     const edited = {

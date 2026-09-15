@@ -51,8 +51,8 @@ describe("merchant classification", () => {
     },
   );
   it.each(["dm", "Burger", "Foodora", "Pizzeria", "Sakura", "Gams"])(
-    "classifies %s as dining out",
-    (name) => expect(classify(transaction(name)).category).toBe("Ausgehen"),
+    "classifies %s by spending purpose",
+    (name) => expect(classify(transaction(name)).category).toBe(name === "dm" ? "Drogerie" : "Ausgehen"),
   );
   it("routes Amazon and AMZ as extra expenses funded from savings", () => {
     for (const name of ["Amazon", "AMZ Marketplace"])
@@ -63,7 +63,7 @@ describe("merchant classification", () => {
       });
   });
   it("only maps exactly twenty-euro ATM withdrawals to barber", () => {
-    expect(classify(transaction("ATM", -20)).category).toBe("Barber");
+    expect(classify(transaction("ATM", -20)).category).toBe("Körperpflege");
     expect(classify(transaction("ATM", -20.01)).category).toBe("Sonstiges");
   });
   it.each([

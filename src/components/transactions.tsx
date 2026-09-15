@@ -40,7 +40,8 @@ import { actualBookings, bookingMonth, classify, monthKey, sum } from "@/lib/cal
 import { personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { categories, transactionSchema, type Transaction } from "@/lib/types";
+import { transactionSchema, type Transaction } from "@/lib/types";
+import { CategoryOptions } from "@/components/category-options";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { ReviewCount } from "@/components/review-count";
@@ -185,9 +186,7 @@ function TransactionForm({
                   }),
               })}
             >
-              {categories.map((category) => (
-                <option key={category}>{category}</option>
-              ))}
+              <CategoryOptions />
             </select>
           </div>
           <DialogFooter>
@@ -413,9 +412,7 @@ export function Transactions() {
             onChange={(e) => setCategory(e.target.value)}
           >
             <option value="">Alle Kategorien</option>
-            {categories.map((value) => (
-              <option key={value}>{value}</option>
-            ))}
+            <CategoryOptions />
           </select>
           <select
             aria-label="Konto/Pocket filtern"

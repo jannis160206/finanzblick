@@ -111,7 +111,7 @@ describe("statement-only UX rules", () => {
     expect(saved.transactions).toHaveLength(0);
     expect(calculateDashboard(saved).current.actualSpending).toBe(50);
     expect(calculateDashboard(saved).spending).toContainEqual({
-      name: "Haftpflicht",
+      name: "Versicherungen",
       value: 50,
     });
     expect(actualBookings(saved)[0].description).toBe("Allianz");

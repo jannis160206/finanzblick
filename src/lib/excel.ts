@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import {
   appStateSchema,
-  categories,
+  categorySchema,
   emptyMonth,
   emptyPockets,
   financeRowSchema,
@@ -86,12 +86,13 @@ function isoDate(cell: ExcelJS.Cell, date1904 = false): string {
 }
 function normalizeCategory(raw: string): Category {
   if (!raw.trim()) return "Prüfen";
-  if (categories.includes(raw as Category)) return raw as Category;
+  const category = categorySchema.safeParse(raw.trim());
+  if (category.success) return category.data;
   if (/(?:amex|american express).*(?:abrechnung|sammel|ausgleich)/i.test(raw))
     return "Transfer intern";
   if (/(?:amex|american express).*(?:monatsgeb|platin)/i.test(raw))
-    return "AMEX Monatsgebühr";
-  if (/spotify/i.test(raw)) return "Spotify";
+    return "Bankgebühren";
+  if (/spotify|abonnement|subscription|paypal.*abo/i.test(raw)) return "Abonnements";
   if (/transfer|umbuch|sparkonto|round-up/i.test(raw)) return "Transfer";
   if (/lebensmittel|haushalt/i.test(raw)) return "Lebensmittel";
   if (/mittag|hotspot|trafi/i.test(raw)) return "Mittagessen";
@@ -300,8 +301,8 @@ export async function parseWorkbook(
             values: {},
           };
           const category = text(row.getCell(15));
-          if (categories.includes(category as Category))
-            item.planCategory = category as Category;
+          const parsedCategory = categorySchema.safeParse(category);
+          if (parsedCategory.success) item.planCategory = parsedCategory.data;
           const overrides = text(row.getCell(17));
           if (overrides) {
             try {

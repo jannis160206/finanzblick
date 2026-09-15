@@ -10,7 +10,7 @@ import {
   type Settings,
   type Transaction,
 } from "@/lib/types";
-import { fixedRowCategory } from "@/lib/fixed";
+import { fixedRowCategory, matchingFixedRow } from "@/lib/fixed";
 import {
   legacyFingerprint,
   numberStatementRows,
@@ -21,6 +21,7 @@ import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } 
 import { alwaysLunch, isSharedHoliday, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, payrollCategory, payrollText } from "@/lib/payroll";
+import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -135,7 +136,7 @@ export function classify(
     !explicitInternal &&
     /auszahlung bei pocket/i.test(description) &&
     absolute < 2;
-  const isAmazon = !explicitInternal && /amazon|amz/i.test(description);
+  const isAmazon = !explicitInternal && /amazon|amz/i.test(description) && !/amazon\s*prime|prime\s*video/i.test(description);
   const isCurrencyExchange = /^revolut$/i.test(transaction.bank ?? "") &&
     /^umtausch$/i.test(sourceCategory) && /^umgetauscht (?:in|von) [a-z]{3}$/i.test(description);
   const isInternal =
@@ -190,13 +191,14 @@ export function classify(
   else if (/billa|\bspar\b|interspar|eurospar/i.test(description))
     category = lunchAllowed && absolute <= 10 ? "Mittagessen" : "Lebensmittel";
   else if (
-    /\bdm\b|dm-drogerie|burger|foodora|pizzeria|sakura|gams|burgschenke|mc\s*donald'?s/i.test(
+    /burger|foodora|pizzeria|sakura|gams|burgschenke|mc\s*donald'?s/i.test(
       description,
     )
   )
     category = "Ausgehen";
   else if (/\batm\b|bankomat/i.test(description) && absolute === 20)
     category = "Barber";
+  else if (amount < 0) category = suggestCategory(`${description} ${sourceCategory}`) ?? category;
   if (
     transaction.categoryOverride &&
     !isCardSettlement &&
@@ -215,6 +217,7 @@ export function classify(
   // These explicit rules outrank remembered categories and calendar filters.
   if (sharedHoliday || reimbursement) category = "Urlaub";
   if (forcedLunch) category = "Mittagessen";
+  category = canonicalCategory(category);
   const isTransfer =
     detectedTransfer ||
     category === "Transfer" ||
@@ -640,11 +643,14 @@ export function missingFixedCosts(state: AppState) {
       return (
         !receipts.some(
           (item) =>
-            item.rowId === row.id || (category && item.category === category),
+            item.rowId === row.id || (!item.rowId && category && canonicalCategory(item.category) === category &&
+              (!groupedContractCategories.includes(category) ||
+                (item.booking && matchingFixedRow(state, category, item.booking)?.id === row.id))),
         ) &&
         !bookings.some(
           (item) =>
-            (category && classify(item).category === category) ||
+            (category && classify(item).category === category &&
+              (!groupedContractCategories.includes(category) || matchingFixedRow(state, category, item)?.id === row.id)) ||
             item.description.toLowerCase().includes(row.label.toLowerCase()),
         )
       );

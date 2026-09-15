@@ -133,7 +133,7 @@ test("unknown merchants use locked facts and category only; invalid amounts rema
   const category = unknown.getByLabel("Kategorie", { exact: true });
   await expect(unknown.getByLabel("Art", { exact: true })).toHaveCount(0);
   expect(await category.locator("option").allTextContents()).toEqual(
-    expect.arrayContaining(["Freizeit", "Handy", "Apple Care", "Shopping"]),
+    expect.arrayContaining(["Freizeit", "Telefon & Internet", "Versicherungen", "Shopping"]),
   );
   await expect(category).toHaveValue("Prüfen");
   await unknown
@@ -460,7 +460,7 @@ test("all Revolut statement pockets are locked including personal accounts", asy
   ).toHaveJSProperty("readOnly", true);
   await locked
     .getByLabel("Kategorie", { exact: true })
-    .selectOption("Apple Care");
+    .selectOption("Versicherungen");
   await locked
     .getByRole("button", { name: "Zuordnung übernehmen", exact: true })
     .click();
@@ -487,7 +487,7 @@ test("all Revolut statement pockets are locked including personal accounts", asy
     expect.arrayContaining([
       expect.objectContaining({
         description: "Unbekannt im Pocket",
-        category: "Apple Care",
+        category: "Versicherungen",
         pocket: "Mittagessen",
         includeInPlan: false,
       }),

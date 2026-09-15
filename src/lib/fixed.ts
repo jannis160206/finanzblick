@@ -3,7 +3,9 @@ import {
   type AppState,
   type Category,
   type FinanceRow,
+  type Transaction,
 } from "@/lib/types";
+import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
 
 const patterns: [Category, RegExp][] = [
   ["Gehalt", /gehalt|lohn/i],
@@ -25,13 +27,41 @@ export const isIncomeCategory = (category: Category) =>
 export function fixedRowCategory(row: FinanceRow): Category | undefined {
   if (row.kind === "variable") return undefined;
   if (row.planCategory && fixedCategories.includes(row.planCategory))
-    return row.planCategory;
-  return patterns.find(([, pattern]) => pattern.test(row.label))?.[0];
+    return canonicalCategory(row.planCategory);
+  const detected = patterns.find(([, pattern]) => pattern.test(row.label))?.[0] ??
+    suggestCategory(row.label) ?? (fixedCategories.includes(row.label as Category) ? row.label as Category : undefined);
+  return detected ? canonicalCategory(detected) : undefined;
 }
-export function matchingFixedRow(state: AppState, category: Category) {
-  return state.financeRows.find(
+export function matchingFixedRow(state: AppState, category: Category, booking?: Transaction, merchantKey?: string) {
+  const canonical = canonicalCategory(category);
+  const candidates = state.financeRows.filter(
     (row) =>
-      row.kind === (isIncomeCategory(category) ? "income" : "fixed") &&
-      (fixedRowCategory(row) === category || row.label === category),
+      row.kind === (isIncomeCategory(canonical) ? "income" : "fixed") &&
+      (fixedRowCategory(row) === canonical || row.label === canonical),
   );
+  // Legacy contract labels remain separate budget positions, even though the
+  // ledger now groups them under one category. Never take the first insurance.
+  const legacy = patterns.find(([name]) => name === category && name !== canonical);
+  if (legacy) return candidates.find((row) => legacy[1].test(row.label));
+  if (!groupedContractCategories.includes(canonical)) return candidates[0];
+  if (booking) {
+    const knownIds = new Set((state.fixedReceipts ?? []).filter((item) =>
+      item.rowId && ((merchantKey && item.merchantKey === merchantKey) ||
+        (item.booking?.bank === booking.bank && item.booking.description === booking.description)),
+    ).map((item) => item.rowId));
+    const known = candidates.filter((row) => knownIds.has(row.id));
+    if (known.length === 1) return known[0];
+    if (known.length > 1) return;
+    const text = [booking.description, booking.rawDescription, ...(booking.rawDetails ?? []), booking.sourceCategory].filter(Boolean).join(" ");
+    const contracts = patterns.filter(([name, pattern]) => canonicalCategory(name) === canonical && pattern.test(text));
+    const matches = candidates.filter((row) => contracts.some(([, pattern]) => pattern.test(row.label)) ||
+      (row.label !== canonical && text.toLocaleLowerCase("de").includes(row.label.toLocaleLowerCase("de"))) ||
+      (canonical === "Versicherungen" && /paypal\s+europe|apple\.com\/bill/i.test(booking.description) &&
+        /apple[\s+-]*care/i.test(row.label) && row.values[booking.date.slice(0, 7)] != null &&
+        Math.abs(Math.abs(booking.amount) - row.values[booking.date.slice(0, 7)]!) <= 0.05));
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1) return;
+  }
+  // A deliberately generic single budget is valid; unrelated named contracts are not.
+  return candidates.length === 1 && candidates[0].label === canonical ? candidates[0] : undefined;
 }

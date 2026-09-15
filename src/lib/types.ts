@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { seasonalModes, seasonalThemes } from "@/lib/seasonal-theme";
+import { allCategories, categories, canonicalCategory, type Category } from "@/lib/categories";
+export { categories, type Category } from "@/lib/categories";
 
 z.config(z.locales.de());
 
@@ -10,39 +12,15 @@ export const pocketNames = [
   "Motorrad",
 ] as const;
 export type Pocket = (typeof pocketNames)[number];
-export const categories = [
-  "Mittagessen",
-  "Lebensmittel",
-  "Ausgehen",
-  "Barber",
-  "Mobilität",
-  "Shopping",
-  "Gesundheit",
-  "Freizeit",
-  "Urlaub",
-  "Sonstiges",
-  "Einkommen",
-  "Transfer",
-  "Transfer intern",
-  "Prüfen",
-  "Gehalt",
-  "Rufbereitschaft",
-  "Leasing",
-  "Haftpflicht",
-  "Vollkasko",
-  "Handyvertrag",
-  "Apple Care",
-  "PayPal Abo",
-  "AMEX Monatsgebühr",
-  "Spotify",
-] as const;
-export type Category = (typeof categories)[number];
+export const categorySchema = z.enum(allCategories).transform(canonicalCategory);
 export const durableCategories: readonly Category[] = [
   "Leasing",
   "Vollkasko",
   "Haftpflicht",
   "Handyvertrag",
   "Apple Care",
+  "Versicherungen",
+  "Telefon & Internet",
 ];
 export const fixedCategories: readonly Category[] = [
   "Gehalt",
@@ -57,6 +35,11 @@ export const fixedCategories: readonly Category[] = [
   "Einkommen",
   "AMEX Monatsgebühr",
   "Spotify",
+  "Abonnements",
+  "Versicherungen",
+  "Telefon & Internet",
+  "Bankgebühren",
+  "Körperpflege",
 ];
 export const variableCategories = categories.filter(
   (category) =>
@@ -95,7 +78,7 @@ export const transactionSchema = z.object({
   description: z.string().trim().min(1, "Beschreibung erforderlich").max(1000),
   rawDescription: z.string().max(1000).optional(),
   rawDetails: z.array(z.string().max(1000)).max(20).optional(),
-  category: z.enum(categories).catch("Prüfen"),
+  category: categorySchema.catch("Prüfen"),
   amount: moneySchema.refine(
     (value) => value !== 0,
     "Betrag darf nicht 0 sein",
@@ -117,13 +100,13 @@ export const pocketSnapshotSchema = z.object({
 export type PocketSnapshot = z.infer<typeof pocketSnapshotSchema>;
 export const merchantRuleSchema = z.object({
   key: z.string().min(1).max(1200),
-  category: z.enum(categories),
+  category: categorySchema,
 });
 export const fixedReceiptSchema = z.object({
   key: z.string().max(2000),
   merchantKey: z.string().max(1200).optional(),
   date: dateSchema,
-  category: z.enum(categories),
+  category: categorySchema,
   rowId: z.string().optional(),
   amount: moneySchema,
   booking: transactionSchema.optional(),
@@ -141,7 +124,7 @@ export const trBalanceSchema = z.object({
 });
 export const fixedChangeSchema = z.object({
   id: z.string(),
-  category: z.enum(categories),
+  category: categorySchema,
   month: z.string(),
   previous: moneySchema,
   amount: moneySchema,
@@ -167,7 +150,7 @@ export const financeRowSchema = z.object({
   id: z.string().min(1),
   label: z.string().trim().min(1).max(100),
   kind: z.enum(["income", "fixed", "variable"]),
-  planCategory: z.enum(categories).optional(),
+  planCategory: categorySchema.optional(),
   overrides: z
     .record(
       z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
@@ -268,7 +251,7 @@ export const appStateSchema = z.object({
     .array(
       z.object({
         merchantKey: z.string(),
-        category: z.enum(categories),
+        category: categorySchema,
         amount: moneySchema,
         month: z.string(),
         accept: z.boolean(),

@@ -311,7 +311,7 @@ describe("automatic import and fixed-cost review", () => {
     const prepared = prepareStatementImport([resultFor([apple])], state);
     expect(prepared.review).toEqual([]);
     expect(prepared.automatic[0]).toMatchObject({
-      category: "Apple Care",
+      category: "Versicherungen",
       includeInPlan: false,
     });
     const saved = commitStatementImport(state, prepared.automatic);

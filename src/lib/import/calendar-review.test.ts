@@ -54,7 +54,7 @@ describe("Amex settlement is not another expense", () => {
     expect(calculateDashboard(state).current.actualSpending).toBe(20);
   });
   it("keeps actual Amex membership fees as expenses", () => {
-    expect(classify({ ...booking("fee", "Monatsgebühr"), bank: "Amex" })).toMatchObject({ category: "AMEX Monatsgebühr", isTransfer: false });
+    expect(classify({ ...booking("fee", "Monatsgebühr"), bank: "Amex" })).toMatchObject({ category: "Bankgebühren", isTransfer: false });
   });
 });
 

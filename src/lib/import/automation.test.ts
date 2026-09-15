@@ -330,7 +330,7 @@ describe("automatic reconciliation and merchant choices", () => {
       prepareStatementImport([result([changed])], restored).review[0],
     ).toMatchObject({
       kind: "fixed",
-      change: { category: "Apple Care", previous: 14.99, amount: 17.99 },
+      change: { category: "Versicherungen", previous: 14.99, amount: 17.99 },
     });
     restored.merchantRules = [
       { key: saved.fixedReceipts![0].merchantKey!, category: "Shopping" },
@@ -422,7 +422,7 @@ describe("automatic reconciliation and merchant choices", () => {
     );
     expect(next.review[0]).toMatchObject({
       kind: "fixed",
-      change: { category: "Haftpflicht", previous: 48.88, amount: 50 },
+      change: { category: "Versicherungen", previous: 48.88, amount: 50 },
     });
   });
   it("does not turn on-call pay into a salary change just because the sender is the same", () => {
