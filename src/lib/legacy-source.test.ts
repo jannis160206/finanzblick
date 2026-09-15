@@ -134,7 +134,7 @@ describe("legacy Excel source categories", () => {
       expect(restoreLegacySourceCategories(edited, reference)).toBe(edited);
     }
   });
-  it("recalculates stale Sonstiges while preserving genuine recurring spending and explicit overrides", () => {
+  it("removes stale Sonstiges planning while preserving the genuine transaction history", () => {
     const reference = createSeed();
     reference.transactions = ["07", "08"].flatMap((month) => [
       {
@@ -163,9 +163,8 @@ describe("legacy Excel source categories", () => {
     );
     const other = repaired.financeRows.find(
       (row) => row.id === "auto-Sonstiges",
-    )!;
-    expect(other.values["2026-09"]).toBe(6.5);
-    expect(other.values["2026-10"]).toBe(123);
+    );
+    expect(other).toBeUndefined();
     expect(
       calculatePlan(repaired.transactions, repaired.settings.asOf).rows,
     ).toHaveLength(1);
@@ -193,13 +192,12 @@ describe("legacy Excel source categories", () => {
     const dashboard = calculateDashboard(repaired);
     expect(
       dashboard.plan.rows.some((row) =>
-        /deutatww|hotel on booking|monatsgeb|spotify/i.test(row.merchant),
+        /deutatww|hotel on booking|monatsgeb|spotify/i.test(row.label),
       ),
     ).toBe(false);
     expect(
-      dashboard.plan.byCategory.find((row) => row.category === "Sonstiges")!
-        .total,
-    ).toBeLessThan(100);
+      dashboard.plan.rows.find((row) => row.category === "Sonstiges"),
+    ).toBeUndefined();
     expect(dashboard.current.surplus).toBeGreaterThan(1000);
     expect(repaired.transactions.map((row) => [row.id, row.amount])).toEqual(
       state.transactions.map((row) => [row.id, row.amount]),

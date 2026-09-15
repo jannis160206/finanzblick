@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { type AppState } from "../src/lib/types";
 
-test("reload repairs legacy miscellaneous inflation without resetting bookings or overrides", async ({
+test("reload removes legacy miscellaneous budgets without resetting bank facts or fixed rows", async ({
   page,
 }) => {
   await page.clock.setFixedTime(new Date("2026-09-12T12:00:00Z"));
@@ -17,11 +17,9 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
       (row) => row.sourceCategory === "AMEX Abrechnung (Sammel)",
     ),
   ).toBe(true);
-  const expectedMiscellaneous = reference.financeRows.find(
+  expect(reference.financeRows.find(
     (row) => row.id === "auto-Sonstiges",
-  )!.values["2026-09"];
-  expect(expectedMiscellaneous).toBeGreaterThan(0);
-  expect(expectedMiscellaneous).toBeLessThan(100);
+  )).toBeUndefined();
   const surplus = page
     .locator("section")
     .filter({ has: page.getByText("Überschuss · Plan", { exact: true }) });
@@ -39,15 +37,10 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
           ? "Sonstiges"
           : row.category,
     })),
-    financeRows: reference.financeRows.map((row) =>
-      row.id === "auto-Sonstiges"
-        ? {
-            ...row,
-            values: { ...row.values, "2026-09": 2000.89 },
-            overrides: { ...row.overrides, "2026-10": 123 },
-          }
-        : row,
-    ),
+    financeRows: [...reference.financeRows, {
+      id: "auto-Sonstiges", label: "Sonstiges", kind: "variable", planCategory: "Sonstiges",
+      values: { "2026-09": 2000.89, "2026-10": 123 }, overrides: { "2026-10": 123 },
+    }],
   };
   await page.addInitScript((state) => {
     if (sessionStorage.getItem("legacy-plan-test")) return;
@@ -63,10 +56,10 @@ test("reload repairs legacy miscellaneous inflation without resetting bookings o
   );
   const miscellaneous = repaired.financeRows.find(
     (row) => row.id === "auto-Sonstiges",
-  )!;
-  expect(miscellaneous.values["2026-09"]).toBe(expectedMiscellaneous);
-  expect(miscellaneous.values["2026-10"]).toBe(123);
-  expect(miscellaneous.overrides?.["2026-10"]).toBe(123);
+  );
+  expect(miscellaneous).toBeUndefined();
+  expect(repaired.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
+  expect(repaired.financeRows.filter((row) => row.kind !== "variable")).toEqual(reference.financeRows.filter((row) => row.kind !== "variable"));
   expect(repaired.transactions.map((row) => [row.id, row.amount])).toEqual(
     reference.transactions.map((row) => [row.id, row.amount]),
   );

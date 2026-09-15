@@ -105,7 +105,8 @@ test("months and budget details are read-only unless exceptions are explicitly o
   await expect(page.locator(".month-grid input").first()).toBeVisible();
   await expect(
     page.getByText("Gesamtbudget ersetzen", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Lebensmittel & Haushalt September 2026", exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: /Jahr befüllen|Zwölf Werte ersetzen/ }),
   ).toHaveCount(0);

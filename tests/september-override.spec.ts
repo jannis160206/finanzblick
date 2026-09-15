@@ -10,7 +10,7 @@ async function stored(page: Page): Promise<AppState> {
   return page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), key);
 }
 
-test("the confirmed stale September override repairs itself on load exactly once", async ({
+test("stale September overrides and extra variable lines cannot return after load", async ({
   page,
 }) => {
   const state = createSeed();
@@ -65,28 +65,26 @@ test("the confirmed stale September override repairs itself on load exactly once
   const surplus = page
     .locator("section")
     .filter({ has: page.getByText("Überschuss · Plan", { exact: true }) });
-  await expect(surplus).toContainText("1.189,67");
+  await expect(surplus).toContainText("1.305,10");
   const saved = await stored(page);
   const repaired = saved.financeRows.find(
     (row) => row.id === "auto-Sonstiges",
-  )!;
-  expect(repaired.values["2026-09"]).toBe(71.06);
-  expect(repaired.overrides?.["2026-09"]).toBeNull();
-  expect(repaired.overrides?.["2026-10"]).toBe(123);
+  );
+  expect(repaired).toBeUndefined();
+  expect(saved.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
   expect(saved.transactions).toEqual(state.transactions);
   await page.reload();
-  await expect(surplus).toContainText("1.189,67");
+  await expect(surplus).toContainText("1.305,10");
   await page.goto("/monate");
   await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
   const cell = page.getByRole("textbox", {
     name: "Sonstiges September 2026",
     exact: true,
   });
-  await expect(cell).toHaveValue("71,06");
-  await cell.fill("2027,75");
-  await cell.press("Enter");
-  await stored(page);
+  await expect(cell).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Lebensmittel & Haushalt September 2026", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Lebensmittel & Haushalt September 2026", { exact: true })).toHaveText("250,00");
   await page.reload();
   await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
-  await expect(cell).toHaveValue("2.027,75");
+  await expect(cell).toHaveCount(0);
 });

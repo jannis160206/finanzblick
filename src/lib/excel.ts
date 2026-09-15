@@ -27,6 +27,7 @@ import {
 } from "@/lib/calc";
 import { createSeed } from "@/lib/seed";
 import { assertImportSize } from "@/lib/import/limits";
+import { applyVariableBudgets } from "@/lib/variable-budgets";
 
 export const sheetNames = [
   "Dashboard",
@@ -501,7 +502,7 @@ export async function parseWorkbook(
         .join("; ")}`,
     );
   return {
-    state: validated.data,
+    state: applyVariableBudgets(validated.data),
     warnings,
     skipped,
     source: native ? "Finanzdashboard" : "Excel-Originalmappe",
@@ -530,6 +531,7 @@ const settingLabels: Record<
 };
 export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
   appStateSchema.parse(state);
+  state = applyVariableBudgets(state);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Finanzdashboard";
   workbook.created = new Date();
@@ -595,42 +597,9 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       pockets.addRow([month, roundUpTotal(state.transactions, month)]),
     );
   const plan = workbook.addWorksheet("Variablen-Plan");
-  plan.addRow([
-    "Händler",
-    "Kategorie",
-    ...d.plan.months,
-    "Aktuell",
-    "Historisch gewichtet",
-    "Aktueller Beitrag",
-    "Plan",
-    "Monate",
-    "Berücksichtigt",
-  ]);
-  d.plan.rows.forEach((row) =>
-    plan.addRow([
-      row.merchant,
-      row.category,
-      ...row.values,
-      row.current,
-      row.historical,
-      row.currentContribution,
-      row.planned,
-      row.appearances,
-      row.eligible ? "Ja" : "Nein",
-    ]),
-  );
-  plan.addRow([
-    "Gesamt",
-    "",
-    "",
-    "",
-    "",
-    "",
-    d.plan.currentTotal,
-    d.plan.historicalTotal,
-    "",
-    d.plan.total,
-  ]);
+  plan.addRow(["Position", "Kategorie", d.plan.currentMonth]);
+  d.plan.rows.forEach((row) => plan.addRow([row.label, row.category ?? "", row.total]));
+  plan.addRow(["Gesamt", "", d.plan.total]);
   const transactions = workbook.addWorksheet("Umsätze");
   transactions.addRow([
     "Datum",

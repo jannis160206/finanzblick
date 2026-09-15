@@ -187,8 +187,8 @@ describe("savings and interest", () => {
     expect(october).toMatchObject({
       income: 3000,
       fixed: 1000,
-      surplus: 2000,
-      bikeTransfer: 1820,
+      surplus: 1088.5,
+      bikeTransfer: 908.5,
       remaining: 180,
     });
   });
@@ -239,7 +239,7 @@ describe("savings and interest", () => {
   it("does not restart bike saving after a funded purchase withdrawal", () => {
     const state = createSeed();
     state.settings.balances.Motorrad = 8500;
-    state.financeRows[0].values = { "2026-10": 1000, "2026-11": 1000 };
+    state.financeRows[0].values = { "2026-10": 1911.5, "2026-11": 2011 };
     state.months["2026-10"] = {
       variableOverride: null,
       bikeOverride: null,

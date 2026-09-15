@@ -7,6 +7,7 @@ import { exportWorkbook, parseWorkbook, sheetNames } from "@/lib/excel";
 import { createSeed } from "@/lib/seed";
 import { calculateDashboard } from "@/lib/calc";
 import { emptyMonth } from "@/lib/types";
+import { applyVariableBudgets } from "@/lib/variable-budgets";
 
 describe("Excel import/export", () => {
   it("round-trips all settings, transactions, overrides, and calculated balances", async () => {
@@ -40,8 +41,8 @@ describe("Excel import/export", () => {
     expect(result.skipped).toBe(0);
     expect(result.state.settings).toEqual(state.settings);
     expect(result.state.transactions).toEqual(state.transactions);
-    expect(result.state.financeRows).toEqual(state.financeRows);
-    expect(result.state.months["2026-10"]).toEqual(state.months["2026-10"]);
+    expect(result.state.financeRows).toEqual(applyVariableBudgets(state).financeRows);
+    expect(result.state.months["2026-10"]).toEqual({ ...state.months["2026-10"], variableOverride: null });
     expect(calculateDashboard(result.state).timeline).toEqual(
       calculateDashboard(state).timeline,
     );
@@ -84,22 +85,21 @@ describe("Excel import/export", () => {
         result.state.financeRows.find((row) => row.label === "Nettogehalt")
           ?.values["2026-09"],
       ).toBe(2576.43);
-      expect(calculateDashboard(result.state).current.income).toBe(2818.26);
-      expect(calculateDashboard(result.state).timeline[0].end).toMatchObject({
+      const dashboard = calculateDashboard(result.state);
+      expect(dashboard.current.income).toBe(2818.26);
+      expect(dashboard.timeline[0].end).toMatchObject({
         Notgroschen: 1642,
         Urlaub: 1750,
         Sparkonto: 100,
       });
-      expect(calculateDashboard(result.state).timeline[7].end).toMatchObject({
+      expect(dashboard.timeline[7].end).toMatchObject({
         Notgroschen: 5380.43,
         Urlaub: 1628.86,
         Sparkonto: 2154.66,
       });
       expect(result.state.months["2027-04"].pocketOut.Motorrad).toBe(7875.49);
       const roundTrip = await parseWorkbook(await exportWorkbook(result.state));
-      expect(calculateDashboard(roundTrip.state)).toEqual(
-        calculateDashboard(result.state),
-      );
+      expect(calculateDashboard(roundTrip.state)).toEqual(dashboard);
     },
   );
 });

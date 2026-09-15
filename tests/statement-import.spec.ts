@@ -53,11 +53,9 @@ async function seed(page: Page, state = createSeed()) {
   );
   await expect
     .poll(async () =>
-      (await ledger(page)).financeRows.some((row: { id: string }) =>
-        row.id.startsWith("auto-"),
-      ),
+      (await ledger(page)).financeRows.filter((row: AppState["financeRows"][number]) => row.kind === "variable").map((row: AppState["financeRows"][number]) => row.label),
     )
-    .toBe(true);
+    .toEqual(["Lebensmittel & Haushalt", "Mittagessen", "Tanken", "Freizeit", "Ausgehen", "Geschenke & Spenden", "Giro Puffer"]);
   await page.reload();
   await ledger(page);
 }
@@ -377,16 +375,18 @@ test("reload advances the plan and pocket split without visiting plan", async ({
   expect(after.settings.asOf).toBe("2026-10-01");
   expect(
     after.financeRows.find((row) => row.id === "food")!.values["2026-10"],
-  ).toBe(65);
+  ).toBe(250);
   expect(
     after.financeRows.find((row) => row.id === "lunch")!.values["2026-10"],
-  ).toBe(33);
+  ).toBe(111.5);
+  expect(after.financeRows.find((row) => row.id === "lunch")!.overrides).toBeUndefined();
+  expect(after.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
   const split = page.getByRole("region", {
     name: "Pocket-Verteilung diesen Monat",
   });
   await expect(split).toContainText("Diesen Monat:");
-  // 2,000 income - 65 groceries - 33 lunch - 180 savings floor.
-  await expect(split).toContainText(/Motorrad.*1\.722,00/);
+  // 2,000 income - 911.50 mandatory October budgets - 180 savings floor.
+  await expect(split).toContainText(/Motorrad.*908,50/);
   await expect(split).toContainText(/Sparkonto.*180,00/);
   await expect(split).not.toContainText(/Urlaub|Notgroschen/);
   await page.goto("/umsaetze");
@@ -397,8 +397,8 @@ test("reload advances the plan and pocket split without visiting plan", async ({
     page.getByText("1 neu, 0 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
   await page.goto("/");
-  // September adds 35 to the groceries budget, not to savings.
-  await expect(split).toContainText(/Motorrad.*1\.687,00/);
+  // Additional September spending must not alter October budgets or savings.
+  await expect(split).toContainText(/Motorrad.*908,50/);
   await expect(split).toContainText(/Sparkonto.*180,00/);
 });
 

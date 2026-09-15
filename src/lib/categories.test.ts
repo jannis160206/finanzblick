@@ -116,19 +116,20 @@ describe("grouped contracts and persistence", () => {
     expect(backup.fixedReceipts).toEqual(restored.fixedReceipts);
     expect(backup.merchantRules).toEqual(restored.merchantRules);
     expect(backup.reviewQueue).toEqual(restored.reviewQueue);
-    expect(backup.financeRows.map((row) => row.values)).toEqual(restored.financeRows.map((row) => row.values));
+    expect(backup.financeRows.filter((row) => row.kind === "fixed").map((row) => row.values)).toEqual(restored.financeRows.map((row) => row.values));
     for (const state of [restored, backup]) {
       expect(actualBookings(state)).toHaveLength(1);
       expect(calculateMonthTotals(state, "2026-09", calculatePlan(state.transactions, state.settings.asOf)).fixed).toBe(40);
     }
   });
 
-  it("automatically plans new variable categories without touching existing overrides", () => {
+  it("keeps new spending categories out of the strict variable plan", () => {
     const state = stateWith([]);
     state.transactions = ["2026-07-02", "2026-08-02"].map((date) => ({ ...booking("Cineplexx"), date }));
     state.financeRows = [{ id: "entertainment", kind: "variable", label: "Entertainment", planCategory: "Entertainment", values: {}, overrides: { "2026-10": 20 } }];
     const planned = synchronizePlan(state);
-    expect(planned.financeRows.find((row) => row.id === "entertainment")?.values).toMatchObject({ "2026-09": 6.5, "2026-10": 20 });
+    expect(planned.financeRows.find((row) => row.id === "entertainment")).toBeUndefined();
+    expect(planned.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
     expect(canonicalCategory("Spotify")).toBe("Abonnements");
   });
 });

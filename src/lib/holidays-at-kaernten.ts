@@ -1,3 +1,5 @@
+import type { HolidayRange } from "@/lib/types";
+
 // Gregorian Easter (Meeus/Jones/Butcher), calendar dates without timezone shifts.
 export function easterSunday(year: number): string {
   const a = year % 19;
@@ -41,6 +43,22 @@ export function isWorkingDay(date?: string): boolean {
   const year = value.getUTCFullYear();
   if (!holidayCache.has(year)) holidayCache.set(year, austrianHolidays(year));
   return !holidayCache.get(year)!.has(date);
+}
+
+export function lunchBudget(month: string, ranges: readonly HolidayRange[] = []) {
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(month)) throw new Error("Ungültiger Budgetmonat");
+  const [year, index] = month.split("-").map(Number);
+  const days = new Date(Date.UTC(year, index, 0)).getUTCDate();
+  let homeOfficeDays = 0;
+  let officeDays = 0;
+  for (let day = 1; day <= days; day++) {
+    const date = `${month}-${String(day).padStart(2, "0")}`;
+    if (!isWorkingDay(date) || ranges.some((range) => date >= range.from && date <= range.to)) continue;
+    const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
+    if (weekday === 1 || weekday === 5) homeOfficeDays++;
+    else officeDays++;
+  }
+  return { homeOfficeDays, officeDays, total: homeOfficeDays * 5 + officeDays * 5.5 };
 }
 
 // Only actual clock values, never infer noon from a date-only statement.

@@ -4,7 +4,7 @@ import { exportWorkbook, parseWorkbook } from "./excel";
 import { refreshPlanning } from "./planning";
 import { createSeed } from "./seed";
 
-it("preserves manual Excel changes across both years, including zero and clearing to Auto", async () => {
+it("rejects manual future variable overrides across both years, including zero and Auto", async () => {
   const state = createSeed();
   state.financeRows = [
     {
@@ -27,18 +27,13 @@ it("preserves manual Excel changes across both years, including zero and clearin
   const restored = (
     await parseWorkbook(Uint8Array.from(new Uint8Array(buffer)).buffer)
   ).state;
-  expect(restored.financeRows[0].overrides).toEqual({
-    "2026-10": 300,
-    "2026-11": 0,
-    "2026-12": null,
-    "2027-01": 1234,
-  });
+  expect(restored.financeRows[0].overrides).toBeUndefined();
   const refreshed = refreshPlanning(restored, "2026-09-11");
   expect(refreshed.financeRows[0].values).toMatchObject({
-    "2026-10": 300,
-    "2026-11": 0,
-    "2026-12": 0,
-    "2027-01": 1234,
+    "2026-10": 250,
+    "2026-11": 250,
+    "2026-12": 250,
+    "2027-01": 250,
   });
   const again = (await parseWorkbook(await exportWorkbook(refreshed))).state;
   expect(again.financeRows).toEqual(refreshed.financeRows);
@@ -65,5 +60,5 @@ it("does not turn unchanged automatically calculated Excel values into overrides
   expect(
     refreshed.financeRows.find((row) => row.planCategory === "Lebensmittel")!
       .values["2026-10"],
-  ).toBe(100);
+  ).toBe(250);
 });

@@ -16,7 +16,8 @@ async function seed(page: Page, transactions: Transaction[]) {
     if (!localStorage.getItem(key)) localStorage.setItem(key, JSON.stringify(state));
   }, { key, state });
   await page.goto("/umsaetze");
-  await expect(page.getByText("Lokal gespeichert", { exact: true })).toBeVisible();
+  await expect(page.getByText("Lokal gespeichert", { exact: true })).toBeAttached();
+  await expect.poll(async () => (await readState(page)).financeRows.filter((row) => row.kind === "variable").length).toBe(7);
 }
 
 test("choose several charges; import Raphael payment; mark the other paid without losing history", async ({ page }) => {
@@ -34,7 +35,8 @@ test("choose several charges; import Raphael payment; mark the other paid withou
   await dialog.getByLabel("Geteilt Gesamtbetrag").fill("");
   await dialog.getByLabel("Geteilte Buchungen suchen").fill("Sakura");
   await dialog.getByRole("checkbox", { name: "Teilen: Sakura 2026-09-04" }).check();
-  await dialog.getByRole("button", { name: "Auswahl bestätigen (2)" }).click();
+  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await control.click();
   await expect(dialog.getByText("Offen", { exact: true })).toHaveCount(2);
   await page.keyboard.press("Escape");
   await expect(control.getByLabel("2 offene Teilungen")).toBeVisible();
@@ -49,7 +51,7 @@ test("choose several charges; import Raphael payment; mark the other paid withou
   await expect(dialog.getByText("Bezahlt", { exact: true })).toHaveCount(1);
   await dialog.getByRole("button", { name: "Als bezahlt markieren: Sakura" }).click();
   await expect(dialog.getByText("Bezahlt", { exact: true })).toHaveCount(2);
-  await page.keyboard.press("Escape");
+  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(control.locator("span")).toHaveCount(0);
   await expect(page.getByLabel("Offene geteilte Kosten")).toHaveCount(0);
   await expect.poll(async () => (await readState(page)).transactions.find((item) => item.id === "sakura")?.sharedPaidManually).toBe(true);
@@ -91,4 +93,66 @@ test("save several short holiday ranges; retain recurring BILLA and fixed costs;
   await page.getByRole("button", { name: "Urlaub", exact: true }).click();
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(390);
+});
+
+test("sharing modal stays within a laptop screen with visible close and save controls; cancel discards changes", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await seed(page, Array.from({ length: 150 }, (_, i) => row(`row-${i}`, `Einkauf ${i}`, -20)));
+  const control = page.getByRole("button", { name: "Geteilt", exact: true });
+  await control.click();
+  const dialog = page.getByRole("dialog");
+  const close = dialog.getByRole("button", { name: "Geteilt schließen" });
+  const save = dialog.getByRole("button", { name: "Speichern", exact: true });
+  await expect(close).toBeInViewport();
+  await expect(save).toBeInViewport();
+  expect(await dialog.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThanOrEqual(720 * 0.8 + 1);
+  const list = dialog.getByLabel("Buchungslisten", { exact: true });
+  expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(close).toBeInViewport();
+  await expect(save).toBeInViewport();
+  await expect(dialog.getByLabel("Geteilte Buchungen suchen")).toBeInViewport();
+  await dialog.getByRole("checkbox").first().check();
+  await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
+  expect((await readState(page)).transactions.some((row) => row.sharedWithRaphael)).toBe(false);
+  await control.click();
+  await expect(dialog.getByRole("checkbox").first()).not.toBeChecked();
+  await close.click();
+  await expect(dialog).toHaveCount(0);
+  await control.click();
+  await dialog.getByRole("checkbox").first().check();
+  await save.click();
+  await expect(control.getByLabel("1 offene Teilungen")).toBeVisible();
+});
+
+test("mobile sharing discards unsaved paid status on cancel, close and Escape", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await seed(page, [{ ...row("shared", "BILLA", -100), sharedWithRaphael: true }]);
+  const control = page.getByRole("button", { name: "Geteilt", exact: true });
+  const dialog = page.getByRole("dialog");
+  const close = dialog.getByRole("button", { name: "Geteilt schließen" });
+  const save = dialog.getByRole("button", { name: "Speichern", exact: true });
+  for (const action of ["cancel", "close", "escape"]) {
+    await control.click();
+    await expect(close).toBeInViewport();
+    await expect(save).toBeInViewport();
+    expect(await dialog.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThanOrEqual(390);
+    await dialog.getByRole("button", { name: "Als bezahlt markieren: BILLA" }).click();
+    await expect(dialog.getByText("Bezahlt", { exact: true })).toBeVisible();
+    expect((await readState(page)).transactions[0].sharedPaidManually).not.toBe(true);
+    if (action === "cancel") await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
+    else if (action === "close") await close.click();
+    else await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(control.getByLabel("1 offene Teilungen")).toBeVisible();
+    expect((await readState(page)).transactions[0].sharedPaidManually).not.toBe(true);
+  }
+  await control.click();
+  await dialog.getByRole("button", { name: "Als bezahlt markieren: BILLA" }).click();
+  await save.click();
+  await expect(control.getByLabel("1 offene Teilungen")).toHaveCount(0);
+  await expect.poll(async () => (await readState(page)).transactions[0].sharedPaidManually).toBe(true);
+  await page.reload();
+  await control.click();
+  await expect(dialog.getByText("Bezahlt", { exact: true })).toBeVisible();
 });

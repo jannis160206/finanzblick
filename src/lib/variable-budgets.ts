@@ -1,0 +1,50 @@
+import type { AppState, Category, FinanceRow, HolidayRange } from "@/lib/types";
+import { lunchBudget } from "@/lib/holidays-at-kaernten";
+
+const gifts = [50, 50, 0, 50, 100, 0, 50, 50, 0, 0, 100, 1000] as const;
+export const variableBudgetLines: { id: string; label: string; category?: Category; pattern: RegExp; amount: number | "lunch" | "gifts" }[] = [
+  { id: "food", label: "Lebensmittel & Haushalt", category: "Lebensmittel", pattern: /lebensmittel/i, amount: 250 },
+  { id: "lunch", label: "Mittagessen", category: "Mittagessen", pattern: /mittag/i, amount: "lunch" },
+  { id: "fuel", label: "Tanken", category: "Mobilität", pattern: /tanken/i, amount: 180 },
+  { id: "leisure", label: "Freizeit", category: "Freizeit", pattern: /g2a|apple.guthaben|^freizeit$/i, amount: 20 },
+  { id: "going-out", label: "Ausgehen", category: "Ausgehen", pattern: /ausgehen|essen.*restaurant/i, amount: 250 },
+  { id: "gifts", label: "Geschenke & Spenden", category: "Geschenke & Spenden", pattern: /geschenk|spenden/i, amount: "gifts" },
+  { id: "buffer", label: "Giro Puffer", pattern: /giro[\s-]*puffer/i, amount: 100 },
+];
+const matches = (row: FinanceRow, line: typeof variableBudgetLines[number]) => row.kind === "variable" &&
+  (row.id === `budget-${line.id}` || (line.category !== undefined && row.planCategory === line.category) || line.pattern.test(row.label));
+const amountFor = (line: typeof variableBudgetLines[number], month: string, ranges: readonly HolidayRange[]) =>
+  line.amount === "lunch" ? lunchBudget(month, ranges).total : line.amount === "gifts" ? gifts[Number(month.slice(5, 7)) - 1] : line.amount;
+
+export function monthlyVariableBudget(month: string, ranges: readonly HolidayRange[] = []) {
+  const rows = variableBudgetLines.map((line) => ({ id: line.id, label: line.label, category: line.category, total: amountFor(line, month, ranges) }));
+  return { currentMonth: month, rows, total: rows.reduce((total, row) => total + row.total, 0), lunch: lunchBudget(month, ranges) };
+}
+
+export function variableBudgetValue(row: FinanceRow, month: string, ranges: readonly HolidayRange[] = []): number {
+  const line = variableBudgetLines.find((line) => matches(row, line));
+  return line ? amountFor(line, month, ranges) : 0;
+}
+
+export function applyVariableBudgets(state: AppState): AppState {
+  const currentMonth = state.settings.asOf.slice(0, 7);
+  const months = [2026, 2027].flatMap((year) => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`))
+    .filter((month) => month >= currentMonth);
+  const used = new Set<string>();
+  const variableRows: FinanceRow[] = variableBudgetLines.map((line) => {
+    const old = state.financeRows.find((row) => !used.has(row.id) && matches(row, line));
+    if (old) used.add(old.id);
+    const values = { ...old?.values };
+    const overrides = Object.fromEntries(Object.entries(old?.overrides ?? {}).filter(([month]) => month < currentMonth));
+    for (const month of months) values[month] = amountFor(line, month, state.holidayRanges ?? []);
+    return { id: old?.id ?? `budget-${line.id}`, label: line.label, kind: "variable",
+      ...(line.category ? { planCategory: line.category } : {}), values,
+      ...(Object.keys(overrides).length ? { overrides } : {}),
+    };
+  });
+  return { ...state,
+    financeRows: [...state.financeRows.filter((row) => row.kind !== "variable"), ...variableRows],
+    months: Object.fromEntries(Object.entries(state.months).map(([month, input]) => [month,
+      month >= currentMonth && input.variableOverride !== null ? { ...input, variableOverride: null } : input])),
+  };
+}

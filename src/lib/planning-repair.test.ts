@@ -69,24 +69,24 @@ describe("known September focus override repair", () => {
       );
     }
   });
-  it("runs automatically on refresh and preserves a later deliberate override through Excel", async () => {
+  it("removes obsolete Sonstiges even with deliberate overrides and through Excel", async () => {
     const repaired = refreshPlanning(staleState(), "2026-09-12");
-    expect(other(repaired).values["2026-09"]).toBe(100);
-    other(repaired).overrides!["2026-09"] = 2027.75;
+    expect(other(repaired)).toBeUndefined();
+    repaired.financeRows.push(other(staleState()));
     const edited = refreshPlanning(repaired, "2026-09-12");
-    expect(other(edited).values["2026-09"]).toBe(2027.75);
+    expect(other(edited)).toBeUndefined();
     const restored = (await parseWorkbook(await exportWorkbook(edited))).state;
     expect(restored.planningRepairs).toEqual(edited.planningRepairs);
     expect(
-      other(refreshPlanning(restored, "2026-09-12")).values["2026-09"],
-    ).toBe(2027.75);
+      other(refreshPlanning(restored, "2026-09-12")),
+    ).toBeUndefined();
   });
-  it("marks unaffected states as checked so future intentional entries are not treated as legacy data", () => {
+  it("never resurrects a removed variable category on a later refresh", () => {
     const checked = refreshPlanning(createSeed(), "2026-09-12");
     checked.financeRows.push(other(staleState()));
     expect(
-      other(refreshPlanning(checked, "2026-09-12")).values["2026-09"],
-    ).toBe(2027.75);
+      other(refreshPlanning(checked, "2026-09-12")),
+    ).toBeUndefined();
   });
   it("repairs historical September using September's plan rather than the later month's plan", () => {
     const state = staleState();
@@ -100,7 +100,7 @@ describe("known September focus override repair", () => {
       category: "Sonstiges",
       includeInPlan: true,
     });
-    const refreshed = refreshPlanning(state, "2026-10-12");
+    const refreshed = repairKnownPlanningOverrides({ ...state, settings: { ...state.settings, asOf: "2026-10-12" } });
     expect(other(refreshed).values["2026-09"]).toBe(300);
     expect(other(refreshed).overrides?.["2026-10"]).toBe(123);
   });

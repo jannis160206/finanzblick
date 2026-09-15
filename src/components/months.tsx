@@ -22,10 +22,8 @@ import { InputLegend, MoneyInput, PageHeading } from "@/components/finance-ui";
 import { financeRowValue, monthsForYear, sum } from "@/lib/calc";
 import { currency, monthLabel, number } from "@/lib/format";
 import {
-  emptyMonth,
   financeRowSchema,
   type FinanceRow,
-  type MonthInput,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CategoryOptions } from "@/components/category-options";
@@ -101,7 +99,6 @@ function RowEditor({
             >
               <option value="income">Einnahmen</option>
               <option value="fixed">Fixkosten</option>
-              <option value="variable">Variable Ausgaben</option>
             </select>
           </div>
           <div>
@@ -143,17 +140,6 @@ export function Months() {
   const timeline = d.timeline.filter((row) =>
     row.month.startsWith(String(year)),
   );
-  const setInput = (
-    month: string,
-    updater: (input: MonthInput) => MonthInput,
-  ) =>
-    update((current) => ({
-      ...current,
-      months: {
-        ...current.months,
-        [month]: updater(current.months[month] ?? emptyMonth()),
-      },
-    }));
   const calculatedRow = (
     label: string,
     values: (number | null)[],
@@ -283,7 +269,7 @@ export function Months() {
                             >
                               {row.label}
                             </span>
-                            {repair && (
+                            {repair && kind !== "variable" && (
                               <span className="flex">
                                 <Button
                                   className="size-6"
@@ -309,7 +295,7 @@ export function Months() {
                         </th>
                         {months.map((month) => (
                           <td key={month}>
-                            {repair ? (
+                            {repair && (kind !== "variable" || month < d.currentMonth) ? (
                               <MoneyInput
                                 label={`${row.label} ${monthLabel(month)}`}
                                 value={
@@ -348,44 +334,21 @@ export function Months() {
                                 className="block text-right font-mono text-xs"
                                 aria-label={`${row.label} ${monthLabel(month)}`}
                               >
-                                {number(financeRowValue(row, month, d.plan))}
+                                {number(financeRowValue(row, month, d.plan, state.holidayRanges))}
                               </span>
                             )}
                             {repair &&
                               kind === "variable" &&
+                              month < d.currentMonth &&
                               row.values[month] == null && (
                                 <p className="mt-1 text-right font-mono text-[10px] text-muted-foreground">
-                                  {number(financeRowValue(row, month, d.plan))}
+                                  {number(financeRowValue(row, month, d.plan, state.holidayRanges))}
                                 </p>
                               )}
                           </td>
                         ))}
                       </tr>
                     ))}
-                  {repair && kind === "variable" && (
-                    <tr>
-                      <th className="sticky-label text-xs font-normal">
-                        Gesamtbudget ersetzen
-                      </th>
-                      {months.map((month) => (
-                        <td key={month}>
-                          <MoneyInput
-                            label={`Variabel gesamt ${month}`}
-                            nullable
-                            value={
-                              state.months[month]?.variableOverride ?? null
-                            }
-                            onCommit={(value) =>
-                              setInput(month, (input) => ({
-                                ...input,
-                                variableOverride: value,
-                              }))
-                            }
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  )}
                   {calculatedRow(
                     kind === "income"
                       ? "Einnahmen gesamt"

@@ -4,12 +4,13 @@ import { actualPockets, calculateDashboard, monthlyInterest, monthsForYear, sync
 import { createSeed } from "./seed";
 import { emptyPockets, type SavingsGoal, type Transaction } from "./types";
 import { exportWorkbook, parseWorkbook } from "./excel";
+import { monthlyVariableBudget } from "./variable-budgets";
 
 const goal = (id: string, target = 8500, date = "2027-03-01"): SavingsGoal => ({ id, name: id, pocket: id, target, date });
 function stateFor(surplus = 1000) {
   const state = createSeed();
   state.settings = { ...state.settings, baselineDate: "2026-09-01", asOf: "2026-09-14", balances: emptyPockets() };
-  state.financeRows = [{ id: "income", label: "Gehalt", kind: "income", values: Object.fromEntries([...monthsForYear(2026), ...monthsForYear(2027)].map((month) => [month, surplus])) }];
+  state.financeRows = [{ id: "income", label: "Gehalt", kind: "income", values: Object.fromEntries([...monthsForYear(2026), ...monthsForYear(2027)].map((month) => [month, surplus + monthlyVariableBudget(month).total])) }];
   state.transactions = [];
   state.months = {};
   state.savingsGoals = [goal("Motorrad")];
@@ -49,9 +50,10 @@ describe("automatic savings floor and goals", () => {
   });
   it("deducts fixed costs and Alltagsbudget before any goal", () => {
     const state = stateFor(2000);
+    state.financeRows[0].values["2026-09"] = 2000;
     state.financeRows.push({ id: "fixed", label: "Leasing", kind: "fixed", values: { "2026-09": 600 } });
     state.months["2026-09"] = { variableOverride: 500, bikeOverride: null, pocketIn: emptyPockets(), pocketOut: emptyPockets() };
-    expect(calculateDashboard(state).current).toMatchObject({ surplus: 900, rates: { Sparkonto: 180, Motorrad: 720 } });
+    expect(calculateDashboard(state).current).toMatchObject({ surplus: 483, rates: { Sparkonto: 180, Motorrad: 303 } });
   });
   it("uses imported balances for additional goal pockets and never funds a reached goal again", () => {
     let state = stateFor(); state.savingsGoals = [goal("Kamera", 820, "2026-09-30")];

@@ -143,7 +143,7 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
     await expect(page.getByRole("cell", { name: "Cineplexx", exact: true })).toBeVisible();
   });
 
-  await test.step("budget links can be selected, saved and reopened", async () => {
+  await test.step("fixed-cost category links persist without adding variable budget lines", async () => {
     await page.goto("/monate");
     await page.getByRole("button", { name: "Ausnahmebearbeitung", exact: true }).click();
     for (const label of ["Spotify", "PayPal Abo"]) {
@@ -157,18 +157,21 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
       const link = dialog.getByLabel("Kategorie / Planverknüpfung", { exact: true });
       await groupedOptions(link);
       await dialog.getByLabel("Bezeichnung", { exact: true }).fill(`Budget ${category}`);
-      await dialog.getByLabel("Bereich", { exact: true }).selectOption("variable");
+      const kind = dialog.getByLabel("Bereich", { exact: true });
+      await expect(kind.locator('option[value="variable"]')).toHaveCount(0);
+      await kind.selectOption("fixed");
       await link.selectOption(category);
       await expect(link).toHaveValue(category);
       await dialog.getByRole("button", { name: "Position speichern", exact: true }).click();
       await expect(dialog).toHaveCount(0);
     }
-    await saved(page);
+    expect((await saved(page)).financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
     await page.reload();
     await page.getByRole("button", { name: "Ausnahmebearbeitung", exact: true }).click();
     for (const category of newCategories) {
       await page.getByRole("button", { name: `Budget ${category} bearbeiten`, exact: true }).click();
       await expect(page.getByLabel("Kategorie / Planverknüpfung", { exact: true })).toHaveValue(category);
+      await expect(page.getByRole("dialog").getByLabel("Bereich", { exact: true })).toHaveValue("fixed");
       await page.getByRole("dialog").getByRole("button", { name: "Abbrechen", exact: true }).click();
     }
   });

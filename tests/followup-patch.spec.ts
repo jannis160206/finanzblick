@@ -73,7 +73,8 @@ test("September footer includes August payroll, half travel spend and no repayme
   await expect(page.getByLabel("Monat filtern")).toHaveValue("2026-09");
   await page.getByRole("button", { name: "Geteilt", exact: true }).click();
   await page.getByRole("dialog").getByRole("checkbox", { name: "Teilen: Swiss 2026-09-03" }).check();
-  await page.getByRole("button", { name: "Auswahl bestätigen (1)" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Speichern", exact: true }).click();
+  await page.getByRole("button", { name: "Geteilt", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("Bezahlt", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByText("4 Treffer", { exact: true })).toBeVisible();

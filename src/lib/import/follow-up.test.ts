@@ -10,6 +10,7 @@ import {
 } from "@/lib/calc";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { refreshPlanning } from "@/lib/planning";
+import { applyVariableBudgets } from "@/lib/variable-budgets";
 import { createSeed } from "@/lib/seed";
 import {
   appStateSchema,
@@ -416,7 +417,7 @@ describe("automatic import and fixed-cost review", () => {
     });
     const restored = (await parseWorkbook(await exportWorkbook(rejected)))
       .state;
-    expect(restored).toEqual(appStateSchema.parse(rejected));
+    expect(restored).toEqual(applyVariableBudgets(appStateSchema.parse(rejected)));
     expect(splitFixedBookings(restored, [booking]).changes).toEqual([]);
   });
 });
@@ -461,7 +462,7 @@ describe("silent planning", () => {
     }
     return state;
   }
-  it("overwrites all five automatic lines on load and preserves explicit row and total overrides", () => {
+  it("enforces seven budget lines on load and removes current/future overrides", () => {
     const state = history();
     state.financeRows.find((row) => row.id === "Mobilität")!.overrides = {
       "2026-10": 77,
@@ -474,34 +475,29 @@ describe("silent planning", () => {
       loaded.financeRows
         .filter((row) => row.kind === "variable")
         .map((row) => row.values["2026-09"]),
-    ).toEqual([100, 100, 100, 100, 100]);
+    ).toEqual([250, 117, 180, 20, 250, 0, 100]);
     expect(
       loaded.financeRows.find((row) => row.id === "Mobilität")?.values,
-    ).toMatchObject({ "2026-08": 88, "2026-10": 77, "2027-12": 0 });
-    expect(calculateDashboard(loaded).current.variablePlan).toBe(999);
+    ).toMatchObject({ "2026-08": 88, "2026-10": 180, "2027-12": 180 });
+    expect(calculateDashboard(loaded).current.variablePlan).toBe(917);
     expect(refreshPlanning(loaded, "2026-09-11")).toEqual(loaded);
   });
-  it("advances four completed months on the first and recalculates pocket allocation without visiting plan", () => {
+  it("advances the budget calendar on the first without re-averaging spending", () => {
     const state = history();
     const september = refreshPlanning(state, "2026-09-30");
     const october = refreshPlanning(september, "2026-10-01");
     const dashboard = calculateDashboard(october);
-    expect(dashboard.plan.months).toEqual([
-      "2026-06",
-      "2026-07",
-      "2026-08",
-      "2026-09",
-    ]);
+    expect(dashboard.plan.currentMonth).toBe("2026-10");
     expect(
       october.financeRows.find((row) => row.id === "Lebensmittel")?.values[
         "2026-10"
       ],
-    ).toBe(65);
+    ).toBe(250);
     const current = dashboard.timeline.find((row) => row.month === "2026-10")!;
-    expect(current.variablePlan).toBe(325);
+    expect(current.variablePlan).toBe(911.5);
     expect(
       Object.values(current.rates).reduce((sum, value) => sum + value, 0),
-    ).toBe(1675);
+    ).toBe(1088.5);
     expect(current.rates.Motorrad).toBeGreaterThan(0);
     const imported = commitStatementImport(october, [
       transaction("BILLA", -100, "2026-09-05"),
@@ -511,7 +507,7 @@ describe("silent planning", () => {
       refreshed.financeRows.find((row) => row.id === "Lebensmittel")?.values[
         "2026-11"
       ],
-    ).toBe(100);
+    ).toBe(250);
     expect(
       calculatePlan(refreshed.transactions, refreshed.settings.asOf).months,
     ).toHaveLength(4);

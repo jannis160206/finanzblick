@@ -29,7 +29,8 @@ describe("selected shared costs", () => {
     const before = calculateDashboard(state);
     expect(before.current.actualSpending).toBe(50);
     expect(before.spending).toEqual([{ name: "Lebensmittel", value: 50 }]);
-    expect(before.plan.byCategory).toEqual([{ category: "Lebensmittel", total: 57.5 }]);
+    expect(before.plan.rows.find((row) => row.category === "Lebensmittel")?.total).toBe(250);
+    expect(calculatePlan(state.transactions, state.settings.asOf).byCategory).toEqual([{ category: "Lebensmittel", total: 57.5 }]);
     state = selectSharedBookings(state, ["sep"], true);
     expect(calculateDashboard(state)).toEqual(before);
     expect(state.transactions[2].amount).toBe(-100);
@@ -66,7 +67,7 @@ describe("selected shared costs", () => {
     expect(state.financeRows).toEqual(originalFinanceRows);
     expect(state.fixedReceipts ?? []).toEqual([]);
     expect(calculateDashboard(state).current).toMatchObject({ received: 0, income: 0, actualSpending: 50 });
-    expect(calculateDashboard(state).plan.rows.some((row) => /raphael/i.test(row.merchant))).toBe(false);
+    expect(calculateDashboard(state).plan.rows.some((row) => /raphael/i.test(row.label))).toBe(false);
     const unmatched = reconcileSharedHoliday([share, { ...payment, amount: 70 }]);
     expect(unmatched.receivables[0].status).toBe("Offen");
     expect(personalAmount(unmatched.bookings[1])).toBe(70);
@@ -94,7 +95,8 @@ describe("holiday periods and plan membership", () => {
     expect(classify(ledger.find((row) => row.id === "foreign-aug")!).category).toBe("Urlaub");
     expect(classify(ledger.find((row) => row.id === "home-trip")!).category).toBe("Lebensmittel");
     expect(classify(ledger.find((row) => row.id === "amazon")!)).toMatchObject({ category: "Shopping", includeInPlan: false });
-    expect(calculateDashboard(state).plan.byCategory).toEqual([{ category: "Lebensmittel", total: 55 }]);
+    expect(calculatePlan(state.transactions, state.settings.asOf, state.holidayRanges).byCategory).toEqual([{ category: "Lebensmittel", total: 55 }]);
+    expect(calculateDashboard(state).plan.rows.find((row) => row.category === "Lebensmittel")?.total).toBe(250);
     expect(calculateDashboard(state).timeline.find((row) => row.month === "2026-08")?.actualSpending).toBe(1300);
     expect(JSON.stringify(state.transactions)).toBe(original);
     expect(calculatePlan(state.transactions, state.settings.asOf).byCategory.find((row) => row.category === "Lebensmittel")!.total).toBeGreaterThan(55);
@@ -110,9 +112,9 @@ describe("holiday periods and plan membership", () => {
   });
   it("re-evaluates recurrence after import, save and load, and reverses the derived category on range deletion", () => {
     let state = synchronizePlan(holidayState());
-    expect(state.financeRows.find((row) => row.planCategory === "Lebensmittel")?.values["2026-09"]).toBe(55);
+    expect(state.financeRows.find((row) => row.planCategory === "Lebensmittel")?.values["2026-09"]).toBe(250);
     state = refreshPlanning(appStateSchema.parse(JSON.parse(JSON.stringify(state))), "2026-09-15");
-    expect(calculateDashboard(state).plan.byCategory[0].total).toBe(55);
+    expect(calculateDashboard(state).plan.rows[0].total).toBe(250);
     const imported = commitStatementImport(state, [booking("home-new", "Mercado extranjero", -100, "2026-09-12")]).state;
     expect(classify(actualBookings(refreshPlanning(imported, "2026-09-15")).find((row) => row.id === "foreign-aug")!).category).toBe("Lebensmittel");
     state.holidayRanges = [];

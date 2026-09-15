@@ -23,6 +23,7 @@ import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, perso
 import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, payrollCategory, payrollText } from "@/lib/payroll";
 import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
+import { monthlyVariableBudget, variableBudgetValue } from "@/lib/variable-budgets";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -727,20 +728,16 @@ export function bikeCountdown(
 export function financeRowValue(
   row: AppState["financeRows"][number],
   month: string,
-  plan: ReturnType<typeof calculatePlan>,
+  plan: { currentMonth: string },
+  holidayRanges: HolidayRange[] = [],
 ) {
-  return (
-    row.values[month] ??
-    (row.kind === "variable" && row.planCategory
-      ? (plan.byCategory.find((item) => item.category === row.planCategory)
-          ?.total ?? 0)
-      : 0)
-  );
+  if (row.kind === "variable" && month >= plan.currentMonth) return variableBudgetValue(row, month, holidayRanges);
+  return row.values[month] ?? 0;
 }
 export function calculateMonthTotals(
   state: AppState,
   month: string,
-  plan: ReturnType<typeof calculatePlan>,
+  plan: { currentMonth: string },
   bookings: AccountedTransaction[] = actualBookings(state),
 ) {
   const income = sum(
@@ -756,11 +753,9 @@ export function calculateMonthTotals(
   const variableRows = state.financeRows.filter(
     (row) => row.kind === "variable",
   );
-  const variablePlan =
-    state.months[month]?.variableOverride ??
-    (variableRows.length
-      ? sum(variableRows.map((row) => financeRowValue(row, month, plan)))
-      : plan.total);
+  const variablePlan = month >= monthKey(state.settings.asOf)
+    ? monthlyVariableBudget(month, state.holidayRanges).total
+    : state.months[month]?.variableOverride ?? sum(variableRows.map((row) => financeRowValue(row, month, plan, state.holidayRanges)));
   const actualSpending = sum(
     bookings
       .filter(
@@ -837,7 +832,7 @@ export function synchronizeGoals(state: AppState): AppState {
   }) };
 }
 export function calculateDashboard(state: AppState) {
-  const plan = calculatePlan(state.transactions, state.settings.asOf, state.holidayRanges);
+  const plan = monthlyVariableBudget(monthKey(state.settings.asOf), state.holidayRanges);
   // Reconcile receipt fingerprints once, not twice for each forecast month.
   const bookings = actualBookings(state);
   const actual = actualPockets(state);

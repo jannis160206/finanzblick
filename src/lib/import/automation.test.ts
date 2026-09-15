@@ -8,6 +8,7 @@ import {
 } from "@/lib/calc";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { refreshPlanning } from "@/lib/planning";
+import { applyVariableBudgets } from "@/lib/variable-budgets";
 import { createSeed } from "@/lib/seed";
 import { emptyMonth, type AppState, type Transaction } from "@/lib/types";
 import { commitStatementImport, prepareStatementImport } from "./review";
@@ -209,6 +210,7 @@ describe("Revolut closing balances", () => {
       stateForTest(),
       parseStatementCsv(consolidated),
     ).state;
+    state.financeRows[0].values = { "2026-09": 1917, "2026-10": 1911.5 };
     const d = calculateDashboard(state);
     const september = d.timeline.find((month) => month.month === "2026-09")!;
     expect(september.rates.Motorrad).toBe(820);
@@ -222,6 +224,7 @@ describe("Revolut closing balances", () => {
       stateForTest(),
       parseStatementCsv(consolidated),
     ).state;
+    state.financeRows[0].values = { "2026-09": 1917, "2026-10": 1911.5 };
     state.pocketSnapshots!.find((item) => item.pocket === "Motorrad")!.balance =
       8500;
     const d = calculateDashboard(state);
@@ -453,7 +456,7 @@ describe("automatic reconciliation and merchant choices", () => {
     expect(next.duplicates).toBe(1);
     expect(next.metadata.fixedReceipts[0].category).toBe("Rufbereitschaft");
   });
-  it("rebuilds learned variable categories on reload, preserving explicit overrides", () => {
+  it("does not rebuild extra variable categories from learned merchants or old overrides", () => {
     const state = stateForTest();
     state.transactions = ["05", "06", "07", "08"].map((month) => ({
       ...row("Bekannter Shop", -100, `2026-${month}-01`),
@@ -470,20 +473,13 @@ describe("automatic reconciliation and merchant choices", () => {
     });
     const refreshed = refreshPlanning(state, "2026-09-12");
     expect(
-      refreshed.financeRows.find((line) => line.id === "shopping")!.values,
-    ).toMatchObject({ "2026-09": 100, "2026-10": 33, "2027-12": 100 });
+      refreshed.financeRows.find((line) => line.id === "shopping"),
+    ).toBeUndefined();
     const october = refreshPlanning(refreshed, "2026-10-01");
-    expect(calculateDashboard(october).plan.months).toEqual([
-      "2026-06",
-      "2026-07",
-      "2026-08",
-      "2026-09",
-    ]);
+    expect(calculateDashboard(october).plan.currentMonth).toBe("2026-10");
     expect(
-      october.financeRows.find((line) => line.id === "shopping")!.values[
-        "2026-11"
-      ],
-    ).toBe(65);
+      october.financeRows.find((line) => line.id === "shopping"),
+    ).toBeUndefined();
     expect(calculateDashboard(october).countdown.days).toBeLessThan(
       calculateDashboard(refreshed).countdown.days,
     );
@@ -501,7 +497,7 @@ describe("automatic reconciliation and merchant choices", () => {
       },
     ]).state;
     const restored = (await parseWorkbook(await exportWorkbook(state))).state;
-    expect(restored).toEqual(state);
+    expect(restored).toEqual(applyVariableBudgets(state));
     expect(actualPockets(restored)).toEqual(actualPockets(state));
     expect(missingFixedCosts(restored)).toEqual([]);
     expect(

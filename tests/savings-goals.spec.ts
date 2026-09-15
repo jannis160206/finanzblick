@@ -24,7 +24,8 @@ test.beforeEach(async ({ page }) => {
   state.settings = { ...state.settings, baselineDate: "2026-09-01", asOf: "2026-09-14", balances: emptyPockets() };
   state.months = {};
   state.transactions = [];
-  state.financeRows = [{ id: "salary", label: "Gehalt", kind: "income", values: { "2026-09": 1000, "2026-10": 1000 } }];
+  // Leave 1,000 available for saving after each month's mandatory variable budgets.
+  state.financeRows = [{ id: "salary", label: "Gehalt", kind: "income", values: { "2026-09": 1917, "2026-10": 1911.5 } }];
   state.savingsGoals = [{ id: "motorcycle", name: "Motorrad", pocket: "Motorrad", target: 8500, date: "2027-03-01" }];
   await page.clock.setFixedTime(new Date("2026-09-14T12:00:00Z"));
   await page.addInitScript(({ key, state }) => {
