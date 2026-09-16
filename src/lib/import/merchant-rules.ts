@@ -72,6 +72,13 @@ export function rememberMerchants(
     : state;
 }
 export function applyMerchantRules(state: AppState, rows: Transaction[]) {
+  if (!rows.length) return [];
+  return rows.map(createMerchantRuleApplier(state));
+}
+
+// Build once per operation, including when repairing several legacy POS rows.
+// No cross-update cache: newly learned choices must take effect immediately.
+export function createMerchantRuleApplier(state: AppState) {
   const remembered = rememberMerchants(
     { ...state, merchantRules: undefined },
     state.transactions,
@@ -88,7 +95,8 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
       (rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)],
     ),
   );
-  return rows.map(recoverMerchant).map((row) => {
+  return (source: Transaction): Transaction => {
+    const row = recoverMerchant(source);
     const detected = classify(row);
     if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const key = merchantRuleKey(row);
@@ -100,5 +108,5 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
     return category && !row.categoryOverride && !detected.isTransfer && !unresolvedTerminal(row.description)
       ? { ...row, category, categoryOverride: true, includeInPlan: true }
       : row;
-  });
+  };
 }

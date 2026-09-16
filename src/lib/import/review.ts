@@ -27,6 +27,7 @@ import {
 } from "@/lib/fixed";
 import {
   applyMerchantRules,
+  createMerchantRuleApplier,
   merchantRuleKey,
   rememberMerchants,
   storedMerchantKey,
@@ -54,14 +55,25 @@ export type ImportMetadata = {
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
 
-export function bookingReviewReason(state: AppState, row: AccountedTransaction): string | undefined {
+function indexReviewRules(state: AppState) {
+  const index = new Map<string, Set<string>>();
+  for (const rule of state.merchantRules ?? []) {
+    const key = storedMerchantKey(rule.key);
+    const categories = index.get(key) ?? new Set<string>();
+    categories.add(rule.category);
+    index.set(key, categories);
+  }
+  return index;
+}
+
+export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
   if (unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
   const result = classify(row);
   if (!row.category || row.category === "Prüfen" || result.category === "Prüfen") return "Kategorie noch offen.";
   if (payrollCategory(row) === result.category) return;
-  const rules = (state.merchantRules ?? []).filter((rule) => storedMerchantKey(rule.key) === merchantRuleKey(row));
-  if (new Set(rules.map((rule) => rule.category)).size > 1 || rules.some((rule) => rule.category !== result.category))
+  const categories = ruleIndex.get(merchantRuleKey(row));
+  if (categories && (categories.size > 1 || !categories.has(result.category)))
     return "Widersprüchliche Händlerregel: Zuordnung prüfen.";
   if (row.category === "Mittagessen" && result.category !== "Mittagessen") return "Mittagessen: Datum oder Uhrzeit passt nicht zur Regel.";
   if (row.categoryOverride || result.isTransfer) return;
@@ -78,6 +90,7 @@ export function openReviewCount(items: ReviewItem[]): number {
 
 export function repairMerchantBookings(state: AppState, candidates: Transaction[] = []): AppState {
   const recovered = candidates.map(recoverMerchant).filter((row) => row.rawDescription && !unresolvedTerminal(row.description));
+  let applyRule: ReturnType<typeof createMerchantRuleApplier> | undefined;
   const repair = (row: Transaction): Transaction => {
     let updated = recoverMerchant(row);
     if (unresolvedTerminal(updated.description)) {
@@ -88,7 +101,9 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
           rawDetails: match.rawDetails ?? row.rawDetails, bankReference: row.bankReference ?? match.bankReference };
       }
     }
-    return updated === row ? row : classifyStatementRows(applyMerchantRules(state, [updated]))[0];
+    if (updated === row) return row;
+    applyRule ??= createMerchantRuleApplier(state);
+    return classifyStatementRows([applyRule(updated)])[0];
   };
   return { ...state,
     transactions: state.transactions.map(repair),
@@ -130,20 +145,29 @@ function repairPayrollBookings(state: AppState): AppState {
 
 export function queueLedgerReview(state: AppState): AppState {
   state = repairPayrollBookings(repairMerchantBookings(state));
+  const rules = indexReviewRules(state);
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" && item.draft.amount !== null ? [item.draft as Transaction] : []);
-  const accounted = accountHolidayRanges(reconcileSharedHoliday([...actualBookings(state), ...pending], state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
-  const safePending = accounted.slice(accounted.length - pending.length).filter((row) =>
-    !bookingReviewReason(state, row));
-  if (safePending.length) state = appendStatementRows(state, safePending.map((row) => row.holidayReimbursementFor || row.holidayRange
-    ? row : { ...row, category: classify(row).category, includeInPlan: classify(row).includeInPlan })).state;
-  const ledger = actualBookings(state);
+  let ledger = actualBookings(state);
+  if (pending.length) {
+    const accounted = accountHolidayRanges(reconcileSharedHoliday([...ledger, ...pending], state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+    const safePending = accounted.slice(accounted.length - pending.length).filter((row) =>
+      !bookingReviewReason(state, row, rules));
+    if (safePending.length) {
+      state = appendStatementRows(state, safePending.map((row) => {
+        if (row.holidayReimbursementFor || row.holidayRange) return row;
+        const result = classify(row);
+        return { ...row, category: result.category, includeInPlan: result.includeInPlan };
+      })).state;
+      ledger = actualBookings(state);
+    }
+  }
   const byId = new Map(ledger.map((row) => [row.id, row]));
   const keys = new Set(ledger.map(statementFingerprint));
   const queue: ReviewItem[] = (state.reviewQueue ?? []).filter((item) => item.kind === "fixed" ||
     (!byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction)))));
   for (const draft of ledger) {
-    const message = bookingReviewReason(state, draft);
+    const message = bookingReviewReason(state, draft, rules);
     if (!message) continue;
     queue.push({ kind: "booking", id: draft.id, draft, message });
   }
@@ -213,6 +237,8 @@ function mergeMetadata(state: AppState, metadata: ImportMetadata): AppState {
 }
 
 export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
+  // Editing an existing ledger assignment does not import any new bookings.
+  if (!candidates.length) return { rows: [], receipts: [], changes: [], duplicates: 0 };
   // An explicit legacy choice still identifies its original contract. Preserve
   // that intent before classification collapses it into a broader category.
   const legacyChoices = new Map(candidates.filter((row) => row.categoryOverride &&
@@ -225,13 +251,13 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
     ...(state.ignoredStatementKeys ?? []),
     ...(state.fixedReceipts ?? []).map((item) => item.key),
   ]);
+  const appleCare = matchingGridRow(state, "Apple Care");
   const classified = classifyStatementRows(
     applyMerchantRules(state, candidates),
     state.transactions,
   ).map((row) => {
     // Generic PayPal direct debits may omit the merchant. Only use the configured
     // Apple Care amount for that narrow statement format, never arbitrary merchants.
-    const appleCare = matchingGridRow(state, "Apple Care");
     const expected = appleCare?.values[monthKey(row.date)];
     if (
       !row.categoryOverride &&
@@ -370,8 +396,9 @@ export function prepareStatementImport(
     id: change.id,
     change,
   }));
+  const rules = indexReviewRules(state);
   for (const row of split.rows) {
-    const message = bookingReviewReason(state, row);
+    const message = bookingReviewReason(state, row, rules);
     if (message)
       review.push({
         kind: "booking",
@@ -550,7 +577,8 @@ export function commitStatementImport(
   }, decisions);
   // Existing ledger reviews edit in place; never append a second spend or fixed receipt.
   const split = splitFixedBookings(current, rows.filter((row) => !ledgerIds.has(row.id)));
-  const appended = appendStatementRows(current, split.rows);
+  const appended = split.rows.length ? appendStatementRows(current, split.rows)
+    : { state: current, added: 0, duplicates: 0 };
   for (const row of split.rows) {
     const category = classify(row).category;
     const month = bookingMonth(row);
@@ -597,8 +625,8 @@ export function commitStatementImport(
       ),
     ],
   });
-  const importedCount =
-    actualBookings(merged).length - actualBookings(state).length;
+  const importedCount = metadata.issues !== undefined || state.importStatus
+    ? actualBookings(merged).length - actualBookings(state).length : 0;
   return {
     ...appended,
     state: {

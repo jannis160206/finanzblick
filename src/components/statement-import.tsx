@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -162,6 +162,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const busyRef = useRef(false);
+  const pendingRef = useRef(false);
   const importMetadata = useRef<ImportMetadata>({});
   const [localUI, setUI] = useReducer(
     (previous: ImportUI, patch: Partial<ImportUI>) => ({
@@ -177,10 +178,12 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       ledgerOnly: false,
     },
   );
-  const ledgerIds = new Set(state.transactions.map((row) => row.id));
-  const ui = { ...localUI, review: (state.reviewQueue ?? []).filter((item) =>
-    !localUI.ledgerOnly || (item.kind === "booking" && ledgerIds.has(item.draft.id)),
-  ) };
+  const review = useMemo(() => {
+    if (!localUI.ledgerOnly) return state.reviewQueue ?? [];
+    const ledgerIds = new Set(state.transactions.map((row) => row.id));
+    return (state.reviewQueue ?? []).filter((item) => item.kind === "booking" && ledgerIds.has(item.draft.id));
+  }, [state.reviewQueue, state.transactions, localUI.ledgerOnly]);
+  const ui = { ...localUI, review };
   const latestState = useRef(state);
   const lastReviewRequest = useRef(reviewRequest);
   useEffect(() => {
@@ -196,6 +199,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
   useEffect(() => {
     if (!ui.pending || statementImport?.requestId !== ui.pending.requestId)
       return;
+    pendingRef.current = false;
     if (statementImport.error) {
       toast.error(statementImport.error);
       const retry: ReviewItem[] = ui.pending.removeId
@@ -229,16 +233,15 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
     removeId?: string,
     decisions: FixedDecision[] = [],
   ) {
+    if (pendingRef.current || !ready || storageError) return;
+    pendingRef.current = true;
     const requestId = crypto.randomUUID();
-    setUI({ pending: { requestId, rows, removeId, decisions } });
-    appendStatements(
-      rows,
-      duplicates,
-      requestId,
-      decisions,
-      importMetadata.current,
-    );
+    const metadata = importMetadata.current;
     importMetadata.current = {};
+    setUI({ pending: { requestId, rows, removeId, decisions } });
+    // Let React display the disabled controls/progress before the synchronous
+    // reducer runs. The reducer still applies to the latest state, not a copy.
+    setTimeout(() => appendStatements(rows, duplicates, requestId, decisions, metadata), 0);
   }
   function skip() {
     setUI({ open: false });
@@ -248,6 +251,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
     if (
       !files.length ||
       busyRef.current ||
+      pendingRef.current ||
       ui.pending ||
       !ready ||
       storageError
@@ -392,6 +396,9 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
               {ui.review.length} Einträge brauchen eine Entscheidung.
             </DialogDescription>
           </DialogHeader>
+          {ui.pending && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+            <LoaderCircle className="size-4 animate-spin" />Zuordnung wird übernommen …
+          </p>}
           <div className="max-h-[65vh] space-y-3 overflow-auto pr-1">
             {ui.review.slice(0, 20).map((item) =>
               item.kind === "booking" ? (

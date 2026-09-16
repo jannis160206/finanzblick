@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Users, X } from "lucide-react";
 import { Tabs } from "radix-ui";
 import { Button } from "@/components/ui/button";
@@ -74,10 +74,16 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
   const count = items.filter((item) => item.status === "Offen").length;
   const openItems = items.filter((item) => item.status === "Offen" && !paid.includes(item.bookingId));
   const pending = selected.length > 0 || paid.length > 0;
-  const candidates = bookings.filter((row) => row.amount < 0 && !classify(row).isTransfer && !isSharedHoliday(row));
-  const filtered = candidates.filter((row) => (!query || row.description.toLocaleLowerCase("de").includes(query.toLocaleLowerCase("de"))) &&
-    (!month || row.date.startsWith(month)) && (!amount || Math.abs(row.amount) === Math.abs(parseStatementAmount(amount) ?? NaN)))
-    .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
+  const candidates = useMemo(() => open
+    ? bookings.filter((row) => row.amount < 0 && !isSharedHoliday(row) && !classify(row).isTransfer)
+    : [], [bookings, open]);
+  const filtered = useMemo(() => {
+    const text = query.toLocaleLowerCase("de");
+    const total = Math.abs(parseStatementAmount(amount) ?? NaN);
+    return candidates.filter((row) => (!text || row.description.toLocaleLowerCase("de").includes(text)) &&
+      (!month || row.date.startsWith(month)) && (!amount || Math.abs(row.amount) === total))
+      .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
+  }, [candidates, query, month, amount]);
   const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setLimit(50); };
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>

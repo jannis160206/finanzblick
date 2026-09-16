@@ -288,10 +288,12 @@ export function classify(
 // Payroll received on the 26th–30th funds the following month, not both months.
 export function bookingMonth(row: Transaction): string {
   const month = monthKey(row.date);
+  if (row.amount <= 0) return month;
   const day = Number(row.date.slice(8, 10));
+  if (day < 25 || day > 30) return month;
   const nextMonth = addMonths(month, 1);
-  return row.amount > 0 && classify(row).category === "Gehalt" &&
-    ((day >= 26 && day <= 30) || earlySpecialSalary(row, nextMonth))
+  return ((day >= 26 && day <= 30) || earlySpecialSalary(row, nextMonth)) &&
+    classify(row).category === "Gehalt"
     ? nextMonth
     : month;
 }
@@ -734,11 +736,39 @@ export function financeRowValue(
   if (row.kind === "variable" && month >= plan.currentMonth) return variableBudgetValue(row, month, holidayRanges);
   return row.values[month] ?? 0;
 }
+
+type MonthlyActuals = { actualSpending: number; received: number; salaryReceived: number };
+// Per-calculation index, never a persistent cache: edits, imports, sharing and
+// the as-of date must immediately affect the next dashboard calculation.
+function indexMonthlyActuals(bookings: AccountedTransaction[], asOf: string) {
+  const months = new Map<string, MonthlyActuals>();
+  for (const row of bookings) {
+    if (row.date > asOf) continue;
+    const result = classify(row);
+    if (result.isTransfer) continue;
+    const month = bookingMonth(row);
+    const totals = months.get(month) ?? { actualSpending: 0, received: 0, salaryReceived: 0 };
+    if (["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category))
+      totals.received += personalAmount(row);
+    else totals.actualSpending -= personalAmount(row);
+    if (row.amount > 0 && result.category === "Gehalt" && isTTSPayroll(row))
+      totals.salaryReceived += row.amount;
+    months.set(month, totals);
+  }
+  for (const totals of months.values()) {
+    totals.actualSpending = round(totals.actualSpending);
+    totals.received = round(totals.received);
+    totals.salaryReceived = round(totals.salaryReceived);
+  }
+  return months;
+}
+
 export function calculateMonthTotals(
   state: AppState,
   month: string,
   plan: { currentMonth: string },
   bookings: AccountedTransaction[] = actualBookings(state),
+  actuals = indexMonthlyActuals(bookings, state.settings.asOf),
 ) {
   const income = sum(
     state.financeRows
@@ -761,38 +791,13 @@ export function calculateMonthTotals(
   const variablePlan = month >= monthKey(state.settings.asOf)
     ? monthlyVariableBudget(month, state.holidayRanges).total
     : state.months[month]?.variableOverride ?? sum(variableRows.map((row) => financeRowValue(row, month, plan, state.holidayRanges)));
-  const actualSpending = sum(
-    bookings
-      .filter(
-        (t) =>
-          bookingMonth(t) === month &&
-          t.date <= state.settings.asOf &&
-          !["Einkommen", "Gehalt", "Rufbereitschaft"].includes(
-            classify(t).category,
-          ) &&
-          !classify(t).isTransfer,
-      )
-      .map((t) => -personalAmount(t)),
-  );
+  const { actualSpending, received, salaryReceived } = actuals.get(month) ??
+    { actualSpending: 0, received: 0, salaryReceived: 0 };
   return {
     income,
     salaryPlan,
-    salaryReceived: sum(bookings.filter((row) => row.amount > 0 && isTTSPayroll(row) &&
-      row.date <= state.settings.asOf && bookingMonth(row) === month &&
-      classify(row).category === "Gehalt" && !classify(row).isTransfer).map((row) => row.amount)),
-    received: sum(
-      bookings
-        .filter(
-          (t) =>
-            bookingMonth(t) === month &&
-            t.date <= state.settings.asOf &&
-            ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(
-              classify(t).category,
-            ) &&
-            !classify(t).isTransfer,
-        )
-        .map((t) => personalAmount(t)),
-    ),
+    salaryReceived,
+    received,
     fixed,
     variablePlan,
     actualSpending,
@@ -844,6 +849,8 @@ export function calculateDashboard(state: AppState) {
   const plan = monthlyVariableBudget(monthKey(state.settings.asOf), state.holidayRanges);
   // Reconcile receipt fingerprints once, not twice for each forecast month.
   const bookings = actualBookings(state);
+  const actuals = indexMonthlyActuals(bookings, state.settings.asOf);
+  const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);
   const baselineMonth = monthKey(state.settings.baselineDate);
@@ -853,7 +860,7 @@ export function calculateDashboard(state: AppState) {
   const actualGoals = Object.fromEntries(goals.map((goal) => [goal.id, goalBalance(state, goal, actual)]));
   let projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, pocketKey(goal.pocket) === "motorrad" ? previous.Motorrad : 0]));
   const timeline = [...monthsForYear(2026), ...monthsForYear(2027)].map((month) => {
-    const totals = calculateMonthTotals(state, month, plan, bookings);
+    const totals = totalsForMonth(month);
     const input = state.months[month] ?? emptyMonth();
     const historical = month < baselineMonth;
     const available = !historical || !!historicalOpening;
@@ -890,19 +897,23 @@ export function calculateDashboard(state: AppState) {
       warning: !historical && (Object.values(end).some((value) => value < 0) || sum(Object.values(input.pocketIn)) > Math.max(0, totals.surplus)),
     };
   });
-  const current = timeline.find((row) => row.month === currentMonth) ?? { ...calculateMonthTotals(state, currentMonth, plan, bookings), month: currentMonth, bikeTransfer: 0, remaining: 0 };
+  const current = timeline.find((row) => row.month === currentMonth) ?? { ...totalsForMonth(currentMonth), month: currentMonth, bikeTransfer: 0, remaining: 0 };
   const allocationMonth = currentMonth;
   const nextTransfer = timeline.find((row) => row.month === allocationMonth)?.bikeTransfer ?? 0;
   const motorcycle = goals.find((goal) => pocketKey(goal.pocket) === "motorrad");
   const countdown = bikeCountdown(actual.Motorrad, nextTransfer, motorcycle ? { ...state.settings, bikeTarget: motorcycle.target, bikePurchaseDate: motorcycle.date } : state.settings);
   const ninetyDays = [0, 1, 2].map((offset) => {
     const month = addMonths(currentMonth, offset);
-    return timeline.find((row) => row.month === month) ?? { month, ...calculateMonthTotals(state, month, plan, bookings), bikeTransfer: 0, remaining: calculateMonthTotals(state, month, plan, bookings).surplus };
+    const existing = timeline.find((row) => row.month === month);
+    if (existing) return existing;
+    const totals = totalsForMonth(month);
+    return { month, ...totals, bikeTransfer: 0, remaining: totals.surplus };
   });
   const categorySpending = new Map<string, number>();
   for (const transaction of bookings) {
+    if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf) continue;
     const result = classify(transaction);
-    if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf || ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer) continue;
+    if (["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer) continue;
     categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - personalAmount(transaction));
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);
