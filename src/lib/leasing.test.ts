@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { actualBookings, calculateDashboard } from "@/lib/calc";
-import { reconcileLeasingSources } from "@/lib/leasing";
+import { actualBookings, calculateDashboard, classify } from "@/lib/calc";
+import { reconcileLeasingSources as reconcileSources } from "@/lib/leasing";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, type Transaction } from "@/lib/types";
 import { statementFingerprint } from "@/lib/import/identity";
@@ -8,6 +8,8 @@ import { commitStatementImport, prepareStatementImport, queueLedgerReview } from
 import type { StatementResult } from "@/lib/import/statements";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { personalAmount } from "@/lib/shared-holiday";
+
+const reconcileLeasingSources = (rows: Transaction[]) => reconcileSources(rows, (row) => classify(row).category);
 
 const legacy: Transaction = {
   id: "xlsx-107", date: "2026-09-01", bank: "Raiffeisen", pocket: null,
@@ -66,7 +68,7 @@ describe("Leasing source reconciliation", () => {
     { description: "Porsche Bank Leasing ohne Kennung" },
     { description: "Porsche Bank Leasing KL123AB und KL999CD" },
     { description: "Andere Bank Leasing KL123AB" },
-    { category: "Versicherungen" },
+    { category: "Versicherungen", categoryOverride: true },
     { pocket: null, bankReference: undefined },
   ])("retains debits without exact matching bank/date/amount/vehicle evidence: %j", (change) => {
     expect(reconcileLeasingSources([legacy, { ...bankBooking(), ...change }])).toHaveLength(2);
@@ -92,6 +94,37 @@ describe("Leasing source reconciliation", () => {
     expect(personalAmount(actualBookings(state)[0])).toBe(-144.76);
     expect(calculateDashboard(state).current.actualSpending).toBe(144.76);
     expect(JSON.stringify(state)).toBe(before);
+  });
+
+  it.each(["Sonstiges", "Prüfen"] as const)("uses the chart's effective Leasing category when an older save stores %s", async (category) => {
+    const state = fixture();
+    state.transactions = [{ ...legacy, category }];
+    expect(classify(state.transactions[0]).category).toBe("Leasing");
+    const before = JSON.stringify(state);
+    const assertOverview = (value: typeof state) => {
+      expect(calculateDashboard(value).spending).toEqual([{ name: "Leasing", value: 289.52 }]);
+      expect(calculateDashboard(value).current.actualSpending).toBe(289.52);
+      expect(actualBookings(value)).toHaveLength(1);
+      expect(value.transactions[0].category).toBe(category);
+    };
+    assertOverview(state);
+    assertOverview(appStateSchema.parse(JSON.parse(JSON.stringify(state))));
+    assertOverview((await parseWorkbook(await exportWorkbook(state))).state);
+    expect(JSON.stringify(state)).toBe(before);
+  });
+
+  it("also uses effective classification for a detailed transaction with a stale stored category", () => {
+    const detailed = { ...bankBooking(), category: "Sonstiges" as const };
+    const state = fixture(false);
+    state.transactions.push(detailed);
+    expect(reconcileLeasingSources(state.transactions)).toEqual([detailed]);
+    expect(calculateDashboard(state).spending).toEqual([{ name: "Leasing", value: 289.52 }]);
+  });
+
+  it("does not ignore an explicit manual non-leasing classification on the legacy row", () => {
+    const manual = { ...legacy, category: "Shopping" as const, categoryOverride: true };
+    expect(classify(manual).category).toBe("Shopping");
+    expect(reconcileLeasingSources([manual, bankBooking()])).toHaveLength(2);
   });
 
   it("survives import, reimport, review, JSON and Excel restoration without deleting bank facts", async () => {

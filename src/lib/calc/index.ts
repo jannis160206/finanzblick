@@ -807,7 +807,7 @@ export function calculateMonthTotals(
 }
 export function actualBookings(state: AppState): AccountedTransaction[] {
   const account = (rows: Transaction[]) => accountHolidayRanges(
-    reconcileSharedHoliday(reconcileLeasingSources(reconcilePayrollSources(rows)), state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+    reconcileSharedHoliday(reconcileLeasingSources(reconcilePayrollSources(rows), (row) => classify(row).category), state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
   if (!state.fixedReceipts?.length) return account(state.transactions);
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [
