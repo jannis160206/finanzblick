@@ -20,13 +20,14 @@ export const shortCurrency = (value: number) =>
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value) + " €";
+const dateFormatter = new Intl.DateTimeFormat("de-AT", { timeZone: "UTC" });
+const monthFormatters = {
+  long: new Intl.DateTimeFormat("de-AT", { month: "long", year: "numeric", timeZone: "UTC" }),
+  short: new Intl.DateTimeFormat("de-AT", { month: "short", year: "numeric", timeZone: "UTC" }),
+};
 export const dateLabel = (value: string) =>
-  new Intl.DateTimeFormat("de-AT", { timeZone: "UTC" }).format(
+  dateFormatter.format(
     new Date(`${value}T12:00:00Z`),
   );
 export const monthLabel = (month: string, short = false) =>
-  new Intl.DateTimeFormat("de-AT", {
-    month: short ? "short" : "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(`${month}-01T12:00:00Z`));
+  monthFormatters[short ? "short" : "long"].format(new Date(`${month}-01T12:00:00Z`));

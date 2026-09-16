@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,7 @@ type ImportUI = {
   ledgerOnly: boolean;
 };
 
-function BookingReview({
+const BookingReview = memo(function BookingReview({
   item,
   disabled,
   save,
@@ -58,7 +58,7 @@ function BookingReview({
 }: {
   item: Extract<ReviewItem, { kind: "booking" }>;
   disabled: boolean;
-  save: (row: Transaction) => void;
+  save: (row: Transaction, id: string) => void;
   skip: () => void;
 }) {
   const [draft, setDraft] = useState<StatementDraft>(item.draft);
@@ -146,7 +146,7 @@ function BookingReview({
               save({
                 ...parsed.data,
                 includeInPlan: classify(parsed.data).includeInPlan,
-              });
+              }, item.id);
           }}
         >
           Zuordnung übernehmen
@@ -154,7 +154,7 @@ function BookingReview({
       </div>
     </section>
   );
-}
+});
 
 export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number }) {
   const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
@@ -227,12 +227,12 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
     }
   }, [statementImport, ui.pending, ui.review, localUI.open]);
 
-  function commit(
+  const commit = useCallback((
     rows: Transaction[],
     duplicates = 0,
     removeId?: string,
     decisions: FixedDecision[] = [],
-  ) {
+  ) => {
     if (pendingRef.current || !ready || storageError) return;
     pendingRef.current = true;
     const requestId = crypto.randomUUID();
@@ -242,10 +242,11 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
     // Let React display the disabled controls/progress before the synchronous
     // reducer runs. The reducer still applies to the latest state, not a copy.
     setTimeout(() => appendStatements(rows, duplicates, requestId, decisions, metadata), 0);
-  }
-  function skip() {
+  }, [appendStatements, ready, storageError]);
+  const saveBooking = useCallback((row: Transaction, id: string) => commit([row], 0, id), [commit]);
+  const skip = useCallback(() => {
     setUI({ open: false });
-  }
+  }, []);
 
   async function selectFiles(files: File[]) {
     if (
@@ -399,14 +400,14 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           {ui.pending && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />Zuordnung wird übernommen …
           </p>}
-          <div className="max-h-[65vh] space-y-3 overflow-auto pr-1">
+          <fieldset disabled={!!ui.pending} className="min-w-0 max-h-[65vh] space-y-3 overflow-auto pr-1">
             {ui.review.slice(0, 20).map((item) =>
               item.kind === "booking" ? (
                 <BookingReview
                   key={item.id}
                   item={item}
-                  disabled={!!ui.pending}
-                  save={(row) => commit([row], 0, item.id)}
+                  disabled={ui.pending?.removeId === item.id}
+                  save={saveBooking}
                   skip={skip}
                 />
               ) : (
@@ -462,7 +463,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
                 Weitere Einträge folgen nach der Prüfung.
               </p>
             )}
-          </div>
+          </fieldset>
         </DialogContent>
       </Dialog>
     </>

@@ -48,8 +48,11 @@ export function reconcileSharedHoliday(rows: Transaction[], asOf = "9999-12-31")
     repayments.set(row.id, match.bookingId);
   }
   const bookings: AccountedTransaction[] = rows.map((row) => {
-    const bankRow: AccountedTransaction = { ...row };
-    delete bankRow.holidayReimbursementFor;
+    let bankRow: AccountedTransaction = row;
+    if ("holidayReimbursementFor" in bankRow) {
+      bankRow = { ...bankRow };
+      delete bankRow.holidayReimbursementFor;
+    }
     const bookingId = repayments.get(row.id);
     return bookingId ? { ...bankRow, holidayReimbursementFor: bookingId } : bankRow;
   });

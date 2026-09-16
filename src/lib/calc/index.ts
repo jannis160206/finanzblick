@@ -319,7 +319,12 @@ const holidayMerchantKey = (row: Transaction) => merchantKeyText(recoverMerchant
 
 export function accountHolidayRanges(rows: AccountedTransaction[], ranges: HolidayRange[] = [], asOf = "9999-12-31"): AccountedTransaction[] {
   const inside = (date: string) => ranges.some((range) => date >= range.from && date <= range.to);
-  const clean = rows.map((row) => { const copy = { ...row }; delete copy.holidayRange; return copy; });
+  const clean = rows.map((row) => {
+    if (!("holidayRange" in row)) return row;
+    const copy = { ...row };
+    delete copy.holidayRange;
+    return copy;
+  });
   if (!ranges.length) return clean;
   const home = new Set(clean.filter((row) => row.amount < 0 && row.date <= asOf && !inside(row.date) &&
     !classify(row).isTransfer && classify(row).category !== "Urlaub" && !unresolvedTerminal(row.description)).map(holidayMerchantKey));

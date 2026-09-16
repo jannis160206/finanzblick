@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/import/review";
 import { localToday, refreshPlanning, synchronizePlan } from "@/lib/planning";
 import { restoreLegacySourceCategories } from "@/lib/legacy-source";
+import { approveReviewedBooking } from "@/lib/import/approve-review";
 
 const STORAGE_KEY = "finanzdashboard.v1";
 type Store = {
@@ -62,7 +64,10 @@ function reducer(store: Store, action: Action | AppendAction): Store {
   switch (action.type) {
     case "appendStatements": {
       try {
-        const result = commitStatementImport(
+        const approval = action.rows.length === 1 && !action.decisions?.length &&
+          !Object.keys(action.metadata ?? {}).length
+          ? approveReviewedBooking(store.data, action.rows[0]) : undefined;
+        const result = approval ?? commitStatementImport(
           store.data,
           action.rows,
           action.decisions,
@@ -70,7 +75,8 @@ function reducer(store: Store, action: Action | AppendAction): Store {
         );
         return {
           ...store,
-          data: appStateSchema.parse(refreshPlanning(queueLedgerReview(result.state))),
+          data: approval ? refreshPlanning(result.state)
+            : appStateSchema.parse(refreshPlanning(queueLedgerReview(result.state))),
           saved: false,
           statementImport: {
             requestId: action.requestId,
@@ -240,6 +246,15 @@ export function FinanceProvider({
     };
   }, [store.data, store.ready, store.blocked]);
   const getDashboard = useMemo(() => createDashboardGetter(store.data), [store.data]);
+  const update = useCallback<FinanceContextValue["update"]>(
+    (updater) => dispatch({ type: "update", updater }),
+    [],
+  );
+  const appendStatements = useCallback<FinanceContextValue["appendStatements"]>(
+    (rows, duplicates, requestId, decisions, metadata) =>
+      dispatch({ type: "appendStatements", rows, duplicates, requestId, decisions, metadata }),
+    [],
+  );
   const value: FinanceContextValue = {
     state: store.data,
     get dashboard() {
@@ -249,7 +264,7 @@ export function FinanceProvider({
     ready: store.ready,
     saved: store.saved,
     storageError: store.error,
-    update: (updater) => dispatch({ type: "update", updater }),
+    update,
     replace: (data) =>
       dispatch({
         type: "hydrate",
@@ -257,15 +272,7 @@ export function FinanceProvider({
         reference: initialState,
       }),
     retrySave: () => dispatch({ type: "retry" }),
-    appendStatements: (rows, duplicates, requestId, decisions, metadata) =>
-      dispatch({
-        type: "appendStatements",
-        rows,
-        duplicates,
-        requestId,
-        decisions,
-        metadata,
-      }),
+    appendStatements,
     statementImport: store.statementImport,
   };
   return (

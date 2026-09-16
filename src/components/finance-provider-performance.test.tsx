@@ -6,6 +6,7 @@ import { FinanceProvider, useFinance } from "@/components/finance-provider";
 import { Transactions } from "@/components/transactions";
 import * as calc from "@/lib/calc";
 import * as review from "@/lib/import/review";
+import * as approvals from "@/lib/import/approve-review";
 import { createSeed } from "@/lib/seed";
 import type { AppState, Transaction } from "@/lib/types";
 
@@ -93,6 +94,7 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
   it("assigns real ledger reviews without any dashboard work, persists and prevents duplicate submissions", () => {
     const dashboard = vi.spyOn(calc, "calculateDashboard");
     const commit = vi.spyOn(review, "commitStatementImport");
+    const approve = vi.spyOn(approvals, "approveReviewedBooking");
     const initial = fixture(1_000);
     const view = renderFinance(initial, <Transactions />);
     expect(view.read().ready).toBe(true);
@@ -116,7 +118,8 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     })));
     act(() => { vi.advanceTimersByTime(1); });
     const assigned = view.read();
-    expect(commit).toHaveBeenCalledTimes(1);
+    expect(approve).toHaveBeenCalledTimes(1);
+    expect(commit).not.toHaveBeenCalled();
     expect(assigned.statementImport).toMatchObject({ added: 0, duplicates: 0 });
     expect(assigned.statementImport?.error).toBeUndefined();
     expect(assigned.state.transactions).toHaveLength(1_001);
@@ -133,7 +136,8 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     fireEvent.change(within(second).getByLabelText("Kategorie"), { target: { value: "Lebensmittel" } });
     fireEvent.click(within(second).getByRole("button", { name: "Zuordnung übernehmen" }));
     act(() => { vi.advanceTimersByTime(1); });
-    expect(commit).toHaveBeenCalledTimes(2);
+    expect(approve).toHaveBeenCalledTimes(2);
+    expect(commit).not.toHaveBeenCalled();
     expect(view.read().openReviewCount).toBe(0);
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("table").textContent).toContain("Freizeit");

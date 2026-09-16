@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -204,13 +204,32 @@ function TransactionForm({
 }
 
 export function Transactions() {
-  "use no memo";
   const { state, update, openReviewCount, storageError } = useFinance();
+  return <TransactionLedger state={state} update={update} openReviewCount={openReviewCount} storageError={storageError} />;
+}
+
+const TransactionLedger = memo(function TransactionLedger({
+  state, update, openReviewCount, storageError,
+}: Pick<ReturnType<typeof useFinance>, "state" | "update" | "openReviewCount" | "storageError">) {
+  "use no memo";
   const [reviewRequest, setReviewRequest] = useState(0);
   const ledger = useMemo(() => actualBookings(state), [state]);
+  // General updates validate/clone the ledger. Category approvals retain only
+  // unchanged bank rows, so their derived classifications remain reusable.
+  const classifyBooking = useMemo(() => {
+    const cache = new WeakMap<AccountedTransaction, ReturnType<typeof classify>>();
+    return (row: AccountedTransaction) => {
+      let result = cache.get(row);
+      if (!result) {
+        result = classify(row);
+        cache.set(row, result);
+      }
+      return result;
+    };
+  }, []);
   const classifications = useMemo(
-    () => new Map(ledger.map((row) => [row, classify(row)])),
-    [ledger],
+    () => new Map(ledger.map((row) => [row, classifyBooking(row)])),
+    [ledger, classifyBooking],
   );
   const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
   const [editor, setEditor] = useState<Transaction | null>(null);
@@ -682,4 +701,4 @@ export function Transactions() {
       </Dialog>
     </>
   );
-}
+});
