@@ -10,9 +10,9 @@ const booking = (id: string, description = "Unbekannter Händler"): Transaction 
 
 describe("bank clocks and lunch", () => {
   it.each([
-    ["Raiffeisen", "14.09.2026;Trafik;14.09.2026;-8,00;EUR;14.09.2026 12:15:00:000"],
-    ["Revolut", "Revolut\nDatum;Beschreibung;Geld ein-/ausgezahlt\n2026-09-14 12:15:00;Trafik;-8,00"],
-    ["Amex", "Date,Description,Card Member,Amount,Time\n14/09/2026,Trafik,Jannis,8.00,12:15:00"],
+    ["Raiffeisen", "14.09.2026;BILLA;14.09.2026;-8,00;EUR;14.09.2026 12:15:00:000"],
+    ["Revolut", "Revolut\nDatum;Beschreibung;Geld ein-/ausgezahlt\n2026-09-14 12:15:00;BILLA;-8,00"],
+    ["Amex", "Date,Description,Card Member,Amount,Time\n14/09/2026,BILLA,Jannis,8.00,12:15:00"],
   ])("extracts %s time and applies the shared lunch rule", (bank, csv) => {
     const result = parseStatementCsv(csv);
     expect(result.rows[0]).toMatchObject({ bank, time: "12:15:00", category: "Mittagessen" });

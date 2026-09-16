@@ -3,7 +3,7 @@ import type { Transaction } from "@/lib/types";
 type PayrollSource = Pick<Transaction, "description" | "amount"> &
   Partial<Pick<Transaction, "date" | "rawDescription" | "rawDetails" | "sourceCategory">>;
 
-const employer = /team\s*talent\s*solutions/i;
+const employer = /team\s*talent\s*solutions|\btts\b/i;
 const specialPayment = /(?:1[34]\.?\s*(?:monats)?(?:gehalt|lohn)|bonus|sonderzahlung|weihnachtsgeld|urlaubsgeld|holiday)/i;
 export const payrollText = (row: PayrollSource) =>
   [row.description, row.rawDescription, ...(row.rawDetails ?? []), row.sourceCategory].filter(Boolean).join(" ");
@@ -49,6 +49,10 @@ export function payrollCategory(row: PayrollSource): "Gehalt" | "Rufbereitschaft
   if (specialPayment.test(text)) return "Einkommen";
   if (!/gehalt|lohn/i.test(text) && !employer.test(text)) return;
   const period = payrollPeriod(row);
+  // Confirmed June special payroll (5506.xx), not a general salary ceiling.
+  // Require this employer and June period; other large salaries stay unchanged.
+  if (employer.test(text) && period?.endsWith("-06") && row.date?.slice(0, 7) === period &&
+    row.amount >= 5506 && row.amount < 5507) return "Einkommen";
   // This employer pays the previous period's on-call allowance separately in
   // the first half of the month. It can exceed the old 500-euro cutoff.
   if (employer.test(text) && row.date && period && period < row.date.slice(0, 7) && Number(row.date.slice(8, 10)) <= 20)

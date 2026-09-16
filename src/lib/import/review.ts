@@ -29,13 +29,14 @@ import {
   applyMerchantRules,
   createMerchantRuleApplier,
   merchantRuleKey,
+  isSpecificMerchantKey,
   rememberMerchants,
   storedMerchantKey,
 } from "./merchant-rules";
 import { recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
-import { isWorkingDay, statementTime } from "@/lib/holidays-at-kaernten";
+import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import {
   appendStatementRows,
@@ -59,6 +60,7 @@ function indexReviewRules(state: AppState) {
   const index = new Map<string, Set<string>>();
   for (const rule of state.merchantRules ?? []) {
     const key = storedMerchantKey(rule.key);
+    if (!isSpecificMerchantKey(key)) continue;
     const categories = index.get(key) ?? new Set<string>();
     categories.add(rule.category);
     index.set(key, categories);
@@ -68,18 +70,14 @@ function indexReviewRules(state: AppState) {
 
 export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
   if (unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
-  if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
   const result = classify(row);
-  if (!row.category || row.category === "Prüfen" || result.category === "Prüfen") return "Kategorie noch offen.";
+  if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
+  if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
   if (payrollCategory(row) === result.category) return;
   const categories = ruleIndex.get(merchantRuleKey(row));
   if (categories && (categories.size > 1 || !categories.has(result.category)))
     return "Widersprüchliche Händlerregel: Zuordnung prüfen.";
-  if (row.category === "Mittagessen" && result.category !== "Mittagessen") return "Mittagessen: Datum oder Uhrzeit passt nicht zur Regel.";
   if (row.categoryOverride || result.isTransfer) return;
-  if (isWorkingDay(row.date) && !statementTime(row.time, row.description) &&
-    (/trafik/i.test(row.description) || (/billa|\bspar\b|interspar|eurospar/i.test(row.description) && Math.abs(row.amount) <= 10)))
-    return "Mittagessen unklar: keine Uhrzeit im Auszug.";
   if (classify({ ...row, category: "Prüfen", sourceCategory: undefined }).category === "Prüfen")
     return "Händler noch nicht sicher zugeordnet.";
 }
@@ -101,9 +99,15 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
           rawDetails: match.rawDetails ?? row.rawDetails, bankReference: row.bankReference ?? match.bankReference };
       }
     }
-    if (updated === row) return row;
+    const time = statementTime(updated.time, updated.rawDescription, updated.description, ...(updated.rawDetails ?? []));
+    if (time && time !== updated.time) updated = { ...updated, time };
+    if (updated.category === "Prüfen" && !updated.categoryOverride && !updated.includeInPlan)
+      updated = { ...updated, includeInPlan: true };
     applyRule ??= createMerchantRuleApplier(state);
-    return classifyStatementRows([applyRule(updated)])[0];
+    const learned = applyRule(updated);
+    const result = classify(learned);
+    return learned.category === result.category && learned.includeInPlan === result.includeInPlan ? learned
+      : { ...learned, category: result.category, includeInPlan: result.includeInPlan };
   };
   return { ...state,
     transactions: state.transactions.map(repair),
@@ -243,37 +247,17 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
   // that intent before classification collapses it into a broader category.
   const legacyChoices = new Map(candidates.filter((row) => row.categoryOverride &&
     canonicalCategory(row.category) !== row.category).map((row) => [row.id, row.category]));
-  // Use the reconciled category, including the narrow Apple Care amount match,
-  // rather than reclassifying a PayPal mandate as a generic subscription.
+  // A provider and matching amount alone do not identify an Apple Care contract.
   const gridFor = (row: Transaction) => matchingGridRow(state,
     legacyChoices.get(row.id) ?? row.category, row, merchantRuleKey(row));
   const ignored = new Set([
     ...(state.ignoredStatementKeys ?? []),
     ...(state.fixedReceipts ?? []).map((item) => item.key),
   ]);
-  const appleCare = matchingGridRow(state, "Apple Care");
   const classified = classifyStatementRows(
     applyMerchantRules(state, candidates),
     state.transactions,
-  ).map((row) => {
-    // Generic PayPal direct debits may omit the merchant. Only use the configured
-    // Apple Care amount for that narrow statement format, never arbitrary merchants.
-    const expected = appleCare?.values[monthKey(row.date)];
-    if (
-      !row.categoryOverride &&
-      row.amount < 0 &&
-      (row.category === "Prüfen" || row.category === "Abonnements") &&
-      /paypal\s+europe|apple\.com\/bill/i.test(row.description) &&
-      expected != null &&
-      Math.abs(round(Math.abs(row.amount) - expected)) <= 0.05
-    )
-      return {
-        ...row,
-        category: "Versicherungen" as const,
-        includeInPlan: false,
-      };
-    return row;
-  });
+  );
   const existing = actualBookings(state);
   const accounted = reconcileSharedHoliday([...existing, ...classified], state.settings.asOf).bookings.slice(existing.length);
   const deduped = deduplicateStatements(accounted, state.transactions);
@@ -538,9 +522,10 @@ export function commitStatementImport(
   ];
   const choices = new Map(
     rows
-      .filter((row) => row.categoryOverride)
+      .filter((row) => row.categoryOverride && isSpecificMerchantKey(merchantRuleKey(row)))
       .map((row) => [merchantRuleKey(row), row.category]),
   );
+  const directChoices = new Map(rows.filter((row) => row.categoryOverride).map((row) => [row.id, row.category]));
   const selected = new Map(
     numberStatementRows(rows).map((row) => [statementFingerprint(row), row]),
   );
@@ -568,7 +553,7 @@ export function commitStatementImport(
   const ledgerIds = new Set(state.transactions.map((row) => row.id));
   const current = applyFixedDecisions({ ...learned,
     transactions: learned.transactions.map((row) => {
-      const category = choices.get(merchantRuleKey(row));
+      const category = directChoices.get(row.id) ?? choices.get(merchantRuleKey(row));
       if (!category) return row;
       const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
       const result = classify(updated);

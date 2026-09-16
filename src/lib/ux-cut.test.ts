@@ -70,7 +70,7 @@ describe("statement-only UX rules", () => {
       isTransfer: false,
       includeInPlan: false,
     });
-    expect(actualPockets(state).Sparkonto).toBe(920);
+    expect(actualPockets(state).Sparkonto).toBe(1000);
     expect(calculateDashboard(state).current.actualSpending).toBe(80);
     state.pocketSnapshots = [
       {
@@ -89,7 +89,7 @@ describe("statement-only UX rules", () => {
         pocket: "AMEX Jannis",
       }),
     );
-    expect(actualPockets(state).Sparkonto).toBe(900);
+    expect(actualPockets(state).Sparkonto).toBe(920);
     state.transactions.push(
       row("Transfer intern", -20, { date: "2026-09-13", pocket: "Sparen" }),
     );

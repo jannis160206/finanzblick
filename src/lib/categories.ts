@@ -29,7 +29,7 @@ export const groupedContractCategories: readonly Category[] = ["Abonnements", "V
 
 const suggestions: [RegExp, Category][] = [
   [/kontof[uü]hrungsgeb[uü]hr|kontogeb[uü]hr|kartengeb[uü]hr|(?:amex|american\s*express).*monatsgeb/i, "Bankgebühren"],
-  [/\bspotify\b|\bnetflix\b|disney\s*\+|disney\s*plus|youtube\s*premium|apple\s*music|icloud\s*\+?|amazon\s*prime|prime\s*video|microsoft\s*365|adobe\s*(?:creative|acrobat)|chatgpt|nordvpn/i, "Abonnements"],
+  [/\bspotify\b|\bnetflix\b|disney\s*\+|disney\s*plus|youtube\s*premium|apple\s*music|icloud\s*\+?|microsoft\s*365|adobe\s*(?:creative|acrobat)|chatgpt|nordvpn/i, "Abonnements"],
   [/\b(?:abo|abonnement|subscription|recurring)\b|wiederkehrend/i, "Abonnements"],
   [/\bkino\b|cinema|cineplexx|cinemaxx|eventim|ticketmaster|oeticket|\bsteam(?:games)?\b|playstation|nintendo|xbox/i, "Entertainment"],
   [/fitnessstudio|\bfitinn\b|\bmcfit\b|\bfitx\b|sportverein|\bdecathlon\b|\bintersport\b/i, "Sport & Fitness"],
@@ -43,5 +43,32 @@ const suggestions: [RegExp, Category][] = [
   [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\buber\b|\btaxi\b|parkgeb[uü]hr|\bparken\b/i, "Mobilität"],
 ];
 export function suggestCategory(text: string): Category | undefined {
-  return suggestions.find(([pattern]) => pattern.test(text))?.[1];
+  const matches = new Set(suggestions.filter(([pattern]) => pattern.test(text)).map(([, category]) => category));
+  return matches.size > 1 ? "Prüfen" : [...matches][0];
+}
+
+export const groceryMerchant = /\bbilla\b|\b(?:inter|euro)?spar\b|\bpenny\b/i;
+export const amazonMerchant = /\bamazon\b|\bamzn?\b|\bamz-shop\b|\bprime\b/i;
+const merchantCategories: [RegExp, Category][] = [
+  [/\bbipa\b|\bhotspot\b|\bmensa\b|\bmensen\b/i, "Mittagessen"],
+  [/\btrafik\b/i, "Shopping"],
+  [groceryMerchant, "Lebensmittel"],
+  [/\bshell\b|\bomv\b|\beni\b|\bpace\s*pay\b|tankstelle|tanken/i, "Mobilität"],
+  [/\bmc\s*donald'?s?\b|\bmcd\b|burger|pizzeria|\bgams\b|sakura|wolt|foodora|burgschenke/i, "Ausgehen"],
+  [/\bmartin\s+auer\b|\bg2a\b/i, "Freizeit"],
+  [/\bdm\b|dm-fil|dm-drogerie/i, "Drogerie"],
+  [amazonMerchant, "Shopping"],
+  [/porsche\s*bank|\bleasing\b/i, "Leasing"],
+  [/allianz|vollkasko|haftpflicht|apple[\s+-]*care/i, "Versicherungen"],
+  [/\ba1\b|handy(?:vertrag)?|telekom/i, "Telefon & Internet"],
+  [/\bbarber\b/i, "Körperpflege"],
+];
+// Contradictory merchant signals are not a reason to choose the first regex.
+export function knownMerchantCategory(text: string, amount: number): Category | undefined {
+  const matches = new Set(merchantCategories.filter(([pattern]) => pattern.test(text)).map(([, category]) => category));
+  const suggested = suggestCategory(text);
+  if (suggested && !(matches.has("Shopping") && amazonMerchant.test(text) && suggested === "Abonnements")) matches.add(suggested);
+  if (/\batm\b|\bbankomat\b/i.test(text.replace(/\bban[ck]omat\s*\/\s*pos\b/gi, "")))
+    matches.add(Math.abs(amount) === 20 ? "Körperpflege" : "Prüfen");
+  return matches.size > 1 ? "Prüfen" : [...matches][0];
 }

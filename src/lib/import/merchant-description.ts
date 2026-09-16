@@ -2,7 +2,9 @@ import type { Transaction } from "@/lib/types";
 
 type MerchantSource = Pick<Transaction, "description"> & Partial<Pick<Transaction, "rawDescription" | "rawDetails">>;
 const clean = (text: string) => text.normalize("NFKC").replace(/\s+/g, " ").trim();
-const terminal = /(?:^|\b)(?:pos|ban[ck]omat\s*\/\s*pos|kartenterminal|terminal|kartenfolge(?:[-\s]*nr\.?)?)\b|\b[A-Z]{2}\s+[DK]\d\b/i;
+const terminal = /(?:^|\b)(?:pos|ban[ck]omat\s*\/\s*pos|kartenterminal|terminal|kartenfolge(?:[-\s]*nr\.?)?)\b|\b[DK]\d\b/i;
+const purpose = /verwendungszweck(?:\/text)?\s*:\s*([\s\S]*?)(?=\s*(?:(?:zahlungsreferenz|auftraggeberreferenz|mandat)\s*:|(?:iban|bic)\b)|$)/i;
+const reference = /zahlungsreferenz\s*:\s*([\s\S]*?)(?=\s*(?:(?:auftraggeberreferenz|mandat)\s*:|(?:iban|bic)\b)|$)/i;
 
 export function hasTerminalText(text: string): boolean {
   return terminal.test(text);
@@ -11,18 +13,18 @@ export function hasTerminalText(text: string): boolean {
 // Strip only payment metadata. Never use a timestamp, reference, IBAN or
 // currency-only cell as a merchant, nor fabricate a merchant from a POS amount.
 export function merchantText(text: string): string {
-  const labeled = text.replace(/^(?:verwendungszweck(?:\/text)?|details|transaktionsdetails|händler|merchant|zusatztext)\s*:\s*/i, "");
+  const labeled = text.replace(/^(?:verwendungszweck(?:\/text)?|zahlungsreferenz|details|transaktionsdetails|händler|merchant|zusatztext)\s*:\s*/i, "");
   const value = clean(labeled
     .replace(/\bterminal[-\s]*(?:id|nr|nummer)\.?\s*:?\s*[A-Z\d*-]+/gi, " ")
     .replace(/\b(?:kartenfolge(?:[-\s]*(?:nr|nummer)\.?)?|karten(?:nummer|[-\s]*nr\.?)|terminal(?:[-\s]*(?:id|nr)\.?)?)\s*:?\s*[\d*X-]+/gi, " ")
     .replace(/\bban[ck]omat\s*\/\s*pos\b|\b(?:pos|kartenterminal|terminal|kartenzahlung|zahlung|debit)\b/gi, " ")
-    .replace(/\b[A-Z]{2}\s+[DK]\d\b/gi, " ")
+    .replace(/\b(?:[A-Z]{2}\s+)?[DK]\d\b/gi, " ")
     .replace(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[./]\d{1,2}[./](?:\d{2,4}\b)?/g, " ")
     .replace(/\b\d{1,2}:\d{2}(?::\d{2}(?:[.:]\d{3})?)?\b/g, " ")
     .replace(/(?:^|\s)[+\-]?\d[\d.]*,\d{2}(?=\s|$)|\b\d+\.\d{2}\b/g, " ")
     .replace(/\b(?:EUR|USD|CHF|Uhr|AT|DE)\b/g, " ")
     .replace(/^[\s:;,/|\-]+|[\s:;,/|\-]+$/g, ""));
-  if (!/[\p{L}]{2}/u.test(value) || /^(?:[A-Z]{2}\d{2}[\dA-Z\s]+|[A-Z]{3}|[\d\s:./-]+)$/i.test(value) ||
+  if (!/[\p{L}]{2}/u.test(value) || /^(?:[A-Z]{2}\d{2}[\dA-Z\s]+|(?:EUR|USD|CHF)|[\d\s:./-]+)$/i.test(value) ||
     /^(?:kartenfolge|referenz|iban|bic|saldo|guthaben|buchungsdatum|valuta|verwendungszweck|details)\b/i.test(value)) return "";
   return value;
 }
@@ -31,18 +33,43 @@ export function unresolvedTerminal(text: string): boolean {
   return hasTerminalText(text) && !merchantText(text);
 }
 
+const recoverable = (row: MerchantSource) => hasTerminalText(row.description) || purpose.test(row.description) || reference.test(row.description);
+function merchantCandidates(row: MerchantSource): string[] {
+  const sources = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""];
+  const extract = (pattern: RegExp) => sources.map((text) => pattern.exec(text)?.[1])
+    .filter((text): text is string => !!text).map(merchantText).filter(Boolean);
+  // Purpose is authoritative; a payment reference may just contain an ID.
+  const purposes = extract(purpose);
+  const references = extract(reference);
+  const candidates = purposes.length ? purposes : references.length ? references : sources.map(merchantText).filter(Boolean);
+  return [...new Map(candidates.map((text) => [clean(text).toLowerCase(), text])).values()];
+}
+
+export function ambiguousMerchant(row: MerchantSource): boolean {
+  return recoverable(row) && merchantCandidates(row).length > 1;
+}
+
 export function recoverMerchant<T extends MerchantSource>(row: T): T {
-  if (!hasTerminalText(row.description)) return row;
-  const description = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""]
-    .map(merchantText).find(Boolean);
+  if (!recoverable(row)) return row;
+  const unique = merchantCandidates(row);
+  if (unique.length !== 1) return row;
+  const description = /\bmartin\s+auer\b/i.test(unique[0]) ? "Martin Auer" : unique[0];
   if (!description || description === row.description) return row;
   return { ...row, description, rawDescription: row.rawDescription ?? row.description };
 }
 
 export function merchantKeyText(description: string): string {
-  const text = hasTerminalText(description) ? merchantText(description) || description : clean(description);
+  const recovered = recoverMerchant({ description }).description;
+  const text = hasTerminalText(recovered) ? merchantText(recovered) || recovered : clean(recovered);
   // Branch/address suffixes do not change this merchant's identity.
   if (/\bmartin\s+auer\b/i.test(text)) return "martin auer";
+  if (/\bshell\s+furnitz\b/i.test(text)) return "shell furnitz";
+  const trafik = /\btrafik\s+(warum|haas)\b/i.exec(text);
+  if (trafik) return `trafik ${trafik[1].toLowerCase()}`;
+  if (/\b(?:billa|bipa|(?:inter|euro)?spar)\b/i.test(text)) return text.toLocaleLowerCase("de-AT")
+    .replace(/\b(?:dankt|filiale|fil|store|nr)\b\.?\s*:?\s*/g, "")
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b|\b\d{1,2}[./]\d{1,2}[./](?:\d{2,4})?\b/g, " ")
+    .replace(/\s+/g, " ").trim();
   return text.toLocaleLowerCase("de-AT");
 }
 

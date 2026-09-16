@@ -41,6 +41,7 @@ export function parseAmexText(
     );
   };
   let pocket = "AMEX Jannis";
+  let unknownHolder = false;
   let pending: StatementDraft | null = null;
   let pendingLine = 0;
   let lineNumber = 0;
@@ -63,7 +64,8 @@ export function parseAmexText(
     const time = statementTime(pending.time, pending.rawDescription, pending.description);
     if (time) pending.time = time;
     const parsed = transactionSchema.safeParse(recoverMerchant(pending));
-    if (parsed.success && !messy && (!descriptionHasAmount || confirmedForeign)) result.rows.push(parsed.data);
+    if (parsed.success && parsed.data.amount > 0 && /zahlung\s*\/\s*überweisung erhalten/i.test(parsed.data.description)) result.skipped++;
+    else if (parsed.success && !messy && !unknownHolder && (!descriptionHasAmount || confirmedForeign)) result.rows.push(parsed.data);
     else {
       result.skipped++;
       result.issues.push({
@@ -104,7 +106,10 @@ export function parseAmexText(
       }
       if (/Neue Belastungen|Sonstige Transaktionen/i.test(line)) {
         flush();
-        pocket = /raphael/i.test(line) ? "AMEX Raphael" : "AMEX Jannis";
+        const ownCard = /\bjannis(?:\s+br(?:ü|ue)hl)?$/i.test(line);
+        const partnerCard = /\braphael(?:\s+piber)?$/i.test(line);
+        unknownHolder = /Neue Belastungen/i.test(line) && !ownCard && !partnerCard;
+        pocket = partnerCard ? "AMEX Raphael" : unknownHolder ? "AMEX ungeklärt" : "AMEX Jannis";
         continue;
       }
       const booking = line.match(/^(\d{2}\.\d{2})\s+(\d{2}\.\d{2})\s+(.+)$/);
@@ -184,10 +189,12 @@ export function parseAmexText(
           line,
         )
       ) {
-        // Unrecognised continuation/section: never silently merge it into a confident row.
+        // The charge table wraps merchant/address text onto subsequent lines.
+        // Keep it with that charge; ambiguous amounts still go to review.
         if (pending) {
           pending.description = `${pending.description} ${line}`.slice(0, 1000);
-          messy = true;
+          detail(line);
+          if (foreignRate || /\d[\d.]*,\d{2}|\b(?:Abschnitt|Zusatzbuchung)\b/i.test(line)) messy = true;
         } else
           result.issues.push({
             file,
@@ -196,10 +203,10 @@ export function parseAmexText(
           });
       }
     }
-    flush();
   }
+  flush();
   result.rows = numberStatementRows(classifyStatementRows(result.rows));
-  if (!result.rows.length && !result.issues.length)
+  if (!result.rows.length && !result.issues.length && !result.skipped)
     result.issues.push({
       file,
       message:

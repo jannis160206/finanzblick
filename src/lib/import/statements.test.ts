@@ -202,7 +202,7 @@ describe("Amex", () => {
 describe("classification uses the existing engine", () => {
   it.each([
     ["BIPA", -25, "Mittagessen"],
-    ["Trafik", -8, "Mittagessen"],
+    ["Trafik", -8, "Shopping"],
     ["INTERSPAR", -10, "Mittagessen"],
     ["SPAR", -10.01, "Lebensmittel"],
     ["dm drogerie", -4, "Drogerie"],
@@ -243,6 +243,7 @@ describe("classification uses the existing engine", () => {
     expect(classify(transaction("Auszahlung bei Pocket", -1.99))).toMatchObject(
       {
         isRoundUp: true,
+        category: "Transfer intern",
         planCategory: "Round-up Sparkonto",
         includeInPlan: false,
       },
@@ -253,11 +254,11 @@ describe("classification uses the existing engine", () => {
       includeInPlan: false,
     });
     expect(classify(transaction("AMZ Marketplace", -25))).toMatchObject({
-      pocket: "Sparkonto",
+      pocket: null,
       includeInPlan: false,
     });
   });
-  it("requires evidence of recurrence for small PayPal charges", () => {
+  it("does not infer a merchant or subscription from repeating provider amounts", () => {
     const one = transaction("PayPal Europe", -2.99, "2026-09-03");
     expect(classifyStatementRows([one])[0].category).toBe("Prüfen");
     expect(
@@ -265,7 +266,7 @@ describe("classification uses the existing engine", () => {
         [one],
         [transaction("PayPal Europe", -2.99, "2026-08-03")],
       )[0],
-    ).toMatchObject({ category: "Abonnements", includeInPlan: false });
+    ).toMatchObject({ category: "Prüfen", includeInPlan: false });
   });
   it("preserves preview category/pocket edits and plan choice", () => {
     const edited = {

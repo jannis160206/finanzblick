@@ -3,7 +3,7 @@ import { austrianHolidays, easterSunday, isLunchTime, isWorkingDay, statementTim
 import { classify } from "./calc";
 import type { Transaction } from "./types";
 
-const booking = (date: string, time?: string, description = "Trafik"): Transaction => ({
+const booking = (date: string, time?: string, description = "BILLA"): Transaction => ({
   id: "lunch", bank: "Raiffeisen", pocket: "Raiffeisen Giro", date, time,
   description, amount: -8, category: "Prüfen", includeInPlan: true,
 });

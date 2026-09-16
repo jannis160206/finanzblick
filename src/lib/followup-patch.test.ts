@@ -28,7 +28,8 @@ describe("unconditional lunch names", () => {
     for (const changed of [{ date: "2026-09-13" }, { date: "2026-10-26" }, { date: "2026-10-10" }, { time: "14:00:01" }])
       expect(classify({ ...booking, ...changed }).category).toBe("Lebensmittel");
     const state = createSeed(); state.transactions = [{ ...booking, time: undefined, category: "Lebensmittel" }];
-    expect(queueLedgerReview(state).reviewQueue).toHaveLength(1);
+    expect(queueLedgerReview(state).reviewQueue).toEqual([]);
+    expect(queueLedgerReview(state).transactions[0].category).toBe("Lebensmittel");
   });
 });
 
@@ -133,11 +134,11 @@ describe("pedantic ledger review", () => {
       { ...row("lunch", "BILLA", -8, "2026-09-14"), category: "Lebensmittel" }, row("safe", "BIPA")];
     state.merchantRules = [{ key: merchantRuleKey(conflict), category: "Freizeit" }];
     const queued = queueLedgerReview(state);
-    expect(openReviewCount(queued.reviewQueue ?? [])).toBe(6);
+    expect(openReviewCount(queued.reviewQueue ?? [])).toBe(5);
     const restored = queueLedgerReview(appStateSchema.parse(JSON.parse(JSON.stringify(queued))));
     expect(restored.reviewQueue).toEqual(queued.reviewQueue);
     const resolved = queueLedgerReview(commitStatementImport(restored, [{ ...state.transactions[2], category: "Shopping", categoryOverride: true }]).state);
-    expect(openReviewCount(resolved.reviewQueue ?? [])).toBe(4);
+    expect(openReviewCount(resolved.reviewQueue ?? [])).toBe(3);
     expect(resolved.transactions).toHaveLength(7);
     expect(resolved.transactions.slice(2, 4).map((booking) => booking.category)).toEqual(["Shopping", "Shopping"]);
     const bankFields = ({ id, description, amount, date, bank, pocket, time, sourceCategory, bankReference, occurrence }: Transaction) => ({ id, description, amount, date, bank, pocket, time, sourceCategory, bankReference, occurrence });

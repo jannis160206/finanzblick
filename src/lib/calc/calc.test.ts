@@ -54,17 +54,17 @@ describe("merchant classification", () => {
     "classifies %s by spending purpose",
     (name) => expect(classify(transaction(name)).category).toBe(name === "dm" ? "Drogerie" : "Ausgehen"),
   );
-  it("routes Amazon and AMZ as extra expenses funded from savings", () => {
+  it("keeps Amazon and AMZ as extra expenses without synthetic savings movements", () => {
     for (const name of ["Amazon", "AMZ Marketplace"])
       expect(classify(transaction(name))).toMatchObject({
-        pocket: "Sparkonto",
+        pocket: null,
         isTransfer: false,
         includeInPlan: false,
       });
   });
   it("only maps exactly twenty-euro ATM withdrawals to barber", () => {
     expect(classify(transaction("ATM", -20)).category).toBe("Körperpflege");
-    expect(classify(transaction("ATM", -20.01)).category).toBe("Sonstiges");
+    expect(classify(transaction("ATM", -20.01)).category).toBe("Prüfen");
   });
   it.each([
     "Eventim",
@@ -172,8 +172,8 @@ describe("savings and interest", () => {
   it("does not count transactions already included in the baseline twice", () => {
     const state = createSeed();
     state.transactions = [
-      transaction("Amazon", -50, "2026-09-01"),
-      transaction("Amazon", -20, "2026-09-12"),
+      { ...transaction("Transfer intern", -50, "2026-09-01"), pocket: "Sparkonto" },
+      { ...transaction("Transfer intern", -20, "2026-09-12"), pocket: "Sparkonto" },
     ];
     expect(actualPockets(state).Sparkonto).toBe(1782.59);
     state.settings.asOf = "2026-09-12";

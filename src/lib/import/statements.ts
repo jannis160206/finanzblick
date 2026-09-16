@@ -522,7 +522,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
           .map((index) => clean(get(index))).filter(Boolean).slice(0, 20).map((text) => text.slice(0, 1000));
         sourceCategory = clean(get(header.category));
         bankReference = clean(get(header.reference));
-        time = statementTime(get(header.time), description, dateText);
+        time = statementTime(description, ...rawDetails, get(header.time), dateText);
         holder = get(header.holder);
         currency = get(header.currency) || sectionCurrency;
         if (header.amount >= 0) {
@@ -565,6 +565,10 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         }
       }
       if (amount === 0) {
+        result.skipped++;
+        continue;
+      }
+      if (source === "Amex" && amount !== null && amount > 0 && /zahlung\s*\/\s*überweisung erhalten/i.test(description)) {
         result.skipped++;
         continue;
       }

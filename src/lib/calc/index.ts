@@ -20,10 +20,10 @@ import {
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
 import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
-import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
+import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
 import { reconcileLeasingSources } from "@/lib/leasing";
-import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
+import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetValue } from "@/lib/variable-budgets";
 
 export const round = (value: number) =>
@@ -115,8 +115,11 @@ export function classify(
   > &
     Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails">>,
 ) {
-  const { description, amount } = recoverMerchant(transaction);
-  const forcedLunch = alwaysLunch(description);
+  const recovered = recoverMerchant(transaction);
+  const { description, amount } = recovered;
+  const sourceText = [description, transaction.rawDescription ?? transaction.description, ...(transaction.rawDetails ?? []), transaction.sourceCategory].filter(Boolean).join(" ");
+  const known = knownMerchantCategory(sourceText, amount);
+  const forcedLunch = alwaysLunch(description) && known !== "Prüfen";
   const sharedHoliday = isSharedHoliday(transaction);
   const reimbursement = !!transaction.holidayReimbursementFor;
   const payroll = payrollCategory(transaction);
@@ -126,90 +129,50 @@ export function classify(
     );
   const absolute = Math.abs(amount);
   const sourceCategory = transaction.sourceCategory ?? "";
-  const isCardSettlement = /(?:amex|american express).*(?:abrechnung|sammel|ausgleich|rückzahlung|ruckzahlung)/i.test(`${description} ${sourceCategory}`) ||
-    (/raiffeisen|revolut/i.test(transaction.bank ?? "") && /\bamex\b|american express/i.test(description) && !/monatsgeb|mitgliedsgeb/i.test(description));
-  const lunchAllowed = isLunchTime(transaction.date, transaction.time ?? statementTime(description));
-  const isCashWithdrawal =
-    /^bargeld$/i.test(sourceCategory) &&
-    /\batm\b|bankomat|behebung/i.test(description) &&
-    absolute !== 20;
-  const explicitInternal =
-    transaction.categoryOverride && transaction.category === "Transfer intern";
+  const isCardSettlement = /(?:amex|american express).*(?:abrechnung|sammel|ausgleich|rückzahlung|ruckzahlung)/i.test(sourceText) ||
+    (/raiffeisen|revolut/i.test(transaction.bank ?? "") && /\bamex\b|american express|AT\s*20\s*1910\s*0000\s*1019\s*5000/i.test(sourceText) && !/monatsgeb|mitgliedsgeb/i.test(sourceText));
+  const lunchAllowed = isLunchTime(transaction.date, transaction.time ?? statementTime(transaction.rawDescription, transaction.description, ...(transaction.rawDetails ?? [])));
   const isRoundUp =
-    !explicitInternal &&
     /auszahlung bei pocket/i.test(description) &&
     absolute < 2;
-  const isAmazon = !explicitInternal && /amazon|amz/i.test(description) && !/amazon\s*prime|prime\s*video/i.test(description);
+  const explicitSavingsTransfer = transaction.categoryOverride && transaction.category === "Transfer intern" && savingsPocket(transaction.pocket);
+  const isAmazon = amazonMerchant.test(description) && !explicitSavingsTransfer;
   const isCurrencyExchange = /^revolut$/i.test(transaction.bank ?? "") &&
     /^umtausch$/i.test(sourceCategory) && /^umgetauscht (?:in|von) [a-z]{3}$/i.test(description);
   const isInternal =
-    /einzustecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\/überweisung erhalten/i.test(
-      description,
+    /einzustecken|einstecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\/überweisung erhalten/i.test(
+      sourceText,
     ) ||
+    (/^revolut$/i.test(transaction.bank ?? "") && /\bto jannis br(?:ü|ue)hl\b/i.test(description)) ||
+    (/^raiffeisen$/i.test(transaction.bank ?? "") && /\bLT25\s*\d[\d\s]+/i.test(sourceText)) ||
     isCardSettlement ||
-    isCashWithdrawal ||
     isCurrencyExchange ||
     transaction.category === "Transfer intern" ||
     /transfer intern/i.test(transaction.sourceCategory ?? "");
   const detectedTransfer = !forcedLunch && !sharedHoliday && !reimbursement && (isRoundUp || (isInternal && !isAmazon));
   let category: Category = transaction.category;
   if (isAmazon) category = "Shopping";
-  else if (isRoundUp) category = "Transfer";
+  else if (isRoundUp) category = "Transfer intern";
   else if (isInternal) category = "Transfer intern";
   else if (payroll) category = payroll;
-  else if (/leasing|porsche\s*bank/i.test(description)) category = "Leasing";
-  else if (/vollkasko/i.test(description)) category = "Vollkasko";
-  else if (/haftpflicht|allianz/i.test(description)) category = "Haftpflicht";
-  else if (
-    /handy(?:vertrag)?|\ba1\b.*telekom|telekom.*\ba1\b/i.test(description)
-  )
-    category = "Handyvertrag";
-  else if (/apple[\s+-]*care/i.test(description)) category = "Apple Care";
-  else if (/spotify/i.test(`${description} ${sourceCategory}`))
-    category = "Spotify";
+  else if (known) category = known === "Lebensmittel" && lunchAllowed && absolute <= 10 ? "Mittagessen" : known;
   else if (
     /(?:amex|american express).*(?:monatsgeb|platin)/i.test(sourceCategory) ||
     (/amex|american express/i.test(transaction.bank ?? "") &&
       /^monatsgeb.*hr/i.test(description))
   )
     category = "AMEX Monatsgebühr";
-  else if (/barber/i.test(description)) category = "Barber";
-  else if (/\bg2a\b/i.test(description)) category = "Freizeit";
-  else if (
-    /paypal/i.test(description) &&
-    absolute <= 20 &&
-    amount < 0 &&
-    /abo|subscription|recurring|wiederkehrend/i.test(
-      `${description} ${transaction.sourceCategory ?? ""}`,
-    )
-  )
-    category = "PayPal Abo";
-  else if (
-    /\bpace\s*pay\b|\bomv\b|\bshell\b|tankstelle|tanken/i.test(description)
-  )
-    category = "Mobilität";
-  else if (forcedLunch) category = "Mittagessen";
-  else if (/trafik/i.test(description))
-    category = lunchAllowed ? "Mittagessen" : "Sonstiges";
-  else if (/billa|\bspar\b|interspar|eurospar/i.test(description))
-    category = lunchAllowed && absolute <= 10 ? "Mittagessen" : "Lebensmittel";
-  else if (
-    /burger|foodora|pizzeria|sakura|gams|burgschenke|mc\s*donald'?s/i.test(
-      description,
-    )
-  )
-    category = "Ausgehen";
-  else if (/\batm\b|bankomat/i.test(description) && absolute === 20)
-    category = "Barber";
-  else if (amount < 0) category = suggestCategory(`${description} ${sourceCategory}`) ?? category;
   if (
     transaction.categoryOverride &&
-    !isCardSettlement &&
+    !detectedTransfer &&
     !(isAmazon && /Transfer/.test(transaction.category))
   )
     category = transaction.category;
-  if (category === "Mittagessen" && !lunchAllowed)
-    category = /billa|\bspar\b|interspar|eurospar/i.test(description) ? "Lebensmittel" : /bipa/i.test(description) ? "Gesundheit" : /hotspot|mensa|mensen/i.test(description) ? "Ausgehen" : "Sonstiges";
+  if (category === "Mittagessen" && !lunchAllowed && !forcedLunch)
+    category = groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen";
+  if (/\btrafik\b/i.test(description)) category = "Shopping";
+  if (isAmazon) category = "Shopping";
+  if (isRoundUp) category = "Transfer intern";
   if (amount > 0 && specialIncome && !detectedTransfer)
     category = payroll ?? "Einkommen";
   // Old imported receipts and learned employer rules can incorrectly force
@@ -218,6 +181,7 @@ export function classify(
     (!transaction.categoryOverride || ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(transaction.category)))
     category = payroll;
   if (forcedLunch) category = "Mittagessen";
+  if (detectedTransfer) category = "Transfer intern";
   category = canonicalCategory(category);
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
   // travel even when an older merchant rule calls a hotel/grocer everyday spend.
@@ -225,6 +189,8 @@ export function classify(
     (transaction.category === "Urlaub" || /^urlaub\b/i.test(sourceCategory) ||
       (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
   if (unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
+  if (ambiguousMerchant(recovered) && !detectedTransfer) category = "Prüfen";
+  if (known === "Prüfen" && !transaction.categoryOverride && !detectedTransfer) category = "Prüfen";
   // A partner transfer must not become a salary receipt before reconciliation.
   if (isRaphaelPayment(transaction) && ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(category)) category = "Sonstiges";
   if (reimbursement) category = "Transfer";
@@ -233,7 +199,7 @@ export function classify(
     category === "Transfer" ||
     category === "Transfer intern";
   const pocket =
-    isRoundUp || isAmazon ? "Sparkonto" : savingsPocket(transaction.pocket);
+    isRoundUp ? "Sparkonto" : savingsPocket(transaction.pocket);
   const exclusion =
     isAmazon ||
     category === "Urlaub" ||
@@ -253,9 +219,7 @@ export function classify(
     category,
     planCategory: isRoundUp
       ? "Round-up Sparkonto"
-      : isAmazon
-        ? "Sparkonto"
-        : category,
+      : category,
     pocket,
     isTransfer,
     isRoundUp,
@@ -317,24 +281,7 @@ export function classifyStatementRows(
     matches.push(row);
     debits.set(key, matches);
   }
-  const paypalMonths = new Map<string, Set<string>>();
-  for (const row of [...existing, ...rows]) {
-    if (
-      !/paypal/i.test(row.description) ||
-      row.amount >= 0 ||
-      Math.abs(row.amount) > 20
-    )
-      continue;
-    const key = `${row.bank.toLowerCase()}|${merchantName(row.description)}|${row.amount.toFixed(2)}`;
-    const months = paypalMonths.get(key) ?? new Set<string>();
-    months.add(monthKey(row.date));
-    paypalMonths.set(key, months);
-  }
   return rows.map((row) => {
-    const paypalKey = `${row.bank.toLowerCase()}|${merchantName(row.description)}|${row.amount.toFixed(2)}`;
-    const recurring =
-      /paypal/i.test(row.description) &&
-      (paypalMonths.get(paypalKey)?.size ?? 0) >= 2;
     const original =
       row.amount > 0 && !row.categoryOverride && !classify(row).isTransfer
         ? debits
@@ -352,14 +299,7 @@ export function classifyStatementRows(
             categoryOverride: true,
           }
         : row;
-    const result = classify(
-      recurring && !row.categoryOverride
-        ? {
-            ...row,
-            sourceCategory: `${row.sourceCategory ?? ""} wiederkehrend`,
-          }
-        : refund,
-    );
+    const result = classify(refund);
     return {
       ...refund,
       category: result.category,
@@ -543,7 +483,7 @@ function pocketMovements(
   );
   const roundUpPairs = new Map<string, number>();
   for (const transaction of relevant) {
-    if (!classify(transaction).isRoundUp) continue;
+    if (transaction.amount >= 0 || !classify(transaction).isRoundUp) continue;
     const key = `${transaction.date}|${transaction.bank}|${Math.abs(transaction.amount)}`;
     roundUpPairs.set(key, (roundUpPairs.get(key) ?? 0) + 1);
   }
@@ -555,7 +495,8 @@ function pocketMovements(
     const pairKey = `${transaction.date}|${transaction.bank}|${transaction.amount}`;
     if (
       transaction.amount > 0 &&
-      /um eur sparen .*einzustecken/i.test(transaction.description) &&
+      classified.pocket === "Sparkonto" &&
+      /\bein(?:zu)?stecken\b/i.test(transaction.description) &&
       (roundUpPairs.get(pairKey) ?? 0) > 0
     ) {
       roundUpPairs.set(pairKey, roundUpPairs.get(pairKey)! - 1);
@@ -605,28 +546,7 @@ function revolutMovement(
       row.date <= to &&
       (!transfersOnly || classify(row).isTransfer),
   );
-  if (pocket !== "Sparkonto" || transfersOnly)
-    return sum(native.map((row) => row.amount));
-  const covered = new Map<string, number>();
-  for (const row of native.filter((row) => classify(row).isTransfer)) {
-    const key = `${row.date}|${row.amount}`;
-    covered.set(key, (covered.get(key) ?? 0) + 1);
-  }
-  const extra = state.transactions
-    .filter(
-      (row) =>
-        row.date > from &&
-        row.date <= to &&
-        classify(row).isAmazon &&
-        !native.includes(row),
-    )
-    .filter((row) => {
-      const key = `${row.date}|${row.amount}`;
-      if (!(covered.get(key)! > 0)) return true;
-      covered.set(key, covered.get(key)! - 1);
-      return false;
-    });
-  return sum([...native, ...extra].map((row) => row.amount));
+  return sum(native.map((row) => row.amount));
 }
 export function actualPockets(state: AppState, date = state.settings.asOf) {
   const movements = pocketMovements(

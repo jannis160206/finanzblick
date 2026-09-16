@@ -1,6 +1,6 @@
 import { classify } from "@/lib/calc";
 import { type AppState, type Transaction } from "@/lib/types";
-import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
+import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory } from "@/lib/categories";
 
@@ -33,12 +33,19 @@ export function storedMerchantKey(key: string): string {
   const divider = key.indexOf("|");
   return divider < 0 ? key : merchantRuleKey({ bank: key.slice(0, divider), description: key.slice(divider + 1) });
 }
+export function isSpecificMerchantKey(key: string): boolean {
+  const merchant = key.slice(key.indexOf("|") + 1).trim();
+  if (!merchant || unresolvedTerminal(merchant)) return false;
+  const provider = merchant.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return !/^(?:paypal(?: europe)?(?: s a r l)?(?: et cie)?(?: s c a)?|revolut(?: epayment| ltd| payments)?|pos|terminal|zahlung|online banking)$/.test(provider);
+}
 export function rememberMerchants(
   state: AppState,
   rows: Transaction[],
 ): AppState {
   const rules = new Map(
-    (state.merchantRules ?? []).map((rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)]),
+    (state.merchantRules ?? []).map((rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)] as const)
+      .filter(([key]) => isSpecificMerchantKey(key)),
   );
   const choices = new Map<string, Transaction["category"]>();
   for (const row of rows)
@@ -46,6 +53,8 @@ export function rememberMerchants(
       row.categoryOverride &&
       row.category !== "Prüfen" &&
       !payrollCategory(row) &&
+      isSpecificMerchantKey(merchantRuleKey(row)) &&
+      !ambiguousMerchant(row) &&
       !unresolvedTerminal(row.description) &&
       !classify(row).isTransfer
     ) {
@@ -69,7 +78,7 @@ export function rememberMerchants(
         }) } : {}),
         merchantRules: [...rules].map(([key, category]) => ({ key, category })),
       }
-    : state;
+    : state.merchantRules?.length ? { ...state, merchantRules: [] } : state;
 }
 export function applyMerchantRules(state: AppState, rows: Transaction[]) {
   if (!rows.length) return [];
@@ -85,15 +94,15 @@ export function createMerchantRuleApplier(state: AppState) {
   );
   const inferred = new Map(
     (state.fixedReceipts ?? []).flatMap((receipt) =>
-      receipt.merchantKey
+      receipt.merchantKey && isSpecificMerchantKey(storedMerchantKey(receipt.merchantKey))
         ? [[storedMerchantKey(receipt.merchantKey), canonicalCategory(receipt.category)] as const]
         : [],
     ),
   );
   const rules = new Map(
     [...(remembered.merchantRules ?? []), ...(state.merchantRules ?? [])].map(
-      (rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)],
-    ),
+      (rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)] as const,
+    ).filter(([key]) => isSpecificMerchantKey(key)),
   );
   return (source: Transaction): Transaction => {
     const row = recoverMerchant(source);
@@ -105,7 +114,7 @@ export function createMerchantRuleApplier(state: AppState) {
       (detected.category === "Prüfen" || detected.category === "Abonnements"
         ? inferred.get(key)
         : undefined);
-    return category && !row.categoryOverride && !detected.isTransfer && !unresolvedTerminal(row.description)
+    return category && isSpecificMerchantKey(key) && !row.categoryOverride && !detected.isTransfer && !ambiguousMerchant(row) && !unresolvedTerminal(row.description)
       ? { ...row, category, categoryOverride: true, includeInPlan: true }
       : row;
   };

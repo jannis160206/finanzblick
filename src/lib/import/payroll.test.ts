@@ -50,7 +50,7 @@ describe("automatic payroll", () => {
   it.each([
     [payments[0], "Rufbereitschaft", "2026-01"], [payments[1], "Gehalt", "2026-02"],
     [payments[2], "Gehalt", "2026-03"], [payments[3], "Gehalt", "2026-04"],
-    [payments[4], "Gehalt", "2026-07"], [payments[5], "Rufbereitschaft", "2026-07"],
+    [payments[4], "Einkommen", "2026-06"], [payments[5], "Rufbereitschaft", "2026-07"],
     [payments[6], "Gehalt", "2026-12"],
   ] as const)("recognizes %j as %s in %s", (booking, category, month) => {
     expect(classify(booking).category).toBe(category);

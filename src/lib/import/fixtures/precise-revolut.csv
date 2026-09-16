@@ -1,0 +1,27 @@
+Revolut
+Persönliches Konto (EUR)
+Kontoauszug zu Transaktionen
+Datum;Beschreibung;Kategorie;Geld ein-/ausgezahlt
+14.09.2026;Gesendet von Revolut;;700,00
+14.09.2026;To Jannis Brühl;;-100,00
+14.09.2026;Auszahlung bei Pocket;;-0,47
+Gesamt;;;599,53
+---------
+Sparen (EUR)
+Kontoauszug zu Transaktionen
+Datum;Beschreibung;Kategorie;Geld ein-/ausgezahlt
+14.09.2026;einstecken;;0,47
+---------
+Persönliches Konto (USD)
+Kontoauszug zu Transaktionen
+Datum;Beschreibung;Kategorie;Geld ein-/ausgezahlt
+14.09.2026;Kein Umsatz;;0,00
+---------
+Investment Services Transaktionsnachweise
+Andere Transaktionen Depotkonto
+Datum;Beschreibung und Symbol;ISIN;Anzahl;Land;Bruttowert;Einbehaltene Steuern;Andere Steuern;Gebühren;Nettowert
+14.09.2026;Dividende Beispiel ETF;TEST;2;IE;20,00;0,00;0,00;0,00;20,00
+---------
+Krypto Transaktionsnachweise
+Datum (des Verkaufs);Datum (des Kaufs);Beschreibung;Units sold;Wert (des Verkaufs);Wert (des Kaufs);Kapitalerträge
+14.09.2026;01.09.2026;Beispiel Coin;1;20,00;10,00;10,00

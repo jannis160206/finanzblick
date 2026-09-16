@@ -308,7 +308,7 @@ describe("automatic reconciliation and merchant choices", () => {
       duplicates: 1,
     });
   });
-  it("recognizes an auto-deduped PayPal fixed merchant on a later price change, including after Excel restore", async () => {
+  it("recognizes a confirmed PayPal mandate on a later price change, including after Excel restore", async () => {
     const state = stateForTest();
     state.financeRows = [
       {
@@ -320,7 +320,7 @@ describe("automatic reconciliation and merchant choices", () => {
     ];
     const merchant =
       "PayPal Europe Referenz 123456 Mandat: APPLE-ABO, 02.10.2021";
-    const saved = importResult(state, result([row(merchant)])).state;
+    const saved = commitStatementImport(state, [{ ...row(merchant), category: "Versicherungen", categoryOverride: true }]).state;
     expect(saved.transactions).toEqual([]);
     expect(saved.fixedReceipts![0].merchantKey).toContain("mandat:apple-abo");
     const restored = (await parseWorkbook(await exportWorkbook(saved))).state;

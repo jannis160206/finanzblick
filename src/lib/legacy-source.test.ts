@@ -97,7 +97,8 @@ describe("legacy Excel source categories", () => {
       includeInPlan: false,
     });
     expect(results[4]).toMatchObject({
-      isTransfer: true,
+      category: "Prüfen",
+      isTransfer: false,
       includeInPlan: false,
     });
     expect(results[5]).toMatchObject({ category: "Körperpflege", isTransfer: false });

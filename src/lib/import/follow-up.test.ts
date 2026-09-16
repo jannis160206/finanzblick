@@ -106,16 +106,13 @@ describe("real statement layouts", () => {
   it("extracts real Amex text with split amounts, CR refunds and two holders", () => {
     const parsed = parseAmexText([fixture("amex-real.txt")]);
     expect(parsed.issues).toEqual([]);
-    expect(parsed.rows).toHaveLength(9);
-    expect(parsed.rows[0]).toMatchObject({
-      date: "2026-07-17",
-      amount: 3628.7,
-      category: "Transfer intern",
-    });
-    expect(parsed.rows[1]).toMatchObject({ date: "2026-07-11", amount: -10.1 });
-    expect(parsed.rows[5].amount).toBe(16.13);
-    expect(parsed.rows[6].pocket).toBe("AMEX Raphael");
-    expect(parsed.rows[8]).toMatchObject({ amount: 4, pocket: "AMEX Jannis" });
+    expect(parsed.rows).toHaveLength(8);
+    expect(parsed.skipped).toBe(1);
+    expect(parsed.rows.some((row) => /ZAHLUNG\/ÜBERWEISUNG ERHALTEN/i.test(row.description))).toBe(false);
+    expect(parsed.rows[0]).toMatchObject({ date: "2026-07-11", amount: -10.1 });
+    expect(parsed.rows[4].amount).toBe(16.13);
+    expect(parsed.rows[5].pocket).toBe("AMEX Raphael");
+    expect(parsed.rows[7]).toMatchObject({ amount: 4, pocket: "AMEX Jannis" });
   });
   it("infers the prior year and retains messy PDF lines rather than rejecting the file", () => {
     const parsed = parseAmexText([
@@ -136,7 +133,7 @@ describe("real statement layouts", () => {
   it.skipIf(!existsSync(examples))(
     "parses all three supplied original files including binary PDF",
     async () => {
-      const expected = { Raiffeisen: 40, Revolut: 173, Amex: 58 };
+      const expected = { Raiffeisen: 40, Revolut: 173, Amex: 57 };
       const sources: string[] = [];
       for (const name of readdirSync(examples).filter((name) =>
         /\.(csv|pdf)$/i.test(name),
@@ -154,7 +151,7 @@ describe("real statement layouts", () => {
         if (parsed.source === "Amex")
           expect(
             parsed.rows.reduce((sum, row) => sum + row.amount, 0),
-          ).toBeCloseTo(2099.12, 2);
+          ).toBeCloseTo(-1529.58, 2);
       }
       expect(sources.sort()).toEqual(["Amex", "Raiffeisen", "Revolut"]);
     },
@@ -306,7 +303,7 @@ describe("automatic import and fixed-cost review", () => {
       duplicates: 1,
     });
   });
-  it("auto-files Apple Care without a grid row and dedupes matching configured PayPal debits", () => {
+  it("auto-files explicit Apple Care but asks about generic PayPal despite a matching amount", () => {
     const state = createSeed();
     const apple = transaction("PayPal AppleCare+", -14.99);
     const prepared = prepareStatementImport([resultFor([apple])], state);
@@ -338,9 +335,10 @@ describe("automatic import and fixed-cost review", () => {
     );
     expect(matching).toMatchObject({
       automatic: [],
-      review: [],
-      duplicates: 2,
+      duplicates: 1,
     });
+    expect(matching.review).toHaveLength(1);
+    expect(matching.review[0]).toMatchObject({ kind: "booking", draft: { amount: -14.99, category: "Prüfen" } });
     const unknown = prepareStatementImport(
       [resultFor([transaction("Unbekannter Händler", -14.99)])],
       state,

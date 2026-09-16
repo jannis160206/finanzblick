@@ -41,7 +41,7 @@ describe("structured categories", () => {
 
   it.each([
     ["Spotify Premium", "Abonnements"], ["Netflix", "Abonnements"], ["PayPal Software Subscription", "Abonnements"],
-    ["Amazon Prime", "Abonnements"], ["Disney Plus", "Abonnements"], ["Microsoft 365", "Abonnements"],
+    ["Amazon Prime", "Shopping"], ["Disney Plus", "Abonnements"], ["Microsoft 365", "Abonnements"],
     ["Cineplexx", "Entertainment"], ["Steam Games", "Entertainment"], ["Nintendo", "Entertainment"],
     ["Fitinn", "Sport & Fitness"], ["Decathlon", "Sport & Fitness"], ["Udemy", "Bildung"],
     ["Fressnapf", "Haustiere"], ["Caritas Spende", "Geschenke & Spenden"], ["Apotheke", "Gesundheit"],
