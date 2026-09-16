@@ -6,7 +6,7 @@ import { appStateSchema, type Transaction } from "@/lib/types";
 import { parseAmexText } from "./amex-pdf";
 import { statementFingerprint } from "./identity";
 import { merchantRuleKey } from "./merchant-rules";
-import { recoverMerchant, unresolvedTerminal } from "./merchant-description";
+import { ambiguousMerchant, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import { commitStatementImport, openReviewCount, prepareStatementImport, queueLedgerReview } from "./review";
 import { parseStatementCsv, type StatementResult } from "./statements";
 
@@ -22,6 +22,18 @@ const importAll = (state: ReturnType<typeof createSeed>, results: StatementResul
 };
 
 describe("POS merchant recovery", () => {
+  it.each([
+    { description: noise, rawDetails: [], ambiguous: false },
+    { description: noise, rawDetails: ["BILLA"], ambiguous: false },
+    { description: noise, rawDetails: ["BILLA", "  billa  "], ambiguous: false },
+    { description: noise, rawDetails: ["BILLA", "SPAR"], ambiguous: true },
+    { description: "Verwendungszweck: BILLA", rawDetails: ["Verwendungszweck: SPAR"], ambiguous: true },
+    { description: noise, rawDetails: ["Verwendungszweck: BILLA", "Zahlungsreferenz: SPAR"], ambiguous: false },
+    { description: "Pizzeria", rawDetails: ["BILLA", "SPAR"], ambiguous: false },
+  ])("detects merchant ambiguity without treating noise or repeated evidence as a conflict: %j", ({ ambiguous, ...source }) => {
+    expect(ambiguousMerchant(source)).toBe(ambiguous);
+    if (ambiguous) expect(recoverMerchant(source)).toBe(source);
+  });
   it("uses Verwendungszweck rather than POS and retains bank facts and identity", () => {
     const booking = csv().rows[0];
     expect(booking).toMatchObject({ description: "Martin Auer", rawDescription: noise, time: "16:55:00", amount: -8.4, date: "2026-09-04" });
