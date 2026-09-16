@@ -22,6 +22,7 @@ import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } 
 import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
+import { reconcileLeasingSources } from "@/lib/leasing";
 import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetValue } from "@/lib/variable-budgets";
 
@@ -806,7 +807,7 @@ export function calculateMonthTotals(
 }
 export function actualBookings(state: AppState): AccountedTransaction[] {
   const account = (rows: Transaction[]) => accountHolidayRanges(
-    reconcileSharedHoliday(reconcilePayrollSources(rows), state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+    reconcileSharedHoliday(reconcileLeasingSources(reconcilePayrollSources(rows)), state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
   if (!state.fixedReceipts?.length) return account(state.transactions);
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [
