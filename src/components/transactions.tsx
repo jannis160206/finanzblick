@@ -205,15 +205,20 @@ function TransactionForm({
 
 export function Transactions() {
   "use no memo";
-  const { state, dashboard, update, openReviewCount, storageError } = useFinance();
+  const { state, update, openReviewCount, storageError } = useFinance();
   const [reviewRequest, setReviewRequest] = useState(0);
   const ledger = useMemo(() => actualBookings(state), [state]);
+  const classifications = useMemo(
+    () => new Map(ledger.map((row) => [row, classify(row)])),
+    [ledger],
+  );
   const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const [query, setQuery] = useState("");
   const [selectedMonth, setMonth] = useState<string | null>(null);
-  const month = selectedMonth ?? dashboard.currentMonth;
+  const currentMonth = monthKey(state.settings.asOf);
+  const month = selectedMonth ?? currentMonth;
   const [showTransfers, setShowTransfers] = useState(false);
   const [category, setCategory] = useState("");
   const [account, setAccount] = useState("");
@@ -226,7 +231,7 @@ export function Transactions() {
   const data = useMemo(
     () =>
       ledger.filter((row) => {
-        const result = classify(row);
+        const result = classifications.get(row)!;
         return (
           (showTransfers || !result.isTransfer || !!row.holidayReimbursementFor) &&
           (!query ||
@@ -241,7 +246,7 @@ export function Transactions() {
           (!to || row.date <= to)
         );
       }),
-    [ledger, query, month, category, account, plan, from, to, showTransfers],
+    [ledger, classifications, query, month, category, account, plan, from, to, showTransfers],
   );
   const columns: ColumnDef<AccountedTransaction>[] = [
     {
@@ -267,7 +272,7 @@ export function Transactions() {
     },
     {
       id: "category",
-      accessorFn: (row) => classify(row).category,
+      accessorFn: (row) => classifications.get(row)!.category,
       header: "Kategorie",
       cell: ({ getValue }) => (
         <span className="rounded-md border bg-muted/30 px-2 py-1 text-[10px]">
@@ -348,7 +353,7 @@ export function Transactions() {
   });
   const filtersActive =
     query ||
-    month !== dashboard.currentMonth ||
+    month !== currentMonth ||
     category ||
     account ||
     plan ||
@@ -398,7 +403,7 @@ export function Transactions() {
             <option value="">Alle Monate</option>
             {[
               ...new Set([
-                dashboard.currentMonth,
+                currentMonth,
                 ...ledger.map(bookingMonth),
                 ...ledger.map((row) => monthKey(row.date)),
               ]),

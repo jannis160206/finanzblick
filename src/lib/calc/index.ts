@@ -131,7 +131,8 @@ export function classify(
   const sourceCategory = transaction.sourceCategory ?? "";
   const isCardSettlement = /(?:amex|american express).*(?:abrechnung|sammel|ausgleich|rückzahlung|ruckzahlung)/i.test(sourceText) ||
     (/raiffeisen|revolut/i.test(transaction.bank ?? "") && /\bamex\b|american express|AT\s*20\s*1910\s*0000\s*1019\s*5000/i.test(sourceText) && !/monatsgeb|mitgliedsgeb/i.test(sourceText));
-  const lunchAllowed = isLunchTime(transaction.date, transaction.time ?? statementTime(transaction.rawDescription, transaction.description, ...(transaction.rawDetails ?? [])));
+  let lunchAllowed: boolean | undefined;
+  const allowsLunch = () => lunchAllowed ??= isLunchTime(transaction.date, transaction.time ?? statementTime(transaction.rawDescription, transaction.description, ...(transaction.rawDetails ?? [])));
   const isRoundUp =
     /auszahlung bei pocket/i.test(description) &&
     absolute < 2;
@@ -155,7 +156,7 @@ export function classify(
   else if (isRoundUp) category = "Transfer intern";
   else if (isInternal) category = "Transfer intern";
   else if (payroll) category = payroll;
-  else if (known) category = known === "Lebensmittel" && lunchAllowed && absolute <= 10 ? "Mittagessen" : known;
+  else if (known) category = known === "Lebensmittel" && absolute <= 10 && allowsLunch() ? "Mittagessen" : known;
   else if (
     /(?:amex|american express).*(?:monatsgeb|platin)/i.test(sourceCategory) ||
     (/amex|american express/i.test(transaction.bank ?? "") &&
@@ -168,7 +169,7 @@ export function classify(
     !(isAmazon && /Transfer/.test(transaction.category))
   )
     category = transaction.category;
-  if (category === "Mittagessen" && !lunchAllowed && !forcedLunch)
+  if (category === "Mittagessen" && !forcedLunch && !allowsLunch())
     category = groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen";
   if (/\btrafik\b/i.test(description)) category = "Shopping";
   if (isAmazon) category = "Shopping";

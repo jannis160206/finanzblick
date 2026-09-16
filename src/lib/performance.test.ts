@@ -6,6 +6,8 @@ import { personalAmount } from "@/lib/shared-holiday";
 import { queueLedgerReview, repairMerchantBookings, splitFixedBookings } from "@/lib/import/review";
 import * as merchants from "@/lib/import/merchant-description";
 import * as rules from "@/lib/import/merchant-rules";
+import * as calc from "@/lib/calc";
+import * as calendar from "@/lib/holidays-at-kaernten";
 import type { AppState, Transaction } from "@/lib/types";
 
 const booking = (id: string, overrides: Partial<Transaction> = {}): Transaction => ({
@@ -107,6 +109,50 @@ describe("performance regressions without timing-dependent limits", () => {
       expect(repaired.transactions.map((row) => row.rawDescription)).toEqual(rows.map((row) => row.description));
       expect(JSON.stringify(state)).toBe(before);
     } finally { createApplier.mockRestore(); }
+  });
+
+  it("infers merchant choices without applying them to a discarded ledger", () => {
+    const rows = Array.from({ length: 100 }, (_, i) => booking(`shop-${i}`));
+    const state = fixture(rows);
+    state.merchantRules = [{ key: rules.merchantRuleKey(rows[0]), category: "Shopping" }];
+    const before = JSON.stringify(state);
+    const classify = vi.spyOn(calc, "classify");
+    let applyRule: ReturnType<typeof rules.createMerchantRuleApplier>;
+    try {
+      applyRule = rules.createMerchantRuleApplier(state);
+      expect(classify).toHaveBeenCalledTimes(rows.length);
+    } finally { classify.mockRestore(); }
+    expect(applyRule({ ...rows[0], id: "later", category: "Prüfen", categoryOverride: false }).category).toBe("Shopping");
+    expect(applyRule({ ...rows[1], id: "later-other", category: "Prüfen", categoryOverride: false }).category).toBe("Freizeit");
+    expect(JSON.stringify(state)).toBe(before);
+  });
+
+  it("checks lunch eligibility only when it can change the category", () => {
+    const lunch = vi.spyOn(calendar, "isLunchTime");
+    try {
+      for (const description of ["Unbekannter Laden", "Amazon", "BIPA", "Pizzeria", "SHELL FURNITZ"])
+        classify(booking(description, { description }));
+      expect(lunch).not.toHaveBeenCalled();
+      expect(classify(booking("groceries", { description: "BILLA", amount: -8, date: "2026-09-14",
+        time: "12:00:00", categoryOverride: false })).category).toBe("Mittagessen");
+      expect(lunch).toHaveBeenCalledTimes(1);
+      expect(classify(booking("manual", { category: "Mittagessen", time: "12:00:00" })).category).toBe("Prüfen");
+      expect(lunch).toHaveBeenCalledTimes(2);
+    } finally { lunch.mockRestore(); }
+  });
+
+  it("classifies unchanged merchant bookings once per repair, never caching across edits", () => {
+    const rows = Array.from({ length: 100 }, (_, i) => booking(`merchant-${i}`));
+    const state = fixture(rows);
+    const before = JSON.stringify(state);
+    const classify = vi.spyOn(calc, "classify");
+    try {
+      expect(repairMerchantBookings(state).transactions).toEqual(rows);
+      expect(classify).toHaveBeenCalledTimes(rows.length);
+      expect(JSON.stringify(state)).toBe(before);
+      rows[0].description = "Amazon";
+      expect(repairMerchantBookings(state).transactions[0]).toMatchObject({ category: "Shopping", includeInPlan: false });
+    } finally { classify.mockRestore(); }
   });
 
   it("does not scan the ledger for an empty import when accepting an existing assignment", () => {

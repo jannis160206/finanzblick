@@ -139,6 +139,12 @@ type FinanceContextValue = {
 };
 const FinanceContext = createContext<FinanceContextValue | null>(null);
 
+function createDashboardGetter(state: AppState) {
+  // Keep each lazy result bound to its state, including across save-status renders.
+  let dashboard: Dashboard | undefined;
+  return () => (dashboard ??= calculateDashboard(state));
+}
+
 export function FinanceProvider({
   initialState,
   children,
@@ -233,10 +239,12 @@ export function FinanceProvider({
       window.removeEventListener("pagehide", flush);
     };
   }, [store.data, store.ready, store.blocked]);
-  const dashboard = useMemo(() => calculateDashboard(store.data), [store.data]);
+  const getDashboard = useMemo(() => createDashboardGetter(store.data), [store.data]);
   const value: FinanceContextValue = {
     state: store.data,
-    dashboard,
+    get dashboard() {
+      return getDashboard();
+    },
     openReviewCount: openReviewCount(store.data.reviewQueue ?? []),
     ready: store.ready,
     saved: store.saved,

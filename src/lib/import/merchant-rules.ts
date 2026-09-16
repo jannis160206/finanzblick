@@ -39,6 +39,23 @@ export function isSpecificMerchantKey(key: string): boolean {
   const provider = merchant.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
   return !/^(?:paypal(?: europe)?(?: s a r l)?(?: et cie)?(?: s c a)?|revolut(?: epayment| ltd| payments)?|pos|terminal|zahlung|online banking)$/.test(provider);
 }
+type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
+
+function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
+  const choices = new Map<string, Transaction["category"]>();
+  for (const row of rows) {
+    if (!row.categoryOverride || row.category === "Prüfen" || payrollCategory(row)) continue;
+    const key = merchantRuleKey(row);
+    if (
+      isSpecificMerchantKey(key) &&
+      !ambiguousMerchant(row) &&
+      !unresolvedTerminal(row.description) &&
+      !classifyBooking(row).isTransfer
+    ) choices.set(key, canonicalCategory(row.category));
+  }
+  return choices;
+}
+
 export function rememberMerchants(
   state: AppState,
   rows: Transaction[],
@@ -47,20 +64,8 @@ export function rememberMerchants(
     (state.merchantRules ?? []).map((rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)] as const)
       .filter(([key]) => isSpecificMerchantKey(key)),
   );
-  const choices = new Map<string, Transaction["category"]>();
-  for (const row of rows)
-    if (
-      row.categoryOverride &&
-      row.category !== "Prüfen" &&
-      !payrollCategory(row) &&
-      isSpecificMerchantKey(merchantRuleKey(row)) &&
-      !ambiguousMerchant(row) &&
-      !unresolvedTerminal(row.description) &&
-      !classify(row).isTransfer
-    ) {
-      rules.set(merchantRuleKey(row), canonicalCategory(row.category));
-      choices.set(merchantRuleKey(row), canonicalCategory(row.category));
-    }
+  const choices = merchantChoices(rows);
+  for (const [key, category] of choices) rules.set(key, category);
   const applyChoice = (row: Transaction): Transaction => {
     const category = choices.get(merchantRuleKey(row));
     if (!category) return row;
@@ -87,26 +92,26 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
 
 // Build once per operation, including when repairing several legacy POS rows.
 // No cross-update cache: newly learned choices must take effect immediately.
-export function createMerchantRuleApplier(state: AppState) {
-  const remembered = rememberMerchants(
-    { ...state, merchantRules: undefined },
-    state.transactions,
-  );
+export function createMerchantRuleApplier(state: AppState, classifyBooking: ClassifyBooking = classify) {
+  // Inferring rules must not apply them to a discarded copy of the entire ledger.
+  const remembered = merchantChoices(state.transactions, classifyBooking);
   const inferred = new Map(
-    (state.fixedReceipts ?? []).flatMap((receipt) =>
-      receipt.merchantKey && isSpecificMerchantKey(storedMerchantKey(receipt.merchantKey))
-        ? [[storedMerchantKey(receipt.merchantKey), canonicalCategory(receipt.category)] as const]
-        : [],
-    ),
+    (state.fixedReceipts ?? []).flatMap((receipt) => {
+      const key = receipt.merchantKey ? storedMerchantKey(receipt.merchantKey) : undefined;
+      return key && isSpecificMerchantKey(key) ? [[key, canonicalCategory(receipt.category)] as const] : [];
+    }),
   );
   const rules = new Map(
-    [...(remembered.merchantRules ?? []), ...(state.merchantRules ?? [])].map(
-      (rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)] as const,
-    ).filter(([key]) => isSpecificMerchantKey(key)),
+    [...remembered].map(([key, category]) => [storedMerchantKey(key), category] as const)
+      .filter(([key]) => isSpecificMerchantKey(key)),
   );
+  for (const rule of state.merchantRules ?? []) {
+    const key = storedMerchantKey(rule.key);
+    if (isSpecificMerchantKey(key)) rules.set(key, canonicalCategory(rule.category));
+  }
   return (source: Transaction): Transaction => {
     const row = recoverMerchant(source);
-    const detected = classify(row);
+    const detected = classifyBooking(row);
     if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const key = merchantRuleKey(row);
     const category =

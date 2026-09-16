@@ -88,6 +88,17 @@ export function openReviewCount(items: ReviewItem[]): number {
 
 export function repairMerchantBookings(state: AppState, candidates: Transaction[] = []): AppState {
   const recovered = candidates.map(recoverMerchant).filter((row) => row.rawDescription && !unresolvedTerminal(row.description));
+  // Rule inference, rule application and repair inspect the same immutable rows.
+  // Share results only for this pass; the next edit always gets a fresh cache.
+  const classifications = new WeakMap<Transaction, ReturnType<typeof classify>>();
+  const classifyBooking = (row: Transaction) => {
+    let result = classifications.get(row);
+    if (!result) {
+      result = classify(row);
+      classifications.set(row, result);
+    }
+    return result;
+  };
   let applyRule: ReturnType<typeof createMerchantRuleApplier> | undefined;
   const repair = (row: Transaction): Transaction => {
     let updated = recoverMerchant(row);
@@ -103,9 +114,9 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
     if (time && time !== updated.time) updated = { ...updated, time };
     if (updated.category === "Prüfen" && !updated.categoryOverride && !updated.includeInPlan)
       updated = { ...updated, includeInPlan: true };
-    applyRule ??= createMerchantRuleApplier(state);
+    applyRule ??= createMerchantRuleApplier(state, classifyBooking);
     const learned = applyRule(updated);
-    const result = classify(learned);
+    const result = classifyBooking(learned);
     return learned.category === result.category && learned.includeInPlan === result.includeInPlan ? learned
       : { ...learned, category: result.category, includeInPlan: result.includeInPlan };
   };

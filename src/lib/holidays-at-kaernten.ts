@@ -78,5 +78,5 @@ export function statementTime(...values: (string | undefined)[]): string | undef
 
 export function isLunchTime(date?: string, time?: string): boolean {
   const clock = statementTime(time);
-  return isWorkingDay(date) && !!clock && clock >= "11:00:00" && clock <= "14:00:00";
+  return !!clock && clock >= "11:00:00" && clock <= "14:00:00" && isWorkingDay(date);
 }
