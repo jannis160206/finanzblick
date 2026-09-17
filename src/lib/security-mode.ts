@@ -1,5 +1,6 @@
 export const SECURITY_MODE_KEY = "finanzblick.security-mode";
 export const SECURITY_FALLBACK_KEY = "finanzblick.security-mode-lock";
+export const SECURITY_AUTO_LOCK_KEY = "finanzblick.security-mode-auto-lock";
 
 type SecuritySnapshot = {
   locked: boolean;
@@ -17,9 +18,10 @@ const readError = "Der Sicherheitsmodus konnte nicht geladen werden. Deine Finan
 const temporaryError = "Der Sicherheitsmodus konnte nicht dauerhaft gespeichert werden. Der Sichtschutz bleibt in diesem Tab aktiv.";
 let snapshot = serverSecuritySnapshot;
 let forcedLock = false;
+let automaticLock = false;
 const listeners = new Set<() => void>();
 
-export const securityModeBootstrap = `(()=>{let locked=true;try{const value=localStorage.getItem(${JSON.stringify(SECURITY_MODE_KEY)});const fallback=sessionStorage.getItem(${JSON.stringify(SECURITY_FALLBACK_KEY)});locked=fallback==="true"||(value!==null&&value!=="false");}catch{}document.documentElement.dataset.securityMode=locked?"locked":"open";})();`;
+export const securityModeBootstrap = `(()=>{let locked=true;try{const value=localStorage.getItem(${JSON.stringify(SECURITY_MODE_KEY)});const fallback=sessionStorage.getItem(${JSON.stringify(SECURITY_FALLBACK_KEY)});const automatic=sessionStorage.getItem(${JSON.stringify(SECURITY_AUTO_LOCK_KEY)});const hidden=document.visibilityState==="hidden";locked=hidden||automatic==="true"||fallback==="true"||(value!==null&&value!=="false");if(hidden){localStorage.setItem(${JSON.stringify(SECURITY_MODE_KEY)},"true");sessionStorage.setItem(${JSON.stringify(SECURITY_AUTO_LOCK_KEY)},"true");}}catch{}document.documentElement.dataset.securityMode=locked?"locked":"open";})();`;
 
 function publish(next: SecuritySnapshot) {
   document.documentElement.dataset.securityMode = next.locked ? "locked" : "open";
@@ -35,15 +37,20 @@ function refresh() {
   }
   let value: string | null;
   let fallback: string | null;
+  let automatic: string | null;
   try {
     value = localStorage.getItem(SECURITY_MODE_KEY);
     fallback = sessionStorage.getItem(SECURITY_FALLBACK_KEY);
+    automatic = sessionStorage.getItem(SECURITY_AUTO_LOCK_KEY);
   } catch {
     publish({ locked: true, ready: true, error: readError });
     return;
   }
+  automaticLock ||= automatic === "true";
   if (fallback === "true") {
     publish({ locked: true, ready: true, error: temporaryError });
+  } else if (automaticLock) {
+    publish({ locked: true, ready: true, error: null });
   } else if (value === null || value === "false" || value === "true") {
     publish({ locked: value === "true", ready: true, error: null });
   } else {
@@ -52,11 +59,19 @@ function refresh() {
 }
 
 function onStorage(event: StorageEvent) {
-  if (event.key === SECURITY_MODE_KEY || event.key === SECURITY_FALLBACK_KEY || event.key === null) refresh();
+  if (event.key === SECURITY_MODE_KEY || event.key === SECURITY_FALLBACK_KEY ||
+    event.key === SECURITY_AUTO_LOCK_KEY || event.key === null) refresh();
+}
+
+function lockOnLeave() {
+  if (automaticLock && snapshot.locked) return;
+  automaticLock = true;
+  writeSecurityMode(true, true);
 }
 
 function onVisibilityChange() {
-  if (document.visibilityState === "visible") refresh();
+  if (document.visibilityState === "hidden") lockOnLeave();
+  else refresh();
 }
 
 export function subscribeSecurityMode(listener: () => void) {
@@ -65,8 +80,10 @@ export function subscribeSecurityMode(listener: () => void) {
     window.addEventListener("storage", onStorage);
     window.addEventListener("pageshow", refresh);
     window.addEventListener("focus", refresh);
+    window.addEventListener("blur", lockOnLeave);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    refresh();
+    if (document.visibilityState === "hidden") lockOnLeave();
+    else refresh();
   }
   return () => {
     listeners.delete(listener);
@@ -74,6 +91,7 @@ export function subscribeSecurityMode(listener: () => void) {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("pageshow", refresh);
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("blur", lockOnLeave);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     }
   };
@@ -82,10 +100,12 @@ export function subscribeSecurityMode(listener: () => void) {
 export const getSecuritySnapshot = () => snapshot;
 export const getServerSecuritySnapshot = () => serverSecuritySnapshot;
 
-export function setSecurityMode(locked: boolean) {
+function writeSecurityMode(locked: boolean, automatic: boolean) {
   if (locked) publish({ locked: true, ready: true, error: null });
   try {
     localStorage.setItem(SECURITY_MODE_KEY, String(locked));
+    if (automatic) sessionStorage.setItem(SECURITY_AUTO_LOCK_KEY, "true");
+    else sessionStorage.removeItem(SECURITY_AUTO_LOCK_KEY);
     sessionStorage.removeItem(SECURITY_FALLBACK_KEY);
   } catch {
     forcedLock = true;
@@ -99,7 +119,12 @@ export function setSecurityMode(locked: boolean) {
     return;
   }
   forcedLock = false;
+  automaticLock = automatic;
   publish({ locked, ready: true, error: null });
+}
+
+export function setSecurityMode(locked: boolean) {
+  writeSecurityMode(locked, locked && automaticLock);
 }
 
 export const toggleSecurityMode = () => setSecurityMode(!snapshot.locked);

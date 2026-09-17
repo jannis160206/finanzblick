@@ -12,6 +12,10 @@
 :root:not([data-security-mode="open"]) [data-slot="dialog-content"]:not([data-variant="navigation"]),
 :root:not([data-security-mode="open"]) [data-slot="popover-content"],
 :root:not([data-security-mode="open"]) [data-slot="dropdown-menu"] {
+  /* Background tabs can suspend transitions; privacy must hide portals immediately. */
+  display: none !important;
+  transition: none !important;
+  animation: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
 }

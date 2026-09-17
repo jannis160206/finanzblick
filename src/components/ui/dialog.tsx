@@ -73,6 +73,9 @@ function DialogContent({
   variant?: "default" | "confirmation" | "work" | "navigation"
 }) {
   useNativeSelectBoundary()
+  const { locked } = useSecurityMode()
+  // Release modal focus/aria locks even when a background tab suspends exit animations.
+  if (locked && variant !== "navigation") return null
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay financial={variant !== "navigation"} />

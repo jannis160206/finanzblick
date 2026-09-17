@@ -58,6 +58,9 @@ test("reviewed phone payments stay ordinary unless marked fixed, persist and rem
   expect(calculateDashboard(state).current.actualSpending).toBe(49.98);
   await page.reload();
   expect((await saved(page)).transactions).toEqual(state.transactions);
+  const privacy = page.getByRole("button", { name: /^Sicherheitsmodus (deaktivieren|aktivieren)$/ });
+  await expect(privacy).toBeEnabled();
+  if (await privacy.getAttribute("aria-pressed") === "true") await privacy.click();
   await page.getByLabel("Kontoauszüge auswählen").setInputFiles(statement);
   await expect(page.getByText("0 neu, 2 Duplikate ignoriert", { exact: true })).toBeVisible();
   expect((await saved(page)).transactions).toEqual(state.transactions);

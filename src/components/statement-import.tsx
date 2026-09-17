@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import { FileUp, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -51,21 +51,25 @@ type ImportUI = {
   dragging: boolean;
   pending: Pending | null;
   ledgerOnly: boolean;
+  drafts: Record<string, StatementDraft>;
 };
 
 const BookingReview = memo(function BookingReview({
   item,
+  draft,
+  changeDraft,
   disabled,
   save,
   skip,
 }: {
   item: Extract<ReviewItem, { kind: "booking" }>;
+  draft: StatementDraft;
+  changeDraft: (id: string, draft: StatementDraft) => void;
   disabled: boolean;
   save: (row: Transaction, id: string) => void;
   skip: () => void;
 }) {
-  const [draft, setDraft] = useState<StatementDraft>(item.draft);
-  const [fixedCost, setFixedCost] = useState(item.draft.fixedCost === true);
+  const fixedCost = draft.fixedCost === true;
   const choices = categories.filter((category) => category !== "Prüfen");
   const classification = classify({
     ...draft, amount: draft.amount ?? 0, categoryOverride: true, includeInPlan: true, fixedCost: false,
@@ -127,14 +131,14 @@ const BookingReview = memo(function BookingReview({
             value={draft.category}
             disabled={disabled}
             onValueChange={(category) =>
-              setDraft({ ...draft, category })
+              changeDraft(item.id, { ...draft, category })
             }
             excludeReview
           />
       </div>
       <FixedCostChoice
         checked={fixedCost}
-        onChange={setFixedCost}
+        onChange={(fixedCost) => changeDraft(item.id, { ...draft, fixedCost })}
         disabled={disabled}
         eligible={canMarkFixed}
       />
@@ -173,9 +177,9 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
   const pendingRef = useRef(false);
   const importMetadata = useRef<ImportMetadata>({});
   const [localUI, setUI] = useReducer(
-    (previous: ImportUI, patch: Partial<ImportUI>) => ({
+    (previous: ImportUI, patch: Partial<ImportUI> | ((state: ImportUI) => Partial<ImportUI>)) => ({
       ...previous,
-      ...patch,
+      ...(typeof patch === "function" ? patch(previous) : patch),
     }),
     {
       review: [],
@@ -184,8 +188,12 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       dragging: false,
       pending: null,
       ledgerOnly: false,
+      drafts: {},
     },
   );
+  const changeDraft = useCallback((id: string, draft: StatementDraft) => {
+    setUI((previous) => ({ drafts: { ...previous.drafts, [id]: draft } }));
+  }, []);
   const review = useMemo(() => {
     if (!localUI.ledgerOnly) return state.reviewQueue ?? [];
     const ledgerIds = new Set(state.transactions.map((row) => row.id));
@@ -221,17 +229,22 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           }));
       setUI({ pending: null, review: [...ui.review, ...retry], open: true });
     } else {
+      const remaining = new Set(ui.review.map((item) => item.id));
+      const removeId = ui.pending.removeId;
       toast.success(
         ui.pending.decisions.length
           ? "Monatsbetrag geprüft – keine doppelte Buchung"
           : `${statementImport.added} neu, ${statementImport.duplicates} Duplikate ignoriert`,
       );
-      setUI({
-        open: ui.pending.removeId
+      setUI((previous) => ({
+        drafts: Object.fromEntries(Object.entries(previous.drafts).filter(([id]) =>
+          id !== removeId && remaining.has(id),
+        )),
+        open: removeId
           ? ui.review.length > 0
           : localUI.open || !!statementImport.changes?.length,
         pending: null,
-      });
+      }));
     }
   }, [statementImport, ui.pending, ui.review, localUI.open]);
 
@@ -253,7 +266,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
   }, [appendStatements, ready, storageError]);
   const saveBooking = useCallback((row: Transaction, id: string) => commit([row], 0, id), [commit]);
   const skip = useCallback(() => {
-    setUI({ open: false });
+    setUI({ open: false, drafts: {} });
   }, []);
 
   async function selectFiles(files: File[]) {
@@ -391,7 +404,9 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       <Dialog
         open={ui.open && ui.review.length > 0}
         onOpenChange={(open) => {
-          if (!ui.pending) setUI({ open });
+          if (!ui.pending) {
+            setUI({ open, ...(!open ? { drafts: {} } : {}) });
+          }
         }}
       >
         <DialogContent
@@ -416,6 +431,8 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
                 <BookingReview
                   key={item.id}
                   item={item}
+                  draft={ui.drafts[item.id] ?? item.draft}
+                  changeDraft={changeDraft}
                   disabled={ui.pending?.removeId === item.id}
                   save={saveBooking}
                   skip={skip}
@@ -477,7 +494,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           </DialogBody>
           <DialogFooter>
             <p className="mr-auto text-xs text-muted-foreground">Offene Buchungen bleiben in der Prüfliste.</p>
-            <Button variant="outline" disabled={!!ui.pending} onClick={() => setUI({ open: false })}>Prüfung schließen</Button>
+            <Button variant="outline" disabled={!!ui.pending} onClick={skip}>Prüfung schließen</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
