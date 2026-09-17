@@ -50,9 +50,9 @@ describe("merchant classification", () => {
       expect(classify(transaction(name, -10.01)).category).toBe("Lebensmittel");
     },
   );
-  it.each(["dm", "Burger", "Foodora", "Pizzeria", "Sakura", "Gams"])(
+  it.each([["dm", "Drogerie"], ["Burger", "Restaurants"], ["Foodora", "Lieferdienste"], ["Pizzeria", "Restaurants"], ["Sakura", "Restaurants"], ["Gams", "Restaurants"]])(
     "classifies %s by spending purpose",
-    (name) => expect(classify(transaction(name)).category).toBe(name === "dm" ? "Drogerie" : "Ausgehen"),
+    (name, category) => expect(classify(transaction(name)).category).toBe(category),
   );
   it("keeps Amazon and AMZ as extra expenses without synthetic savings movements", () => {
     for (const name of ["Amazon", "AMZ Marketplace"])

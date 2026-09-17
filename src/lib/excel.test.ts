@@ -55,6 +55,27 @@ describe("Excel import/export", () => {
       parseWorkbook(new ArrayBuffer(21 * 1024 * 1024)),
     ).rejects.toThrow("20 MB");
   });
+  it("consolidates legacy workbook categories while preserving their original labels and bank facts", async () => {
+    const choices = [
+      ["Ausgehen", "Restaurants"], ["Kleidung & Schuhe", "Shopping"], ["Elektronik", "Shopping"],
+      ["Bücher", "Bildung"], ["Unterkunft", "Urlaub"], ["Flugreisen", "Urlaub"],
+      ["G2A / Apple-Guthaben", "Guthabenkarten"], ["Essen / Restaurant", "Restaurants"],
+      ["Porto & Versand", "Porto & Versand"],
+    ];
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Umsätze");
+    sheet.addRow(["Datum", "Beschreibung", "Betrag", "Bank", "Kategorie", "Im Plan"]);
+    for (const [category] of choices) sheet.addRow(["2026-09-02", `Original ${category}`, -12.5, "Testbank", category, "Nein"]);
+    const loaded = await parseWorkbook(Uint8Array.from(new Uint8Array(await workbook.xlsx.writeBuffer())).buffer);
+    expect(loaded.skipped).toBe(0);
+    expect(loaded.state.transactions).toHaveLength(choices.length);
+    choices.forEach(([sourceCategory, category], index) => expect(loaded.state.transactions[index]).toMatchObject({
+      category, sourceCategory, description: `Original ${sourceCategory}`, date: "2026-09-02",
+      amount: -12.5, bank: "Testbank", includeInPlan: false,
+    }));
+    const restored = await parseWorkbook(await exportWorkbook(loaded.state));
+    expect(restored.state.transactions).toEqual(loaded.state.transactions);
+  });
   it("imports edited visible cells instead of stale hidden state", async () => {
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(await exportWorkbook(createSeed()));

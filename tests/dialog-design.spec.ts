@@ -9,8 +9,8 @@ const booking: Transaction = {
   categoryOverride: true, includeInPlan: true,
 };
 const detailedCategories = [
-  "Restaurants", "Lieferdienste", "Cafés & Snacks", "Kleidung & Schuhe", "Elektronik",
-  "Bücher", "Weiterbildung", "Unterkunft", "Flugreisen", "Miete", "Energie & Nebenkosten",
+  "Restaurants", "Lieferdienste", "Cafés & Snacks", "Shopping", "Guthabenkarten", "Porto & Versand",
+  "Bildung", "Weiterbildung", "Urlaub", "Miete", "Energie & Nebenkosten",
   "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Tanken",
   "Öffentliche Verkehrsmittel", "Parken & Maut", "Fahrzeugwartung",
 ];
@@ -65,18 +65,20 @@ test("category search, draft discard and save preserve bank facts in the new ins
   await expect(dialog.getByRole("region", { name: "Originalbuchung" })).toContainText("89,90");
   await expect(dialog.getByRole("textbox")).toHaveCount(0);
   const select = dialog.getByLabel("Kategorie", { exact: true });
-  await expect(select.locator("option")).toHaveCount(45);
+  await expect(select.locator("option")).toHaveCount(41);
+  for (const legacy of ["Ausgehen", "Kleidung & Schuhe", "Elektronik", "Bücher", "Unterkunft", "Flugreisen"])
+    await expect(select.locator(`option[value="${legacy}"]`)).toHaveCount(0);
   for (const category of detailedCategories) {
     await select.selectOption(category);
     await expect(select).toHaveValue(category);
   }
   await dialog.getByRole("button", { name: "Kategorie durchsuchen", exact: true }).click();
   const search = page.getByRole("combobox", { name: "Kategorien suchen" });
-  await search.fill("elektr");
-  await expect(page.getByRole("option", { name: "Elektronik", exact: true }).filter({ visible: true })).toHaveCount(1);
+  await search.fill("porto");
+  await expect(page.getByRole("option", { name: "Porto & Versand", exact: true }).filter({ visible: true })).toHaveCount(1);
   await search.press("Enter");
   await expect(page.getByRole("dialog", { name: "Kategoriesuche", exact: true })).toHaveCount(0);
-  await expect(dialog.getByLabel("Kategorie", { exact: true })).toHaveValue("Elektronik");
+  await expect(dialog.getByLabel("Kategorie", { exact: true })).toHaveValue("Porto & Versand");
   await page.screenshot({ path: testInfo.outputPath("category-dialog.png") });
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
@@ -89,14 +91,14 @@ test("category search, draft discard and save preserve bank facts in the new ins
   await search.press("Escape");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Kategorie durchsuchen", exact: true })).toBeFocused();
-  await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Elektronik");
+  await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Porto & Versand");
   await dialog.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect.poll(async () => (await stored(page)).transactions[0].category).toBe("Elektronik");
+  await expect.poll(async () => (await stored(page)).transactions[0].category).toBe("Porto & Versand");
   const saved = (await stored(page)).transactions[0];
-  expect(saved).toMatchObject({ ...booking, category: "Elektronik" });
+  expect(saved).toMatchObject({ ...booking, category: "Porto & Versand" });
   await page.reload();
-  await page.getByLabel("Kategorie filtern").selectOption("Elektronik");
+  await page.getByLabel("Kategorie filtern").selectOption("Porto & Versand");
   await expect(page.getByRole("cell", { name: "Beispielkauf", exact: true })).toBeVisible();
   await page.goto("/plan");
   await page.getByText("Budgetberechnung", { exact: true }).click();

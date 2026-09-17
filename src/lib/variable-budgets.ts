@@ -9,7 +9,7 @@ export const variableBudgetLines: { id: VariableBudgetId; label: string; categor
   { id: "lunch", label: "Mittagessen", category: "Mittagessen", pattern: /mittag/i, amount: "lunch" },
   { id: "fuel", label: "Tanken", category: "Mobilität", pattern: /tanken/i, amount: 180 },
   { id: "leisure", label: "Freizeit", category: "Freizeit", pattern: /g2a|apple.guthaben|^freizeit$/i, amount: 20 },
-  { id: "going-out", label: "Ausgehen", category: "Ausgehen", pattern: /ausgehen|essen.*restaurant/i, amount: 250 },
+  { id: "going-out", label: "Restaurants & Lieferdienste", category: "Restaurants", pattern: /ausgehen|restaurant/i, amount: 250 },
   { id: "gifts", label: "Geschenke & Spenden", category: "Geschenke & Spenden", pattern: /geschenk|spenden/i, amount: "gifts" },
   { id: "buffer", label: "Giro Puffer", pattern: /giro[\s-]*puffer/i, amount: 100 },
 ];
@@ -21,12 +21,11 @@ const categoryBudgets: Partial<Record<Category, VariableBudgetId>> = {
   "Mobilität": "fuel",
   "Tanken": "fuel",
   "Freizeit": "leisure",
+  "Guthabenkarten": "leisure",
   "Entertainment": "leisure",
   "Sport & Fitness": "leisure",
   "Bildung": "leisure",
-  "Bücher": "leisure",
   "Weiterbildung": "leisure",
-  "Ausgehen": "going-out",
   "Restaurants": "going-out",
   "Lieferdienste": "going-out",
   "Cafés & Snacks": "going-out",
@@ -41,7 +40,8 @@ export function variableBudgetId(category: Category): VariableBudgetId | undefin
   return categoryBudgets[category] ?? "buffer";
 }
 const matches = (row: FinanceRow, line: typeof variableBudgetLines[number]) => row.kind === "variable" &&
-  (row.id === `budget-${line.id}` || (line.category !== undefined && row.planCategory === line.category) || line.pattern.test(row.label));
+  (row.id === `budget-${line.id}` || (line.category !== undefined && row.planCategory !== undefined &&
+    canonicalCategory(row.planCategory) === line.category) || line.pattern.test(row.label));
 const amountFor = (line: typeof variableBudgetLines[number], month: string, ranges: readonly HolidayRange[]) =>
   line.amount === "lunch" ? lunchBudget(month, ranges).total : line.amount === "gifts" ? gifts[Number(month.slice(5, 7)) - 1] : line.amount;
 

@@ -6,8 +6,9 @@ import type { AppState, Transaction } from "../src/lib/types";
 const storageKey = "finanzdashboard.v1";
 const newCategories = [
   "Entertainment", "Sport & Fitness", "Bildung", "Haustiere", "Wohnen & Haushalt",
+  "Guthabenkarten", "Porto & Versand",
 ] as const;
-const merchants = ["Cineplexx", "Fitinn", "Udemy", "Fressnapf", "IKEA"];
+const merchants = ["Cineplexx", "Fitinn", "Udemy", "Fressnapf", "IKEA", "G2A", "Österreichische Post"];
 const statement = {
   name: "Kategorien.csv",
   mimeType: "text/csv",
@@ -33,8 +34,8 @@ async function groupedOptions(select: Locator) {
     "Einnahmen", "Sonstiges & Umbuchungen",
   ]);
   for (const [group, categories] of [
-    ["Alltag", ["Drogerie", "Körperpflege"]],
-    ["Freizeit & Leben", [...newCategories.slice(0, 4), "Geschenke & Spenden"]],
+    ["Alltag", ["Drogerie", "Körperpflege", "Shopping", "Guthabenkarten", "Porto & Versand", "Restaurants", "Lieferdienste", "Cafés & Snacks"]],
+    ["Freizeit & Leben", [...newCategories.slice(0, 4), "Geschenke & Spenden", "Urlaub"]],
     ["Wohnen & Mobilität", ["Wohnen & Haushalt"]],
     ["Verträge & Gebühren", ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren"]],
   ] as const) {
@@ -46,7 +47,8 @@ async function groupedOptions(select: Locator) {
   }
   const values = await select.locator("option").evaluateAll((options) => options.map((option) => option.getAttribute("value")));
   expect(new Set(values).size).toBe(values.length);
-  for (const legacy of ["Spotify", "PayPal Abo", "Vollkasko", "Haftpflicht", "Apple Care", "Handyvertrag", "AMEX Monatsgebühr", "Barber"])
+  for (const legacy of ["Spotify", "PayPal Abo", "Vollkasko", "Haftpflicht", "Apple Care", "Handyvertrag", "AMEX Monatsgebühr", "Barber",
+    "Ausgehen", "Kleidung & Schuhe", "Elektronik", "Bücher", "Unterkunft", "Flugreisen"])
     expect(values).not.toContain(legacy);
 }
 
@@ -111,7 +113,7 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
     await review.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     const imported = await saved(page);
-    expect(imported.transactions).toHaveLength(8);
+    expect(imported.transactions).toHaveLength(10);
     for (const [index, description] of merchants.entries())
       expect(imported.transactions.find((row) => row.description === description)).toMatchObject({
         category: newCategories[index], date: "2026-09-10", amount: -(12 + index),
@@ -197,7 +199,7 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
     expect(restored.merchantRules).toEqual(before.merchantRules);
     await page.goto("/umsaetze");
     await page.getByLabel("Kontoauszüge auswählen").setInputFiles(statement);
-    await expect(page.getByText("0 neu, 6 Duplikate ignoriert", { exact: true })).toBeVisible();
+    await expect(page.getByText("0 neu, 8 Duplikate ignoriert", { exact: true })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
     const reimported = await saved(page);
     expect(reimported.transactions).toEqual(before.transactions);

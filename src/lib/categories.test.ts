@@ -5,8 +5,9 @@ import { actualBookings, calculateDashboard, calculateMonthTotals, calculatePlan
 import { createSeed } from "./seed";
 import { exportWorkbook, parseWorkbook } from "./excel";
 import { matchingFixedRow } from "./fixed";
-import { commitStatementImport, prepareStatementImport } from "./import/review";
+import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "./import/review";
 import { statementFingerprint } from "./import/identity";
+import { merchantRuleKey } from "./import/merchant-rules";
 import { synchronizePlan } from "./planning";
 
 const booking = (description: string, category: Category = "Prüfen", amount = -10): Transaction => ({
@@ -22,8 +23,8 @@ const stateWith = (labels: string[]) => {
 };
 const result = (rows: Transaction[]) => ({ file: "categories.csv", source: "Revolut" as const, rows, skipped: 0, issues: [] });
 const expandedCategories = [
-  "Restaurants", "Lieferdienste", "Cafés & Snacks", "Kleidung & Schuhe", "Elektronik",
-  "Bücher", "Weiterbildung", "Unterkunft", "Flugreisen", "Miete", "Energie & Nebenkosten",
+  "Restaurants", "Lieferdienste", "Cafés & Snacks", "Shopping", "Guthabenkarten", "Porto & Versand",
+  "Bildung", "Weiterbildung", "Urlaub", "Miete", "Energie & Nebenkosten",
   "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Tanken", "Öffentliche Verkehrsmittel",
   "Parken & Maut", "Fahrzeugwartung",
 ] as const satisfies readonly Category[];
@@ -37,7 +38,7 @@ describe("structured categories", () => {
     expect(categoryGroups).toHaveLength(6);
     expect(categories).toEqual(expect.arrayContaining([...expandedCategories]));
     expect(categories).toEqual(expect.arrayContaining([
-      "Lebensmittel", "Mittagessen", "Ausgehen", "Shopping", "Drogerie", "Gesundheit", "Körperpflege",
+      "Lebensmittel", "Mittagessen", "Shopping", "Drogerie", "Gesundheit", "Körperpflege",
       "Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Geschenke & Spenden", "Haustiere", "Urlaub",
       "Wohnen & Haushalt", "Mobilität", "Leasing", "Abonnements", "Versicherungen", "Telefon & Internet",
       "Bankgebühren", "Gehalt", "Rufbereitschaft", "Einkommen", "Sonstiges", "Transfer", "Transfer intern", "Prüfen",
@@ -51,6 +52,20 @@ describe("structured categories", () => {
     expect(parsed).toEqual({ ...row, category: expected, categoryOverride: true });
     expect(transactionSchema.parse(parsed)).toEqual(parsed);
     expect(statementFingerprint(parsed)).toBe(statementFingerprint(row));
+    const state = stateWith(["Altvertrag"]);
+    state.financeRows[0].planCategory = row.category;
+    state.merchantRules = [{ key: merchantRuleKey(row), category: row.category }];
+    state.fixedReceipts = [{ key: statementFingerprint(row), date: row.date, amount: row.amount, category: row.category, booking: row }];
+    state.fixedAmountDecisions = [{ merchantKey: merchantRuleKey(row), category: row.category, month: "2026-09", amount: 10, accept: false }];
+    state.reviewQueue = [{ kind: "fixed", id: "change", change: {
+      id: "change", category: row.category, month: "2026-09", previous: 9, amount: 10, bookings: [row],
+    } }];
+    const restored = appStateSchema.parse(JSON.parse(JSON.stringify(state)));
+    expect(restored.financeRows[0].planCategory).toBe(expected);
+    expect(restored.merchantRules?.[0].category).toBe(expected);
+    expect(restored.fixedReceipts?.[0]).toMatchObject({ category: expected, booking: { ...row, category: expected } });
+    expect(restored.fixedAmountDecisions?.[0].category).toBe(expected);
+    expect(restored.reviewQueue?.[0]).toMatchObject({ change: { category: expected, bookings: [{ ...row, category: expected }] } });
   });
 
   it.each([
@@ -62,6 +77,16 @@ describe("structured categories", () => {
     ["dm Drogerie", "Drogerie"], ["IKEA", "Wohnen & Haushalt"], ["OEBB Ticket", "Mobilität"],
     ["Friseur", "Körperpflege"], ["Allianz Haftpflicht", "Versicherungen"], ["A1 Telekom", "Telefon & Internet"],
     ["AMEX Monatsgebühr", "Bankgebühren"],
+    ["G2A.COM", "Guthabenkarten"], ["Guthabenkarte", "Guthabenkarten"], ["Apple-Guthaben", "Guthabenkarten"],
+    ["Paysafecard", "Guthabenkarten"], ["Post", "Porto & Versand"], ["Österreichische Post AG", "Porto & Versand"],
+    ["Kartenzahlung Oesterreichische Post", "Porto & Versand"], ["Deutsche Post", "Porto & Versand"],
+    ["Postfiliale 9500", "Porto & Versand"], ["Post.at", "Porto & Versand"],
+    ["DHL Paket", "Porto & Versand"], ["DPD", "Porto & Versand"], ["GLS", "Porto & Versand"],
+    ["UPS", "Porto & Versand"], ["FedEx", "Porto & Versand"], ["Hermes Paketshop", "Porto & Versand"],
+    ["Briefmarken", "Porto & Versand"], ["Paketversand", "Porto & Versand"],
+    ["McDonalds", "Restaurants"], ["Wolt", "Lieferdienste"], ["Foodora", "Lieferdienste"],
+    ["Lieferando", "Lieferdienste"], ["Uber Eats", "Lieferdienste"], ["Uber", "Mobilität"],
+    ["Martin Auer", "Cafés & Snacks"], ["Starbucks", "Cafés & Snacks"], ["Café Linde", "Cafés & Snacks"],
   ])("recognizes %s as %s", (description, expected) => {
     expect(classify(booking(description)).category).toBe(expected);
   });
@@ -87,19 +112,24 @@ describe("structured categories", () => {
 
   it.each([
     ["Booking.com", "Unterkunft"], ["Lufthansa", "Flugreisen"],
-  ] as const)("keeps a refined travel choice for %s without adding it to everyday budgets", (description, category) => {
+  ] as const)("consolidates a legacy travel choice for %s outside everyday budgets", (description, category) => {
     expect(classify(booking(description)).category).toBe("Urlaub");
     expect(classify({ ...booking(description, category), categoryOverride: true }))
-      .toMatchObject({ category, includeInPlan: false, isTransfer: false });
+      .toMatchObject({ category: "Urlaub", includeInPlan: false, isTransfer: false });
+    expect(isTravelCategory(category)).toBe(true);
   });
 
-  it("does not infer the new granular purposes from payment providers or replace old merchant classifications", () => {
+  it("does not infer purposes from providers, balances, place names or conflicting merchants", () => {
     for (const description of ["PayPal Europe Zahlung", "Kartenzahlung", "Fachhandel Linde"])
       expect(classify(booking(description)).category).toBe("Prüfen");
+    for (const description of ["Postbank", "Postproduktion", "Guthaben", "PayPal Guthaben", "Hermes", "G2A DHL"])
+      expect(classify(booking(description)).category).toBe("Prüfen");
+    expect(classify(booking("Gasthaus Zur Post")).category).toBe("Restaurants");
+    expect(classify({ ...booking("G2A", "Shopping"), categoryOverride: true }).category).toBe("Shopping");
     for (const [description, category] of [
       ["Thalia", "Bildung"], ["Udemy", "Bildung"], ["Miete", "Wohnen & Haushalt"],
       ["Stromrechnung", "Wohnen & Haushalt"], ["OEBB", "Mobilität"], ["Parkgebühr", "Mobilität"],
-      ["Shell", "Mobilität"], ["Foodora", "Ausgehen"],
+      ["Shell", "Mobilität"], ["Foodora", "Lieferdienste"],
     ]) expect(classify(booking(description)).category).toBe(category);
   });
 });
@@ -202,15 +232,72 @@ describe("grouped contracts and persistence", () => {
     }
   });
 
-  it("retains a learned accommodation purpose for a recognized travel merchant after Excel reload", async () => {
+  it("consolidates a learned accommodation purpose for a recognized travel merchant after Excel reload", async () => {
     const original = synchronizePlan(stateWith([]));
     const row = { ...booking("Booking.com", "Unterkunft", -120), categoryOverride: true };
     const saved = commitStatementImport(original, [row]).state;
     const loaded = (await parseWorkbook(await exportWorkbook(saved))).state;
-    expect(loaded.transactions[0]).toMatchObject({ category: "Unterkunft", categoryOverride: true, includeInPlan: false });
+    expect(loaded.transactions[0]).toMatchObject({ category: "Urlaub", categoryOverride: true, includeInPlan: false });
     const next = prepareStatementImport([result([{ ...booking("Booking.com"), date: "2026-09-03" }])], loaded);
     expect(next.review).toHaveLength(0);
-    expect(next.automatic[0]).toMatchObject({ category: "Unterkunft", categoryOverride: true, includeInPlan: false });
+    expect(next.automatic[0]).toMatchObject({ category: "Urlaub", categoryOverride: true, includeInPlan: false });
+  });
+
+  it("migrates consolidated choices, learned rules and pending reviews without losing facts or duplicating imports", async () => {
+    const original = synchronizePlan(stateWith([]));
+    const legacyCategories = ["Ausgehen", "Kleidung & Schuhe", "Elektronik", "Bücher", "Unterkunft", "Flugreisen"] as const;
+    const expected = ["Restaurants", "Shopping", "Shopping", "Bildung", "Urlaub", "Urlaub"];
+    original.transactions = legacyCategories.map((category, index) => ({
+      ...booking(`Fachhandel Linde ${index}`, category, -20), categoryOverride: true,
+      includeInPlan: !isTravelCategory(category), time: "18:20:00", bankReference: `synthetic-${index}`,
+      rawDescription: `Originalbuchung ${index}`, rawDetails: [`Beleg ${index}`], sourceCategory: category,
+      occurrence: 1, afterBaseline: true, sharedWithRaphael: false, sharedPaidManually: false,
+    }));
+    original.merchantRules = original.transactions.map((row) => ({ key: merchantRuleKey(row), category: row.category }));
+    original.reviewQueue = original.transactions.map((row, index) => ({
+      kind: "booking", id: `pending-${index}`, draft: { ...row, id: `pending-${index}`, amount: null }, message: "Betrag fehlt",
+    }));
+    const json = appStateSchema.parse(JSON.parse(JSON.stringify(original)));
+    const workbook = await parseWorkbook(await exportWorkbook(original));
+    expect(workbook.warnings).toEqual([]);
+    for (const restored of [json, workbook.state]) {
+      expect(restored.transactions).toEqual(original.transactions.map((row, index) => ({ ...row, category: expected[index] })));
+      expect(restored.merchantRules).toEqual(original.merchantRules.map((rule, index) => ({ ...rule, category: expected[index] })));
+      expect(restored.reviewQueue).toEqual(original.reviewQueue.map((item, index) => item.kind === "booking" ? {
+        ...item, draft: { ...item.draft, category: expected[index] },
+      } : item));
+      expect(queueLedgerReview(restored).transactions).toEqual(restored.transactions);
+      expect(restored.transactions.map(statementFingerprint)).toEqual(original.transactions.map(statementFingerprint));
+      expect(restored.financeRows).toEqual(original.financeRows);
+      expect(calculateDashboard(restored).plan).toEqual(calculateDashboard(original).plan);
+      expect(calculateDashboard(restored).current.actualSpending).toBe(calculateDashboard(original).current.actualSpending);
+      const repeated = prepareStatementImport([result(original.transactions)], restored);
+      expect(repeated.duplicates).toBe(legacyCategories.length);
+      expect(repeated.automatic).toEqual([]);
+      const next = prepareStatementImport([result(original.transactions.map((row) => ({
+        ...row, id: crypto.randomUUID(), date: "2026-09-03", bankReference: `${row.bankReference}-next`,
+        category: "Prüfen", categoryOverride: false,
+      })))], { ...restored, reviewQueue: [] });
+      expect(next.review).toEqual([]);
+      expect(next.automatic.map((row) => row.category)).toEqual(expected);
+      expect(next.automatic.every((row) => row.categoryOverride)).toBe(true);
+    }
+  });
+
+  it("refines trusted merchants on reload without overriding learned or manual choices", () => {
+    const original = synchronizePlan(stateWith([]));
+    original.transactions = [
+      booking("G2A", "Freizeit"), booking("Foodora", "Ausgehen"), booking("Martin Auer", "Freizeit"),
+      { ...booking("DHL Paket", "Shopping"), categoryOverride: true },
+    ];
+    const restored = queueLedgerReview(appStateSchema.parse(JSON.parse(JSON.stringify(original))));
+    expect(restored.transactions.map((row) => row.category)).toEqual(["Guthabenkarten", "Lieferdienste", "Cafés & Snacks", "Shopping"]);
+    expect(restored.transactions.map(statementFingerprint)).toEqual(original.transactions.map(statementFingerprint));
+    expect(restored.reviewQueue).toEqual([]);
+    const learned = appStateSchema.parse({
+      ...original, merchantRules: [{ key: merchantRuleKey(original.transactions[0]), category: "Freizeit" }],
+    });
+    expect(queueLedgerReview(learned).transactions[0]).toMatchObject({ category: "Freizeit", categoryOverride: true });
   });
 
   it("matches explicit rent and utility contracts without counting them in variable budgets", async () => {

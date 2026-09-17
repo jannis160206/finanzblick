@@ -206,7 +206,7 @@ describe("classification uses the existing engine", () => {
     ["INTERSPAR", -10, "Mittagessen"],
     ["SPAR", -10.01, "Lebensmittel"],
     ["dm drogerie", -4, "Drogerie"],
-    ["Burgschenke", -20, "Ausgehen"],
+    ["Burgschenke", -20, "Restaurants"],
     ["BANKOMAT", -20, "Körperpflege"],
     ["TeamTalentSolutions", 400, "Rufbereitschaft"],
     ["Gehalt", 2576.43, "Gehalt"],

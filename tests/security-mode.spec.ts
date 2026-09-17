@@ -83,7 +83,7 @@ test("another tab hides open financial portals without losing an unsaved categor
   await seed(page);
   await page.getByRole("button", { name: "Zuordnung ändern: Privater Beispielkauf", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Zuordnung ändern", exact: true });
-  await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Elektronik");
+  await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Guthabenkarten");
   const other = await context.newPage();
   await other.clock.setFixedTime(new Date("2026-09-17T12:00:00Z"));
   await other.goto("/");
@@ -92,7 +92,7 @@ test("another tab hides open financial portals without losing an unsaved categor
   await expect(page.locator('[data-financial-overlay]')).toHaveCount(0);
   await other.getByRole("button", { name: "Sicherheitsmodus deaktivieren", exact: true }).click();
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Kategorie", { exact: true })).toHaveValue("Elektronik");
+  await expect(dialog.getByLabel("Kategorie", { exact: true })).toHaveValue("Guthabenkarten");
   await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
   await page.getByRole("button", { name: "Weitere Filter", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Weitere Filter", exact: true })).toBeVisible();

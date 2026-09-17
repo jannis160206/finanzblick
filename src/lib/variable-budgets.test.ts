@@ -10,10 +10,10 @@ import { commitStatementImport } from "@/lib/import/review";
 
 const detailedBudgets = [
   ["Restaurants", "going-out"], ["Lieferdienste", "going-out"], ["Cafés & Snacks", "going-out"],
-  ["Kleidung & Schuhe", "buffer"], ["Elektronik", "buffer"], ["Bücher", "leisure"], ["Weiterbildung", "leisure"],
+  ["Shopping", "buffer"], ["Porto & Versand", "buffer"], ["Bildung", "leisure"], ["Weiterbildung", "leisure"],
   ["Miete", undefined], ["Energie & Nebenkosten", undefined], ["Möbel & Einrichtung", "buffer"],
   ["Reparaturen & Instandhaltung", "buffer"], ["Tanken", "fuel"], ["Öffentliche Verkehrsmittel", "buffer"],
-  ["Parken & Maut", "buffer"], ["Fahrzeugwartung", "buffer"], ["Unterkunft", undefined], ["Flugreisen", undefined],
+  ["Parken & Maut", "buffer"], ["Fahrzeugwartung", "buffer"], ["Urlaub", undefined], ["Guthabenkarten", "leisure"],
 ] as const;
 
 describe("Carinthian lunch budgets", () => {
@@ -46,6 +46,12 @@ describe("strict variable budgets", () => {
   it.each(detailedBudgets)("aggregates %s to the existing %s budget without adding a plan line", (category, expected) => {
     expect(variableBudgetId(category)).toBe(expected);
   });
+  it.each([
+    ["Ausgehen", "going-out"], ["Kleidung & Schuhe", "buffer"], ["Elektronik", "buffer"],
+    ["Bücher", "leisure"], ["Unterkunft", undefined], ["Flugreisen", undefined],
+  ] as const)("retains the budget of legacy category %s", (category, expected) => {
+    expect(variableBudgetId(category)).toBe(expected);
+  });
   it.each(["Gehalt", "Rufbereitschaft", "Einkommen", "Transfer", "Transfer intern", "Prüfen", "Urlaub", "Spotify", "Versicherungen"] as const)(
     "keeps %s outside variable budgets", (category) => {
       expect(variableBudgetId(category)).toBeUndefined();
@@ -62,7 +68,7 @@ describe("strict variable budgets", () => {
     state.transactions.push(transaction("Gehalt", 2500), transaction("Transfer intern", -1000));
     const dashboard = calculateDashboard(state);
     expect(dashboard.plan.rows.map(({ actual, ...row }) => {
-      expect(actual).toBe(({ food: 0, lunch: 0, fuel: 7, leisure: 14, "going-out": 21, gifts: 0, buffer: 49 })[row.id]);
+      expect(actual).toBe(({ food: 0, lunch: 0, fuel: 7, leisure: 21, "going-out": 21, gifts: 0, buffer: 49 })[row.id]);
       return row;
     })).toEqual(monthlyVariableBudget("2026-09").rows);
     expect(dashboard.current).toMatchObject({ actualSpending: 119, received: 2500 });
@@ -83,6 +89,29 @@ describe("strict variable budgets", () => {
     const dashboard = calculateDashboard(state);
     expect(dashboard.plan.rows.find((row) => row.id === "going-out")?.actual).toBe(50.5);
     expect(dashboard.spending).toEqual([{ name: "Restaurants", value: 90.5 }]);
+  });
+  it.each([
+    { label: "Ausgehen" },
+    { label: "Eigenes Essensbudget", planCategory: "Ausgehen" as const },
+  ])("retains the old dining budget identity and history when renaming $label", async (fields) => {
+    const original = synchronizePlan(createSeed());
+    original.settings.asOf = "2026-09-15";
+    original.financeRows = original.financeRows.map((row) => row.id === "budget-going-out" ? {
+      ...row, id: "legacy-dining", ...fields, planCategory: fields.planCategory,
+      values: { ...row.values, "2026-08": 317 }, overrides: { "2026-08": 333 },
+    } : row);
+    const fixed = original.financeRows.filter((row) => row.kind !== "variable");
+    const migrated = synchronizePlan(appStateSchema.parse(JSON.parse(JSON.stringify(original))));
+    const backup = (await parseWorkbook(await exportWorkbook(original))).state;
+    for (const state of [migrated, backup]) {
+      expect(state.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
+      expect(state.financeRows.find((row) => row.id === "legacy-dining")).toMatchObject({
+        label: "Restaurants & Lieferdienste", planCategory: "Restaurants",
+        values: { "2026-08": 317, "2026-09": 250, "2026-10": 250 }, overrides: { "2026-08": 333 },
+      });
+      expect(state.financeRows.filter((row) => row.kind !== "variable")).toEqual(fixed);
+      expect(synchronizePlan(state).financeRows).toEqual(state.financeRows);
+    }
   });
   it.each([2026, 2027])("uses only the gift calendar in %s, without spreading Christmas", (year) => {
     const actual = Array.from({ length: 12 }, (_, index) => monthlyVariableBudget(`${year}-${String(index + 1).padStart(2, "0")}`).rows.find((row) => row.id === "gifts")!.total);

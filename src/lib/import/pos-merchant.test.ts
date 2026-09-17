@@ -68,7 +68,7 @@ describe("POS merchant recovery", () => {
       expect(prepared.review).toEqual([]);
       expect(prepared.duplicates).toBe(1);
       expect(prepared.automatic).toHaveLength(1);
-      expect(prepared.automatic[0]).toMatchObject({ description: "Martin Auer", category: "Freizeit" });
+      expect(prepared.automatic[0]).toMatchObject({ description: "Martin Auer", category: "Cafés & Snacks" });
     }
   });
   it("rescans persisted detail fields and enriches legacy rows on re-drop without duplicates", () => {

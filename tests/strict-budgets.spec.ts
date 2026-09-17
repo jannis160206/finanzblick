@@ -16,7 +16,7 @@ test("strict budgets survive load and import, while saved vacation changes only 
   const stored = (): Promise<AppState> => page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), key);
   await page.goto("/monate");
   await expect(page.getByText("Lokal gespeichert", { exact: true })).toBeVisible();
-  for (const [label, value] of [["Lebensmittel & Haushalt", "250,00"], ["Mittagessen", "111,50"], ["Tanken", "180,00"], ["Freizeit", "20,00"], ["Ausgehen", "250,00"], ["Geschenke & Spenden", "0,00"], ["Giro Puffer", "100,00"]])
+  for (const [label, value] of [["Lebensmittel & Haushalt", "250,00"], ["Mittagessen", "111,50"], ["Tanken", "180,00"], ["Freizeit", "20,00"], ["Restaurants & Lieferdienste", "250,00"], ["Geschenke & Spenden", "0,00"], ["Giro Puffer", "100,00"]])
     await expect(page.getByLabel(`${label} Oktober 2026`, { exact: true })).toHaveText(value);
   for (const label of ["AMEX", "Amex-Rate", "Amex Rückzahlung", "Klarna", "Sonstiges", "Gesundheit", "Drogerie", "Shopping", "Wohnen & Haushalt", "G2A"])
     await expect(page.getByRole("row").filter({ has: page.getByText(label, { exact: true }) })).toHaveCount(0);

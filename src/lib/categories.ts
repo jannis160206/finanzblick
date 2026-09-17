@@ -1,7 +1,7 @@
 // Display categories describe a purpose, not a payment provider or contract.
 export const categoryGroups = [
-  { label: "Alltag", categories: ["Lebensmittel", "Mittagessen", "Ausgehen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Shopping", "Kleidung & Schuhe", "Elektronik", "Drogerie", "Gesundheit", "Körperpflege"] },
-  { label: "Freizeit & Leben", categories: ["Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Bücher", "Weiterbildung", "Geschenke & Spenden", "Haustiere", "Urlaub", "Unterkunft", "Flugreisen"] },
+  { label: "Alltag", categories: ["Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Shopping", "Guthabenkarten", "Porto & Versand", "Drogerie", "Gesundheit", "Körperpflege"] },
+  { label: "Freizeit & Leben", categories: ["Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Weiterbildung", "Geschenke & Spenden", "Haustiere", "Urlaub"] },
   { label: "Wohnen & Mobilität", categories: ["Wohnen & Haushalt", "Miete", "Energie & Nebenkosten", "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Mobilität", "Tanken", "Öffentliche Verkehrsmittel", "Parken & Maut", "Fahrzeugwartung", "Leasing"] },
   { label: "Verträge & Gebühren", categories: ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren"] },
   { label: "Einnahmen", categories: ["Gehalt", "Rufbereitschaft", "Einkommen"] },
@@ -18,6 +18,12 @@ export const categoryAliases = {
   "Handyvertrag": "Telefon & Internet",
   "AMEX Monatsgebühr": "Bankgebühren",
   "Barber": "Körperpflege",
+  "Ausgehen": "Restaurants",
+  "Kleidung & Schuhe": "Shopping",
+  "Elektronik": "Shopping",
+  "Bücher": "Bildung",
+  "Unterkunft": "Urlaub",
+  "Flugreisen": "Urlaub",
 } as const satisfies Record<string, CurrentCategory>;
 export type Category = CurrentCategory | keyof typeof categoryAliases;
 export const allCategories: Category[] = [...categories, ...Object.keys(categoryAliases) as (keyof typeof categoryAliases)[]];
@@ -26,8 +32,8 @@ export function canonicalCategory(category: Category): Category {
   return categoryAliases[category as keyof typeof categoryAliases] ?? category;
 }
 export const groupedContractCategories: readonly Category[] = ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren", "Miete", "Energie & Nebenkosten"];
-export const travelCategories: readonly Category[] = ["Urlaub", "Unterkunft", "Flugreisen"];
-export const isTravelCategory = (category: Category) => travelCategories.includes(category);
+export const travelCategories: readonly Category[] = ["Urlaub"];
+export const isTravelCategory = (category: Category) => travelCategories.includes(canonicalCategory(category));
 
 const suggestions: [RegExp, Category][] = [
   [/kontof[uü]hrungsgeb[uü]hr|kontogeb[uü]hr|kartengeb[uü]hr|(?:amex|american\s*express).*monatsgeb/i, "Bankgebühren"],
@@ -41,8 +47,10 @@ const suggestions: [RegExp, Category][] = [
   [/\bapotheke\b|\barzt\b|zahnarzt|krankenhaus|optiker|\bfielmann\b/i, "Gesundheit"],
   [/\bdm\b|dm-drogerie|\bmueller\s*drogerie\b|\bmüller\s*drogerie\b/i, "Drogerie"],
   [/\bbarber\b|fris[eö]ur|friseur|frisör|kosmetikstudio/i, "Körperpflege"],
+  [/\bg2a\b|\bguthabenkarten?\b|\b(?:apple|itunes)[\s-]*guthaben\b|\bpaysafecard\b/i, "Guthabenkarten"],
+  [/\b(?:dhl|dpd|gls|ups|fedex)\b|(?:^|\W)(?:österreichische|oesterreichische|deutsche|schweizer(?:ische)?)\s+post\b|\bpost\s*(?:ag|filiale)\b|\bpost\.(?:at|de|ch)\b|\bhermes\s*(?:paket|versand|germany)|\b(?:briefmarken?|paketmarken?|portogeb[uü]hr|paketversand)\b|^\s*post(?=\s|$)/i, "Porto & Versand"],
   [/\bikea\b|\bmömax\b|\bmoemax\b|\bxxxlutz\b|\bhornbach\b|\bobi\b|\bbauhaus\b|\bmiete\b|stromrechnung|heizkosten/i, "Wohnen & Haushalt"],
-  [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\buber\b|\btaxi\b|parkgeb[uü]hr|\bparken\b/i, "Mobilität"],
+  [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\buber\b(?!\s*eats\b)|\btaxi\b|parkgeb[uü]hr|\bparken\b/i, "Mobilität"],
 ];
 export function suggestCategory(text: string): Category | undefined {
   const matches = new Set(suggestions.filter(([pattern]) => pattern.test(text)).map(([, category]) => category));
@@ -56,8 +64,9 @@ const merchantCategories: [RegExp, Category][] = [
   [/\btrafik\b/i, "Shopping"],
   [groceryMerchant, "Lebensmittel"],
   [/\bshell\b|\bomv\b|\beni\b|\bpace\s*pay\b|tankstelle|tanken/i, "Mobilität"],
-  [/\bmc\s*donald'?s?\b|\bmcd\b|burger|pizzeria|\bgams\b|sakura|wolt|foodora|burgschenke/i, "Ausgehen"],
-  [/\bmartin\s+auer\b|\bg2a\b/i, "Freizeit"],
+  [/\bmc\s*donald'?s?\b|\bmcd\b|burger|pizzeria|\bgams\b|sakura|burgschenke|\brestaurants?\b|\bgasthaus\b/i, "Restaurants"],
+  [/\bwolt\b|\bfoodora\b|\blieferando\b|\blieferdienst\b|\buber\s*eats\b/i, "Lieferdienste"],
+  [/\bmartin\s+auer\b|\bstarbucks\b|\bcaf[eé]s?(?=\W|$)|\bsnacks?\b/i, "Cafés & Snacks"],
   [/\bdm\b|dm-fil|dm-drogerie/i, "Drogerie"],
   [amazonMerchant, "Shopping"],
   [/porsche\s*bank|\bleasing\b/i, "Leasing"],

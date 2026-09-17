@@ -245,12 +245,12 @@ describe("incremental booking review approval", () => {
     const state = fixture([booking("selected"), inferred, other], {
       merchantRules: [{ key, category: "Ausgehen" }],
     });
-    expect(state.transactions[2].category).toBe("Ausgehen");
+    expect(state.transactions[2].category).toBe("Restaurants");
     const result = approve(state, choose(state, "selected"));
 
     expect(result.state.transactions[1]).toBe(state.transactions[1]);
     expect(result.state.transactions[2]).toBe(state.transactions[2]);
-    expect(result.state.merchantRules).toContainEqual({ key, category: "Ausgehen" });
+    expect(result.state.merchantRules).toContainEqual({ key, category: "Restaurants" });
   });
 
   it("keeps a review open when mandatory merchant classification contradicts the chosen rule", () => {
@@ -276,9 +276,9 @@ describe("incremental booking review approval", () => {
     const changed = fixture(first.transactions.map((row) =>
       row.id === "second" ? { ...row, amount: -87, bankReference: "synthetic-new-state" } : row),
     { merchantRules: first.merchantRules });
-    const result = approve(changed, choose(changed, "second", "Ausgehen"));
+    const result = approve(changed, choose(changed, "second", "Restaurants"));
 
-    expect(result.state.transactions[1]).toMatchObject({ amount: -87, bankReference: "synthetic-new-state", category: "Ausgehen" });
+    expect(result.state.transactions[1]).toMatchObject({ amount: -87, bankReference: "synthetic-new-state", category: "Restaurants" });
     expect(first.transactions[1].category).toBe("Prüfen");
     expect(original.transactions.every((row) => row.category === "Prüfen")).toBe(true);
   });
@@ -329,7 +329,7 @@ describe("incremental booking review approval", () => {
       booking("second", { description: "Testladen Südlicht" }),
     ]);
     const warmed = approve(state, choose(state, "first")).state;
-    const addedRule = { key: "raiffeisen|testladen westlicht", category: "Ausgehen" as const };
+    const addedRule = { key: "raiffeisen|testladen westlicht", category: "Restaurants" as const };
     const changed = { ...warmed, merchantRules: [...warmed.merchantRules!, addedRule] };
     expect(changed.transactions).toBe(warmed.transactions);
     expect(changed.reviewQueue).toBe(warmed.reviewQueue);
@@ -350,7 +350,7 @@ describe("incremental booking review approval", () => {
     keys.mockClear();
     classifications.mockClear();
 
-    const selected = choose(first.state, "row-1", "Ausgehen");
+    const selected = choose(first.state, "row-1", "Restaurants");
     const second = approveReviewedBooking(first.state, selected);
     expect(second).toBeDefined();
     expect(keys.mock.calls.length).toBeLessThan(40);

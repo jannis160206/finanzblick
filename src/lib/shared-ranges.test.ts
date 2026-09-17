@@ -146,7 +146,7 @@ describe("holiday periods and plan membership", () => {
     state = selectSharedBookings(state, ["receipt"]) as typeof state;
     const loaded = (await parseWorkbook(await exportWorkbook(state))).state;
     expect(loaded.holidayRanges).toEqual(ranges);
-    expect(loaded.transactions).toEqual(state.transactions);
+    expect(loaded.transactions).toEqual(appStateSchema.parse(state).transactions);
     expect(personalAmount(actualBookings(loaded).find((row) => row.id === "receipt")!)).toBe(-10);
     expect(reconcileSharedHoliday(loaded.transactions).receivables[0]).toMatchObject({ status: "Bezahlt", ownSpend: 200 });
     expect(calculateDashboard(loaded).plan).toEqual(calculateDashboard(state).plan);

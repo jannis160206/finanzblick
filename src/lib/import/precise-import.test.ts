@@ -26,7 +26,7 @@ describe("precise statement facts", () => {
     expect(parsed.issues).toEqual([]);
     expect(parsed.rows).toHaveLength(9);
     expect(parsed.rows[0]).toMatchObject({ description: "Martin Auer", date: "2026-09-04", amount: -8.4,
-      bank: "Raiffeisen", time: "16:55:00", category: "Freizeit", bankReference: "05.09.2026 08:02:01:001" });
+      bank: "Raiffeisen", time: "16:55:00", category: "Cafés & Snacks", bankReference: "05.09.2026 08:02:01:001" });
     expect(parsed.rows[0].rawDescription).toContain("MARTIN AUER ATRIOVIL VILLACH 9500");
     expect(parsed.rows[1]).toMatchObject({ description: "SPAR 2361", time: "12:10:00", category: "Mittagessen" });
     expect(parsed.rows[2]).toMatchObject({ category: "Mittagessen", date: "2026-09-13" });
@@ -70,7 +70,7 @@ describe("precise statement facts", () => {
     expect(amex.issues).toEqual([]);
     expect(amex.skipped).toBe(1);
     expect(amex.rows).toHaveLength(2);
-    expect(amex.rows[0]).toMatchObject({ description: "McDonalds VILLACH", date: "2026-09-14", amount: -12, category: "Ausgehen" });
+    expect(amex.rows[0]).toMatchObject({ description: "McDonalds VILLACH", date: "2026-09-14", amount: -12, category: "Restaurants" });
     expect(amex.rows[1]).toMatchObject({ pocket: "AMEX Raphael", amount: -20, includeInPlan: false });
     const giro = parseStatementCsv(fixture("raiffeisen.csv"));
     const settlement = result([giro.rows[6]]);
@@ -105,8 +105,8 @@ describe("high-confidence merchant policy", () => {
   it.each([
     ["BIPA", "Mittagessen"], ["Hotspot", "Mittagessen"], ["Mensa", "Mittagessen"],
     ["Trafik Haas", "Shopping"], ["SHELL FURNITZ", "Mobilität"], ["OMV", "Mobilität"], ["ENI", "Mobilität"],
-    ["McD", "Ausgehen"], ["Burger King", "Ausgehen"], ["Pizzeria", "Ausgehen"], ["Bauernhof Gams", "Ausgehen"],
-    ["Sakura", "Ausgehen"], ["Wolt", "Ausgehen"], ["MARTIN AUER", "Freizeit"], ["DM-FIL", "Drogerie"],
+    ["McD", "Restaurants"], ["Burger King", "Restaurants"], ["Pizzeria", "Restaurants"], ["Bauernhof Gams", "Restaurants"],
+    ["Sakura", "Restaurants"], ["Wolt", "Lieferdienste"], ["MARTIN AUER", "Cafés & Snacks"], ["DM-FIL", "Drogerie"],
     ["Porsche Bank", "Leasing"], ["Allianz", "Versicherungen"], ["Vollkasko", "Versicherungen"], ["A1", "Telefon & Internet"],
   ])("silently files %s as %s even on Sunday", (description, category) => {
     const parsed = prepareStatementImport([result([row(description, -8, { date: "2026-09-13" })])], createSeed());
@@ -176,7 +176,7 @@ describe("stable identity and persisted repair", () => {
     const state = createSeed(); state.transactions = [old];
     const restored = queueLedgerReview(appStateSchema.parse(JSON.parse(JSON.stringify(state))));
     expect(restored.transactions[0]).toMatchObject({ id: old.id, date: old.date, amount: -8.4, bank: old.bank, pocket: old.pocket,
-      bankReference: "TEST-OLD", occurrence: 2, time: "16:54:00", description: "Martin Auer", category: "Freizeit" });
+      bankReference: "TEST-OLD", occurrence: 2, time: "16:54:00", description: "Martin Auer", category: "Cafés & Snacks" });
     expect(statementFingerprint(restored.transactions[0])).toBe(statementFingerprint(old));
     expect(restored.reviewQueue).toEqual([]);
     expect(queueLedgerReview(restored)).toEqual(restored);

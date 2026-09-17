@@ -55,7 +55,7 @@ async function seed(page: Page, state = createSeed()) {
     .poll(async () =>
       (await ledger(page)).financeRows.filter((row: AppState["financeRows"][number]) => row.kind === "variable").map((row: AppState["financeRows"][number]) => row.label),
     )
-    .toEqual(["Lebensmittel & Haushalt", "Mittagessen", "Tanken", "Freizeit", "Ausgehen", "Geschenke & Spenden", "Giro Puffer"]);
+    .toEqual(["Lebensmittel & Haushalt", "Mittagessen", "Tanken", "Freizeit", "Restaurants & Lieferdienste", "Geschenke & Spenden", "Giro Puffer"]);
   await page.reload();
   await ledger(page);
 }

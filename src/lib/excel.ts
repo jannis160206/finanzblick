@@ -98,8 +98,8 @@ function normalizeCategory(raw: string): Category {
   if (/lebensmittel|haushalt/i.test(raw)) return "Lebensmittel";
   if (/mittag|hotspot|trafi/i.test(raw)) return "Mittagessen";
   if (/tanken|verkehr|mobil/i.test(raw)) return "Mobilität";
-  if (/g2a|apple-guthaben/i.test(raw)) return "Freizeit";
-  if (/essen|restaurant/i.test(raw)) return "Ausgehen";
+  if (/g2a|apple-guthaben/i.test(raw)) return "Guthabenkarten";
+  if (/essen|restaurant/i.test(raw)) return "Restaurants";
   if (/gehalt|einkommen|rufbereitschaft/i.test(raw)) return "Einkommen";
   return "Sonstiges";
 }

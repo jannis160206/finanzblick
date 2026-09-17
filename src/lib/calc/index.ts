@@ -186,7 +186,7 @@ export function classify(
   category = canonicalCategory(category);
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
   // travel even when an older merchant rule calls a hotel/grocer everyday spend.
-  if (!detectedTransfer && !fixedCategories.includes(category) && !isAmazon && !isTravelCategory(category) &&
+  if (!detectedTransfer && !forcedLunch && !fixedCategories.includes(category) && !isAmazon && !isTravelCategory(category) &&
     (transaction.category === "Urlaub" || /^urlaub\b/i.test(sourceCategory) ||
       (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
   if (unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";

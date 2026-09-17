@@ -66,7 +66,7 @@ describe("real statement layouts", () => {
     expect(result.rows[0]).toMatchObject({
       date: "2026-08-19",
       amount: -13.15,
-      category: "Ausgehen",
+      category: "Restaurants",
     });
     expect(result.issues).toEqual([]);
   });
@@ -438,8 +438,8 @@ describe("silent planning", () => {
       ["BILLA", "Lebensmittel"],
       ["Mensa", "Mittagessen"],
       ["PACE Pay", "Mobilität"],
-      ["G2A", "Freizeit"],
-      ["McDonalds", "Ausgehen"],
+      ["G2A", "Guthabenkarten"],
+      ["McDonalds", "Restaurants"],
     ] as [string, Category][]) {
       state.financeRows.push({
         id: category,
