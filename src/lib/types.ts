@@ -93,6 +93,8 @@ export const transactionSchema = z.object({
   includeInPlan: z.boolean(),
   afterBaseline: z.boolean().optional(),
   categoryOverride: z.boolean().optional(),
+  // Only this booking: omission keeps legacy category-based accounting.
+  fixedCost: z.boolean().optional(),
   sourceCategory: z.string().max(200).optional(),
   bankReference: z.string().max(500).optional(),
   occurrence: z.number().int().positive().optional(),
@@ -110,6 +112,7 @@ export type PocketSnapshot = z.infer<typeof pocketSnapshotSchema>;
 export const merchantRuleSchema = z.object({
   key: z.string().min(1).max(1200),
   category: categorySchema,
+  fixedCost: z.boolean().optional(),
 });
 export const fixedReceiptSchema = z.object({
   key: z.string().max(2000),

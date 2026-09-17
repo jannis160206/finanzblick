@@ -3,6 +3,7 @@ import { type AppState, type Transaction } from "@/lib/types";
 import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory } from "@/lib/categories";
+import { isIncomeCategory } from "@/lib/fixed";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -40,9 +41,10 @@ export function isSpecificMerchantKey(key: string): boolean {
   return !/^(?:paypal(?: europe)?(?: s a r l)?(?: et cie)?(?: s c a)?|revolut(?: epayment| ltd| payments)?|pos|terminal|zahlung|online banking)$/.test(provider);
 }
 type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
+export type MerchantChoice = Pick<Transaction, "category" | "fixedCost">;
 
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
-  const choices = new Map<string, Transaction["category"]>();
+  const choices = new Map<string, MerchantChoice>();
   for (const row of rows) {
     if (!row.categoryOverride || row.category === "Prüfen" || payrollCategory(row)) continue;
     const key = merchantRuleKey(row);
@@ -51,7 +53,12 @@ function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking =
       !ambiguousMerchant(row) &&
       !unresolvedTerminal(row.description) &&
       !classifyBooking(row).isTransfer
-    ) choices.set(key, canonicalCategory(row.category));
+    ) choices.set(key, {
+      ...choices.get(key),
+      category: canonicalCategory(row.category),
+      ...(row.fixedCost !== undefined && row.amount < 0 && !isIncomeCategory(classifyBooking(row).category)
+        ? { fixedCost: row.fixedCost } : {}),
+    });
   }
   return choices;
 }
@@ -61,13 +68,14 @@ export function rememberMerchants(
   rows: Transaction[],
 ): AppState {
   const rules = new Map(
-    (state.merchantRules ?? []).map((rule) => [storedMerchantKey(rule.key), canonicalCategory(rule.category)] as const)
+    (state.merchantRules ?? []).map(({ key, ...choice }) => [storedMerchantKey(key),
+      { ...choice, category: canonicalCategory(choice.category) }] as const)
       .filter(([key]) => isSpecificMerchantKey(key)),
   );
   const choices = merchantChoices(rows);
-  for (const [key, category] of choices) rules.set(key, category);
+  for (const [key, choice] of choices) rules.set(key, { ...rules.get(key), ...choice });
   const applyChoice = (row: Transaction): Transaction => {
-    const category = choices.get(merchantRuleKey(row));
+    const category = choices.get(merchantRuleKey(row))?.category;
     if (!category) return row;
     const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
     const result = classify(updated);
@@ -78,49 +86,56 @@ export function rememberMerchants(
         ...state,
         transactions: state.transactions.map(applyChoice),
         ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
-          const category = item.merchantKey ? choices.get(storedMerchantKey(item.merchantKey)) : undefined;
+          const category = item.merchantKey ? choices.get(storedMerchantKey(item.merchantKey))?.category : undefined;
           return category ? { ...item, category, ...(item.booking ? { booking: applyChoice(item.booking) } : {}) } : item;
         }) } : {}),
-        merchantRules: [...rules].map(([key, category]) => ({ key, category })),
+        merchantRules: [...rules].map(([key, choice]) => ({ key, ...choice })),
       }
     : state.merchantRules?.length ? { ...state, merchantRules: [] } : state;
 }
 export function applyMerchantRules(state: AppState, rows: Transaction[]) {
   if (!rows.length) return [];
-  return rows.map(createMerchantRuleApplier(state));
+  return rows.map(createMerchantRuleApplier(state, classify, true));
 }
 
 // Build once per operation, including when repairing several legacy POS rows.
 // No cross-update cache: newly learned choices must take effect immediately.
-export function createMerchantRuleApplier(state: AppState, classifyBooking: ClassifyBooking = classify) {
+export function createMerchantRuleApplier(state: AppState, classifyBooking: ClassifyBooking = classify, applyFixedCost = false) {
   // Inferring rules must not apply them to a discarded copy of the entire ledger.
   const remembered = merchantChoices(state.transactions, classifyBooking);
-  const inferred = new Map(
+  const inferred = new Map<string, MerchantChoice>(
     (state.fixedReceipts ?? []).flatMap((receipt) => {
       const key = receipt.merchantKey ? storedMerchantKey(receipt.merchantKey) : undefined;
-      return key && isSpecificMerchantKey(key) ? [[key, canonicalCategory(receipt.category)] as const] : [];
+      return key && isSpecificMerchantKey(key) ? [[key, { category: canonicalCategory(receipt.category) }] as const] : [];
     }),
   );
   const rules = new Map(
-    [...remembered].map(([key, category]) => [storedMerchantKey(key), category] as const)
+    [...remembered].map(([key, choice]) => [storedMerchantKey(key), choice] as const)
       .filter(([key]) => isSpecificMerchantKey(key)),
   );
   for (const rule of state.merchantRules ?? []) {
     const key = storedMerchantKey(rule.key);
-    if (isSpecificMerchantKey(key)) rules.set(key, canonicalCategory(rule.category));
+    if (isSpecificMerchantKey(key)) rules.set(key, {
+      category: canonicalCategory(rule.category),
+      ...(rule.fixedCost !== undefined ? { fixedCost: rule.fixedCost } : {}),
+    });
   }
   return (source: Transaction): Transaction => {
     const row = recoverMerchant(source);
     const detected = classifyBooking(row);
     if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const key = merchantRuleKey(row);
-    const category =
+    const choice =
       rules.get(key) ??
       (detected.category === "Prüfen" || detected.category === "Abonnements"
         ? inferred.get(key)
         : undefined);
-    return category && isSpecificMerchantKey(key) && !row.categoryOverride && !detected.isTransfer && !ambiguousMerchant(row) && !unresolvedTerminal(row.description)
-      ? { ...row, category, categoryOverride: true, includeInPlan: true }
+    return choice && isSpecificMerchantKey(key) && !row.categoryOverride && !detected.isTransfer && !ambiguousMerchant(row) && !unresolvedTerminal(row.description)
+      ? { ...row, category: choice.category, categoryOverride: true, includeInPlan: true,
+          // Reload/repair must not apply a new booking's checkbox to old twins.
+          ...(applyFixedCost && row.fixedCost === undefined && (row.amount < 0 || choice.fixedCost === false) && !isIncomeCategory(choice.category) &&
+            choice.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}),
+        }
       : row;
   };
 }

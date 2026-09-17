@@ -40,9 +40,11 @@ export function reconcileLeasingSources<T extends Transaction>(
     const index = group.indices[group.next++];
     represented.add(index);
     const original = rows[index];
-    // Preserve explicit sharing if it was selected on the workbook row first.
-    return original.sharedWithRaphael || original.sharedPaidManually ? {
+    // Preserve per-booking choices made on the workbook representation first.
+    return original.sharedWithRaphael || original.sharedPaidManually ||
+      (row.fixedCost === undefined && original.fixedCost !== undefined) ? {
       ...row,
+      ...(row.fixedCost === undefined && original.fixedCost !== undefined ? { fixedCost: original.fixedCost } : {}),
       ...(original.sharedWithRaphael ? { sharedWithRaphael: true } : {}),
       ...(original.sharedPaidManually ? { sharedPaidManually: true } : {}),
     } : row;

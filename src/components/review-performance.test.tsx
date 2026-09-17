@@ -34,8 +34,7 @@ function model(state: AppState, appendStatements: Finance["appendStatements"], r
     ready: true, saved: true, storageError: null, openReviewCount: state.reviewQueue?.length ?? 0,
     update: vi.fn(), replace: vi.fn(), retrySave: vi.fn() };
 }
-function renderReview() {
-  const initial = fixture();
+function renderReview(initial = fixture()) {
   let latest: Store = { state: initial, result: undefined };
   let setStore: Dispatch<SetStateAction<Store>> = () => {};
   let fail = false;
@@ -112,6 +111,59 @@ describe("responsive review actions", () => {
     expect(view.read().transactions).toHaveLength(2);
     expect(view.read().transactions[0].category).toBe("Freizeit");
     expect(view.read().transactions[0].amount).toBe(-100);
+  });
+
+  it("defaults a reviewed phone payment to an ordinary booking without changing the fixed plan", () => {
+    const view = renderReview();
+    const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const checkbox = within(section).getByRole<HTMLInputElement>("checkbox", { name: "Als Fixkosten markieren" });
+    const plan = view.read().financeRows;
+    expect(checkbox.checked).toBe(false);
+    fireEvent.change(within(section).getByLabelText("Kategorie"), { target: { value: "Telefon & Internet" } });
+    expect(checkbox.checked).toBe(false);
+    fireEvent.click(within(section).getByRole("button", { name: "Zuordnung übernehmen" }));
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(view.read().transactions[0]).toMatchObject({
+      ...row("first"), category: "Telefon & Internet", categoryOverride: true, fixedCost: false, includeInPlan: true,
+    });
+    expect(view.read().financeRows).toEqual(plan);
+    expect(calc.classify(view.read().transactions[0]).isFixedCost).toBe(false);
+  });
+
+  it("retains a checked fixed-cost choice after failure and saves it once without creating a plan", () => {
+    const view = renderReview();
+    const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const checkbox = within(section).getByRole<HTMLInputElement>("checkbox", { name: "Als Fixkosten markieren" });
+    const plan = view.read().financeRows;
+    fireEvent.change(within(section).getByLabelText("Kategorie"), { target: { value: "Telefon & Internet" } });
+    fireEvent.click(checkbox);
+    const button = within(section).getByRole<HTMLButtonElement>("button", { name: "Zuordnung übernehmen" });
+    view.failNext();
+    fireEvent.click(button);
+    expect(checkbox.disabled).toBe(true);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(checkbox.checked).toBe(true);
+    expect(checkbox.disabled).toBe(false);
+    fireEvent.click(button);
+    act(() => { vi.advanceTimersByTime(1); });
+    expect(view.read().transactions[0]).toMatchObject({
+      ...row("first"), category: "Telefon & Internet", categoryOverride: true, fixedCost: true, includeInPlan: false,
+    });
+    expect(view.read().transactions).toHaveLength(2);
+    expect(view.read().financeRows).toEqual(plan);
+    expect(calc.classify(view.read().transactions[0]).isFixedCost).toBe(true);
+  });
+
+  it("does not permit fixed-cost marking for transfers or incoming payments", () => {
+    const initial = fixture();
+    initial.transactions[1] = { ...row("second"), amount: 100 };
+    initial.reviewQueue = initial.transactions.map((draft) => ({ kind: "booking", id: draft.id, draft, message: "Kategorie wählen" }));
+    renderReview(initial);
+    const expense = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const income = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf second");
+    expect(within(income).getByRole<HTMLInputElement>("checkbox").disabled).toBe(true);
+    fireEvent.change(within(expense).getByLabelText("Kategorie"), { target: { value: "Transfer intern" } });
+    expect(within(expense).getByRole<HTMLInputElement>("checkbox").disabled).toBe(true);
   });
 
   it("does not scan sharing candidates while closed or reclassify them on selection/filter changes", () => {

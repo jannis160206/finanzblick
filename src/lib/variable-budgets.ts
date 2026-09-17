@@ -1,6 +1,7 @@
 import { fixedCategories, type AppState, type Category, type FinanceRow, type HolidayRange } from "@/lib/types";
 import { canonicalCategory, isTravelCategory } from "@/lib/categories";
 import { lunchBudget } from "@/lib/holidays-at-kaernten";
+import { isIncomeCategory } from "@/lib/fixed";
 
 const gifts = [50, 50, 0, 50, 100, 0, 50, 50, 0, 0, 100, 1000] as const;
 export type VariableBudgetId = "food" | "lunch" | "fuel" | "leisure" | "going-out" | "gifts" | "buffer";
@@ -31,9 +32,10 @@ const categoryBudgets: Partial<Record<Category, VariableBudgetId>> = {
   "Cafés & Snacks": "going-out",
   "Geschenke & Spenden": "gifts",
 };
-export function variableBudgetId(category: Category): VariableBudgetId | undefined {
+export function variableBudgetId(category: Category, fixedCost?: boolean): VariableBudgetId | undefined {
   category = canonicalCategory(category);
-  if (fixedCategories.includes(category) || isTravelCategory(category) ||
+  if (fixedCost === true || isIncomeCategory(category) ||
+    (fixedCost !== false && fixedCategories.includes(category)) || isTravelCategory(category) ||
     category === "Transfer" || category === "Transfer intern" || category === "Prüfen") return;
   // Detailed non-fuel mobility and larger household purchases use the buffer,
   // not a new plan line or a redefinition of the grocery and fuel allowances.

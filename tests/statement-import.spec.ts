@@ -93,7 +93,7 @@ test("headerless Raiffeisen drop auto-saves, dedupes and has no manual creation 
   );
 });
 
-test("unknown merchants use locked facts and category only; invalid amounts remain in status", async ({
+test("unknown merchants use locked facts and optional fixed-cost marking; invalid amounts remain in status", async ({
   page,
 }) => {
   await seed(page);
@@ -110,7 +110,8 @@ test("unknown merchants use locked facts and category only; invalid amounts rema
     page.getByText("1 neu, 0 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
   expect((await ledger(page)).transactions).toHaveLength(1);
-  await expect(dialog.getByRole("checkbox")).toHaveCount(0);
+  await expect(dialog.getByRole("checkbox", { name: "Als Fixkosten markieren", exact: true })).toHaveCount(1);
+  await expect(dialog.getByRole("checkbox", { name: "Als Fixkosten markieren", exact: true })).not.toBeChecked();
   await expect(dialog.getByText(/Im Plan|Plan-Kat|Nur „Prüfen“/)).toHaveCount(
     0,
   );

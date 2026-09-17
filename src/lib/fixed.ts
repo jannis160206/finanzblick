@@ -24,6 +24,13 @@ export const isIncomeCategory = (category: Category) =>
   category === "Gehalt" ||
   category === "Rufbereitschaft" ||
   category === "Einkommen";
+export function isFixedExpense(
+  row: Pick<Transaction, "category" | "amount" | "fixedCost">,
+) {
+  return row.amount < 0 && !isIncomeCategory(row.category) &&
+    !["Transfer", "Transfer intern"].includes(row.category) &&
+    (row.fixedCost ?? fixedCategories.includes(row.category));
+}
 export function fixedRowCategory(row: FinanceRow): Category | undefined {
   if (row.kind === "variable") return undefined;
   if (row.planCategory && fixedCategories.includes(row.planCategory))
@@ -33,6 +40,7 @@ export function fixedRowCategory(row: FinanceRow): Category | undefined {
   return detected ? canonicalCategory(detected) : undefined;
 }
 export function matchingFixedRow(state: AppState, category: Category, booking?: Transaction, merchantKey?: string) {
+  if (booking?.fixedCost === false && !isIncomeCategory(category)) return;
   const canonical = canonicalCategory(category);
   const candidates = state.financeRows.filter(
     (row) =>

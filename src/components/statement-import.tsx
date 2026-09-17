@@ -35,6 +35,8 @@ import {
 } from "@/lib/import/review";
 import { cn } from "@/lib/utils";
 import { CategorySelect } from "@/components/category-select";
+import { FixedCostChoice } from "@/components/fixed-cost-choice";
+import { isIncomeCategory } from "@/lib/fixed";
 
 type Pending = {
   requestId: string;
@@ -63,11 +65,18 @@ const BookingReview = memo(function BookingReview({
   skip: () => void;
 }) {
   const [draft, setDraft] = useState<StatementDraft>(item.draft);
+  const [fixedCost, setFixedCost] = useState(item.draft.fixedCost === true);
   const choices = categories.filter((category) => category !== "Prüfen");
+  const classification = classify({
+    ...draft, amount: draft.amount ?? 0, categoryOverride: true, includeInPlan: true, fixedCost: false,
+  });
+  const canMarkFixed = draft.amount !== null && draft.amount < 0 &&
+    !classification.isTransfer && !isIncomeCategory(classification.category);
   const candidate = {
     ...draft,
     categoryOverride: true,
     includeInPlan: true,
+    fixedCost: canMarkFixed && fixedCost,
   };
   const parsed = transactionSchema.safeParse(candidate);
   return (
@@ -123,6 +132,12 @@ const BookingReview = memo(function BookingReview({
             excludeReview
           />
       </div>
+      <FixedCostChoice
+        checked={fixedCost}
+        onChange={setFixedCost}
+        disabled={disabled}
+        eligible={canMarkFixed}
+      />
       <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
         <Button variant="ghost" size="sm" disabled={disabled} onClick={skip}>
           Später prüfen

@@ -11,7 +11,7 @@ import {
   type Settings,
   type Transaction,
 } from "@/lib/types";
-import { fixedRowCategory, matchingFixedRow } from "@/lib/fixed";
+import { fixedRowCategory, isFixedExpense, isIncomeCategory, matchingFixedRow } from "@/lib/fixed";
 import {
   legacyFingerprint,
   numberStatementRows,
@@ -113,7 +113,7 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails">>,
 ) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
@@ -186,7 +186,10 @@ export function classify(
   category = canonicalCategory(category);
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
   // travel even when an older merchant rule calls a hotel/grocer everyday spend.
-  if (!detectedTransfer && !forcedLunch && !fixedCategories.includes(category) && !isAmazon && !isTravelCategory(category) &&
+  if (!detectedTransfer && !forcedLunch &&
+    !(transaction.fixedCost !== false && fixedCategories.includes(category)) &&
+    !isFixedExpense({ amount, category, fixedCost: transaction.fixedCost }) &&
+    !isIncomeCategory(category) && !isAmazon && !isTravelCategory(category) &&
     (transaction.category === "Urlaub" || /^urlaub\b/i.test(sourceCategory) ||
       (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
   if (unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
@@ -207,7 +210,9 @@ export function classify(
     /amex raphael/i.test(transaction.pocket ?? "") ||
     excluded.test(`${description} ${transaction.sourceCategory ?? ""}`) ||
     savingsPocket(transaction.pocket) === "Urlaub";
-  const fixedOrIncome = fixedCategories.includes(category);
+  const isFixedCost = !isTransfer && isFixedExpense({ amount, category, fixedCost: transaction.fixedCost });
+  const fixedOrIncome = isFixedCost || isIncomeCategory(category) ||
+    (amount >= 0 && transaction.fixedCost !== false && fixedCategories.includes(category));
   const includeInPlan =
     amount !== 0 &&
     !isTransfer &&
@@ -223,6 +228,7 @@ export function classify(
       : category,
     pocket,
     isTransfer,
+    isFixedCost,
     isRoundUp,
     isAmazon,
     includeInPlan,
@@ -293,11 +299,12 @@ export function classifyStatementRows(
             )
         : undefined;
     const refund =
-      original && !fixedCategories.includes(classify(original).category)
+      original && !classify(original).isFixedCost && !isIncomeCategory(classify(original).category)
         ? {
             ...row,
             category: classify(original).category,
             categoryOverride: true,
+            ...(original.fixedCost === false ? { fixedCost: false } : {}),
           }
         : row;
     const result = classify(refund);
@@ -331,7 +338,7 @@ export function accountHolidayRanges(rows: AccountedTransaction[], ranges: Holid
   return clean.map((row) => {
     const result = classify(row);
     if (row.amount >= 0 || !inside(row.date) || result.isTransfer || result.isAmazon ||
-      fixedCategories.includes(result.category) || home.has(holidayMerchantKey(row))) return row;
+      result.isFixedCost || isIncomeCategory(result.category) || home.has(holidayMerchantKey(row))) return row;
     return { ...row, holidayRange: true };
   });
 }
@@ -582,18 +589,22 @@ export function actualPockets(state: AppState, date = state.settings.asOf) {
 export function missingFixedCosts(state: AppState) {
   if (Number(state.settings.asOf.slice(8, 10)) <= 5) return [];
   const month = monthKey(state.settings.asOf);
+  const ordinaryKeys = new Set(state.fixedReceipts?.length && state.transactions.some((row) => row.fixedCost === false)
+    ? numberStatementRows(state.transactions).filter((row) => row.fixedCost === false)
+      .flatMap((row) => [statementFingerprint(row), legacyFingerprint(row)])
+    : []);
   const bookings = state.transactions.filter(
     (row) =>
       monthKey(row.date) === month &&
       row.date <= state.settings.asOf &&
       row.amount < 0 &&
-      !classify(row).isTransfer,
+      !classify(row).isTransfer && row.fixedCost !== false,
   );
   const receipts = (state.fixedReceipts ?? []).filter(
     (row) =>
       monthKey(row.date) === month &&
       row.date <= state.settings.asOf &&
-      row.amount < 0,
+      row.amount < 0 && row.booking?.fixedCost !== false && !ordinaryKeys.has(row.key),
   );
   return state.financeRows
     .filter((row) => {
@@ -843,7 +854,7 @@ export function calculateDashboard(state: AppState) {
     const result = classify(transaction);
     if (["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer) continue;
     categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - personalAmount(transaction));
-    const budgetId = result.includeInPlan ? variableBudgetId(result.category) : undefined;
+    const budgetId = result.includeInPlan ? variableBudgetId(result.category, transaction.fixedCost) : undefined;
     if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - personalAmount(transaction));
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);

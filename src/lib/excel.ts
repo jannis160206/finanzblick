@@ -232,6 +232,7 @@ export async function parseWorkbook(
       if (amount === null && !description) return;
       const get = (...names: string[]) => row.getCell(col(...names) ?? 200);
       const planCell = get("Im Plan (Eingabe)", "Im Plan");
+      const fixedCostCell = text(get("Fixkosten"));
       const candidate = {
         id: text(get("ID")) || `xlsx-${index}`,
         date: isoDate(row.getCell(dateCol), workbook.properties.date1904),
@@ -244,6 +245,9 @@ export async function parseWorkbook(
         category: normalizeCategory(text(get("Kategorie", "Category"))),
         includeInPlan:
           isFormula(planCell) || !/^(nein|false|0)$/i.test(text(planCell)),
+        ...(fixedCostCell
+          ? { fixedCost: /^(ja|true|1)$/i.test(fixedCostCell) ? true : /^(nein|false|0)$/i.test(fixedCostCell) ? false : fixedCostCell }
+          : {}),
         ...(native && text(get("Bankreferenz"))
           ? { bankReference: text(get("Bankreferenz")) }
           : {}),
@@ -623,6 +627,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Händlerdetails",
     "Geteilt mit Raphael",
     "Geteilt manuell bezahlt",
+    "Fixkosten",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -652,6 +657,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.rawDetails?.join("\n") ?? "",
       row.sharedWithRaphael === undefined ? "" : row.sharedWithRaphael ? "Ja" : "Nein",
       row.sharedPaidManually === undefined ? "" : row.sharedPaidManually ? "Ja" : "Nein",
+      row.fixedCost === undefined ? "" : row.fixedCost ? "Ja" : "Nein",
     ]);
   });
   for (const year of [2026, 2027]) {

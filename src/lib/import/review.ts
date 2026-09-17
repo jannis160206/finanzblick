@@ -284,24 +284,33 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
       : category;
   };
   for (const row of state.transactions)
-    monthly.set(`${bookingMonth(row)}|${scope({ ...row, category: classify(row).category })}`, row);
+    if (row.fixedCost === undefined || isIncome(classify(row).category))
+      monthly.set(`${bookingMonth(row)}|${scope({ ...row, category: classify(row).category })}`, row);
   for (const row of deduped.rows) {
     const category = row.category;
+    const classification = classify(row);
     const isFixed =
-      !classify(row).isTransfer &&
-      fixedCategories.includes(category) &&
-      (isIncome(category) ? row.amount > 0 : row.amount < 0);
+      classification.isFixedCost ||
+      (!classification.isTransfer && isIncome(category) && row.amount > 0);
     if (
       ignored.has(statementFingerprint(row)) ||
       ignored.has(legacyFingerprint(row))
     ) {
-      if (isFixed)
-        receipts.push(receipt(row, gridFor(row)?.id));
+      const grid = isFixed ? gridFor(row) : undefined;
+      if (isFixed && (row.fixedCost !== true || isIncome(category) || grid))
+        receipts.push(receipt(row, grid?.id));
       duplicates++;
       continue;
     }
     if (!isFixed) {
       rows.push(row);
+      continue;
+    }
+    // A booking marker is not a recurring contract or a price-change decision.
+    if (row.fixedCost !== undefined && !isIncome(category)) {
+      rows.push(row);
+      const grid = gridFor(row);
+      if (classification.isFixedCost && grid) receipts.push(receipt(row, grid.id));
       continue;
     }
     const month = bookingMonth(row);
@@ -536,7 +545,9 @@ export function commitStatementImport(
       .filter((row) => row.categoryOverride && isSpecificMerchantKey(merchantRuleKey(row)))
       .map((row) => [merchantRuleKey(row), row.category]),
   );
-  const directChoices = new Map(rows.filter((row) => row.categoryOverride).map((row) => [row.id, row.category]));
+  const directChoices = new Map(rows.filter((row) => row.categoryOverride || row.fixedCost !== undefined).map((row) => [row.id, row]));
+  const fingerprintChoices = new Map(numberStatementRows([...directChoices.values()]).map((row) => [statementFingerprint(row), row]));
+  const directChoice = (row: Transaction) => directChoices.get(row.id) ?? fingerprintChoices.get(statementFingerprint(row));
   const selected = new Map(
     numberStatementRows(rows).map((row) => [statementFingerprint(row), row]),
   );
@@ -550,27 +561,52 @@ export function commitStatementImport(
         category,
         categoryOverride: true,
         includeInPlan: true,
+        ...(directChoice(item.draft as Transaction)?.fixedCost !== undefined
+          ? { fixedCost: directChoice(item.draft as Transaction)!.fixedCost }
+          : {}),
       };
       selected.set(statementFingerprint(row), row);
     }
   }
   rows = [...selected.values()];
+  // Queue twins share the category, not the selected booking's future mode.
   const learned = rememberMerchants(state, [
     ...rows.filter(
       (row) => row.amount < 0 || fixedCategories.includes(row.category),
-    ),
+    ).map((row) => ({ ...row, fixedCost: directChoice(row)?.fixedCost })),
     ...decisions.flatMap(({ change }) => change.bookings),
   ]);
-  const ledgerIds = new Set(state.transactions.map((row) => row.id));
-  const current = applyFixedDecisions({ ...learned,
+  let current = applyFixedDecisions({ ...learned,
     transactions: learned.transactions.map((row) => {
-      const category = directChoices.get(row.id) ?? choices.get(merchantRuleKey(row));
+      const choice = directChoice(row);
+      const category = choice?.category ?? choices.get(merchantRuleKey(row));
       if (!category) return row;
-      const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
+      const updated = { ...row, category, categoryOverride: true, includeInPlan: true,
+        ...(choice?.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}) };
       const result = classify(updated);
       return { ...updated, category: result.category, includeInPlan: result.includeInPlan };
     }),
   }, decisions);
+  const promoted: Transaction[] = [];
+  if (current.fixedReceipts?.length) {
+    const ledgerKeys = new Set(current.transactions.map(statementFingerprint));
+    const fixedReceipts = current.fixedReceipts.flatMap((item): FixedReceipt[] => {
+      const choice = directChoices.get(item.key) ?? (item.booking && directChoice(item.booking));
+      if (!choice || choice.fixedCost === undefined || !item.booking) return [item];
+      const updated = { ...item.booking, id: choice.id, category: choice.category,
+        categoryOverride: true, fixedCost: choice.fixedCost, includeInPlan: true };
+      const result = classify(updated);
+      const booking = { ...updated, category: result.category, includeInPlan: result.includeInPlan };
+      if (!ledgerKeys.has(statementFingerprint(booking))) {
+        promoted.push(booking);
+        ledgerKeys.add(statementFingerprint(booking));
+      }
+      const grid = result.isFixedCost ? matchingGridRow(current, result.category, booking, merchantRuleKey(booking)) : undefined;
+      return grid ? [receipt(booking, grid.id)] : isIncome(result.category) ? [{ ...item, booking }] : [];
+    });
+    current = { ...(promoted.length ? appendStatementRows(current, promoted).state : current), fixedReceipts };
+  }
+  const ledgerIds = new Set(current.transactions.map((row) => row.id));
   // Existing ledger reviews edit in place; never append a second spend or fixed receipt.
   const split = splitFixedBookings(current, rows.filter((row) => !ledgerIds.has(row.id)));
   const appended = split.rows.length ? appendStatementRows(current, split.rows)
@@ -581,6 +617,7 @@ export function commitStatementImport(
     const grid = matchingGridRow(appended.state, category, row, merchantRuleKey(row));
     if (
       durableCategories.includes(category) &&
+      row.fixedCost === undefined &&
       grid?.values[month] == null &&
       (isIncome(category) ? row.amount > 0 : row.amount < 0)
     ) {
@@ -619,7 +656,11 @@ export function commitStatementImport(
       ...decisions.flatMap(({ change }) =>
         change.bookings.map((row) => receipt(row, change.rowId)),
       ),
-    ],
+    ].filter((item) => {
+      const choice = directChoices.get(item.key) ?? (item.booking && directChoice(item.booking));
+      return choice?.fixedCost === undefined || (item.booking?.fixedCost === choice.fixedCost &&
+        (choice.fixedCost || isIncome(item.category)));
+    }),
   });
   const importedCount = metadata.issues !== undefined || state.importStatus
     ? actualBookings(merged).length - actualBookings(state).length : 0;

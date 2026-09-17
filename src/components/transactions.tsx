@@ -54,6 +54,8 @@ import { ReviewCount } from "@/components/review-count";
 import { rememberMerchants } from "@/lib/import/merchant-rules";
 import { SharedCosts, SharedRowAction } from "@/components/shared-costs";
 import { HolidayRanges } from "@/components/holiday-ranges";
+import { FixedCostChoice } from "@/components/fixed-cost-choice";
+import { isIncomeCategory } from "@/lib/fixed";
 
 const accountLabel = (row: Transaction) =>
   `${row.bank} · ${row.pocket ?? "Hauptkonto"}`;
@@ -80,10 +82,18 @@ function TransactionForm({
     pocket: values.pocket ?? null,
     includeInPlan: values.includeInPlan ?? true,
     categoryOverride: values.categoryOverride,
+    fixedCost: values.fixedCost,
     sourceCategory: values.sourceCategory,
     bank: values.bank,
   });
+  const canMarkFixed = transaction.amount < 0 && !preview.isTransfer && !isIncomeCategory(preview.category);
   function save(value: Transaction) {
+    const assignment = {
+      category: value.category,
+      categoryOverride: true,
+      includeInPlan: true,
+      ...(value.fixedCost !== undefined ? { fixedCost: canMarkFixed && value.fixedCost } : {}),
+    };
     update((current) =>
       rememberMerchants(
         {
@@ -92,9 +102,8 @@ function TransactionForm({
             row.id === transaction.id
               ? {
                   ...row,
-                  category: value.category,
-                  categoryOverride: true,
-                  includeInPlan: true,
+                  ...assignment,
+                  includeInPlan: classify({ ...row, ...assignment }).includeInPlan,
                 }
               : row,
           ),
@@ -103,13 +112,21 @@ function TransactionForm({
                 fixedReceipts: current.fixedReceipts.map((receipt) =>
                   receipt.key === transaction.id ||
                   receipt.key === statementFingerprint(transaction)
-                    ? { ...receipt, category: value.category }
+                    ? {
+                        ...receipt,
+                        category: value.category,
+                        booking: {
+                          ...(receipt.booking ?? transaction),
+                          ...assignment,
+                          includeInPlan: classify({ ...(receipt.booking ?? transaction), ...assignment }).includeInPlan,
+                        },
+                      }
                     : receipt,
                 ),
               }
             : {}),
         },
-        [{ ...transaction, category: value.category, categoryOverride: true }],
+        [{ ...transaction, ...assignment }],
       ),
     );
     toast.success("Umsatz aktualisiert");
@@ -132,7 +149,7 @@ function TransactionForm({
         <DialogHeader>
           <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            Ändere die Kategorie. Die ursprüngliche Bankbuchung bleibt unverändert.
+            Ändere Kategorie und Fixkosten-Markierung. Die ursprüngliche Bankbuchung bleibt unverändert.
           </DialogDescription>
         </DialogHeader>
         <DialogForm onSubmit={form.handleSubmit(save)}>
@@ -162,6 +179,11 @@ function TransactionForm({
             <p id="tx-category-help" className="text-sm leading-relaxed text-muted-foreground">{preview.reason || "Im Alltagsbudget berücksichtigt"}</p>
             {error("category")}
           </div>
+          <FixedCostChoice
+            checked={values.fixedCost ?? preview.isFixedCost}
+            onChange={(checked) => form.setValue("fixedCost", checked, { shouldDirty: true, shouldValidate: true })}
+            eligible={canMarkFixed}
+          />
           <p className="text-xs leading-relaxed text-muted-foreground">Die Zuordnung wird auch für spätere Buchungen dieses Händlers gelernt. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
           </DialogBody>
           <DialogFooter>
@@ -275,9 +297,11 @@ const TransactionLedger = memo(function TransactionLedger({
       id: "category",
       accessorFn: (row) => classifications.get(row)!.category,
       header: "Kategorie",
-      cell: ({ getValue }) => (
-        <span className="rounded-md border bg-muted/30 px-2 py-1 text-[10px]">
-          {getValue<string>()}
+      cell: ({ getValue, row }) => (
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          <span className="rounded-md border bg-muted/30 px-2 py-1 text-[10px]">{getValue<string>()}</span>
+          {row.original.fixedCost && classifications.get(row.original)!.isFixedCost &&
+            <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">Fixkosten</span>}
         </span>
       ),
     },

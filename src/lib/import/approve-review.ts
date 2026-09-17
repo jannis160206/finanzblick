@@ -1,8 +1,9 @@
 import { classify } from "@/lib/calc";
 import { canonicalCategory, isTravelCategory } from "@/lib/categories";
-import { categorySchema, fixedCategories, transactionSchema, type AppState, type Category, type ReviewItem, type Transaction } from "@/lib/types";
+import { categorySchema, transactionSchema, type AppState, type ReviewItem, type Transaction } from "@/lib/types";
+import { isIncomeCategory } from "@/lib/fixed";
 import { ambiguousMerchant, unresolvedTerminal } from "./merchant-description";
-import { isSpecificMerchantKey, merchantRuleKey, storedMerchantKey } from "./merchant-rules";
+import { isSpecificMerchantKey, merchantRuleKey, storedMerchantKey, type MerchantChoice } from "./merchant-rules";
 import { statementFingerprint, legacyFingerprint } from "./identity";
 import { appendStatementRows } from "./statements";
 import { bookingReviewReason, type commitStatementImport } from "./review";
@@ -13,7 +14,7 @@ type ReviewIndex = {
   merchants: Map<string, Transaction[]>;
   reviews: Map<string, BookingReview[]>;
   receipts: Set<string>;
-  rules: Map<string, Category>;
+  rules: Map<string, MerchantChoice>;
   conflictingRules: boolean;
   ambiguousIds: boolean;
 };
@@ -67,7 +68,10 @@ function reviewIndex(state: AppState): ReviewIndex {
     const key = storedMerchantKey(rule.key);
     if (index.rules.has(key) || canonicalCategory(rule.category) !== rule.category)
       index.conflictingRules = true;
-    if (isSpecificMerchantKey(key)) index.rules.set(key, canonicalCategory(rule.category));
+    if (isSpecificMerchantKey(key)) index.rules.set(key, {
+      category: canonicalCategory(rule.category),
+      ...(rule.fixedCost !== undefined ? { fixedCost: rule.fixedCost } : {}),
+    });
   }
   cacheIndex(state, index);
   return index;
@@ -76,7 +80,7 @@ function reviewIndex(state: AppState): ReviewIndex {
 const ordinary = (row: Transaction) => {
   const result = classify(row);
   return row.amount < 0 && !result.isTransfer && !isTravelCategory(result.category) &&
-    !fixedCategories.includes(result.category);
+    !result.isFixedCost && !isIncomeCategory(result.category);
 };
 
 // Return undefined when bank facts or accounting scope need the full import
@@ -87,7 +91,7 @@ export function approveReviewedBooking(
   selected: Transaction,
 ): ReturnType<typeof commitStatementImport> | undefined {
   if (!selected.categoryOverride || !categorySchema.safeParse(selected.category).success || selected.category === "Prüfen" ||
-    fixedCategories.includes(selected.category) || isTravelCategory(selected.category) || ["Transfer", "Transfer intern"].includes(selected.category)) return;
+    !ordinary(selected)) return;
   const item = state.reviewQueue?.find((entry): entry is BookingReview =>
     entry.kind === "booking" && entry.draft.id === selected.id);
   if (!item || item.draft.amount === null) return;
@@ -104,9 +108,12 @@ export function approveReviewedBooking(
   for (const review of reviews)
     if (!affected.has(review.draft.id)) affected.set(review.draft.id, transactionSchema.parse(review.draft));
   const updated = new Map<string, Transaction>();
+  const selectedFingerprint = statementFingerprint(selected);
   for (const row of affected.values()) {
     if (!ordinary(row) || ambiguousMerchant(row) || unresolvedTerminal(row.description)) return;
-    const candidate = transactionSchema.parse({ ...row, category: selected.category, categoryOverride: true, includeInPlan: true });
+    const candidate = transactionSchema.parse({ ...row, category: selected.category, categoryOverride: true, includeInPlan: true,
+      ...(selected.fixedCost !== undefined && (row.id === selected.id || statementFingerprint(row) === selectedFingerprint)
+        ? { fixedCost: selected.fixedCost } : {}) });
     if (!ordinary(candidate)) return;
     const result = classify(candidate);
     updated.set(row.id, { ...candidate, category: result.category, includeInPlan: result.includeInPlan });
@@ -120,12 +127,13 @@ export function approveReviewedBooking(
     if (incoming.some((row) => ignored.has(statementFingerprint(row)) || ignored.has(legacyFingerprint(row)))) return;
   }
   const rules = new Map(index.rules);
-  rules.set(key, canonicalCategory(selected.category));
+  rules.set(key, { ...rules.get(key), category: canonicalCategory(selected.category),
+    ...(selected.fixedCost !== undefined ? { fixedCost: selected.fixedCost } : {}) });
   if (rules.size > 100_000) return;
   let next: AppState = {
     ...state,
     transactions: state.transactions.map((row) => updated.get(row.id) ?? row),
-    merchantRules: [...rules].map(([key, category]) => ({ key, category })),
+    merchantRules: [...rules].map(([key, choice]) => ({ key, ...choice })),
   };
   // Match the full importer: selected fingerprint first, last queue twin wins.
   const incomingByKey = new Map<string, Transaction>();
@@ -139,7 +147,7 @@ export function approveReviewedBooking(
   const uniqueIncoming = [...incomingByKey.values()];
   const appended = incoming.length ? appendStatementRows(next, uniqueIncoming) : { state: next, added: 0, duplicates: 0 };
   next = appended.state;
-  const ruleIndex = new Map([...rules].map(([key, category]) => [key, new Set([category])]));
+  const ruleIndex = new Map([...rules].map(([key, choice]) => [key, new Set([choice.category])]));
   const queue = (state.reviewQueue ?? []).flatMap((entry): ReviewItem[] => {
     if (entry.kind !== "booking") return [entry];
     const row = updated.get(entry.draft.id);
