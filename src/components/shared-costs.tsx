@@ -5,7 +5,7 @@ import { Users, X } from "lucide-react";
 import { Tabs } from "radix-ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
@@ -40,16 +40,17 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
         <Users className="size-3.5" />
       </Button>
     </DialogTrigger>
-    <DialogContent className="sm:max-w-md">
+    <DialogContent variant="confirmation">
       <DialogHeader>
         <DialogTitle>Diese Buchung als geteilt markieren?</DialogTitle>
         <DialogDescription>Es zählt nur noch die Hälfte.</DialogDescription>
       </DialogHeader>
-      <div className="min-w-0 text-xs">
+      <DialogBody className="min-w-0 space-y-2 text-sm">
         <p className="truncate font-medium" title={booking.description}>{booking.description}</p>
         <p className="text-muted-foreground">{dateLabel(booking.date)} · Gesamt {currency(Math.abs(booking.amount))}</p>
         <p>Meine Hälfte: {currency(Math.abs(personalAmount({ ...booking, sharedWithRaphael: true })))}</p>
-      </div>
+        {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
+      </DialogBody>
       <DialogFooter>
         <Button variant="outline" onClick={() => setOpen(false)}>Abbrechen</Button>
         <Button disabled={!!storageError} onClick={() => {
@@ -84,6 +85,7 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
       (!month || row.date.startsWith(month)) && (!amount || Math.abs(row.amount) === total))
       .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
   }, [candidates, query, month, amount]);
+  const invalidAmount = !!amount && parseStatementAmount(amount) === null;
   const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setLimit(50); };
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>
@@ -93,28 +95,34 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
       {count > 0 && <span aria-label={`${count} offene Teilungen`} className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">{count}</span>}
     </Button>
     </DialogTrigger>
-      <DialogContent showCloseButton={false}
-        style={{ display: "flex", flexDirection: "column", maxWidth: "min(500px, calc(100vw - 2rem))", maxHeight: "70dvh", gap: 0, overflow: "hidden", padding: 0 }}>
+      <DialogContent variant="work" showCloseButton={false}>
         <Tabs.Root value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="sticky top-0 z-10 shrink-0 border-b bg-background p-4">
-        <DialogHeader className="relative pr-10">
+        <DialogHeader>
           <DialogTitle>Geteilt</DialogTitle>
           <DialogDescription>Meine Hälfte 50 % · Raphael 50 %</DialogDescription>
-          <Button size="icon" variant="ghost" className="absolute top-0 right-0 size-8" aria-label="Geteilt schließen" onClick={() => changeOpen(false)}><X className="size-4" /></Button>
-        </DialogHeader>
+          <Button size="icon" variant="ghost" className="absolute top-3 right-3 size-11 sm:top-4 sm:right-4" aria-label="Geteilt schließen" onClick={() => changeOpen(false)}><X className="size-4" /></Button>
         <Tabs.List aria-label="Geteilt-Ansicht" className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
-          <Tabs.Trigger value="search" className="rounded px-3 py-1.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Suchen</Tabs.Trigger>
-          <Tabs.Trigger value="open" className="rounded px-3 py-1.5 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Offen · {openItems.length}</Tabs.Trigger>
+          <Tabs.Trigger value="search" className="min-h-10 rounded px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Suchen</Tabs.Trigger>
+          <Tabs.Trigger value="open" className="min-h-10 rounded px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Offen · {openItems.length}</Tabs.Trigger>
         </Tabs.List>
-        {tab === "search" && <div className="mt-3 grid grid-cols-2 gap-2">
-          <Input className="col-span-2" aria-label="Geteilte Buchungen suchen" placeholder="Händler / Text" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(50); }} />
-          <Input aria-label="Geteilt Monat" type="month" value={month} onChange={(e) => { setMonth(e.target.value); setLimit(50); }} />
-          <Input aria-label="Geteilt Gesamtbetrag" inputMode="decimal" placeholder="Gesamtbetrag (€)" value={amount} onChange={(e) => { setAmount(e.target.value); setLimit(50); }} />
-        </div>}
+        </DialogHeader>
+        <DialogBody aria-label="Buchungslisten">
+        <Tabs.Content value="search" className="space-y-5">
+        <div className="grid gap-4 bg-card pb-4 sm:grid-cols-2 md:[@media(min-height:600px)]:sticky md:[@media(min-height:600px)]:top-0 md:[@media(min-height:600px)]:z-10">
+          <label className="block text-sm font-medium sm:col-span-2">Händler / Text
+            <Input className="mt-2" aria-label="Geteilte Buchungen suchen" placeholder="Buchungen durchsuchen" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(50); }} />
+          </label>
+          <label className="block text-sm font-medium">Monat
+            <Input className="mt-2" aria-label="Geteilt Monat" type="month" value={month} onChange={(e) => { setMonth(e.target.value); setLimit(50); }} />
+          </label>
+          <label className="block text-sm font-medium">Gesamtbetrag (€)
+            <Input className="mt-2" aria-label="Geteilt Gesamtbetrag" inputMode="decimal" placeholder="z. B. 100,00" value={amount} aria-invalid={invalidAmount} aria-describedby={invalidAmount ? "shared-amount-error" : undefined} onChange={(e) => { setAmount(e.target.value); setLimit(50); }} />
+          </label>
         </div>
-        <Tabs.Content value="search" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+        {invalidAmount && <p id="shared-amount-error" role="alert" className="text-sm text-destructive">Bitte einen gültigen Gesamtbetrag eingeben, z. B. 100,00.</p>}
+        <p className="text-xs text-muted-foreground">Auswahl und Bezahlmarkierungen werden erst beim Speichern übernommen. Abbrechen oder Schließen verwirft Änderungen.</p>
         <div className="rounded-md border">
-          {filtered.slice(0, limit).map((row) => <label key={row.id} className="flex cursor-pointer items-center gap-3 border-b p-3 text-xs last:border-b-0">
+          {filtered.slice(0, limit).map((row) => <label key={row.id} className="flex cursor-pointer items-center gap-3 border-b p-3 text-sm last:border-b-0">
             <input type="checkbox" className="accent-primary" aria-label={`Teilen: ${row.description} ${row.date}`}
               checked={selected.includes(row.id)} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, row.id] : ids.filter((id) => id !== row.id))} />
             <span className="min-w-0 flex-1"><span className="block truncate font-medium">{row.description}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
@@ -127,14 +135,17 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
           {filtered.length > limit && <Button variant="ghost" size="sm" onClick={() => setLimit((n) => n + 50)}>Mehr anzeigen</Button>}
         </div>
         </Tabs.Content>
-        <Tabs.Content value="open" className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+        <Tabs.Content value="open" className="space-y-3">
           <h3 className="text-sm font-medium">Offen · Raphael Piber</h3>
+          <p className="text-xs text-muted-foreground">Bezahlmarkierungen werden erst beim Speichern übernommen. Abbrechen oder Schließen verwirft Änderungen.</p>
           <ShareRows items={openItems} disabled={!!storageError} onPaid={(id) => setPaid((ids) => [...ids, id])} />
           {!openItems.length && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Teilungen.</p>}
         </Tabs.Content>
-        <DialogFooter className="sticky bottom-0 z-10 shrink-0 flex-row flex-wrap items-center border-t bg-background p-4">
+        {storageError && <p role="alert" className="mt-4 text-sm text-destructive">{storageError}</p>}
+        </DialogBody>
+        <DialogFooter>
           {tab === "search" || pending ? <>
-          <span className="mr-auto text-xs text-muted-foreground">{selected.length} ausgewählt{paid.length > 0 && ` · ${paid.length} bezahlt (ungespeichert)`}</span>
+          <span role="status" className="mr-auto text-xs text-muted-foreground">{selected.length} ausgewählt{paid.length > 0 && ` · ${paid.length} bezahlt (ungespeichert)`}</span>
           <Button variant="outline" onClick={() => changeOpen(false)}>Abbrechen</Button>
           <Button disabled={!pending || !!storageError} onClick={() => {
             const ids = selected.filter((id) => candidates.some((row) => row.id === id));

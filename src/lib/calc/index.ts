@@ -23,8 +23,8 @@ import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, perso
 import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
 import { reconcileLeasingSources } from "@/lib/leasing";
-import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories } from "@/lib/categories";
-import { monthlyVariableBudget, variableBudgetValue } from "@/lib/variable-budgets";
+import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories, isTravelCategory } from "@/lib/categories";
+import { monthlyVariableBudget, variableBudgetId, variableBudgetValue, type VariableBudgetId } from "@/lib/variable-budgets";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -186,7 +186,7 @@ export function classify(
   category = canonicalCategory(category);
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
   // travel even when an older merchant rule calls a hotel/grocer everyday spend.
-  if (!detectedTransfer && !fixedCategories.includes(category) && !isAmazon &&
+  if (!detectedTransfer && !fixedCategories.includes(category) && !isAmazon && !isTravelCategory(category) &&
     (transaction.category === "Urlaub" || /^urlaub\b/i.test(sourceCategory) ||
       (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
   if (unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
@@ -203,7 +203,7 @@ export function classify(
     isRoundUp ? "Sparkonto" : savingsPocket(transaction.pocket);
   const exclusion =
     isAmazon ||
-    category === "Urlaub" ||
+    isTravelCategory(category) ||
     /amex raphael/i.test(transaction.pocket ?? "") ||
     excluded.test(`${description} ${transaction.sourceCategory ?? ""}`) ||
     savingsPocket(transaction.pocket) === "Urlaub";
@@ -327,7 +327,7 @@ export function accountHolidayRanges(rows: AccountedTransaction[], ranges: Holid
   });
   if (!ranges.length) return clean;
   const home = new Set(clean.filter((row) => row.amount < 0 && row.date <= asOf && !inside(row.date) &&
-    !classify(row).isTransfer && classify(row).category !== "Urlaub" && !unresolvedTerminal(row.description)).map(holidayMerchantKey));
+    !classify(row).isTransfer && !isTravelCategory(classify(row).category) && !unresolvedTerminal(row.description)).map(holidayMerchantKey));
   return clean.map((row) => {
     const result = classify(row);
     if (row.amount >= 0 || !inside(row.date) || result.isTransfer || result.isAmazon ||
@@ -837,14 +837,17 @@ export function calculateDashboard(state: AppState) {
     return { month, ...totals, bikeTransfer: 0, remaining: totals.surplus };
   });
   const categorySpending = new Map<string, number>();
+  const budgetSpending = new Map<VariableBudgetId, number>();
   for (const transaction of bookings) {
     if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf) continue;
     const result = classify(transaction);
     if (["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer) continue;
     categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - personalAmount(transaction));
+    const budgetId = result.includeInPlan ? variableBudgetId(result.category) : undefined;
+    if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - personalAmount(transaction));
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);
-  return { plan, goals, actualGoals,
+  return { plan: { ...plan, rows: plan.rows.map((row) => ({ ...row, actual: round(budgetSpending.get(row.id) ?? 0) })) }, goals, actualGoals,
     monthlyFunding: [
       { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: currentRow?.rates.Sparkonto ?? 0 },
       ...[...goals].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)).map((goal) => ({ ...goal, amount: currentRow?.goalRates[goal.id] ?? 0 })),

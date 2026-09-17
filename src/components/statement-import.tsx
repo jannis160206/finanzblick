@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -18,7 +20,6 @@ import { currency, monthLabel } from "@/lib/format";
 import {
   categories,
   transactionSchema,
-  type Category,
   type Transaction,
 } from "@/lib/types";
 import {
@@ -33,7 +34,7 @@ import {
   type ReviewItem,
 } from "@/lib/import/review";
 import { cn } from "@/lib/utils";
-import { CategoryOptions } from "@/components/category-options";
+import { CategorySelect } from "@/components/category-select";
 
 type Pending = {
   requestId: string;
@@ -110,31 +111,23 @@ const BookingReview = memo(function BookingReview({
           />
         </label>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-xs">
-          Kategorie
-          <select
-            aria-label="Kategorie"
-            className="select-input editable w-full"
+      <div className="space-y-2">
+          <p className="text-sm font-medium">Kategorie</p>
+          <CategorySelect
+            label="Kategorie"
             value={draft.category}
             disabled={disabled}
-            onChange={(e) =>
-              setDraft({ ...draft, category: e.target.value as Category })
+            onValueChange={(category) =>
+              setDraft({ ...draft, category })
             }
-          >
-            <option value="Prüfen" disabled>
-              Kategorie wählen
-            </option>
-            <CategoryOptions excludeReview />
-          </select>
-        </label>
+            excludeReview
+          />
       </div>
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
         <Button variant="ghost" size="sm" disabled={disabled} onClick={skip}>
           Später prüfen
         </Button>
         <Button
-          variant="outline"
           size="sm"
           disabled={
             disabled ||
@@ -387,7 +380,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
         }}
       >
         <DialogContent
-          className="bg-card sm:max-w-3xl"
+          variant="work"
           showCloseButton={!ui.pending}
         >
           <DialogHeader>
@@ -396,11 +389,12 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
               Sichere Buchungen sind automatisch gespeichert. Nur diese{" "}
               {ui.review.length} Einträge brauchen eine Entscheidung.
             </DialogDescription>
-          </DialogHeader>
           {ui.pending && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />Zuordnung wird übernommen …
           </p>}
-          <fieldset disabled={!!ui.pending} className="min-w-0 max-h-[65vh] space-y-3 overflow-auto pr-1">
+          </DialogHeader>
+          <DialogBody>
+          <fieldset disabled={!!ui.pending} className="min-w-0 space-y-4">
             {ui.review.slice(0, 20).map((item) =>
               item.kind === "booking" ? (
                 <BookingReview
@@ -464,6 +458,11 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
               </p>
             )}
           </fieldset>
+          </DialogBody>
+          <DialogFooter>
+            <p className="mr-auto text-xs text-muted-foreground">Offene Buchungen bleiben in der Prüfliste.</p>
+            <Button variant="outline" disabled={!!ui.pending} onClick={() => setUI({ open: false })}>Prüfung schließen</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

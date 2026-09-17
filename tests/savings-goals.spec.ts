@@ -57,7 +57,7 @@ test("goals follow deadline order and removing the last goal preserves the ledge
   for (const name of ["Kamera", "Motorrad"]) {
     const goal = page.getByRole("article", { name: `Sparziel ${name}`, exact: true });
     await goal.getByLabel(`${name} Menü`).click();
-    await goal.getByRole("button", { name: "Entfernen", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Entfernen", exact: true }).click();
     await dialog.getByRole("button", { name: "Entfernen", exact: true }).click();
     await expect(goal).toHaveCount(0);
   }

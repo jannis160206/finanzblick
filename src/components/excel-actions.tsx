@@ -4,8 +4,10 @@ import { useRef, useState } from "react";
 import { Download, FileSpreadsheet, LoaderCircle, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -21,10 +23,13 @@ import { openReviewCount, queueLedgerReview } from "@/lib/import/review";
 export function ExcelActions({ compact = false }: { compact?: boolean }) {
   const { state, replace } = useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
+  const restoreTrigger = useRef<HTMLButtonElement>(null);
   const [busy, setBusy] = useState<"import" | "export" | null>(null);
   const [preview, setPreview] = useState<ImportResult | null>(null);
   const [filename, setFilename] = useState("");
+  const [actionError, setActionError] = useState("");
   async function download() {
+    setActionError("");
     setBusy("export");
     try {
       const { exportWorkbook } = await import("@/lib/excel");
@@ -43,19 +48,22 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
       toast.success("Excel-Sicherung erstellt");
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Export fehlgeschlagen",
-      );
+      const message = error instanceof Error ? error.message : "Export fehlgeschlagen";
+      setActionError(`Die Sicherung konnte nicht erstellt werden. ${message}`);
+      toast.error(message);
     } finally {
       setBusy(null);
     }
   }
   async function upload(file: File) {
+    setActionError("");
     if (!/\.xlsx$/i.test(file.name)) {
+      setActionError("Bitte eine XLSX-Datei auswählen. Die vorhandenen Daten wurden nicht verändert.");
       toast.error("Bitte eine XLSX-Datei auswählen.");
       return;
     }
     if (file.size > MAX_IMPORT_BYTES) {
+      setActionError("Die Datei darf höchstens 20 MB groß sein. Die vorhandenen Daten wurden nicht verändert.");
       toast.error("Die Datei darf höchstens 20 MB groß sein.");
       return;
     }
@@ -65,9 +73,9 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
       const { parseWorkbook } = await import("@/lib/excel");
       setPreview(await parseWorkbook(await file.arrayBuffer()));
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Import fehlgeschlagen",
-      );
+      const message = error instanceof Error ? error.message : "Import fehlgeschlagen";
+      setActionError(`Die Sicherung konnte nicht eingelesen werden. Vorhandene Daten bleiben erhalten. ${message}`);
+      toast.error(message);
     } finally {
       setBusy(null);
     }
@@ -90,19 +98,17 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
         <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => void download()}>
           <Download className="size-4" />Exportieren
         </Button>
-        <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => fileInput.current?.click()}>
+        <Button ref={restoreTrigger} type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => fileInput.current?.click()}>
           <Upload className="size-4" />Wiederherstellen
         </Button>
-      </div> : <details className="relative">
-        <summary className="cursor-pointer rounded-md border px-3 py-2 text-xs">
-          Sicherung
-        </summary>
-        <div className="absolute right-0 z-40 mt-2 flex min-w-64 flex-col gap-2 rounded-lg border bg-card p-3 shadow-lg">
-          <Button
-            size="sm"
-            variant="ghost"
+      </div> : <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button ref={restoreTrigger} type="button" size="sm" variant="outline">Sicherung</Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent>
+          <DropdownMenuItem
             disabled={!!busy}
-            onClick={() => fileInput.current?.click()}
+            onSelect={() => fileInput.current?.click()}
             aria-label="Sicherung wiederherstellen"
           >
             {busy === "import" ? (
@@ -111,12 +117,10 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
               <Upload className="size-4" />
             )}
             <span>Sicherung wiederherstellen</span>
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
+          </DropdownMenuItem>
+          <DropdownMenuItem
             disabled={!!busy}
-            onClick={() => void download()}
+            onSelect={() => void download()}
             aria-label="Excel herunterladen"
           >
             {busy === "export" ? (
@@ -125,16 +129,19 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
               <Download className="size-4" />
             )}
             <span>Sicherung herunterladen</span>
-          </Button>
-        </div>
-      </details>}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>}
+      {actionError && !preview && (
+        <p role="alert" className="max-w-prose break-words text-sm text-destructive">{actionError}</p>
+      )}
       <Dialog
         open={!!preview}
         onOpenChange={(open) => {
           if (!open) setPreview(null);
         }}
       >
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent variant="work" onCloseAutoFocus={(event) => { event.preventDefault(); restoreTrigger.current?.focus(); }}>
           <DialogHeader>
             <DialogTitle>Sicherung wiederherstellen</DialogTitle>
             <DialogDescription className="break-all">
@@ -143,6 +150,7 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
           </DialogHeader>
           {preview && (
             <>
+              <DialogBody className="space-y-5">
               <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-4">
                 <FileSpreadsheet className="size-8 text-primary" />
                 <div>
@@ -172,7 +180,7 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                 ))}
               </div>
               {preview.warnings.length > 0 && (
-                <div className="max-h-40 overflow-auto rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
                   <p className="mb-2 font-semibold">Hinweise zum Import</p>
                   <ul className="space-y-1.5">
                     {preview.warnings.map((warning, index) => (
@@ -193,11 +201,18 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                 <Download className="size-4" />
                 Aktuelle Daten sichern
               </Button>
+              {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
+              <p className="text-xs text-muted-foreground">
+                Abbrechen oder Schließen verwirft die Vorschau. Ohne Bestätigung werden keine Daten ersetzt.
+              </p>
+              </DialogBody>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPreview(null)}>
                   Abbrechen
                 </Button>
                 <Button
+                  variant="destructive"
+                  className="h-auto min-h-10 min-w-0 whitespace-normal sm:flex-1"
                   disabled={!!busy}
                   onClick={() => {
                     replace(preview.state);

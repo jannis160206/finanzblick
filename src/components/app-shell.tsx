@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useTheme } from "next-themes";
 import {
   ArrowLeftRight,
@@ -22,6 +22,7 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -51,21 +52,21 @@ export function AppShell({
   const { theme, setTheme } = useTheme();
   const { ready, saved, storageError, retrySave, openReviewCount } = useFinance();
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const current = navigation.find((item) => item.href === pathname);
   const links = (
-    <nav aria-label="Hauptnavigation" className="space-y-1">
+    <nav aria-label="Hauptnavigation" className="flex h-full flex-col gap-1.5">
       {navigation.map((item, index) => (
+        <div key={item.href} className={index === 5 ? "mt-auto border-t pt-4" : undefined}>
         <Link
-          key={item.href}
           href={item.href}
           onClick={() => setMenuOpen(false)}
           aria-current={pathname === item.href ? "page" : undefined}
           className={cn(
-            "flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] transition-colors",
+            "flex min-h-11 items-center gap-3 rounded-xl px-3 py-3 text-sm transition-colors duration-150",
             pathname === item.href
               ? "bg-primary/10 font-medium text-primary"
               : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            index === 5 && "mt-8",
           )}
         >
           {item.href === "/" || item.href === "/pockets" ? (
@@ -79,10 +80,8 @@ export function AppShell({
           )}
           {item.label}
           {item.href === "/umsaetze" && ready && <ReviewCount count={openReviewCount} className="ml-auto" />}
-          {pathname === item.href && item.href !== "/umsaetze" && (
-            <span className="ml-auto size-1.5 rounded-full bg-primary" />
-          )}
         </Link>
+        </div>
       ))}
     </nav>
   );
@@ -102,11 +101,10 @@ export function AppShell({
             <span className="font-normal text-muted-foreground">blick</span>
           </span>
         </Link>
-        <div className="flex-1 px-4 pt-6">
-          <p className="eyebrow mb-4 px-3">WORKSPACE</p>
+        <div className="min-h-0 flex-1 px-4 pt-4 pb-5">
           {links}
         </div>
-        <div className="mx-4 mb-5 rounded-xl border bg-background/50 p-3">
+        <div className="mx-4 mb-5 rounded-xl bg-background/70 p-3">
           <div className="flex items-center gap-2 text-xs font-medium">
             <span className="flex size-8 items-center justify-center rounded-lg bg-muted">
               <LockKeyhole className="size-4 text-muted-foreground" />
@@ -122,10 +120,13 @@ export function AppShell({
         <header className="app-header sticky top-0 z-20 flex h-[76px] items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur-sm sm:px-7 xl:px-9">
           <div className="relative z-10 flex items-center gap-3">
             <Button
+              ref={menuTrigger}
               size="icon"
               variant="ghost"
               className="lg:hidden"
               aria-label="Navigation öffnen"
+              aria-expanded={menuOpen}
+              aria-haspopup="dialog"
               onClick={() => setMenuOpen(true)}
             >
               <Menu className="size-5" />
@@ -217,12 +218,17 @@ export function AppShell({
         </main>
       </div>
       <Dialog open={menuOpen} onOpenChange={setMenuOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent variant="navigation" onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          menuTrigger.current?.focus();
+        }}>
           <DialogHeader>
-            <DialogTitle>Finanzblick</DialogTitle>
-            <DialogDescription>Persönlicher Workspace</DialogDescription>
+            <DialogTitle className="flex items-center gap-3"><FinanzblickMark />Finanzblick</DialogTitle>
+            <DialogDescription>Deine Finanzen, an einem Ort.</DialogDescription>
           </DialogHeader>
-          {links}
+          <DialogBody className="flex flex-col">
+            {links}
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </div>

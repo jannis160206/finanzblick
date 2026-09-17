@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { categories, categoryAliases, categoryGroups, canonicalCategory, type Category } from "./categories";
-import { appStateSchema, transactionSchema, type Transaction } from "./types";
-import { actualBookings, calculateMonthTotals, calculatePlan, classify, missingFixedCosts } from "./calc";
+import { categories, categoryAliases, categoryGroups, canonicalCategory, isTravelCategory, type Category } from "./categories";
+import { appStateSchema, fixedCategories, transactionSchema, type Transaction } from "./types";
+import { actualBookings, calculateDashboard, calculateMonthTotals, calculatePlan, classify, missingFixedCosts } from "./calc";
 import { createSeed } from "./seed";
 import { exportWorkbook, parseWorkbook } from "./excel";
 import { matchingFixedRow } from "./fixed";
@@ -21,6 +21,12 @@ const stateWith = (labels: string[]) => {
   return state;
 };
 const result = (rows: Transaction[]) => ({ file: "categories.csv", source: "Revolut" as const, rows, skipped: 0, issues: [] });
+const expandedCategories = [
+  "Restaurants", "Lieferdienste", "Cafés & Snacks", "Kleidung & Schuhe", "Elektronik",
+  "Bücher", "Weiterbildung", "Unterkunft", "Flugreisen", "Miete", "Energie & Nebenkosten",
+  "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Tanken", "Öffentliche Verkehrsmittel",
+  "Parken & Maut", "Fahrzeugwartung",
+] as const satisfies readonly Category[];
 
 describe("structured categories", () => {
   it("offers each purpose exactly once, without legacy provider names", () => {
@@ -28,6 +34,14 @@ describe("structured categories", () => {
     expect(categoryGroups.flatMap((group): string[] => [...group.categories])).toEqual(categories);
     expect(categories).toContain("Entertainment");
     expect(categories).toContain("Abonnements");
+    expect(categoryGroups).toHaveLength(6);
+    expect(categories).toEqual(expect.arrayContaining([...expandedCategories]));
+    expect(categories).toEqual(expect.arrayContaining([
+      "Lebensmittel", "Mittagessen", "Ausgehen", "Shopping", "Drogerie", "Gesundheit", "Körperpflege",
+      "Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Geschenke & Spenden", "Haustiere", "Urlaub",
+      "Wohnen & Haushalt", "Mobilität", "Leasing", "Abonnements", "Versicherungen", "Telefon & Internet",
+      "Bankgebühren", "Gehalt", "Rufbereitschaft", "Einkommen", "Sonstiges", "Transfer", "Transfer intern", "Prüfen",
+    ]));
     for (const legacy of Object.keys(categoryAliases)) expect(categories).not.toContain(legacy);
   });
 
@@ -59,6 +73,34 @@ describe("structured categories", () => {
     expect(classify(booking("Amazon Marketplace")).category).toBe("Shopping");
     expect(classify(booking("BIPA")).category).toBe("Mittagessen");
     expect(classify(booking("Gehalt", "Prüfen", 2500)).category).toBe("Gehalt");
+  });
+
+  it.each(expandedCategories)("accepts the manual purpose %s without remapping it", (category) => {
+    const row = { ...booking("Fachhandel Linde", category), categoryOverride: true };
+    expect(transactionSchema.parse(row)).toEqual(row);
+    expect(canonicalCategory(category)).toBe(category);
+    expect(classify(row)).toMatchObject({ category, isTransfer: false, includeInPlan: !isTravelCategory(category) && !fixedCategories.includes(category) });
+    for (const description of ["BIPA", "Hotspot", "Mensa", "Mensen"])
+      expect(classify({ ...row, description }).category).toBe("Mittagessen");
+    expect(classify({ ...row, description: "Interne Überweisung" })).toMatchObject({ category: "Transfer intern", isTransfer: true, includeInPlan: false });
+  });
+
+  it.each([
+    ["Booking.com", "Unterkunft"], ["Lufthansa", "Flugreisen"],
+  ] as const)("keeps a refined travel choice for %s without adding it to everyday budgets", (description, category) => {
+    expect(classify(booking(description)).category).toBe("Urlaub");
+    expect(classify({ ...booking(description, category), categoryOverride: true }))
+      .toMatchObject({ category, includeInPlan: false, isTransfer: false });
+  });
+
+  it("does not infer the new granular purposes from payment providers or replace old merchant classifications", () => {
+    for (const description of ["PayPal Europe Zahlung", "Kartenzahlung", "Fachhandel Linde"])
+      expect(classify(booking(description)).category).toBe("Prüfen");
+    for (const [description, category] of [
+      ["Thalia", "Bildung"], ["Udemy", "Bildung"], ["Miete", "Wohnen & Haushalt"],
+      ["Stromrechnung", "Wohnen & Haushalt"], ["OEBB", "Mobilität"], ["Parkgebühr", "Mobilität"],
+      ["Shell", "Mobilität"], ["Foodora", "Ausgehen"],
+    ]) expect(classify(booking(description)).category).toBe(category);
   });
 });
 
@@ -131,5 +173,84 @@ describe("grouped contracts and persistence", () => {
     expect(planned.financeRows.find((row) => row.id === "entertainment")).toBeUndefined();
     expect(planned.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
     expect(canonicalCategory("Spotify")).toBe("Abonnements");
+  });
+
+  it("remembers every new manual choice through review, JSON, Excel and subsequent imports", async () => {
+    const original = synchronizePlan(stateWith([]));
+    const drafts = expandedCategories.map((category, index) => booking(`Fachhandel Linde ${index}`, category));
+    const prepared = prepareStatementImport([result(drafts.map((row) => ({ ...row, category: "Prüfen" })))], original);
+    expect(prepared.review).toHaveLength(expandedCategories.length);
+    const saved = commitStatementImport(original, drafts.map((row) => ({ ...row, categoryOverride: true })), [], prepared.metadata).state;
+    expect(saved.reviewQueue ?? []).toHaveLength(0);
+    expect(saved.merchantRules?.map((rule) => rule.category)).toEqual(expandedCategories);
+    const json = appStateSchema.parse(JSON.parse(JSON.stringify(saved)));
+    const workbook = await parseWorkbook(await exportWorkbook(json));
+    expect(workbook.warnings).toEqual([]);
+    for (const restored of [json, workbook.state]) {
+      expect(restored.transactions.map((row) => row.category)).toEqual(expandedCategories);
+      expect(restored.merchantRules).toEqual(saved.merchantRules);
+      expect(restored.transactions.map(statementFingerprint)).toEqual(saved.transactions.map(statementFingerprint));
+      expect(restored.financeRows).toEqual(original.financeRows);
+      const next = prepareStatementImport([result(drafts.map((row) => ({
+        ...row, id: crypto.randomUUID(), date: "2026-09-03", category: "Prüfen",
+      })))], restored);
+      expect(next.review).toHaveLength(0);
+      expect(next.automatic.map((row) => row.category)).toEqual(expandedCategories.filter((category) => !fixedCategories.includes(category)));
+      expect(next.automatic.every((row) => row.categoryOverride)).toBe(true);
+      expect(next.metadata.fixedReceipts.map((receipt) => receipt.category)).toEqual(["Miete", "Energie & Nebenkosten"]);
+      expect(next.metadata.fixedReceipts.every((receipt) => receipt.booking?.categoryOverride)).toBe(true);
+    }
+  });
+
+  it("retains a learned accommodation purpose for a recognized travel merchant after Excel reload", async () => {
+    const original = synchronizePlan(stateWith([]));
+    const row = { ...booking("Booking.com", "Unterkunft", -120), categoryOverride: true };
+    const saved = commitStatementImport(original, [row]).state;
+    const loaded = (await parseWorkbook(await exportWorkbook(saved))).state;
+    expect(loaded.transactions[0]).toMatchObject({ category: "Unterkunft", categoryOverride: true, includeInPlan: false });
+    const next = prepareStatementImport([result([{ ...booking("Booking.com"), date: "2026-09-03" }])], loaded);
+    expect(next.review).toHaveLength(0);
+    expect(next.automatic[0]).toMatchObject({ category: "Unterkunft", categoryOverride: true, includeInPlan: false });
+  });
+
+  it("matches explicit rent and utility contracts without counting them in variable budgets", async () => {
+    const original = synchronizePlan(stateWith(["Wohnung Linde", "Stadtwerke Linde"]));
+    original.financeRows[0].planCategory = "Miete";
+    original.financeRows[1].planCategory = "Energie & Nebenkosten";
+    const rows = [
+      { ...booking("Wohnung Linde", "Miete"), categoryOverride: true },
+      { ...booking("Stadtwerke Linde", "Energie & Nebenkosten"), categoryOverride: true },
+    ];
+    const imported = commitStatementImport(original, rows).state;
+    expect(imported.fixedReceipts?.map((receipt) => receipt.rowId)).toEqual(["contract-0", "contract-1"]);
+    for (const state of [imported, (await parseWorkbook(await exportWorkbook(imported))).state]) {
+      expect(state.financeRows).toEqual(original.financeRows);
+      expect(missingFixedCosts(state)).toEqual([]);
+      expect(actualBookings(state)).toHaveLength(2);
+      const dashboard = calculateDashboard(state);
+      expect(dashboard.current).toMatchObject({ fixed: 20, actualSpending: 20 });
+      expect(dashboard.plan.rows.every((row) => row.actual === 0)).toBe(true);
+      expect(dashboard.spending).toEqual(expect.arrayContaining([{ name: "Miete", value: 10 }, { name: "Energie & Nebenkosten", value: 10 }]));
+    }
+    const updated = commitStatementImport(imported, [{ ...rows[0], id: crypto.randomUUID(), date: "2026-09-03", amount: -12 }]).state;
+    expect(updated.financeRows).toEqual(original.financeRows);
+    expect(actualBookings(updated)).toHaveLength(3);
+    expect(calculateDashboard(updated).current.actualSpending).toBe(32);
+  });
+
+  it.each(["Miete", "Energie & Nebenkosten"] as const)("keeps separate %s contracts distinct and creates no plan rows", (category) => {
+    const original = synchronizePlan(stateWith(["Vertrag Linde", "Vertrag Eiche"]));
+    original.financeRows[0].planCategory = category;
+    original.financeRows[1].planCategory = category;
+    const row = { ...booking("Vertrag Linde", category), categoryOverride: true };
+    const saved = commitStatementImport(original, [row]).state;
+    expect(saved.fixedReceipts).toEqual([expect.objectContaining({ rowId: "contract-0", category })]);
+    expect(missingFixedCosts(saved)).toEqual(["Vertrag Eiche"]);
+    expect(matchingFixedRow(saved, category, booking("Unbekannter Vertrag", category))).toBeUndefined();
+    const withoutContracts = synchronizePlan(stateWith([]));
+    const unplanned = commitStatementImport(withoutContracts, [row]).state;
+    expect(unplanned.financeRows).toEqual(withoutContracts.financeRows);
+    expect(actualBookings(unplanned)).toHaveLength(1);
+    expect(calculateDashboard(unplanned).plan.rows.every((row) => row.actual === 0)).toBe(true);
   });
 });

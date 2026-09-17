@@ -1,5 +1,5 @@
 import { classify } from "@/lib/calc";
-import { canonicalCategory } from "@/lib/categories";
+import { canonicalCategory, isTravelCategory } from "@/lib/categories";
 import { categorySchema, fixedCategories, transactionSchema, type AppState, type Category, type ReviewItem, type Transaction } from "@/lib/types";
 import { ambiguousMerchant, unresolvedTerminal } from "./merchant-description";
 import { isSpecificMerchantKey, merchantRuleKey, storedMerchantKey } from "./merchant-rules";
@@ -75,7 +75,7 @@ function reviewIndex(state: AppState): ReviewIndex {
 
 const ordinary = (row: Transaction) => {
   const result = classify(row);
-  return row.amount < 0 && !result.isTransfer && result.category !== "Urlaub" &&
+  return row.amount < 0 && !result.isTransfer && !isTravelCategory(result.category) &&
     !fixedCategories.includes(result.category);
 };
 
@@ -87,7 +87,7 @@ export function approveReviewedBooking(
   selected: Transaction,
 ): ReturnType<typeof commitStatementImport> | undefined {
   if (!selected.categoryOverride || !categorySchema.safeParse(selected.category).success || selected.category === "Prüfen" ||
-    fixedCategories.includes(selected.category) || ["Transfer", "Transfer intern", "Urlaub"].includes(selected.category)) return;
+    fixedCategories.includes(selected.category) || isTravelCategory(selected.category) || ["Transfer", "Transfer intern"].includes(selected.category)) return;
   const item = state.reviewQueue?.find((entry): entry is BookingReview =>
     entry.kind === "booking" && entry.draft.id === selected.id);
   if (!item || item.draft.amount === null) return;

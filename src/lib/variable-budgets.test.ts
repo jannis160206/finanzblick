@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { lunchBudget } from "@/lib/holidays-at-kaernten";
-import { applyVariableBudgets, monthlyVariableBudget, variableBudgetLines } from "@/lib/variable-budgets";
+import { applyVariableBudgets, monthlyVariableBudget, variableBudgetId, variableBudgetLines } from "@/lib/variable-budgets";
 import { synchronizePlan, refreshPlanning } from "@/lib/planning";
 import { calculateDashboard, calculatePlan, financeRowValue } from "@/lib/calc";
 import { createSeed } from "@/lib/seed";
-import { appStateSchema, emptyMonth, type FinanceRow } from "@/lib/types";
+import { appStateSchema, emptyMonth, type Category, type FinanceRow, type Transaction } from "@/lib/types";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { commitStatementImport } from "@/lib/import/review";
+
+const detailedBudgets = [
+  ["Restaurants", "going-out"], ["Lieferdienste", "going-out"], ["Cafés & Snacks", "going-out"],
+  ["Kleidung & Schuhe", "buffer"], ["Elektronik", "buffer"], ["Bücher", "leisure"], ["Weiterbildung", "leisure"],
+  ["Miete", undefined], ["Energie & Nebenkosten", undefined], ["Möbel & Einrichtung", "buffer"],
+  ["Reparaturen & Instandhaltung", "buffer"], ["Tanken", "fuel"], ["Öffentliche Verkehrsmittel", "buffer"],
+  ["Parken & Maut", "buffer"], ["Fahrzeugwartung", "buffer"], ["Unterkunft", undefined], ["Flugreisen", undefined],
+] as const;
 
 describe("Carinthian lunch budgets", () => {
   it("October 2026 excludes Monday 26 October; Saturday 10 October is never a workday", () => {
@@ -35,6 +43,47 @@ describe("Carinthian lunch budgets", () => {
 });
 
 describe("strict variable budgets", () => {
+  it.each(detailedBudgets)("aggregates %s to the existing %s budget without adding a plan line", (category, expected) => {
+    expect(variableBudgetId(category)).toBe(expected);
+  });
+  it.each(["Gehalt", "Rufbereitschaft", "Einkommen", "Transfer", "Transfer intern", "Prüfen", "Urlaub", "Spotify", "Versicherungen"] as const)(
+    "keeps %s outside variable budgets", (category) => {
+      expect(variableBudgetId(category)).toBeUndefined();
+    },
+  );
+  it("retains granular actuals and refunds while allocating them to exactly seven unchanged budgets", () => {
+    const state = synchronizePlan(createSeed());
+    state.settings.asOf = "2026-09-15";
+    const transaction = (category: Category, amount: number): Transaction => ({
+      id: crypto.randomUUID(), date: "2026-09-02", description: `Fachhandel ${category}`, category,
+      amount, bank: "Revolut", pocket: null, categoryOverride: true, includeInPlan: true,
+    });
+    state.transactions = detailedBudgets.flatMap(([category]) => [transaction(category, -10), transaction(category, 3)]);
+    state.transactions.push(transaction("Gehalt", 2500), transaction("Transfer intern", -1000));
+    const dashboard = calculateDashboard(state);
+    expect(dashboard.plan.rows.map(({ actual, ...row }) => {
+      expect(actual).toBe(({ food: 0, lunch: 0, fuel: 7, leisure: 14, "going-out": 21, gifts: 0, buffer: 49 })[row.id]);
+      return row;
+    })).toEqual(monthlyVariableBudget("2026-09").rows);
+    expect(dashboard.current).toMatchObject({ actualSpending: 119, received: 2500 });
+    expect(dashboard.spending).toHaveLength(detailedBudgets.length);
+    for (const [category] of detailedBudgets)
+      expect(dashboard.spending).toContainEqual({ name: category, value: 7 });
+    expect(synchronizePlan(state).financeRows).toEqual(state.financeRows);
+  });
+  it("uses the personal share and respects explicit exclusions in actual budget totals", () => {
+    const state = synchronizePlan(createSeed());
+    state.settings.asOf = "2026-09-15";
+    state.transactions = [
+      { id: "shared", date: "2026-09-02", description: "Gasthaus Linde", category: "Restaurants", amount: -101,
+        bank: "Revolut", pocket: null, categoryOverride: true, includeInPlan: true, sharedWithRaphael: true },
+      { id: "extra", date: "2026-09-02", description: "Bistro Linde", category: "Restaurants", amount: -40,
+        bank: "Revolut", pocket: null, categoryOverride: true, includeInPlan: false },
+    ];
+    const dashboard = calculateDashboard(state);
+    expect(dashboard.plan.rows.find((row) => row.id === "going-out")?.actual).toBe(50.5);
+    expect(dashboard.spending).toEqual([{ name: "Restaurants", value: 90.5 }]);
+  });
   it.each([2026, 2027])("uses only the gift calendar in %s, without spreading Christmas", (year) => {
     const actual = Array.from({ length: 12 }, (_, index) => monthlyVariableBudget(`${year}-${String(index + 1).padStart(2, "0")}`).rows.find((row) => row.id === "gifts")!.total);
     expect(actual).toEqual([50, 50, 0, 50, 100, 0, 50, 50, 0, 0, 100, 1000]);

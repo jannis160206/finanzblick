@@ -134,7 +134,7 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
     await page.getByRole("button", { name: "Zuordnung ändern: Cineplexx", exact: true }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Bildung");
-    await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+    await dialog.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
     await expect(dialog).toHaveCount(0);
     await saved(page);
     await page.reload();

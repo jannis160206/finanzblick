@@ -195,7 +195,38 @@ body {
   @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium;
 }
 .select-input {
-  @apply h-9 rounded-md border border-input bg-background px-3 text-xs outline-none;
+  @apply h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-[border-color,box-shadow] duration-150;
+}
+.select-input:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent);
+}
+.select-input[aria-invalid="true"] {
+  border-color: var(--destructive);
+}
+.select-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+[data-slot="dialog-body"] {
+  scrollbar-gutter: stable;
+}
+@media (pointer: coarse) {
+  [data-slot="button"],
+  [data-slot="dialog-close"],
+  [data-slot="input"],
+  .select-input,
+  [role="menuitem"],
+  [role="tab"],
+  [role="option"] {
+    min-height: 44px;
+  }
+  [data-slot="button"][data-size^="icon"] {
+    min-width: 44px;
+  }
+  .select-input {
+    font-size: 16px;
+  }
 }
 .editable {
   background-color: #fff2c4 !important;

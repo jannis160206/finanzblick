@@ -118,7 +118,7 @@ test("unknown merchants use locked facts and category only; invalid amounts rema
     name: "Buchung prüfen: Unbekannter Händler",
     exact: true,
   });
-  await expect(unknown.locator(".editable")).toHaveCount(1);
+  await expect(unknown.locator(".editable")).toHaveCount(0);
   await expect(unknown.getByRole("combobox")).toHaveCount(1);
   for (const field of ["Datum", "Text", "Betrag", "Konto/Pocket"])
     await expect(unknown.getByLabel(field, { exact: true })).toHaveJSProperty(

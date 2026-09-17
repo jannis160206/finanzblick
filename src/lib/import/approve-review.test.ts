@@ -413,6 +413,7 @@ describe("conservative booking review fallbacks", () => {
 
   it.each([
     "Prüfen", "Transfer", "Transfer intern", "Gehalt", "Einkommen", "Abonnements", "Leasing", "Urlaub",
+    "Miete", "Energie & Nebenkosten", "Unterkunft", "Flugreisen",
   ] as const)("declines the complex or unresolved target category %s", (category) => {
     const state = fixture([booking("selected")]);
     expect(approveReviewedBooking(state, choose(state, "selected", category))).toBeUndefined();

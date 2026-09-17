@@ -1,8 +1,10 @@
-import type { AppState, Category, FinanceRow, HolidayRange } from "@/lib/types";
+import { fixedCategories, type AppState, type Category, type FinanceRow, type HolidayRange } from "@/lib/types";
+import { canonicalCategory, isTravelCategory } from "@/lib/categories";
 import { lunchBudget } from "@/lib/holidays-at-kaernten";
 
 const gifts = [50, 50, 0, 50, 100, 0, 50, 50, 0, 0, 100, 1000] as const;
-export const variableBudgetLines: { id: string; label: string; category?: Category; pattern: RegExp; amount: number | "lunch" | "gifts" }[] = [
+export type VariableBudgetId = "food" | "lunch" | "fuel" | "leisure" | "going-out" | "gifts" | "buffer";
+export const variableBudgetLines: { id: VariableBudgetId; label: string; category?: Category; pattern: RegExp; amount: number | "lunch" | "gifts" }[] = [
   { id: "food", label: "Lebensmittel & Haushalt", category: "Lebensmittel", pattern: /lebensmittel/i, amount: 250 },
   { id: "lunch", label: "Mittagessen", category: "Mittagessen", pattern: /mittag/i, amount: "lunch" },
   { id: "fuel", label: "Tanken", category: "Mobilität", pattern: /tanken/i, amount: 180 },
@@ -11,6 +13,33 @@ export const variableBudgetLines: { id: string; label: string; category?: Catego
   { id: "gifts", label: "Geschenke & Spenden", category: "Geschenke & Spenden", pattern: /geschenk|spenden/i, amount: "gifts" },
   { id: "buffer", label: "Giro Puffer", pattern: /giro[\s-]*puffer/i, amount: 100 },
 ];
+const categoryBudgets: Partial<Record<Category, VariableBudgetId>> = {
+  "Lebensmittel": "food",
+  "Drogerie": "food",
+  "Wohnen & Haushalt": "food",
+  "Mittagessen": "lunch",
+  "Mobilität": "fuel",
+  "Tanken": "fuel",
+  "Freizeit": "leisure",
+  "Entertainment": "leisure",
+  "Sport & Fitness": "leisure",
+  "Bildung": "leisure",
+  "Bücher": "leisure",
+  "Weiterbildung": "leisure",
+  "Ausgehen": "going-out",
+  "Restaurants": "going-out",
+  "Lieferdienste": "going-out",
+  "Cafés & Snacks": "going-out",
+  "Geschenke & Spenden": "gifts",
+};
+export function variableBudgetId(category: Category): VariableBudgetId | undefined {
+  category = canonicalCategory(category);
+  if (fixedCategories.includes(category) || isTravelCategory(category) ||
+    category === "Transfer" || category === "Transfer intern" || category === "Prüfen") return;
+  // Detailed non-fuel mobility and larger household purchases use the buffer,
+  // not a new plan line or a redefinition of the grocery and fuel allowances.
+  return categoryBudgets[category] ?? "buffer";
+}
 const matches = (row: FinanceRow, line: typeof variableBudgetLines[number]) => row.kind === "variable" &&
   (row.id === `budget-${line.id}` || (line.category !== undefined && row.planCategory === line.category) || line.pattern.test(row.label));
 const amountFor = (line: typeof variableBudgetLines[number], month: string, ranges: readonly HolidayRange[]) =>

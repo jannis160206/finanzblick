@@ -1,8 +1,8 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -11,9 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -26,16 +28,18 @@ import {
   type FinanceRow,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { CategoryOptions } from "@/components/category-options";
+import { CategorySelect } from "@/components/category-select";
 
 function RowEditor({
   row,
   close,
+  returnFocus,
 }: {
   row: FinanceRow | null;
   close: () => void;
+  returnFocus: () => void;
 }) {
-  const { update } = useFinance();
+  const { state, update, storageError } = useFinance();
   const form = useForm<FinanceRow>({
     resolver: zodResolver(financeRowSchema),
     defaultValues: row ?? {
@@ -52,7 +56,7 @@ function RowEditor({
         if (!open) close();
       }}
     >
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); returnFocus(); }}>
         <DialogHeader>
           <DialogTitle>
             {row ? "Position bearbeiten" : "Position hinzufügen"}
@@ -61,9 +65,16 @@ function RowEditor({
             Die Position steht in beiden Jahren zur Verfügung.
           </DialogDescription>
         </DialogHeader>
-        <form
-          className="space-y-4"
+        <DialogForm
+          noValidate
           onSubmit={form.handleSubmit((value) => {
+            if (storageError) return;
+            if (!row && state.financeRows.length >= 200) {
+              form.setError("root", {
+                message: "Es sind höchstens 200 Positionen möglich. Entferne zuerst eine nicht mehr benötigte Position.",
+              });
+              return;
+            }
             update((current) => ({
               ...current,
               financeRows: row
@@ -76,17 +87,22 @@ function RowEditor({
             toast.success("Position gespeichert");
           })}
         >
+          <DialogBody className="space-y-5">
           <div>
             <Label htmlFor="row-label">Bezeichnung</Label>
             <Input
               id="row-label"
-              className="editable mt-2"
+              className="mt-2"
               autoFocus
+              required
+              maxLength={100}
+              aria-invalid={!!form.formState.errors.label}
+              aria-describedby={form.formState.errors.label ? "row-label-error" : undefined}
               {...form.register("label")}
             />
             {form.formState.errors.label && (
-              <p role="alert" className="mt-1 text-xs text-destructive">
-                {form.formState.errors.label.message}
+              <p id="row-label-error" role="alert" className="mt-2 text-sm text-destructive">
+                Bitte eine Bezeichnung mit 1 bis 100 Zeichen eingeben.
               </p>
             )}
           </div>
@@ -94,7 +110,7 @@ function RowEditor({
             <Label htmlFor="row-kind">Bereich</Label>
             <select
               id="row-kind"
-              className="select-input editable mt-2 w-full"
+              className="select-input mt-2 w-full"
               {...form.register("kind")}
             >
               <option value="income">Einnahmen</option>
@@ -102,40 +118,67 @@ function RowEditor({
             </select>
           </div>
           <div>
-            <Label htmlFor="row-plan">
-              Kategorie / Planverknüpfung
-            </Label>
-            <select
-              id="row-plan"
-              className="select-input editable mt-2 w-full"
-              {...form.register("planCategory", {
-                setValueAs: (value) => value || undefined,
-              })}
-            >
-              <option value="">Keine Verknüpfung</option>
-              <CategoryOptions />
-            </select>
+            <Label htmlFor="row-plan">Kategorie / Planverknüpfung</Label>
+            <Controller
+              control={form.control}
+              name="planCategory"
+              render={({ field }) => (
+                <CategorySelect
+                  id="row-plan"
+                  name={field.name}
+                  label="Kategorie / Planverknüpfung"
+                  className="mt-2"
+                  aria-describedby="row-plan-help"
+                  allowAll
+                  allLabel="Keine Verknüpfung"
+                  value={field.value ?? ""}
+                  onBlur={field.onBlur}
+                  onValueChange={(value) => field.onChange(value || undefined)}
+                />
+              )}
+            />
+            <p id="row-plan-help" className="mt-2 text-xs text-muted-foreground">
+              Optional: Ordnet die Position einer Kategorie im Budgetplan zu.
+            </p>
           </div>
+          {(form.formState.errors.root || storageError) && (
+            <p role="alert" className="text-sm text-destructive">
+              {storageError ?? form.formState.errors.root?.message}
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Änderungen werden erst mit „Position speichern“ übernommen. Abbrechen oder Schließen verwirft den Entwurf.
+          </p>
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" type="button" onClick={close}>
               Abbrechen
             </Button>
-            <Button type="submit">Position speichern</Button>
+            <Button type="submit" disabled={!!storageError}>Position speichern</Button>
           </DialogFooter>
-        </form>
+        </DialogForm>
       </DialogContent>
     </Dialog>
   );
 }
 
 export function Months() {
-  const { state, dashboard: d, update } = useFinance();
+  const { state, dashboard: d, update, storageError } = useFinance();
   const [year, setYear] = useState(
     Number(state.settings.asOf.slice(0, 4)) === 2027 ? 2027 : 2026,
   );
   const [editor, setEditor] = useState<FinanceRow | "new" | null>(null);
   const [deleting, setDeleting] = useState<FinanceRow | null>(null);
   const [repair, setRepair] = useState(false);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const returnTarget = useRef<{ id: string; action: "edit" | "delete" } | null>(null);
+  const returnFocus = () => {
+    const target = returnTarget.current;
+    const trigger = Array.from(tableRef.current?.querySelectorAll<HTMLButtonElement>("[data-finance-row-action]") ?? [])
+      .find((button) => button.dataset.financeRowId === target?.id && button.dataset.financeRowAction === target?.action);
+    (trigger ?? addButton.current)?.focus();
+  };
   const months = monthsForYear(year);
   const timeline = d.timeline.filter((row) =>
     row.month.startsWith(String(year)),
@@ -194,7 +237,7 @@ export function Months() {
           ))}
         </div>
         {repair && (
-          <Button size="sm" onClick={() => setEditor("new")}>
+          <Button ref={addButton} size="sm" onClick={() => { returnTarget.current = null; setEditor("new"); }}>
             <Plus className="size-4" />
             Position
           </Button>
@@ -225,7 +268,7 @@ export function Months() {
       </div>
       <section className="panel overflow-hidden">
         <div className="max-h-[75vh] overflow-auto">
-          <table className="month-grid data-table w-full">
+          <table ref={tableRef} className="month-grid data-table w-full">
             <thead>
               <tr>
                 <th className="sticky-label min-w-64">Position · EUR</th>
@@ -276,7 +319,9 @@ export function Months() {
                                   size="icon"
                                   variant="ghost"
                                   aria-label={`${row.label} bearbeiten`}
-                                  onClick={() => setEditor(row)}
+                                  data-finance-row-id={row.id}
+                                  data-finance-row-action="edit"
+                                  onClick={() => { returnTarget.current = { id: row.id, action: "edit" }; setEditor(row); }}
                                 >
                                   <Pencil className="size-3" />
                                 </Button>
@@ -285,7 +330,9 @@ export function Months() {
                                   size="icon"
                                   variant="ghost"
                                   aria-label={`${row.label} löschen`}
-                                  onClick={() => setDeleting(row)}
+                                  data-finance-row-id={row.id}
+                                  data-finance-row-action="delete"
+                                  onClick={() => { returnTarget.current = { id: row.id, action: "delete" }; setDeleting(row); }}
                                 >
                                   <Trash2 className="size-3" />
                                 </Button>
@@ -379,6 +426,7 @@ export function Months() {
         <RowEditor
           row={editor === "new" ? null : editor}
           close={() => setEditor(null)}
+          returnFocus={returnFocus}
         />
       )}
       <Dialog
@@ -387,20 +435,26 @@ export function Months() {
           if (!open) setDeleting(null);
         }}
       >
-        <DialogContent>
+        <DialogContent variant="confirmation" onCloseAutoFocus={(event) => { event.preventDefault(); returnFocus(); }}>
           <DialogHeader>
             <DialogTitle>Position löschen?</DialogTitle>
             <DialogDescription>
-              „{deleting?.label}“ und alle zugehörigen Werte für 2026 und 2027
-              werden entfernt.
+              Diese Aktion kann nicht rückgängig gemacht werden.
             </DialogDescription>
           </DialogHeader>
+          <DialogBody className="space-y-3">
+            <p className="text-sm">
+              „{deleting?.label}“ und alle zugehörigen Werte für 2026 und 2027 werden entfernt.
+            </p>
+            {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleting(null)}>
               Abbrechen
             </Button>
             <Button
               variant="destructive"
+              disabled={!!storageError}
               onClick={() => {
                 update((current) => ({
                   ...current,

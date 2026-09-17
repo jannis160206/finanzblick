@@ -172,13 +172,12 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
   await page
     .getByRole("button", { name: "Zuordnung ändern: Browserprüfung Einkauf" })
     .click();
-  await expect(
-    page.getByLabel("Beschreibung", { exact: true }),
-  ).toHaveJSProperty("readOnly", true);
+  await expect(page.getByRole("region", { name: "Originalbuchung" })).toContainText("Browserprüfung Einkauf");
+  await expect(page.getByRole("dialog").getByRole("textbox")).toHaveCount(0);
   await page
     .getByLabel("Kategorie", { exact: true })
     .selectOption("Gesundheit");
-  await page.getByRole("button", { name: "Speichern", exact: true }).click();
+  await page.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
   await expect(
     page.getByText("Lokal gespeichert", { exact: true }),
   ).toBeVisible();
@@ -192,7 +191,7 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
   ).toBeVisible();
   await page.getByLabel("Weitere Aktionen: Browserprüfung Einkauf").click();
   await page
-    .getByRole("button", { name: "Löschen: Browserprüfung Einkauf" })
+    .getByRole("menuitem", { name: "Löschen: Browserprüfung Einkauf" })
     .click();
   await page.getByRole("button", { name: "Endgültig löschen" }).click();
   await expect(

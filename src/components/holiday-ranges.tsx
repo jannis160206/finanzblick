@@ -6,7 +6,7 @@ import { useFinance } from "@/components/finance-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { appStateSchema } from "@/lib/types";
 import { dateLabel } from "@/lib/format";
 
@@ -17,34 +17,57 @@ export function HolidayRanges() {
   const [to, setTo] = useState("");
   const [error, setError] = useState("");
   const ranges = state.holidayRanges ?? [];
+  const changeOpen = (value: boolean) => {
+    setOpen(value);
+    setFrom("");
+    setTo("");
+    setError("");
+  };
   const chips = <div className="flex flex-wrap gap-1" aria-label="Aktive Urlaubszeiträume">
     {ranges.map((range) => <span key={`${range.from}|${range.to}`} className="inline-flex items-center gap-1 rounded-md border bg-muted/30 px-2 py-1 text-[10px]">
       {dateLabel(range.from)}–{dateLabel(range.to)}
-      <button type="button" disabled={!!storageError} className="rounded p-1 hover:bg-muted" aria-label={`Urlaub löschen: ${range.from} bis ${range.to}`}
+      <button type="button" disabled={!!storageError} className="rounded p-1 text-destructive hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-ring" aria-label={`Urlaub löschen: ${range.from} bis ${range.to}`}
         onClick={() => update((current) => ({ ...current, holidayRanges: current.holidayRanges?.filter((item) => item.from !== range.from || item.to !== range.to) }))}><X className="size-3" /></button>
     </span>)}
   </div>;
   return <>
-    <Button size="sm" variant="outline" disabled={!!storageError} onClick={() => { setOpen(true); setError(""); }}><CalendarDays className="size-3.5" />Urlaub</Button>
-    {!open && chips}
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog open={open} onOpenChange={changeOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm" variant="outline" disabled={!!storageError}><CalendarDays className="size-3.5" />Urlaub</Button>
+      </DialogTrigger>
+      {!open && chips}
+      <DialogContent>
         <DialogHeader><DialogTitle>Urlaubs-Zeiträume</DialogTitle><DialogDescription>Max. 25 Tage je Zeitraum · Wiederkehrende Heimkosten bleiben im Alltag.</DialogDescription></DialogHeader>
-        {chips}
-        <form className="space-y-3" onSubmit={(event) => {
+        <DialogForm noValidate onSubmit={(event) => {
           event.preventDefault();
+          if (storageError) return;
+          if (!from || !to) {
+            setError("Bitte Anfang und Ende des Urlaubszeitraums angeben.");
+            const input = event.currentTarget.elements.namedItem(!from ? "from" : "to");
+            if (input instanceof HTMLElement) input.focus();
+            return;
+          }
           const parsed = appStateSchema.shape.holidayRanges.safeParse([...ranges, { from, to }]);
           if (!parsed.success) { setError(parsed.error.issues[0].message); return; }
           update((current) => ({ ...current, holidayRanges: parsed.data }));
           setFrom(""); setTo(""); setError("");
         }}>
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label htmlFor="holiday-from">Von</Label><Input id="holiday-from" className="mt-2" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-            <div><Label htmlFor="holiday-to">Bis</Label><Input id="holiday-to" className="mt-2" type="date" required value={to} onChange={(e) => setTo(e.target.value)} /></div>
-          </div>
-          {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
-          <div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setOpen(false)}>Fertig</Button><Button type="submit" disabled={!!storageError}>Zeitraum speichern</Button></div>
-        </form>
+          <DialogBody className="space-y-5">
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div><Label htmlFor="holiday-from">Von</Label><Input id="holiday-from" name="from" className="mt-2" type="date" required value={from} aria-invalid={!!error} aria-describedby={error ? "holiday-range-error" : undefined} onChange={(e) => { setFrom(e.target.value); setError(""); }} /></div>
+              <div><Label htmlFor="holiday-to">Bis</Label><Input id="holiday-to" name="to" className="mt-2" type="date" required value={to} aria-invalid={!!error} aria-describedby={error ? "holiday-range-error" : undefined} onChange={(e) => { setTo(e.target.value); setError(""); }} /></div>
+            </div>
+            {error && <p id="holiday-range-error" role="alert" className="text-sm text-destructive">{error}</p>}
+            {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
+            <p className="text-xs text-muted-foreground">„Zeitraum speichern“ übernimmt den Zeitraum sofort. Fertig oder Schließen verwirft nur noch nicht gespeicherte Datumsangaben.</p>
+            {ranges.length > 0 && <section className="space-y-3 border-t pt-5">
+              <h3 className="text-sm font-medium">Gespeicherte Zeiträume</h3>
+              {chips}
+              <p className="text-xs text-muted-foreground">Das Entfernen eines Zeitraums wird sofort übernommen.</p>
+            </section>}
+          </DialogBody>
+          <DialogFooter><Button type="button" variant="outline" onClick={() => changeOpen(false)}>Fertig</Button><Button type="submit" disabled={!!storageError}>Zeitraum speichern</Button></DialogFooter>
+        </DialogForm>
       </DialogContent>
     </Dialog>
   </>;

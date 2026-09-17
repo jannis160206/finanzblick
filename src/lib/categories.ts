@@ -1,8 +1,8 @@
 // Display categories describe a purpose, not a payment provider or contract.
 export const categoryGroups = [
-  { label: "Alltag", categories: ["Lebensmittel", "Mittagessen", "Ausgehen", "Shopping", "Drogerie", "Gesundheit", "Körperpflege"] },
-  { label: "Freizeit & Leben", categories: ["Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Geschenke & Spenden", "Haustiere", "Urlaub"] },
-  { label: "Wohnen & Mobilität", categories: ["Wohnen & Haushalt", "Mobilität", "Leasing"] },
+  { label: "Alltag", categories: ["Lebensmittel", "Mittagessen", "Ausgehen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Shopping", "Kleidung & Schuhe", "Elektronik", "Drogerie", "Gesundheit", "Körperpflege"] },
+  { label: "Freizeit & Leben", categories: ["Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Bücher", "Weiterbildung", "Geschenke & Spenden", "Haustiere", "Urlaub", "Unterkunft", "Flugreisen"] },
+  { label: "Wohnen & Mobilität", categories: ["Wohnen & Haushalt", "Miete", "Energie & Nebenkosten", "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Mobilität", "Tanken", "Öffentliche Verkehrsmittel", "Parken & Maut", "Fahrzeugwartung", "Leasing"] },
   { label: "Verträge & Gebühren", categories: ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren"] },
   { label: "Einnahmen", categories: ["Gehalt", "Rufbereitschaft", "Einkommen"] },
   { label: "Sonstiges & Umbuchungen", categories: ["Sonstiges", "Transfer", "Transfer intern", "Prüfen"] },
@@ -25,7 +25,9 @@ export const allCategories: Category[] = [...categories, ...Object.keys(category
 export function canonicalCategory(category: Category): Category {
   return categoryAliases[category as keyof typeof categoryAliases] ?? category;
 }
-export const groupedContractCategories: readonly Category[] = ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren"];
+export const groupedContractCategories: readonly Category[] = ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren", "Miete", "Energie & Nebenkosten"];
+export const travelCategories: readonly Category[] = ["Urlaub", "Unterkunft", "Flugreisen"];
+export const isTravelCategory = (category: Category) => travelCategories.includes(category);
 
 const suggestions: [RegExp, Category][] = [
   [/kontof[uü]hrungsgeb[uü]hr|kontogeb[uü]hr|kartengeb[uü]hr|(?:amex|american\s*express).*monatsgeb/i, "Bankgebühren"],

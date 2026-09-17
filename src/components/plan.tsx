@@ -8,11 +8,12 @@ import {
   PageHeading,
   SectionHeading,
 } from "@/components/finance-ui";
-import { currency, monthLabel } from "@/lib/format";
+import { currency, dateLabel, monthLabel } from "@/lib/format";
 
 export function Plan() {
   const {
     dashboard: { plan },
+    state,
   } = useFinance();
   return (
     <>
@@ -46,7 +47,7 @@ export function Plan() {
           <div className="p-5 pb-0">
             <SectionHeading
               title="Monatsbudgets"
-              subtitle="Geschenke nach Kalender · Keine Umsatzdurchschnitte"
+              subtitle={`Plan bleibt fest · Ist aus vorhandenen Buchungen bis ${dateLabel(state.settings.asOf)}`}
             />
           </div>
           <div className="overflow-x-auto">
@@ -55,6 +56,7 @@ export function Plan() {
                 <tr>
                   <th>Position</th>
                   <th className="text-right">Plan</th>
+                  <th className="text-right">Ist</th>
                 </tr>
               </thead>
               <tbody>
@@ -64,6 +66,7 @@ export function Plan() {
                     <td className="text-right font-mono font-semibold whitespace-nowrap">
                       {currency(row.total)}
                     </td>
+                    <td className="text-right font-mono whitespace-nowrap">{currency(row.actual)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -74,6 +77,9 @@ export function Plan() {
                   </td>
                   <td className="text-right font-mono font-semibold text-primary">
                     {currency(plan.total)}
+                  </td>
+                  <td className="text-right font-mono font-semibold">
+                    {currency(plan.rows.reduce((total, row) => total + row.actual, 0))}
                   </td>
                 </tr>
               </tfoot>
@@ -90,7 +96,10 @@ export function Plan() {
             <span className="text-sm text-muted-foreground">
               {row.label}
             </span>
-            <span className="font-mono text-sm">{currency(row.total)}</span>
+            <span className="text-right text-sm">
+              <span className="block font-mono">{currency(row.total)} <span className="font-sans text-xs text-muted-foreground">Plan</span></span>
+              <span className="mt-1 block text-xs text-muted-foreground">{currency(row.actual)} Ist</span>
+            </span>
           </div>
         ))}
       </div>

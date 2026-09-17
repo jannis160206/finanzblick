@@ -40,6 +40,8 @@ export const fixedCategories: readonly Category[] = [
   "Telefon & Internet",
   "Bankgebühren",
   "Körperpflege",
+  "Miete",
+  "Energie & Nebenkosten",
 ];
 export const variableCategories = categories.filter(
   (category) =>

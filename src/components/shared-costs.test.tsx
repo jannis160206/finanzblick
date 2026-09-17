@@ -53,10 +53,7 @@ function switchTab(name: "Suchen" | "Offen") {
   return screen.getByRole("tabpanel");
 }
 function rowShare(row: Transaction) {
-  const details = screen.getByLabelText(`Weitere Aktionen: ${row.description}`);
-  if (!details.parentElement?.hasAttribute("open")) fireEvent.click(details);
   const action = screen.getByRole("button", { name: `Teilen: ${row.description}` });
-  expect(action.previousElementSibling?.getAttribute("aria-label")).toBe(`Löschen: ${row.description}`);
   fireEvent.click(action);
   return screen.getByRole("dialog", { name: "Diese Buchung als geteilt markieren?" });
 }
@@ -73,16 +70,13 @@ describe("Geteilt UI", () => {
     expect(screen.getByLabelText("11 offene Teilungen")).toBeTruthy();
 
     const dialog = openModal();
-    const expectedSize = document.createElement("div");
-    expectedSize.style.maxWidth = "min(500px, calc(100vw - 2rem))";
-    expect(dialog.style.maxWidth).toBe(expectedSize.style.maxWidth);
-    expect(dialog.style.maxHeight).toBe("70dvh");
-    expect(dialog.style.overflow).toBe("hidden");
-    expect(dialog.querySelector('[data-slot="dialog-header"]')?.parentElement?.className).toContain("sticky top-0");
-    expect(dialog.querySelector('[data-slot="dialog-footer"]')?.className).toContain("sticky bottom-0");
+    expect(dialog.getAttribute("data-variant")).toBe("work");
+    expect(dialog.className).toContain("overflow-hidden");
+    expect(dialog.querySelector('[data-slot="dialog-header"]')).toBeTruthy();
+    expect(dialog.querySelector('[data-slot="dialog-footer"]')?.className).toContain("shrink-0");
     expect(within(dialog).queryByText("Offen · Raphael Piber")).toBeNull();
     const panel = switchTab("Offen");
-    expect(panel.className).toContain("min-h-0 flex-1 overflow-y-auto");
+    expect(panel.closest('[data-slot="dialog-body"]')?.className).toContain("overflow-y-auto");
     expect(within(panel).getByText("Offen · Raphael Piber")).toBeTruthy();
     expect(within(panel).getAllByRole("listitem")).toHaveLength(11);
     expect(within(panel).queryByText(paid.description)).toBeNull();
@@ -118,7 +112,7 @@ describe("Geteilt UI", () => {
   it("marks a receipt-backed ledger row without modifying the original date or full amount", () => {
     const row = booking("original-bank-id");
     const state = fixture([]);
-    state.fixedReceipts = [{ key: "receipt-key", rowId: "contract", month: "2026-09", date: row.date,
+    state.fixedReceipts = [{ key: "receipt-key", rowId: "contract", date: row.date,
       amount: row.amount, category: row.category, booking: row }];
     const view = renderLedger(state);
     const confirm = rowShare(row);

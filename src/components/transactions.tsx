@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -17,8 +17,10 @@ import {
   ChevronLeft,
   ChevronRight,
   ListChecks,
+  MoreHorizontal,
   Pencil,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
@@ -28,9 +30,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogForm,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -40,8 +44,10 @@ import { actualBookings, bookingMonth, classify, monthKey, sum } from "@/lib/cal
 import { personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { transactionSchema, type Transaction } from "@/lib/types";
-import { CategoryOptions } from "@/components/category-options";
+import { transactionSchema, type Category, type Transaction } from "@/lib/types";
+import { CategorySelect } from "@/components/category-select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { ReviewCount } from "@/components/review-count";
@@ -55,9 +61,11 @@ const accountLabel = (row: Transaction) =>
 function TransactionForm({
   transaction,
   onClose,
+  returnFocus,
 }: {
   transaction: Transaction;
   onClose: () => void;
+  returnFocus: () => void;
 }) {
   const { update } = useFinance();
   const form = useForm<Transaction>({
@@ -120,84 +128,49 @@ function TransactionForm({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); returnFocus(); }}>
         <DialogHeader>
           <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            {preview.reason || "Im Alltagsbudget berücksichtigt"}
+            Ändere die Kategorie. Die ursprüngliche Bankbuchung bleibt unverändert.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={form.handleSubmit(save)} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="tx-date">Datum</Label>
-              <Input
-                id="tx-date"
-                readOnly
-                type="date"
-                className="mt-2"
-                {...form.register("date")}
-              />
-              {error("date")}
-            </div>
-            <div>
-              <Label htmlFor="tx-amount">Betrag (€)</Label>
-              <Input
-                id="tx-amount"
-                readOnly
-                type="number"
-                step="0.01"
-                className="mt-2"
-                placeholder="−24,90"
-                {...form.register("amount", { valueAsNumber: true })}
-              />
-              {error("amount")}
-            </div>
-          </div>
-          <div>
-            <Label htmlFor="tx-description">Beschreibung</Label>
-            <Input
-              id="tx-description"
-              readOnly
-              className="mt-2"
-              placeholder="Händler oder Verwendungszweck"
-              {...form.register("description")}
-            />
-            {error("description")}
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="tx-bank">Konto/Pocket</Label>
-              <Input
-                id="tx-bank"
-                className="mt-2"
-                readOnly
-                value={accountLabel(transaction)}
-              />
-            </div>
-          </div>
-          <div>
+        <DialogForm onSubmit={form.handleSubmit(save)}>
+          <DialogBody className="space-y-6">
+          <section aria-label="Originalbuchung" className="rounded-xl bg-muted/50 p-4">
+            <p className="text-xs font-medium text-muted-foreground">Originalbuchung</p>
+            <p className="mt-2 break-words text-base font-medium">{transaction.description}</p>
+            <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">{currency(transaction.amount)}</p>
+            <dl className="mt-4 space-y-2 text-sm">
+              <div className="flex flex-wrap justify-between gap-2"><dt className="text-muted-foreground">Datum</dt><dd>{dateLabel(transaction.date)}</dd></div>
+              <div className="flex flex-wrap justify-between gap-2"><dt className="text-muted-foreground">Konto/Pocket</dt><dd>{accountLabel(transaction)}</dd></div>
+            </dl>
+          </section>
+          <div className="space-y-2">
             <Label htmlFor="tx-category">Kategorie</Label>
-            <select
+            <CategorySelect
               id="tx-category"
-              className="select-input editable mt-2 w-full"
-              {...form.register("category", {
-                onChange: () =>
-                  form.setValue("categoryOverride", true, {
-                    shouldDirty: true,
-                  }),
-              })}
-            >
-              <CategoryOptions />
-            </select>
+              label="Kategorie"
+              value={values.category ?? transaction.category}
+              onValueChange={(category) => {
+                form.setValue("category", category, { shouldDirty: true, shouldValidate: true });
+                form.setValue("categoryOverride", true, { shouldDirty: true });
+              }}
+              aria-describedby="tx-category-help"
+              aria-invalid={!!form.formState.errors.category}
+            />
+            <p id="tx-category-help" className="text-sm leading-relaxed text-muted-foreground">{preview.reason || "Im Alltagsbudget berücksichtigt"}</p>
+            {error("category")}
           </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">Die Zuordnung wird auch für spätere Buchungen dieses Händlers gelernt. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
+          </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Abbrechen
             </Button>
-            <Button type="submit">Speichern</Button>
+            <Button type="submit">Zuordnung übernehmen</Button>
           </DialogFooter>
-        </form>
+        </DialogForm>
       </DialogContent>
     </Dialog>
   );
@@ -234,12 +207,21 @@ const TransactionLedger = memo(function TransactionLedger({
   const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
+  const actionTrigger = useRef<{ id: string; action: "edit" | "menu" } | null>(null);
+  function returnActionFocus() {
+    // Table cells can remount while a dialog is open; resolve the current button.
+    const target = [...document.querySelectorAll<HTMLButtonElement>("[data-ledger-action]")]
+      .find((button) => button.dataset.bookingId === actionTrigger.current?.id &&
+        button.dataset.ledgerAction === actionTrigger.current?.action);
+    if (target) target.focus();
+    else document.querySelector<HTMLSelectElement>('[aria-label="Kategorie filtern"]')?.focus();
+  }
   const [query, setQuery] = useState("");
   const [selectedMonth, setMonth] = useState<string | null>(null);
   const currentMonth = monthKey(state.settings.asOf);
   const month = selectedMonth ?? currentMonth;
   const [showTransfers, setShowTransfers] = useState(false);
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState<Category | "">("");
   const [account, setAccount] = useState("");
   const [plan, setPlan] = useState("");
   const [from, setFrom] = useState("");
@@ -332,28 +314,43 @@ const TransactionLedger = memo(function TransactionLedger({
             variant="ghost"
             className="size-7"
             aria-label={`Zuordnung ändern: ${row.original.description}`}
-            onClick={() => setEditor(row.original)}
+            data-ledger-action="edit"
+            data-booking-id={row.original.id}
+            onClick={() => { actionTrigger.current = { id: row.original.id, action: "edit" }; setEditor(row.original); }}
           >
             <Pencil className="size-3.5" />
           </Button>
-          <details>
-            <summary
-              className="cursor-pointer text-xs"
-              aria-label={`Weitere Aktionen: ${row.original.description}`}
-            >
-              Weitere Aktionen
-            </summary>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-7 text-muted-foreground hover:text-destructive"
-              aria-label={`Löschen: ${row.original.description}`}
-              onClick={() => setDeleting(row.original)}
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-            <SharedRowAction booking={row.original} />
-          </details>
+          <SharedRowAction booking={row.original} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" variant="ghost" className="size-8"
+                aria-label={`Weitere Aktionen: ${row.original.description}`}
+                data-ledger-action="menu"
+                data-booking-id={row.original.id}
+                onFocus={() => { actionTrigger.current = { id: row.original.id, action: "menu" }; }}>
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent onCloseAutoFocus={(event) => {
+              if (editor || deleting) event.preventDefault();
+            }}>
+              <DropdownMenuItem onSelect={() => {
+                actionTrigger.current = { id: row.original.id, action: "menu" };
+                setEditor(row.original);
+              }}>
+                <Pencil />Zuordnung ändern
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem aria-label={`Löschen: ${row.original.description}`}
+                className="text-destructive data-[highlighted]:bg-destructive/10"
+                onSelect={() => {
+                  actionTrigger.current = { id: row.original.id, action: "menu" };
+                  setDeleting(row.original);
+                }}>
+                <Trash2 />Löschen
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
@@ -435,15 +432,12 @@ const TransactionLedger = memo(function TransactionLedger({
                 </option>
               ))}
           </select>
-          <select
-            aria-label="Kategorie filtern"
-            className="select-input"
+          <CategorySelect
+            label="Kategorie filtern"
+            allowAll
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
-          >
-            <option value="">Alle Kategorien</option>
-            <CategoryOptions />
-          </select>
+            onValueChange={setCategory}
+          />
           <select
             aria-label="Konto/Pocket filtern"
             className="select-input"
@@ -455,12 +449,17 @@ const TransactionLedger = memo(function TransactionLedger({
               <option key={value}>{value}</option>
             ))}
           </select>
-          <details>
-            <summary className="cursor-pointer text-xs">Weitere Filter</summary>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline"><SlidersHorizontal className="size-4" />Weitere Filter{(plan || from || to || showTransfers) && <span className="size-2 rounded-full bg-primary" aria-label="Zusätzliche Filter aktiv" />}</Button>
+            </PopoverTrigger>
+            <PopoverContent aria-label="Weitere Filter" className="max-h-[var(--radix-popover-content-available-height)] space-y-4 overflow-y-auto">
+              <p className="text-sm font-semibold">Umsätze eingrenzen</p>
+              <label className="block space-y-2 text-sm">
+                <span>Planrelevanz</span>
               <select
                 aria-label="Planrelevanz filtern"
-                className="select-input"
+                className="select-input w-full"
                 value={plan}
                 onChange={(e) => setPlan(e.target.value)}
               >
@@ -468,37 +467,36 @@ const TransactionLedger = memo(function TransactionLedger({
                 <option value="yes">Im Plan</option>
                 <option value="no">Nicht im Plan</option>
               </select>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              </label>
+              <label className="block space-y-2 text-sm">
                 Von
                 <Input
                   type="date"
                   aria-label="Datum von"
-                  className="w-36"
                   value={from}
                   onChange={(e) => setFrom(e.target.value)}
                 />
               </label>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <label className="block space-y-2 text-sm">
                 Bis
                 <Input
                   type="date"
                   aria-label="Datum bis"
-                  className="w-36"
                   value={to}
                   onChange={(e) => setTo(e.target.value)}
                 />
               </label>
-              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <label className="flex min-h-11 items-center gap-3 border-t pt-3 text-sm">
                 <input
                   type="checkbox"
-                  className="accent-amber-400"
+                  className="size-4 accent-primary"
                   checked={showTransfers}
                   onChange={(event) => setShowTransfers(event.target.checked)}
                 />
                 Transfers anzeigen
               </label>
-            </div>
-          </details>
+            </PopoverContent>
+          </Popover>
           {filtersActive && (
             <Button
               size="sm"
@@ -622,7 +620,7 @@ const TransactionLedger = memo(function TransactionLedger({
         </div>
       </section>
       {editor && (
-        <TransactionForm transaction={editor} onClose={() => setEditor(null)} />
+        <TransactionForm transaction={editor} onClose={() => setEditor(null)} returnFocus={returnActionFocus} />
       )}
       <Dialog
         open={!!deleting}
@@ -630,7 +628,7 @@ const TransactionLedger = memo(function TransactionLedger({
           if (!open) setDeleting(null);
         }}
       >
-        <DialogContent>
+        <DialogContent variant="confirmation" onCloseAutoFocus={(event) => { event.preventDefault(); returnActionFocus(); }}>
           <DialogHeader>
             <DialogTitle>Umsatz löschen?</DialogTitle>
             <DialogDescription>
