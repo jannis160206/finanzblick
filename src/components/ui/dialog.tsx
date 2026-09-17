@@ -6,11 +6,23 @@ import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { Button } from "@/components/ui/button"
+import { useSecurityMode } from "@/components/security-mode-provider"
 
 function Dialog({
+  open,
+  defaultOpen = false,
+  onOpenChange,
+  allowWhenLocked = false,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Root>) {
-  return <DialogPrimitive.Root data-slot="dialog" {...props} />
+}: React.ComponentProps<typeof DialogPrimitive.Root> & { allowWhenLocked?: boolean }) {
+  const { locked } = useSecurityMode()
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen)
+  return <DialogPrimitive.Root
+    data-slot="dialog"
+    open={(allowWhenLocked || !locked) && (open ?? internalOpen)}
+    onOpenChange={(next) => { setInternalOpen(next); onOpenChange?.(next) }}
+    {...props}
+  />
 }
 
 function DialogTrigger({
@@ -33,11 +45,13 @@ function DialogClose({
 
 function DialogOverlay({
   className,
+  financial = true,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay>) {
+}: React.ComponentProps<typeof DialogPrimitive.Overlay> & { financial?: boolean }) {
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
+      data-financial-overlay={financial ? "" : undefined}
       className={cn(
         "fixed inset-0 z-50 bg-black/35 backdrop-blur-[2px] duration-150 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className
@@ -59,7 +73,7 @@ function DialogContent({
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay />
+      <DialogOverlay financial={variant !== "navigation"} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         data-variant={variant}

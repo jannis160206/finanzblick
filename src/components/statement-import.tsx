@@ -381,6 +381,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       >
         <DialogContent
           variant="work"
+          className="max-h-[min(80dvh,720px)] max-w-[720px]"
           showCloseButton={!ui.pending}
         >
           <DialogHeader>

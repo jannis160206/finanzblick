@@ -1,0 +1,27 @@
+[data-security-screen] {
+  display: none;
+}
+
+:root:not([data-security-mode="open"]) [data-financial-content],
+:root:not([data-security-mode="open"]) [data-financial-number],
+:root:not([data-security-mode="open"]) [data-sonner-toaster],
+:root:not([data-security-mode="open"]) [data-financial-overlay] {
+  display: none !important;
+}
+
+:root:not([data-security-mode="open"]) [data-slot="dialog-content"]:not([data-variant="navigation"]),
+:root:not([data-security-mode="open"]) [data-slot="popover-content"],
+:root:not([data-security-mode="open"]) [data-slot="dropdown-menu"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+:root:not([data-security-mode="open"]) [data-security-screen] {
+  display: flex;
+}
+
+@media print {
+  :root:not([data-security-mode="open"]) [data-financial-content] {
+    display: none !important;
+  }
+}

@@ -6,7 +6,10 @@ import { AppShell } from "@/components/app-shell";
 import { SeasonalThemeProvider } from "@/components/seasonal-theme-provider";
 import { seasonalThemeBootstrap } from "@/lib/seasonal-theme";
 import { getInitialData } from "@/lib/bootstrap";
+import { SecurityModeProvider } from "@/components/security-mode-provider";
+import { securityModeBootstrap } from "@/lib/security-mode";
 import "./globals.css";
+import "./security-mode.css";
 
 export const dynamic = "force-dynamic";
 
@@ -27,19 +30,23 @@ export default async function RootLayout({
     <html
       lang="de"
       data-theme="default"
+      data-security-mode="locked"
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable} h-full antialiased`}
     >
       <head>
         <meta name="darkreader-lock" content="true" />
         <script dangerouslySetInnerHTML={{ __html: seasonalThemeBootstrap }} />
+        <script dangerouslySetInnerHTML={{ __html: securityModeBootstrap }} />
       </head>
       <body className="min-h-full">
+        <SecurityModeProvider>
         <FinanceProvider initialState={initial.state}>
           <SeasonalThemeProvider>
             <AppShell initialWarning={initial.warning}>{children}</AppShell>
           </SeasonalThemeProvider>
         </FinanceProvider>
+        </SecurityModeProvider>
       </body>
     </html>
   );

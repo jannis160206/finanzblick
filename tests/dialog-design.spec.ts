@@ -238,8 +238,8 @@ test("long work dialogs keep actions visible on desktop, phone and short landsca
     await body.evaluate((element) => { element.scrollTop = element.scrollHeight; });
     await expect(close).toBeInViewport();
     const box = (await dialog.boundingBox())!;
-    expect(box.width).toBeLessThanOrEqual(viewport.width - 32 + 1);
-    expect(box.height).toBeLessThanOrEqual(viewport.height - 32 + 1);
+    expect(box.width).toBeLessThanOrEqual(Math.min(viewport.width - 32, 720) + 1);
+    expect(box.height).toBeLessThanOrEqual(Math.min(viewport.height * 0.8, 720) + 1);
     await page.screenshot({ path: testInfo.outputPath(`review-${viewport.width}.png`) });
     await close.click();
   }

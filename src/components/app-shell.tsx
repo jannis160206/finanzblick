@@ -16,6 +16,8 @@ import {
   Menu,
   Moon,
   Settings2,
+  Shield,
+  ShieldCheck,
   Sun,
   Wallet,
 } from "lucide-react";
@@ -32,6 +34,7 @@ import { FinanzblickMark, SeasonalIcon } from "@/components/seasonal-icons";
 import { useFinance } from "@/components/finance-provider";
 import { ReviewCount } from "@/components/review-count";
 import { cn } from "@/lib/utils";
+import { useSecurityMode } from "@/components/security-mode-provider";
 
 const navigation = [
   { href: "/", label: "Übersicht", icon: LayoutDashboard },
@@ -53,6 +56,7 @@ export function AppShell({
   const { ready, saved, storageError, retrySave, openReviewCount } = useFinance();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const security = useSecurityMode();
   const current = navigation.find((item) => item.href === pathname);
   const links = (
     <nav aria-label="Hauptnavigation" className="flex h-full flex-col gap-1.5">
@@ -79,7 +83,7 @@ export function AppShell({
             <item.icon className="size-[18px]" />
           )}
           {item.label}
-          {item.href === "/umsaetze" && ready && <ReviewCount count={openReviewCount} className="ml-auto" />}
+          {item.href === "/umsaetze" && ready && openReviewCount > 0 && <span data-financial-number className="ml-auto" hidden={security.locked}><ReviewCount count={openReviewCount} /></span>}
         </Link>
         </div>
       ))}
@@ -127,6 +131,7 @@ export function AppShell({
               aria-label="Navigation öffnen"
               aria-expanded={menuOpen}
               aria-haspopup="dialog"
+              disabled={!security.ready}
               onClick={() => setMenuOpen(true)}
             >
               <Menu className="size-5" />
@@ -163,6 +168,18 @@ export function AppShell({
             <Button
               variant="ghost"
               size="icon"
+              className={cn("size-9", security.locked && "bg-primary/10 text-primary")}
+              disabled={!security.ready}
+              aria-label={security.locked ? "Sicherheitsmodus deaktivieren" : "Sicherheitsmodus aktivieren"}
+              aria-pressed={security.locked}
+              title={security.locked ? "Sichtschutz aktiv – Finanzdaten anzeigen" : "Finanzdaten ausblenden"}
+              onClick={security.toggle}
+            >
+              {security.locked ? <ShieldCheck className="size-4" /> : <Shield className="size-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               className="size-8"
               aria-label="Farbschema wechseln"
               onClick={() => setTheme(theme === "light" ? "dark" : "light")}
@@ -176,6 +193,18 @@ export function AppShell({
           id="main-content"
           className="mx-auto max-w-[1600px] px-4 py-6 sm:px-7 sm:py-8 xl:px-9"
         >
+          {security.error && <div role="alert" className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+            <CircleAlert className="size-4 shrink-0" />
+            <p className="min-w-0 flex-1">{security.error}</p>
+            <Button variant="outline" size="sm" onClick={security.retry}>Erneut speichern</Button>
+          </div>}
+          <section data-security-screen className="min-h-[55vh] flex-col items-center justify-center rounded-2xl border bg-card px-6 py-12 text-center" aria-label="Sichtschutz">
+            <span className="mb-6 flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary"><LockKeyhole className="size-7" /></span>
+            <h1 className="text-2xl font-semibold tracking-tight">Sicherheitsmodus aktiv</h1>
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">Deine Finanzdaten sind ausgeblendet – auch in Diagrammen und Pop-ups. Zum Anzeigen den Schutz oben neben dem Farbschalter deaktivieren.</p>
+            <p className="mt-6 text-xs text-muted-foreground">Sichtschutz für deinen Bildschirm, keine Passwortsperre.</p>
+          </section>
+          <div data-financial-content hidden={security.locked} inert={security.locked}>
           {storageError && (
             <div
               role="alert"
@@ -211,13 +240,14 @@ export function AppShell({
               <div className="panel h-80 animate-pulse bg-muted/20" />
             </div>
           )}
+          </div>
           <footer className="mt-10 flex flex-wrap justify-between gap-2 border-t pt-4 text-[10px] text-muted-foreground">
             <span>Finanzblick · Persönliche Finanzplanung</span>
             <span>EUR · Planung ist keine Kontobestätigung</span>
           </footer>
         </main>
       </div>
-      <Dialog open={menuOpen} onOpenChange={setMenuOpen}>
+      <Dialog open={menuOpen} onOpenChange={setMenuOpen} allowWhenLocked>
         <DialogContent variant="navigation" onCloseAutoFocus={(event) => {
           event.preventDefault();
           menuTrigger.current?.focus();

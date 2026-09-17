@@ -8,6 +8,7 @@ import { CategoryOptions } from "@/components/category-options";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { useNativeSelectBoundary } from "@/components/ui/use-native-select-boundary";
 
 type CategorySelectProps = Pick<ComponentProps<"select">,
   "id" | "name" | "disabled" | "onBlur" | "aria-describedby" | "aria-invalid"
@@ -31,6 +32,7 @@ const normalize = (text: string) =>
   text.toLocaleLowerCase("de").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 export function CategorySelect(props: CategorySelectProps) {
+  useNativeSelectBoundary();
   const { label, className, excludeReview, disabled, value, id, name, onBlur } = props;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -125,7 +127,7 @@ export function CategorySelect(props: CategorySelectProps) {
             <Search className="size-4" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent aria-label="Kategoriesuche" className="flex max-h-[var(--radix-popover-content-available-height)] flex-col overflow-hidden p-2">
+        <PopoverContent aria-label="Kategoriesuche" className="flex flex-col overflow-hidden p-2">
           <div className="shrink-0 p-1">
             <Input
               role="combobox"

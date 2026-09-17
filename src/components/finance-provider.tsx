@@ -24,6 +24,12 @@ import {
 import { localToday, refreshPlanning, synchronizePlan } from "@/lib/planning";
 import { restoreLegacySourceCategories } from "@/lib/legacy-source";
 import { approveReviewedBooking } from "@/lib/import/approve-review";
+import { useSecurityMode } from "@/components/security-mode-provider";
+
+function FinanceNotifications() {
+  const { locked } = useSecurityMode();
+  return locked ? null : <Toaster richColors position="bottom-right" closeButton />;
+}
 
 const STORAGE_KEY = "finanzdashboard.v1";
 type Store = {
@@ -284,7 +290,7 @@ export function FinanceProvider({
     >
       <FinanceContext.Provider value={value}>
         {children}
-        <Toaster richColors position="bottom-right" closeButton />
+        <FinanceNotifications />
       </FinanceContext.Provider>
     </ThemeProvider>
   );
