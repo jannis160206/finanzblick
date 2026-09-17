@@ -13,6 +13,7 @@ const detailedCategories = [
   "Bildung", "Weiterbildung", "Urlaub", "Miete", "Energie & Nebenkosten",
   "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Tanken",
   "Öffentliche Verkehrsmittel", "Parken & Maut", "Fahrzeugwartung",
+  "Rückerstattungen", "Rücklastschriftgebühren",
 ];
 
 async function seed(page: Page, transactions = [booking]) {
@@ -65,7 +66,7 @@ test("category search, draft discard and save preserve bank facts in the new ins
   await expect(dialog.getByRole("region", { name: "Originalbuchung" })).toContainText("89,90");
   await expect(dialog.getByRole("textbox")).toHaveCount(0);
   const select = dialog.getByLabel("Kategorie", { exact: true });
-  await expect(select.locator("option")).toHaveCount(41);
+  await expect(select.locator("option")).toHaveCount(43);
   for (const legacy of ["Ausgehen", "Kleidung & Schuhe", "Elektronik", "Bücher", "Unterkunft", "Flugreisen"])
     await expect(select.locator(`option[value="${legacy}"]`)).toHaveCount(0);
   for (const category of detailedCategories) {

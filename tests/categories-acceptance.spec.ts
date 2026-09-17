@@ -37,7 +37,8 @@ async function groupedOptions(select: Locator) {
     ["Alltag", ["Drogerie", "Körperpflege", "Shopping", "Guthabenkarten", "Porto & Versand", "Restaurants", "Lieferdienste", "Cafés & Snacks"]],
     ["Freizeit & Leben", [...newCategories.slice(0, 4), "Geschenke & Spenden", "Urlaub"]],
     ["Wohnen & Mobilität", ["Wohnen & Haushalt"]],
-    ["Verträge & Gebühren", ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren"]],
+    ["Verträge & Gebühren", ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren", "Rücklastschriftgebühren"]],
+    ["Sonstiges & Umbuchungen", ["Rückerstattungen"]],
   ] as const) {
     for (const category of categories) {
       const option = select.locator(`optgroup[label="${group}"] option[value="${category}"]`);

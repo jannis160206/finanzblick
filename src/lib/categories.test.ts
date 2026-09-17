@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { categories, categoryAliases, categoryGroups, canonicalCategory, isTravelCategory, type Category } from "./categories";
 import { appStateSchema, fixedCategories, transactionSchema, type Transaction } from "./types";
-import { actualBookings, calculateDashboard, calculateMonthTotals, calculatePlan, classify, missingFixedCosts } from "./calc";
+import { actualBookings, calculateDashboard, calculateMonthTotals, calculatePlan, classify, classifyStatementRows, missingFixedCosts } from "./calc";
 import { createSeed } from "./seed";
 import { exportWorkbook, parseWorkbook } from "./excel";
 import { matchingFixedRow } from "./fixed";
@@ -27,6 +27,7 @@ const expandedCategories = [
   "Bildung", "Weiterbildung", "Urlaub", "Miete", "Energie & Nebenkosten",
   "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Tanken", "Öffentliche Verkehrsmittel",
   "Parken & Maut", "Fahrzeugwartung",
+  "Rückerstattungen", "Rücklastschriftgebühren",
 ] as const satisfies readonly Category[];
 
 describe("structured categories", () => {
@@ -36,6 +37,7 @@ describe("structured categories", () => {
     expect(categories).toContain("Entertainment");
     expect(categories).toContain("Abonnements");
     expect(categoryGroups).toHaveLength(6);
+    expect(categories).toHaveLength(43);
     expect(categories).toEqual(expect.arrayContaining([...expandedCategories]));
     expect(categories).toEqual(expect.arrayContaining([
       "Lebensmittel", "Mittagessen", "Shopping", "Drogerie", "Gesundheit", "Körperpflege",
@@ -131,6 +133,79 @@ describe("structured categories", () => {
       ["Stromrechnung", "Wohnen & Haushalt"], ["OEBB", "Mobilität"], ["Parkgebühr", "Mobilität"],
       ["Shell", "Mobilität"], ["Foodora", "Lieferdienste"],
     ]) expect(classify(booking(description)).category).toBe(category);
+  });
+});
+
+describe("refund and returned-debit fee categories", () => {
+  it.each([
+    "Rücklastschriftgebühr", "Rücklastschriftgebühren", "Ruecklastschriftgebuehr",
+    "Rücklastschrift-Entgelt", "Rücklastschrift Entgelt", "Rücklastschriftkosten",
+    "Gebühr für Rücklastschrift", "Entgelt wegen einer Rücklastschrift",
+  ])("recognizes the explicit fee %s, not returned principal", (description) => {
+    expect(classify(booking(description, "Prüfen", -3.5)).category).toBe("Rücklastschriftgebühren");
+  });
+
+  it.each(["Bankgebühren", "Kontokosten", "Kontoführungsgebühr", "Kontoführungsentgelt", "Entgelt für die Kontoführung"])(
+    "keeps generic account costs %s under Bankgebühren", (description) => {
+      expect(classify(booking(description, "Prüfen", -5)).category).toBe("Bankgebühren");
+    },
+  );
+
+  it.each([-100, 100])("does not infer a fee or income from ambiguous returned principal (%s)", (amount) => {
+    for (const description of ["Rücklastschrift", "Rücklastschrift SEPA", "Ruecklastschrift", "Lastschriftretoure", "Rückerstattung",
+      "Rücklastschrift 100 EUR inklusive Gebühr 3 EUR"])
+      expect(classify(booking(description, "Prüfen", amount)).category).toBe("Prüfen");
+  });
+
+  it("imports explicit one-off fees without treating unresolved reversals as fees or creating contracts", () => {
+    const original = synchronizePlan(stateWith([]));
+    const fee = booking("Rücklastschriftgebühr", "Prüfen", -3.5);
+    const prepared = prepareStatementImport([result([fee, booking("Rücklastschrift", "Prüfen", -100), booking("Rücklastschrift", "Prüfen", 100)])], original);
+    expect(prepared.automatic).toEqual([expect.objectContaining({ ...fee, category: "Rücklastschriftgebühren" })]);
+    expect(prepared.review).toHaveLength(2);
+    expect(prepared.review.every((item) => item.kind === "booking" && item.draft.category === "Prüfen")).toBe(true);
+    const imported = commitStatementImport(original, prepared.automatic, [], prepared.metadata).state;
+    expect(imported.transactions).toHaveLength(1);
+    expect(imported.financeRows).toEqual(original.financeRows);
+    expect(imported.fixedReceipts ?? []).toEqual([]);
+    expect(calculateDashboard(imported).current).toMatchObject({ received: 0, salaryReceived: 0, actualSpending: 3.5 });
+  });
+
+  it("keeps a manually selected positive refund out of salary and preserves it through JSON, Excel and reimport", async () => {
+    const original = synchronizePlan(stateWith([]));
+    const row = { ...booking("Erstattung Fachhandel Linde", "Rückerstattungen", 30), categoryOverride: true };
+    const imported = commitStatementImport(original, [row]).state;
+    const json = appStateSchema.parse(JSON.parse(JSON.stringify(imported)));
+    const excel = (await parseWorkbook(await exportWorkbook(json))).state;
+    for (const state of [imported, json, excel]) {
+      expect(state.transactions[0]).toMatchObject({ ...row, category: "Rückerstattungen" });
+      expect(state.merchantRules ?? []).toEqual(original.merchantRules ?? []);
+      expect(calculateDashboard(state).current).toMatchObject({ received: 0, salaryReceived: 0, actualSpending: -30 });
+      expect(state.financeRows).toEqual(original.financeRows);
+      expect(statementFingerprint(state.transactions[0])).toBe(statementFingerprint(row));
+      const next = prepareStatementImport([result([{ ...row, id: crypto.randomUUID(), date: "2026-09-03", category: "Prüfen", categoryOverride: false }])], state);
+      expect(next.review).toEqual([]);
+      expect(next.automatic[0]).toMatchObject({ category: "Rückerstattungen", amount: 30, categoryOverride: true });
+    }
+  });
+
+  it("retains matched refunds in their original spending category", () => {
+    const debit = { ...booking("Fachhandel Linde", "Shopping", -50), categoryOverride: true };
+    const refund = { ...booking("Fachhandel Linde Erstattung", "Prüfen", 20), date: "2026-09-03" };
+    const matched = classifyStatementRows([refund], [debit]);
+    expect(matched[0]).toMatchObject({ ...refund, category: "Shopping", categoryOverride: true });
+    expect(classify(booking("BILLA Erstattung", "Prüfen", 20)).category).toBe("Lebensmittel");
+  });
+
+  it("keeps matching shared repayments as transfers even when manually tagged as refunds", () => {
+    const state = synchronizePlan(stateWith([]));
+    state.transactions = [
+      { ...booking("Sakura", "Restaurants", -80), categoryOverride: true, sharedWithRaphael: true },
+      { ...booking("Raphael Piber Rückerstattung", "Rückerstattungen", 40), date: "2026-09-03", categoryOverride: true },
+    ];
+    const repayment = actualBookings(state).find((row) => row.amount > 0)!;
+    expect(classify(repayment)).toMatchObject({ category: "Transfer", isTransfer: true, includeInPlan: false });
+    expect(calculateDashboard(state).current).toMatchObject({ received: 0, salaryReceived: 0, actualSpending: 40 });
   });
 });
 

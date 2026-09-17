@@ -3,9 +3,9 @@ export const categoryGroups = [
   { label: "Alltag", categories: ["Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Shopping", "Guthabenkarten", "Porto & Versand", "Drogerie", "Gesundheit", "Körperpflege"] },
   { label: "Freizeit & Leben", categories: ["Entertainment", "Freizeit", "Sport & Fitness", "Bildung", "Weiterbildung", "Geschenke & Spenden", "Haustiere", "Urlaub"] },
   { label: "Wohnen & Mobilität", categories: ["Wohnen & Haushalt", "Miete", "Energie & Nebenkosten", "Möbel & Einrichtung", "Reparaturen & Instandhaltung", "Mobilität", "Tanken", "Öffentliche Verkehrsmittel", "Parken & Maut", "Fahrzeugwartung", "Leasing"] },
-  { label: "Verträge & Gebühren", categories: ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren"] },
+  { label: "Verträge & Gebühren", categories: ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren", "Rücklastschriftgebühren"] },
   { label: "Einnahmen", categories: ["Gehalt", "Rufbereitschaft", "Einkommen"] },
-  { label: "Sonstiges & Umbuchungen", categories: ["Sonstiges", "Transfer", "Transfer intern", "Prüfen"] },
+  { label: "Sonstiges & Umbuchungen", categories: ["Sonstiges", "Rückerstattungen", "Transfer", "Transfer intern", "Prüfen"] },
 ] as const;
 type CurrentCategory = (typeof categoryGroups)[number]["categories"][number];
 export const categories = categoryGroups.flatMap((group): CurrentCategory[] => [...group.categories]);
@@ -36,7 +36,8 @@ export const travelCategories: readonly Category[] = ["Urlaub"];
 export const isTravelCategory = (category: Category) => travelCategories.includes(canonicalCategory(category));
 
 const suggestions: [RegExp, Category][] = [
-  [/kontof[uü]hrungsgeb[uü]hr|kontogeb[uü]hr|kartengeb[uü]hr|(?:amex|american\s*express).*monatsgeb/i, "Bankgebühren"],
+  [/kontof[uü]hrungsgeb[uü]hr|kontogeb[uü]hr|kartengeb[uü]hr|bankgeb[uü]hr|kontof[uü]hrungsentgelt|\bkontokosten\b|\bentgelt\s+f[uü]r\s+(?:die\s+)?kontof[uü]hrung\b|(?:amex|american\s*express).*monatsgeb/i, "Bankgebühren"],
+  [/\br(?:ü|ue|u)cklastschrift[-\s]*(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\b|\b(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\s+(?:f[uü]r|wegen)\s+(?:(?:eine|einer|der)\s+)?r(?:ü|ue|u)cklastschrift\b/i, "Rücklastschriftgebühren"],
   [/\bspotify\b|\bnetflix\b|disney\s*\+|disney\s*plus|youtube\s*premium|apple\s*music|icloud\s*\+?|microsoft\s*365|adobe\s*(?:creative|acrobat)|chatgpt|nordvpn/i, "Abonnements"],
   [/\b(?:abo|abonnement|subscription|recurring)\b|wiederkehrend/i, "Abonnements"],
   [/\bkino\b|cinema|cineplexx|cinemaxx|eventim|ticketmaster|oeticket|\bsteam(?:games)?\b|playstation|nintendo|xbox/i, "Entertainment"],
