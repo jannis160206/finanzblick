@@ -10,10 +10,18 @@ export function hasTerminalText(text: string): boolean {
   return terminal.test(text);
 }
 
+const merchantLabel = String.raw`(?:h(?:ä|ae|a)ndler|merchant)(?:[\s-]*name)?`;
+const labeledMerchant = new RegExp(`${merchantLabel}\\s*:`, "i");
+const namedMerchant = new RegExp(
+  String.raw`(?:^|[\s;|])${merchantLabel}\s*:\s*([\s\S]*?)(?=\s*(?:${merchantLabel}|verwendungszweck(?:\/text)?|zahlungsreferenz|auftraggeberreferenz|mandat|referenz|iban|bic|h(?:ä|ae|a)ndler[\s-]*(?:ort|land)|merchant[\s-]*(?:city|country))\s*:|\s+(?:iban|bic)\b|$)`,
+  "gi",
+);
+const leadingLabel = new RegExp(`^(?:verwendungszweck(?:/text)?|zahlungsreferenz|details|transaktionsdetails|${merchantLabel}|zusatztext)\\s*:\\s*`, "i");
+
 // Strip only payment metadata. Never use a timestamp, reference, IBAN or
 // currency-only cell as a merchant, nor fabricate a merchant from a POS amount.
 export function merchantText(text: string): string {
-  const labeled = text.replace(/^(?:verwendungszweck(?:\/text)?|zahlungsreferenz|details|transaktionsdetails|händler|merchant|zusatztext)\s*:\s*/i, "");
+  const labeled = text.replace(leadingLabel, "");
   const value = clean(labeled
     .replace(/\bterminal[-\s]*(?:id|nr|nummer)\.?\s*:?\s*[A-Z\d*-]+/gi, " ")
     .replace(/\b(?:kartenfolge(?:[-\s]*(?:nr|nummer)\.?)?|karten(?:nummer|[-\s]*nr\.?)|terminal(?:[-\s]*(?:id|nr)\.?)?)\s*:?\s*[\d*X-]+/gi, " ")
@@ -33,15 +41,16 @@ export function unresolvedTerminal(text: string): boolean {
   return hasTerminalText(text) && !merchantText(text);
 }
 
-const recoverable = (row: MerchantSource) => hasTerminalText(row.description) || purpose.test(row.description) || reference.test(row.description);
+const recoverable = (row: MerchantSource) => hasTerminalText(row.description) || purpose.test(row.description) || reference.test(row.description) || labeledMerchant.test(row.description);
 function merchantCandidates(row: MerchantSource): string[] {
   const sources = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""];
   const extract = (pattern: RegExp) => sources.map((text) => pattern.exec(text)?.[1])
     .filter((text): text is string => !!text).map(merchantText).filter(Boolean);
-  // Purpose is authoritative; a payment reference may just contain an ID.
+  // Explicit merchant fields outrank purpose/reference text, which may be only payment metadata.
+  const named = sources.flatMap((text) => [...text.matchAll(namedMerchant)].map((match) => merchantText(match[1]))).filter(Boolean);
   const purposes = extract(purpose);
   const references = extract(reference);
-  const candidates = purposes.length ? purposes : references.length ? references : sources.map(merchantText).filter(Boolean);
+  const candidates = named.length ? named : purposes.length ? purposes : references.length ? references : sources.map(merchantText).filter(Boolean);
   return [...new Map(candidates.map((text) => [clean(text).toLowerCase(), text])).values()];
 }
 

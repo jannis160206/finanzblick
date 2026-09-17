@@ -44,6 +44,7 @@ type Header = {
   time: number;
   description: number;
   details: number[];
+  merchants: { index: number; label: string }[];
   amount: number;
   amountColumns: number[];
   incoming: number;
@@ -208,7 +209,7 @@ function headerFor(cells: string[]): Header | null {
     "starteddate",
     "completeddate",
   );
-  const description = index(
+  let description = index(
     "verwendungszwecktext",
     "verwendungszweck",
     "buchungstext",
@@ -218,6 +219,9 @@ function headerFor(cells: string[]): Header | null {
     "umsatzbeschreibung",
     "transaktionsdetails",
   );
+  if (description < 0) description = index("zahlungsreferenz");
+  const merchants = headers.flatMap((name, index) =>
+    /^(?:h(?:ae|a)ndler|merchant)(?:name)?$/.test(name) ? [{ index, label: clean(cells[index]) }] : []);
   const amountColumns = headers.flatMap(
     (name, index) =>
       amountHeaders.includes(name) ||
@@ -256,7 +260,8 @@ function headerFor(cells: string[]): Header | null {
     time: index("uhrzeit", "zeit", "time", "transaktionszeit", "transactiontime"),
     description,
     details: headers.flatMap((name, index) => index !== description &&
-      /verwendungszweck|beschreibung|buchungstext|details|zusatz|merchant|haendler|empfaenger|zahlungsempfaenger/.test(name) ? [index] : []),
+      /verwendungszweck|beschreibung|buchungstext|details|zusatz|merchant|h(?:ae|a)ndler|empfaenger|zahlungsempfaenger/.test(name) ? [index] : []),
+    merchants,
     amount,
     amountColumns,
     incoming,
@@ -308,6 +313,7 @@ const raiffeisenHeader: Header = {
   time: 5,
   description: 1,
   details: [],
+  merchants: [],
   amount: 3,
   amountColumns: [3],
   currency: 4,
@@ -520,6 +526,9 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         rawDetails = [...new Set([...header.details, ...row.cells.map((_, index) => index).filter((index) =>
           index > header!.description && !reserved.has(index))])]
           .map((index) => clean(get(index))).filter(Boolean).slice(0, 20).map((text) => text.slice(0, 1000));
+        // Keep the bank cell values and their merchant-field provenance for later repairs.
+        rawDetails = [...header.merchants.flatMap(({ index, label }) =>
+          get(index).trim() ? [`${label}: ${clean(get(index))}`.slice(0, 1000)] : []), ...rawDetails].slice(0, 20);
         sourceCategory = clean(get(header.category));
         bankReference = clean(get(header.reference));
         time = statementTime(description, ...rawDetails, get(header.time), dateText);

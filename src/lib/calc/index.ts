@@ -192,8 +192,8 @@ export function classify(
     !isIncomeCategory(category) && !isAmazon && !isTravelCategory(category) &&
     (transaction.category === "Urlaub" || /^urlaub\b/i.test(sourceCategory) ||
       (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
-  if (unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
-  if (ambiguousMerchant(recovered) && !detectedTransfer) category = "Prüfen";
+  if (!transaction.categoryOverride && unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
+  if (!transaction.categoryOverride && ambiguousMerchant(recovered) && !detectedTransfer) category = "Prüfen";
   if (known === "Prüfen" && !transaction.categoryOverride && !detectedTransfer) category = "Prüfen";
   // A partner transfer must not become a salary receipt before reconciliation.
   if (isRaphaelPayment(transaction) && ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(category)) category = "Sonstiges";

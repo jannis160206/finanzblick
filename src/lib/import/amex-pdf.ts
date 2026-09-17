@@ -182,7 +182,6 @@ export function parseAmexText(
         detail(line);
       } else if (pending && unresolvedTerminal(pending.description) && line) {
         pending.rawDetails = [...(pending.rawDetails ?? []), line.slice(0, 1000)].slice(0, 20);
-        pending = recoverMerchant<StatementDraft>(pending);
       } else if (
         line &&
         !/^(?:Karten(?:nummer|-Nr\.)|Ticketnummer:|R-[a-f\d-]+|\d[\d.]*,\d{2})/i.test(

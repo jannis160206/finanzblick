@@ -76,6 +76,7 @@ function TransactionForm({
   });
   const values = useWatch({ control: form.control });
   const preview = classify({
+    ...transaction,
     description: values.description ?? "",
     amount: values.amount ?? 0,
     category: values.category ?? "Sonstiges",
@@ -94,6 +95,11 @@ function TransactionForm({
       includeInPlan: true,
       ...(value.fixedCost !== undefined ? { fixedCost: canMarkFixed && value.fixedCost } : {}),
     };
+    const result = classify({ ...transaction, ...assignment });
+    if (result.category !== value.category) {
+      form.setError("category", { message: `Für diese Buchung gilt die feste Zuordnung „${result.category}“. Wähle diese Kategorie, um die Änderung zu übernehmen.` });
+      return;
+    }
     update((current) =>
       rememberMerchants(
         {
@@ -300,7 +306,7 @@ const TransactionLedger = memo(function TransactionLedger({
       cell: ({ getValue, row }) => (
         <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="rounded-md border bg-muted/30 px-2 py-1 text-[10px]">{getValue<string>()}</span>
-          {row.original.fixedCost && classifications.get(row.original)!.isFixedCost &&
+          {classifications.get(row.original)!.isFixedCost &&
             <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">Fixkosten</span>}
         </span>
       ),

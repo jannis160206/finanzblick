@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import ExcelJS from "exceljs";
 import { actualBookings, classify } from "@/lib/calc";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { createSeed } from "@/lib/seed";
@@ -8,7 +9,7 @@ import { statementFingerprint } from "./identity";
 import { merchantRuleKey } from "./merchant-rules";
 import { ambiguousMerchant, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import { commitStatementImport, openReviewCount, prepareStatementImport, queueLedgerReview } from "./review";
-import { parseStatementCsv, type StatementResult } from "./statements";
+import { parseStatementCsv, parseStatementFile, type StatementResult } from "./statements";
 
 const noise = "POS 8,40 AT D1 04.09. 16:55 Kartenfolge-Nr.: 1";
 const merchant = "MARTIN AUER ATRIOVIL VILLACH 9500";
@@ -22,6 +23,112 @@ const importAll = (state: ReturnType<typeof createSeed>, results: StatementResul
 };
 
 describe("POS merchant recovery", () => {
+  const paymentReference = "POS 3,50 AT D1 09.09. 11:53 Kartenfolge-Nr.: 1";
+  const namedSource = (label = "Händler Name", first = false) => [
+    "Raiffeisen",
+    `Buchungsdatum;${first ? `${label};` : ""}Buchungstext;Betrag;Zahlungsreferenz;${first ? "" : `${label};`}Referenz`,
+    `10.09.2026;${first ? "BILLA;" : ""}${paymentReference};-3,50;Beleg TEST-350;${first ? "" : "BILLA;"}synthetic-reference`,
+  ].join("\n");
+
+  it.each(["Händler Name", "Händlername", "Haendler Name", "Merchant Name"])("prefers the explicit %s column over payment references in any column order", (label) => {
+    for (const first of [false, true]) {
+      const parsed = parseStatementCsv(namedSource(label, first));
+      expect(parsed.issues).toEqual([]);
+      expect(parsed.rows).toHaveLength(1);
+      expect(parsed.rows[0]).toMatchObject({
+        description: "BILLA", rawDescription: paymentReference, amount: -3.5,
+        date: "2026-09-10", time: "11:53:00", bankReference: "synthetic-reference",
+      });
+      expect(parsed.rows[0].rawDetails).toEqual(expect.arrayContaining(["BILLA", "Beleg TEST-350"]));
+    }
+  });
+
+  it("accepts Zahlungsreferenz as the source text when no booking-text column exists", () => {
+    const parsed = parseStatementCsv(`Raiffeisen\nBuchungsdatum;Zahlungsreferenz;Betrag;Händler Name\n10.09.2026;${paymentReference};-3,50;BILLA`);
+    expect(parsed.rows[0]).toMatchObject({ description: "BILLA", rawDescription: paymentReference, amount: -3.5, date: "2026-09-10" });
+  });
+
+  it("shares named-column precedence with Raiffeisen XLSX statements", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Raiffeisen");
+    namedSource().split("\n").slice(1).forEach((row) => sheet.addRow(row.split(";")));
+    const buffer = await workbook.xlsx.writeBuffer() as ArrayBuffer;
+    const parsed = await parseStatementFile({ name: "synthetic-raiffeisen.xlsx", size: buffer.byteLength, arrayBuffer: async () => buffer });
+    expect(parsed.rows[0]).toMatchObject({ description: "BILLA", rawDescription: paymentReference, bankReference: "synthetic-reference", amount: -3.5 });
+  });
+
+  it.each(["Händler Name", "Händlername", "Haendler Name", "Merchant Name"])("recovers persisted labelled %s without changing any original bank facts", (label) => {
+    const row = {
+      ...legacy(), date: "2026-09-10", amount: -3.5, description: paymentReference,
+      rawDescription: paymentReference, bankReference: "synthetic-reference",
+      rawDetails: [`Zahlungsreferenz: ${paymentReference}`, `Verwendungszweck: Kartenzahlung`, `${label}: BILLA`],
+    };
+    expect(recoverMerchant(row)).toEqual({ ...row, description: "BILLA" });
+    expect(recoverMerchant({ ...row, description: "Pizzeria" }).description).toBe("Pizzeria");
+  });
+
+  it("separates an embedded merchant label from payment and card metadata", () => {
+    const row = {
+      description: `Zahlungsreferenz: ${paymentReference} Händler Name: BILLA IBAN: AT000000000000000000 BIC: TESTAT00`,
+    };
+    expect(recoverMerchant(row)).toEqual({ description: "BILLA", rawDescription: row.description });
+  });
+
+  it("prefers named merchants over conflicting purpose text and detects conflicts within one raw field", () => {
+    const row = {
+      description: paymentReference,
+      rawDetails: ["Verwendungszweck: SPAR Zahlungsreferenz: Beleg TEST-350 Händler Name: BILLA"],
+    };
+    expect(recoverMerchant(row).description).toBe("BILLA");
+    const conflicting = { ...row, rawDetails: ["Händler Name: BILLA Merchant Name: SPAR"] };
+    expect(ambiguousMerchant(conflicting)).toBe(true);
+    expect(recoverMerchant(conflicting)).toBe(conflicting);
+  });
+
+  it("keeps a Raiffeisen POS payment reference without a merchant in review", () => {
+    const parsed = parseStatementCsv(`Raiffeisen\nBuchungsdatum;Zahlungsreferenz;Betrag;Händler Name\n10.09.2026;${paymentReference};-3,50;`);
+    expect(parsed.rows[0]).toMatchObject({ description: paymentReference, amount: -3.5, date: "2026-09-10" });
+    expect(prepareStatementImport([parsed], createSeed()).review).toHaveLength(1);
+  });
+
+  it("does not choose between conflicting named merchants or invent one from empty labelled fields", () => {
+    const conflicting = { description: paymentReference, rawDetails: ["Händler Name: BILLA", "Merchant Name: SPAR"] };
+    expect(ambiguousMerchant(conflicting)).toBe(true);
+    expect(recoverMerchant(conflicting)).toBe(conflicting);
+    for (const name of ["", paymentReference]) {
+      const row = { ...legacy(), description: paymentReference, rawDetails: [`Händler Name: ${name}`, `Zahlungsreferenz: ${paymentReference}`] };
+      expect(recoverMerchant(row)).toBe(row);
+      expect(openReviewCount(queueLedgerReview({ ...createSeed(), transactions: [row] }).reviewQueue ?? [])).toBe(1);
+    }
+  });
+
+  it("repairs saved named metadata and re-dropped imports without duplicate ledger rows", async () => {
+    const row = {
+      ...legacy(), date: "2026-09-10", amount: -3.5, description: paymentReference,
+      bankReference: "synthetic-reference", rawDetails: [`Händler Name: BILLA`, `Zahlungsreferenz: ${paymentReference}`],
+    };
+    const state = { ...createSeed(), transactions: [row] };
+    const restored = (await parseWorkbook(await exportWorkbook(state))).state;
+    const repaired = queueLedgerReview(restored);
+    expect(repaired.transactions[0]).toMatchObject({
+      id: row.id, date: row.date, amount: row.amount, bank: row.bank, pocket: row.pocket,
+      bankReference: row.bankReference, rawDetails: row.rawDetails, description: "BILLA", rawDescription: paymentReference,
+    });
+    expect(importAll(repaired, [parseStatementCsv(namedSource())]).transactions).toHaveLength(1);
+    const withoutDetails = { ...state, transactions: [{ ...row, rawDetails: undefined }] };
+    const reimported = importAll(withoutDetails, [parseStatementCsv(namedSource())]);
+    expect(reimported.transactions).toHaveLength(1);
+    expect(reimported.transactions[0]).toMatchObject({ id: row.id, description: "BILLA", rawDescription: paymentReference, bankReference: row.bankReference, amount: row.amount, date: row.date });
+  });
+
+  it.each([false, true])("recovers named PDF continuation fields regardless of order (merchant first: %s)", (first) => {
+    const details = ["Händler Name: BILLA", `Zahlungsreferenz: ${paymentReference}`];
+    if (!first) details.reverse();
+    const parsed = parseAmexText([`American Express\n30.09.2026\nUmsatz vom Buchung am Betrag in EUR\n10.09 10.09 ${paymentReference} 3,50\n${details.join("\n")}`]);
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.rows[0]).toMatchObject({ description: "BILLA", rawDescription: paymentReference, rawDetails: details, amount: -3.5 });
+  });
+
   it.each([
     { description: noise, rawDetails: [], ambiguous: false },
     { description: noise, rawDetails: ["BILLA"], ambiguous: false },
