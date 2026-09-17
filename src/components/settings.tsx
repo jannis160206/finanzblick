@@ -9,6 +9,7 @@ import { useFinance } from "@/components/finance-provider";
 import { PageHeading, SectionHeading } from "@/components/finance-ui";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 import { AppearanceControls } from "@/components/appearance-controls";
+import { InteractionSoundsSetting } from "@/components/interaction-sounds";
 import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
 import { latestTRBalance } from "@/lib/calc";
@@ -78,6 +79,7 @@ export function Settings() {
             <Button type="submit" size="sm"><Save className="size-4" />Einstellungen speichern</Button>
           </div>}
         </form>
+        <InteractionSoundsSetting />
         <details className="mt-4 border-t pt-3 text-xs" onToggle={(event) => { if (!event.currentTarget.open) setTestTheme(null); }}>
           <summary className="cursor-pointer text-muted-foreground">Saisonvorschau</summary>
           <label className="mt-3 flex flex-wrap items-center gap-3">Vorschau

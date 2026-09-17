@@ -7,6 +7,7 @@ import { SeasonalThemeProvider } from "@/components/seasonal-theme-provider";
 import { seasonalThemeBootstrap } from "@/lib/seasonal-theme";
 import { getInitialData } from "@/lib/bootstrap";
 import { SecurityModeProvider } from "@/components/security-mode-provider";
+import { InteractionSoundsProvider } from "@/components/interaction-sounds";
 import { securityModeBootstrap } from "@/lib/security-mode";
 import "./globals.css";
 import "./security-mode.css";
@@ -43,7 +44,9 @@ export default async function RootLayout({
         <SecurityModeProvider>
         <FinanceProvider initialState={initial.state}>
           <SeasonalThemeProvider>
-            <AppShell initialWarning={initial.warning}>{children}</AppShell>
+            <InteractionSoundsProvider>
+              <AppShell initialWarning={initial.warning}>{children}</AppShell>
+            </InteractionSoundsProvider>
           </SeasonalThemeProvider>
         </FinanceProvider>
         </SecurityModeProvider>
