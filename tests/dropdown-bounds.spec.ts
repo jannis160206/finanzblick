@@ -61,7 +61,7 @@ async function pickerBounds(cdp: CDPSession, select: Locator) {
   const { object } = await cdp.send("DOM.resolveNode", { backendNodeId: picker.backendNodeId });
   const { result } = await cdp.send("Runtime.callFunctionOn", {
     objectId: object.objectId,
-    functionDeclaration: "function() { return { scrollHeight: this.scrollHeight, clientHeight: this.clientHeight }; }",
+    functionDeclaration: "function() { return { scrollHeight: this.scrollHeight, clientHeight: this.clientHeight, scrollTop: this.scrollTop }; }",
     returnByValue: true,
   });
   await select.evaluate((element) => element.removeAttribute("data-bounds-probe"));
@@ -69,7 +69,7 @@ async function pickerBounds(cdp: CDPSession, select: Locator) {
     x: model.border[0], y: model.border[1],
     right: model.border[2], bottom: model.border[5],
     height: model.height,
-    ...result.value as { scrollHeight: number; clientHeight: number },
+    ...result.value as { scrollHeight: number; clientHeight: number; scrollTop: number },
   };
 }
 
@@ -111,6 +111,68 @@ async function checkSelect(page: Page, cdp: CDPSession, select: Locator, testInf
 }
 
 for (const viewport of viewports) {
+  test(`native dropdowns scroll down and back up with the mouse wheel at ${viewport.width}x${viewport.height}`, async ({ page, context }) => {
+    await page.setViewportSize(viewport);
+    await seed(page);
+    const cdp = await context.newCDPSession(page);
+    async function scrollSearch(trigger: Locator) {
+      await trigger.click();
+      const list = page.getByRole("listbox", { name: "Kategorien", exact: true });
+      await expect(list).toBeVisible();
+      const box = (await list.boundingBox())!;
+      const windowY = await page.evaluate(() => scrollY);
+      const dialogBody = page.locator('[data-slot="dialog-body"]:visible');
+      const bodyY = await dialogBody.count() ? await dialogBody.evaluate((element) => element.scrollTop) : undefined;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.wheel(0, 600);
+      await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(300);
+      await page.mouse.wheel(0, -1200);
+      await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => scrollY)).toBe(windowY);
+      if (bodyY !== undefined) expect(await dialogBody.evaluate((element) => element.scrollTop)).toBe(bodyY);
+      await page.keyboard.press("Escape");
+      await expect(list).toHaveCount(0);
+    }
+    async function scrollBothWays(select: Locator) {
+      await select.click();
+      await expect.poll(() => select.evaluate((element) => element.matches(":open"))).toBe(true);
+      await page.keyboard.press("Home");
+      const bounds = await pickerBounds(cdp, select);
+      const windowY = await page.evaluate(() => scrollY);
+      const dialogBody = page.locator('[data-slot="dialog-body"]:visible');
+      const bodyY = await dialogBody.count() ? await dialogBody.evaluate((element) => element.scrollTop) : undefined;
+      await page.mouse.move((bounds.x + bounds.right) / 2, (bounds.y + bounds.bottom) / 2);
+      for (let cycle = 0; cycle < 2; cycle++) {
+        await page.mouse.wheel(0, 600);
+        await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeGreaterThan(300);
+        await page.mouse.wheel(0, -1200);
+        await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeLessThanOrEqual(1);
+      }
+      for (const delta of [1800, 1200, 600, 300, 100]) await page.mouse.wheel(0, delta);
+      const maxScroll = bounds.scrollHeight - bounds.clientHeight;
+      await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeGreaterThanOrEqual(maxScroll - 1);
+      await page.mouse.wheel(0, -300);
+      await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeLessThan(maxScroll - 100);
+      await page.mouse.wheel(0, -bounds.scrollHeight);
+      await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeLessThanOrEqual(1);
+      expect(await page.evaluate(() => scrollY)).toBe(windowY);
+      if (bodyY !== undefined) expect(await dialogBody.evaluate((element) => element.scrollTop)).toBe(bodyY);
+      await page.keyboard.press("Escape");
+    }
+    await scrollBothWays(page.getByLabel("Kategorie filtern", { exact: true }));
+    await scrollSearch(page.getByRole("button", { name: "Kategorien durchsuchen", exact: true }));
+    await page.getByRole("button", { name: /^Zuordnung prüfen/ }).click();
+    let dialog = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
+    await scrollBothWays(dialog.getByLabel("Kategorie", { exact: true }).first());
+    await scrollSearch(dialog.getByRole("button", { name: "Kategorie durchsuchen", exact: true }).first());
+    await dialog.getByRole("button", { name: "Prüfung schließen", exact: true }).click();
+    await page.getByRole("button", { name: "Zuordnung ändern: Dropdown Beispiel", exact: true }).click();
+    dialog = page.getByRole("dialog", { name: "Zuordnung ändern", exact: true });
+    await scrollBothWays(dialog.getByLabel("Kategorie", { exact: true }));
+    await scrollSearch(dialog.getByRole("button", { name: "Kategorie durchsuchen", exact: true }));
+    await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
+  });
+
   test(`all native dropdown surfaces stay bounded at ${viewport.width}x${viewport.height}`, async ({ page, context }, testInfo) => {
     await page.setViewportSize(viewport);
     await seed(page);
@@ -198,3 +260,49 @@ for (const viewport of viewports) {
     }
   });
 }
+
+test("touch swipes scroll native and searchable dropdowns in both directions inside a dialog", async ({ page, context }) => {
+  await page.setViewportSize(viewports[0]);
+  await seed(page);
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  await page.getByRole("button", { name: /^Zuordnung prüfen/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
+  const select = dialog.getByLabel("Kategorie", { exact: true }).first();
+  await select.click();
+  await expect.poll(() => select.evaluate((element) => element.matches(":open"))).toBe(true);
+  await page.keyboard.press("Home");
+  const bounds = await pickerBounds(cdp, select);
+  const body = dialog.locator('[data-slot="dialog-body"]');
+  const bodyY = await body.evaluate((element) => element.scrollTop);
+  async function swipe(box: { x: number; y: number; width: number; height: number }, upward: boolean) {
+    const x = box.x + box.width / 2;
+    const startY = box.y + box.height * (upward ? 0.2 : 0.8);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart", touchPoints: [{ x, y: startY }],
+    });
+    for (let step = 1; step <= 10; step++) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: startY + box.height * (upward ? 0.6 : -0.6) * step / 10 }],
+      });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  }
+  const nativeBox = { ...bounds, width: bounds.right - bounds.x };
+  await swipe(nativeBox, false);
+  await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeGreaterThan(50);
+  const down = (await pickerBounds(cdp, select)).scrollTop;
+  await swipe(nativeBox, true);
+  await expect.poll(async () => (await pickerBounds(cdp, select)).scrollTop).toBeLessThan(down - 50);
+  await page.keyboard.press("Escape");
+  await dialog.getByRole("button", { name: "Kategorie durchsuchen", exact: true }).first().click();
+  const list = page.getByRole("listbox", { name: "Kategorien", exact: true });
+  const box = (await list.boundingBox())!;
+  await swipe(box, false);
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeGreaterThan(50);
+  const listDown = await list.evaluate((element) => element.scrollTop);
+  await swipe(box, true);
+  await expect.poll(() => list.evaluate((element) => element.scrollTop)).toBeLessThan(listDown - 50);
+  expect(await body.evaluate((element) => element.scrollTop)).toBe(bodyY);
+});

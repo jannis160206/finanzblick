@@ -7,6 +7,7 @@ import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { Button } from "@/components/ui/button"
 import { useSecurityMode } from "@/components/security-mode-provider"
+import { useNativeSelectBoundary } from "@/components/ui/use-native-select-boundary"
 
 function Dialog({
   open,
@@ -71,6 +72,7 @@ function DialogContent({
   showCloseButton?: boolean
   variant?: "default" | "confirmation" | "work" | "navigation"
 }) {
+  useNativeSelectBoundary()
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay financial={variant !== "navigation"} />
