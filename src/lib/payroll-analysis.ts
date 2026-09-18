@@ -1,0 +1,550 @@
+import {
+  payslipKey,
+  payslipSchema,
+  payrollEmployerKey,
+  payrollForecastSchema,
+  type Payslip,
+  type PayrollForecast,
+  type PayrollForecastMonth,
+} from "@/lib/payslip-schema";
+
+export type PayrollYear = 2026 | 2027;
+
+export const payrollTaxSources = [
+  { label: "RIS · § 67 EStG · Sonderzahlungen", href: "https://www.ris.bka.gv.at/NormDokument.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004570&Paragraf=67&FassungVom=2026-09-18" },
+  { label: "RIS · § 77 EStG · Kontrollsechstel", href: "https://www.ris.bka.gv.at/NormDokument.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004570&Paragraf=77&FassungVom=2026-09-18" },
+  { label: "RIS · § 33 EStG · Einkommensteuertarif", href: "https://www.ris.bka.gv.at/NormDokument.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004570&Paragraf=33&FassungVom=2026-09-18" },
+  { label: "RIS · § 66 EStG · Lohnsteuerberechnung", href: "https://www.ris.bka.gv.at/NormDokument.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004570&Paragraf=66&FassungVom=2026-09-18" },
+  { label: "RIS · BGBl. II Nr. 260/2026 · Werte 2027", href: "https://www.ris.bka.gv.at/Dokumente/BgblAuth/BGBLA_2026_II_260/BGBLA_2026_II_260.html" },
+  { label: "BMF · Anteilige Sonderzahlungs-SV", href: "https://findok.bmf.gv.at/findok/api/volltext?segmentId=c194ab7e-6f27-43db-8323-bbf52114646a" },
+  { label: "ÖGK · Beitragswerte 2026", href: "https://www.oegk.at/cdscontent/?contentid=10007.907722&portal=oegkdgportal" },
+  { label: "ÖGK · Niedrige Einkommen und Arbeitslosenversicherung", href: "https://www.oegk.at/cdscontent/?contentid=10007.904620&portal=oegkdgportal" },
+  { label: "WKO · Steuerliche Behandlung sonstiger Bezüge", href: "https://www.wko.at/lohnverrechnung/sonstige-bezuege-steuerliche-behandlung" },
+];
+
+export type PayrollTax = {
+  preferential: number;
+  tariff: number;
+  total: number;
+  extraDueToOverflow: number;
+  reductionDueToOverflow: number;
+  signedOverflowDelta: number;
+  netSpecial: number;
+};
+
+export type PayrollProjection = {
+  month: number;
+  source: "scenario";
+  regularGrossYtd: number;
+  specialGrossYtd: number;
+  sixth: number;
+  remaining: number;
+  overhang: number;
+  specialGross: number;
+  utilizationSource: "verified" | "gross-comparison";
+  eligibleGross: number;
+  overflowGross: number;
+  controlSixth?: number;
+  tax?: PayrollTax;
+  taxIssues: string[];
+  taxAssumptions: string[];
+};
+
+export type PayrollActual = {
+  month: number;
+  regularGrossYtd?: number;
+  specialGrossYtd?: number;
+  sixth: number;
+  source: "reported" | "calculated";
+  remaining?: number;
+  usedSixth?: number;
+  specialTaxableYtd?: number;
+  controlSixth?: number;
+};
+
+export type PayrollAnalysis = {
+  latest?: Payslip;
+  missingMonths: number[];
+  issues: string[];
+  actual?: PayrollActual;
+  forecast: PayrollForecast;
+  projections: PayrollProjection[];
+  nextSpecial?: PayrollProjection;
+  yearEnd?: PayrollProjection;
+};
+
+const cents = (value: number) => Math.round((value + Number.EPSILON) * 100);
+const money = (value: number) => cents(value) / 100;
+const sum = (values: number[]) => values.reduce((total, value) => total + cents(value), 0) / 100;
+const sameMoney = (left: number, right: number) => cents(left) === cents(right);
+const unique = (values: string[]) => [...new Set(values)];
+const freeLimit = (year: PayrollYear) => year === 2026 ? 2615 : 2675;
+
+function standardSpecialSv2026(gross: number, precedingGross: number): number {
+  const rate = gross <= 2225 ? 0.1412 : gross <= 2427 ? 0.1512 : gross <= 2630 ? 0.1612 : 0.1707;
+  return money(Math.min(gross, Math.max(0, 13860 - precedingGross)) * rate);
+}
+
+function selectedPayslips(payslips: Payslip[], year: PayrollYear, employer: string) {
+  const employerKey = payrollEmployerKey(employer);
+  return payslips
+    .filter((entry) => entry.year === year && payrollEmployerKey(entry.employer) === employerKey)
+    .sort((left, right) => left.month - right.month);
+}
+
+export function defaultPayrollForecast(
+  payslips: Payslip[],
+  year: PayrollYear,
+  employer: string,
+): PayrollForecast {
+  const selected = selectedPayslips(payslips, year, employer);
+  const latest = selected.at(-1);
+  const distinctPeriods = new Set(selected.map(payslipKey)).size === selected.length;
+  let previousSpecialGross = latest ? cumulative(selected, selected.length - 1, "specialGross", "specialGrossYtd") : undefined;
+  return {
+    year,
+    employer: employer.trim(),
+    standardPayrollConfirmed: false,
+    months: latest && distinctPeriods && payslipSchema.safeParse(latest).success
+      ? Array.from({ length: 12 - latest.month }, (_, index) => {
+        const month = latest.month + index + 1;
+        const specialGross = month === 6 || month === 11 ? latest.baseSalary ?? 0 : 0;
+        const specialSv = year === 2026 && previousSpecialGross !== undefined && specialGross > 0
+          ? standardSpecialSv2026(specialGross, previousSpecialGross)
+          : undefined;
+        if (previousSpecialGross !== undefined) previousSpecialGross = sum([previousSpecialGross, specialGross]);
+        return {
+          month,
+          regularGross: latest.regularGross,
+          specialGross,
+          ...(specialSv === undefined ? {} : { specialSv }),
+          ...(latest.monthlyTaxableBase === undefined ? {} : { monthlyTaxableBase: latest.monthlyTaxableBase }),
+        };
+      })
+      : [],
+  };
+}
+
+function mergeForecast(
+  defaults: PayrollForecast,
+  saved: PayrollForecast | undefined,
+  issues: string[],
+  previousSpecialGross: number | undefined,
+): PayrollForecast {
+  if (!saved) return defaults;
+  if (saved.year !== defaults.year || payrollEmployerKey(saved.employer) !== payrollEmployerKey(defaults.employer)) {
+    issues.push("Die gespeicherte Prognose gehört zu einem anderen Jahr oder Arbeitgeber und wurde nicht übernommen.");
+    return defaults;
+  }
+  if (!payrollForecastSchema.safeParse(saved).success) {
+    issues.push("Die Prognose enthält ungültige Beträge oder doppelte Monate; bitte die Annahmen korrigieren.");
+    return defaults;
+  }
+  return {
+    ...defaults,
+    standardPayrollConfirmed: saved.standardPayrollConfirmed,
+    months: defaults.months.map((month) => {
+      const override = saved.months.find((entry) => entry.month === month.month);
+      if (!override) {
+        const specialSv = defaults.year === 2026 && previousSpecialGross !== undefined && month.specialGross > 0
+          ? standardSpecialSv2026(month.specialGross, previousSpecialGross)
+          : month.specialSv;
+        if (previousSpecialGross !== undefined) previousSpecialGross = sum([previousSpecialGross, month.specialGross]);
+        return { ...month, ...(specialSv === undefined ? {} : { specialSv }) };
+      }
+      if (previousSpecialGross !== undefined) previousSpecialGross = sum([previousSpecialGross, override.specialGross]);
+      // An explicitly cleared tax/SV field stays unknown, even at unchanged gross.
+      return { ...override };
+    }),
+  };
+}
+
+function cumulative(
+  entries: Payslip[],
+  index: number,
+  gross: "regularGross" | "specialGross",
+  ytd: "regularGrossYtd" | "specialGrossYtd",
+): number | undefined {
+  let following = 0;
+  for (let cursor = index; cursor >= 0; cursor--) {
+    const entry = entries[cursor];
+    if (entry[ytd] !== undefined) return sum([entry[ytd], following]);
+    following = sum([following, entry[gross]]);
+    if (entry.month === 1) return following;
+    if (entries[cursor - 1]?.month !== entry.month - 1) return undefined;
+  }
+  return undefined;
+}
+
+function consistencyIssues(entries: Payslip[]): string[] {
+  const issues: string[] = [];
+  const keys = new Set<string>();
+  for (const [index, entry] of entries.entries()) {
+    const prefix = `Monat ${entry.month}: `;
+    if (keys.has(payslipKey(entry))) issues.push(`${prefix}doppelte Abrechnung; zuerst den gültigen Stand auswählen.`);
+    keys.add(payslipKey(entry));
+    if (!payslipSchema.safeParse(entry).success) {
+      issues.push(`${prefix}ungültige Abrechnungsdaten; Beträge müssen nichtnegativ und centgenau sein.`);
+      continue;
+    }
+    if (entry.regularSv !== undefined && entry.regularSv > entry.regularGross) {
+      issues.push(`${prefix}laufende SV übersteigt das laufende Brutto.`);
+    }
+    if (entry.specialSv !== undefined && entry.specialSv > entry.specialGross) {
+      issues.push(`${prefix}Sonderzahlungs-SV übersteigt das Sonderzahlungsbrutto.`);
+    }
+    for (const [gross, ytd] of [
+      ["regularGross", "regularGrossYtd"],
+      ["specialGross", "specialGrossYtd"],
+    ] as const) {
+      if (entry[ytd] === undefined) continue;
+      if (entry[ytd] < entry[gross]) {
+        issues.push(`${prefix}kumuliertes ${gross === "regularGross" ? "laufendes Brutto" : "Sonderzahlungsbrutto"} liegt unter dem Monatsbetrag.`);
+      }
+      const earlier = entries.slice(0, index).filter((previous) => previous.month < entry.month);
+      if (entry[ytd] < sum([...earlier.map((previous) => previous[gross]), entry[gross]])) {
+        issues.push(`${prefix}kumuliertes Brutto liegt unter der Summe der vorhandenen Monatsbeträge.`);
+      }
+      for (const [anchorIndex, anchor] of earlier.entries()) {
+        if (anchor[ytd] !== undefined
+          && entry[ytd] < sum([anchor[ytd], ...earlier.slice(anchorIndex + 1).map((previous) => previous[gross]), entry[gross]])) {
+          issues.push(`${prefix}kumuliertes Brutto widerspricht einem früheren bestätigten Jahreswert.`);
+        }
+      }
+      const earlierTotal = earlier.length ? cumulative(earlier, earlier.length - 1, gross, ytd) : 0;
+      if (earlierTotal !== undefined) {
+        const minimum = sum([earlierTotal, entry[gross]]);
+        if (entry[ytd] < minimum) issues.push(`${prefix}kumuliertes Brutto widerspricht früheren Abrechnungen (Korrektur prüfen).`);
+        const contiguous = entry.month === 1 || earlier.at(-1)?.month === entry.month - 1;
+        if (contiguous && !sameMoney(entry[ytd], minimum)) {
+          issues.push(`${prefix}Monatsbeträge und kumuliertes Brutto stimmen nicht überein (Korrektur prüfen).`);
+        }
+      }
+    }
+    const specialGrossYtd = cumulative(entries, index, "specialGross", "specialGrossYtd");
+    if (entry.usedSixth !== undefined && specialGrossYtd !== undefined && entry.usedSixth > specialGrossYtd) {
+      issues.push(`${prefix}verbrauchtes Sechstel übersteigt die kumulierten Sonderzahlungen.`);
+    }
+    if (entry.specialTaxableYtd !== undefined
+      && entry.specialTaxableYtd > (entry.usedSixth ?? specialGrossYtd ?? Infinity)) {
+      issues.push(`${prefix}begünstigte Steuerbasis übersteigt das zugehörige Brutto.`);
+    }
+    for (const field of ["usedSixth", "specialTaxableYtd"] as const) {
+      const earlier = entries.slice(0, index).findLast((previous) => previous[field] !== undefined);
+      if (entry[field] !== undefined && earlier?.[field] !== undefined && entry[field] < earlier[field]) {
+        issues.push(`${prefix}kumulierte Sechstelwerte sind gesunken; Korrektur oder Aufrollung zuerst klären.`);
+      }
+    }
+  }
+  return unique(issues);
+}
+
+type Utilization = {
+  used?: number;
+  taxable?: number;
+  exempt?: boolean;
+  issues: string[];
+};
+
+function historicalUtilization(entries: Payslip[]): Utilization {
+  let used: number | undefined;
+  let taxable: number | undefined;
+  let exempt: boolean | undefined;
+  let issues: string[] = [];
+  for (const [index, entry] of entries.entries()) {
+    const specialTotal = cumulative(entries, index, "specialGross", "specialGrossYtd");
+    const regularTotal = cumulative(entries, index, "regularGross", "regularGrossYtd");
+    if (entry.month === 1) {
+      used = 0;
+      taxable = 0;
+    } else if (entries[index - 1]?.month !== entry.month - 1) {
+      used = undefined;
+      taxable = undefined;
+      issues.push("Frühere Sonderzahlungen sind ohne lückenlose Abrechnungen oder bestätigten Sechstelverbrauch und begünstigte Steuerbasis nicht rekonstruierbar.");
+    }
+    if (specialTotal === 0) {
+      used = 0;
+      taxable = 0;
+      issues = [];
+      exempt = undefined;
+    } else if (entry.specialGross > 0) {
+      const sixth = entry.reportedSixth
+        ?? (regularTotal !== undefined && entry.monthlyPayroll ? money(regularTotal / entry.month * 2) : undefined);
+      if (used !== undefined && sixth !== undefined) {
+        const eligible = Math.min(entry.specialGross, Math.max(0, money(sixth - used)));
+        const currentExempt = sixth <= freeLimit(entry.year);
+        if (eligible > 0 && taxable !== undefined && taxable > 0 && exempt !== undefined && currentExempt !== exempt) {
+          issues.push("Geänderte Freigrenzenbehandlung früherer Sonderzahlungen: Aufrollung und bereits einbehaltene Steuer müssen geklärt werden.");
+        }
+        if (eligible > 0) exempt = currentExempt;
+        used = sum([used, eligible]);
+        if (eligible < entry.specialGross) {
+          taxable = undefined;
+          issues.push("Früherer Sechstelüberhang: bestätigten Sechstelverbrauch und kumulierte begünstigte Steuerbasis aus der Lohnverrechnung ergänzen.");
+        } else if (entry.specialSv === undefined) {
+          taxable = undefined;
+          issues.push("Die SV früherer Sonderzahlungen fehlt; begünstigte Steuerbasis ist unbekannt.");
+        } else if (taxable !== undefined) {
+          taxable = sum([taxable, entry.specialGross - entry.specialSv]);
+        }
+      } else {
+        used = undefined;
+        taxable = undefined;
+      }
+    }
+    if (entry.usedSixth !== undefined) used = entry.usedSixth;
+    if (entry.specialTaxableYtd !== undefined) taxable = entry.specialTaxableYtd;
+    if (entry.usedSixth !== undefined && entry.specialTaxableYtd !== undefined) {
+      // Gross utilization and tax base do not establish whether a tax catch-up was paid.
+      issues = issues.filter((issue) => issue.includes("Freigrenzenbehandlung"));
+      const anchorSixth = entry.reportedSixth
+        ?? (regularTotal !== undefined && entry.monthlyPayroll ? money(regularTotal / entry.month * 2) : undefined);
+      exempt = anchorSixth === undefined || entry.usedSixth === 0 ? undefined : anchorSixth <= freeLimit(entry.year);
+    }
+  }
+  if (used === undefined || taxable === undefined) {
+    issues.push("Bestätigter bisheriger Sechstelverbrauch und kumulierte begünstigte Steuerbasis (vor 620 €) fehlen.");
+  }
+  return { used, taxable, exempt, issues: unique(issues) };
+}
+
+function annualTariff(taxable: number, year: PayrollYear): number {
+  const bounds = year === 2026
+    ? [13539, 21992, 36458, 70365, 104859, 1000000, Infinity]
+    : [13846, 22491, 37285, 71960, 107236, 1000000, Infinity];
+  const rates = [0, 0.2, 0.3, 0.4, 0.48, 0.5, 0.55];
+  let tax = 0;
+  let lower = 0;
+  for (const [index, upper] of bounds.entries()) {
+    tax += Math.max(0, Math.min(taxable, upper) - lower) * rates[index];
+    lower = upper;
+    if (taxable <= upper) break;
+  }
+  return tax;
+}
+
+function monthlyTariff(base: number, year: PayrollYear): number {
+  return annualTariff(Math.max(0, base * 12 - 132), year) / 12;
+}
+
+function preferentialTax(base: number): number {
+  return Math.min(Math.max(0, base - 620), 24380) * 0.06
+    + Math.min(Math.max(0, base - 25000), 25000) * 0.27
+    + Math.min(Math.max(0, base - 50000), 33333) * 0.3575;
+}
+
+function tariffIncrement(
+  netOverflow: number,
+  month: PayrollForecastMonth,
+  latest: Payslip,
+  year: PayrollYear,
+  issues: string[],
+): number | undefined {
+  if (netOverflow === 0) return 0;
+  if (month.monthlyTaxableBase === undefined) {
+    issues.push("Laufende monatliche LSt-Basis vor dem Werbungskostenpauschale fehlt für die Tarifbesteuerung des Überhangs.");
+    return undefined;
+  }
+  const before = monthlyTariff(month.monthlyTaxableBase, year);
+  const after = monthlyTariff(sum([month.monthlyTaxableBase, netOverflow]), year);
+  if (sameMoney(before, after)) return 0;
+  if (latest.monthlyTaxableBase === undefined || latest.regularTax === undefined) {
+    issues.push("Beobachtete laufende LSt-Basis und tatsächlich einbehaltene laufende Lohnsteuer fehlen; Absetzbeträge sind nicht abgesichert.");
+    return undefined;
+  }
+  const observedTariff = monthlyTariff(latest.monthlyTaxableBase, year);
+  const projectedWithholding = money(latest.regularTax + before - observedTariff);
+  if (latest.regularTax <= 0 || projectedWithholding <= 0) {
+    issues.push("Laufende Lohnsteuer ist beobachtet oder im Prognosemonat nicht positiv; unbekannte ungenutzte Absetzbeträge verhindern eine sichere Überhangsteuer.");
+    return undefined;
+  }
+  if (latest.regularTax > money(observedTariff)) {
+    issues.push("Beobachtete laufende Lohnsteuer übersteigt den normalisierten Tarif; Korrekturen oder abweichende LSt-Basis zuerst klären.");
+    return undefined;
+  }
+  return money(after - before);
+}
+
+function projectedTax(
+  year: PayrollYear,
+  month: PayrollForecastMonth,
+  latest: Payslip,
+  sixth: number,
+  eligibleGross: number,
+  taxableBefore: number | undefined,
+  issues: string[],
+): PayrollTax | undefined {
+  if (month.specialGross === 0) return undefined;
+  if (month.specialSv === undefined || month.specialSv > month.specialGross || taxableBefore === undefined) return undefined;
+  const eligibleSv = money(month.specialSv * eligibleGross / month.specialGross);
+  const eligibleNet = money(eligibleGross - eligibleSv);
+  const entireNet = money(month.specialGross - month.specialSv);
+  const overflowNet = money(entireNet - eligibleNet);
+  if (sum([taxableBefore, entireNet]) > 83333) {
+    issues.push("Kumulierte Sonderzahlungsbasis über 83.333 €: zusätzliche Tarifbehandlung der oberen Begünstigungsgrenze ist nicht modelliert.");
+    return undefined;
+  }
+  const exempt = sixth <= freeLimit(year);
+  const preferential = exempt ? 0 : money(
+    preferentialTax(sum([taxableBefore, eligibleNet])) - preferentialTax(taxableBefore),
+  );
+  const otherwisePreferential = exempt ? 0 : money(
+    preferentialTax(sum([taxableBefore, entireNet])) - preferentialTax(taxableBefore),
+  );
+  const tariff = tariffIncrement(overflowNet, month, latest, year, issues);
+  if (tariff === undefined || issues.length) return undefined;
+  const total = sum([preferential, tariff]);
+  const signedOverflowDelta = money(total - otherwisePreferential);
+  return {
+    preferential,
+    tariff,
+    total,
+    signedOverflowDelta,
+    extraDueToOverflow: Math.max(0, signedOverflowDelta),
+    reductionDueToOverflow: Math.max(0, -signedOverflowDelta),
+    netSpecial: money(entireNet - total),
+  };
+}
+
+export function analyzePayroll(
+  payslips: Payslip[],
+  year: PayrollYear,
+  employer: string,
+  savedForecast?: PayrollForecast,
+): PayrollAnalysis {
+  const entries = selectedPayslips(payslips, year, employer);
+  const latest = entries.at(-1);
+  const issues: string[] = [];
+  const forecast = mergeForecast(
+    defaultPayrollForecast(payslips, year, employer), savedForecast, issues,
+    latest ? cumulative(entries, entries.length - 1, "specialGross", "specialGrossYtd") : undefined,
+  );
+  const result: PayrollAnalysis = {
+    latest,
+    missingMonths: latest && Number.isInteger(latest.month) && latest.month >= 1 && latest.month <= 12
+      ? Array.from({ length: latest.month }, (_, index) => index + 1)
+        .filter((month) => !entries.some((entry) => entry.month === month))
+      : [],
+    issues,
+    forecast,
+    projections: [],
+  };
+  if (!latest) {
+    issues.push("Für dieses Jahr und diesen Arbeitgeber liegt noch keine Abrechnung vor.");
+    return result;
+  }
+  const invalid = consistencyIssues(entries);
+  if (invalid.length) {
+    issues.push(...invalid);
+    return result;
+  }
+  const regularGrossYtd = cumulative(entries, entries.length - 1, "regularGross", "regularGrossYtd");
+  const specialGrossYtd = cumulative(entries, entries.length - 1, "specialGross", "specialGrossYtd");
+  const utilization = historicalUtilization(entries);
+  const monthlyPayroll = entries.every((entry) => entry.monthlyPayroll);
+  if (result.missingMonths.length) {
+    issues.push(`Abrechnungen für Monat ${result.missingMonths.join(", ")} fehlen. Nur bestätigte kumulierte Werte können diese Lücken überbrücken.`);
+  }
+  if (!monthlyPayroll) issues.push("Keine durchgehend bestätigte monatliche Abrechnung: Teilmonate oder Sonderfälle müssen von der Lohnverrechnung geklärt werden.");
+  if (regularGrossYtd === undefined) issues.push("Das kumulierte laufende Brutto ist unbekannt; ein fehlender Monat wird nicht als 0 € angenommen.");
+  if (specialGrossYtd === undefined) issues.push("Die bisherigen Sonderzahlungen sind unbekannt; fehlende Abrechnungen bedeuten nicht 0 € Sonderzahlungen.");
+  const beforeFirstRegularPay = regularGrossYtd === 0 && specialGrossYtd !== 0 && latest.reportedSixth === undefined;
+  if (beforeFirstRegularPay) issues.push("Vor dem ersten laufenden Bezug ist ein Sechstel ohne bestätigten Abrechnungswert nicht berechenbar.");
+  const sixth = latest.reportedSixth
+    ?? (regularGrossYtd !== undefined && monthlyPayroll && !beforeFirstRegularPay ? money(regularGrossYtd / latest.month * 2) : undefined);
+  if (sixth !== undefined) {
+    result.actual = {
+      month: latest.month,
+      regularGrossYtd,
+      specialGrossYtd,
+      sixth,
+      source: latest.reportedSixth === undefined ? "calculated" : "reported",
+      usedSixth: utilization.used,
+      specialTaxableYtd: utilization.taxable,
+      remaining: utilization.used === undefined ? undefined : money(Math.max(0, sixth - utilization.used)),
+      controlSixth: latest.month === 12 && regularGrossYtd !== undefined ? money(regularGrossYtd / 6) : undefined,
+    };
+  }
+  if (regularGrossYtd === undefined || specialGrossYtd === undefined || !monthlyPayroll || beforeFirstRegularPay) return result;
+
+  let regular = regularGrossYtd;
+  let special = specialGrossYtd;
+  let used = utilization.used ?? specialGrossYtd;
+  let taxable = utilization.taxable;
+  let exempt = utilization.exempt;
+  const ongoingTaxIssues = [...utilization.issues];
+  if (latest.reportedSixth !== undefined && !sameMoney(latest.reportedSixth, money(regularGrossYtd / latest.month * 2))) {
+    const discrepancy = "Das ausgewiesene Jahressechstel weicht von der bestätigten laufenden Basis ab. Der Ist-Wert bleibt erhalten; vor einer Steuerschätzung bitte die Abweichung mit der Lohnverrechnung klären.";
+    issues.push(discrepancy);
+    ongoingTaxIssues.push(discrepancy);
+  }
+  for (const month of forecast.months) {
+    regular = sum([regular, month.regularGross]);
+    special = sum([special, month.specialGross]);
+    const projectedSixth = money(regular / month.month * 2);
+    const eligibleGross = money(Math.min(month.specialGross, Math.max(0, projectedSixth - used)));
+    const overflowGross = money(month.specialGross - eligibleGross);
+    used = sum([used, eligibleGross]);
+    const taxIssues = [...ongoingTaxIssues];
+    if (!forecast.standardPayrollConfirmed) taxIssues.push("Prognoseannahmen für die Standard-Lohnverrechnung sind noch nicht bestätigt.");
+    if (month.specialGross > 0 && month.specialSv === undefined) {
+      taxIssues.push(year === 2027
+        ? "SV der geplanten Sonderzahlung fehlt; SV-Tabellen 2027 sind nicht verifiziert, daher ist ein expliziter SV-Betrag erforderlich."
+        : "SV der geplanten Sonderzahlung fehlt; keine Nettoberechnung ohne bestätigten SV-Betrag.");
+    }
+    if (month.specialSv !== undefined && month.specialSv > month.specialGross) taxIssues.push("Geplante Sonderzahlungs-SV übersteigt das Sonderzahlungsbrutto.");
+    if (month.specialGross > 0 && taxable === undefined) taxIssues.push("Kumulierte begünstigte Steuerbasis früherer tatsächlicher oder modellierter Sonderzahlungen ist unbekannt.");
+    if (month.specialGross > 0 && eligibleGross > 0 && taxable !== undefined && taxable > 0) {
+      if (exempt === undefined || exempt !== (projectedSixth <= freeLimit(year))) {
+        const message = "Geänderte oder unbekannte Freigrenzenbehandlung früherer Sonderzahlungen: mögliche Aufrollung ist nicht als zusätzliche Monatssteuer berechenbar.";
+        taxIssues.push(message);
+        ongoingTaxIssues.push(message);
+      }
+    }
+    const tax = projectedTax(year, month, latest, projectedSixth, eligibleGross, taxable, taxIssues);
+    result.projections.push({
+      month: month.month,
+      source: "scenario",
+      regularGrossYtd: regular,
+      specialGrossYtd: special,
+      sixth: projectedSixth,
+      remaining: money(Math.max(0, projectedSixth - used)),
+      overhang: money(Math.max(0, special - projectedSixth)),
+      specialGross: month.specialGross,
+      utilizationSource: utilization.used === undefined ? "gross-comparison" : "verified",
+      eligibleGross,
+      overflowGross,
+      controlSixth: month.month === 12 ? money(regular / 6) : undefined,
+      tax,
+      taxIssues: unique(taxIssues),
+      taxAssumptions: [
+        "Reines Szenario ab dem letzten tatsächlichen Abrechnungsmonat; keine Aussage über bereits erfolgte spätere Zahlungen.",
+        "Juni/November mit angegebenem Grundgehalt sind nur eine Vorlage, kein festgestellter Sonderzahlungsanspruch.",
+        "Laufende LSt-Basis vor 132 € jährlichem Werbungskostenpauschale; unveränderte feste Absetzbeträge, keine zusätzlichen einkommensabhängigen Absetzbeträge oder Sonderfälle.",
+        "Sonderzahlungs-SV ist eine Prognoseannahme für homogene, vollversicherte Angestelltenbezüge; keine Lehrlinge oder gemischten SV-Zahlungen. Explizite Monatswerte haben Vorrang.",
+        ...(year === 2026
+          ? ["SV-Vorlage 2026: 14,12/15,12/16,12/17,07 % nach gesamtem Monats-SZ-Brutto, jährliche SZ-Höchstbeitragsgrundlage 13.860 €; bisheriges SZ-Brutto gilt nur im bestätigten Standardmodell als verbrauchte SV-Basis."]
+          : ["Keine automatische SV-Schätzung 2027; nur explizit eingetragene SV-Annahmen."]),
+        "Berechnet wird zusätzliche laufende Lohnsteuer im Auszahlungsmonat (§ 67 Abs. 10), nicht die endgültige jährliche Einkommensteuer.",
+        "Optionale 30%-Einschleif-Aufrollung nach § 77 Abs. 4 und sonstige historische Korrekturen werden nicht angewendet.",
+        ...(month.month === 12
+          ? ["Kontrollsechstel: nur Jahresbrutto/6. Ein Jahresüberhang ist keine neue Dezember-Steuerschuld; rückwirkende Korrektur oder Rückerstattung früherer Zahlungen wird nicht berechnet."]
+          : []),
+        ...(utilization.used === undefined
+          ? ["Sechstelverbrauch unbekannt: Bruttovergleich unterstellt vorläufig alle bisherigen Sonderzahlungen als Verbrauch; keine gesicherte Aufteilung in begünstigt und Überhang."]
+          : []),
+      ],
+    });
+    if (month.specialGross > 0 && eligibleGross > 0) {
+      if (month.specialSv === undefined || month.specialSv > month.specialGross) {
+        taxable = undefined;
+      } else if (taxable !== undefined) {
+        taxable = sum([taxable, eligibleGross - money(month.specialSv * eligibleGross / month.specialGross)]);
+      }
+      exempt = projectedSixth <= freeLimit(year);
+    }
+  }
+  result.nextSpecial = result.projections.find((projection) => projection.specialGross > 0);
+  result.yearEnd = result.projections.find((projection) => projection.month === 12);
+  return result;
+}

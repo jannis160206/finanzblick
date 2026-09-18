@@ -2,6 +2,7 @@ import { z } from "zod";
 import { normalizeAccount } from "@/lib/accounts";
 import { normalizeStatementKey } from "@/lib/import/identity";
 import { seasonalModes, seasonalThemes } from "@/lib/seasonal-theme";
+import { payslipKey, payslipSchema, payrollEmployerKey, payrollForecastSchema } from "@/lib/payslip-schema";
 import { allCategories, categories, canonicalCategory, type Category } from "@/lib/categories";
 export { categories, type Category } from "@/lib/categories";
 
@@ -270,6 +271,14 @@ export const annualSixthSchema = z.object({
 export type AnnualSixth = z.infer<typeof annualSixthSchema>;
 export const appStateSchema = z.object({
   version: z.literal(1),
+  payslips: z.array(payslipSchema).max(240).refine(
+    (entries) => new Set(entries.map(payslipKey)).size === entries.length,
+    "Je Arbeitgeber und Monat darf nur eine Lohnabrechnung gespeichert sein.",
+  ).optional(),
+  payrollForecasts: z.array(payrollForecastSchema).max(20).refine(
+    (entries) => new Set(entries.map((entry) => `${entry.year}|${payrollEmployerKey(entry.employer)}`)).size === entries.length,
+    "Je Arbeitgeber und Jahr darf nur eine Gehaltsprognose gespeichert sein.",
+  ).optional(),
   annualSixth: z.array(annualSixthSchema).max(2).refine(
     (entries) => new Set(entries.map((entry) => entry.year)).size === entries.length,
     "Für jedes Jahr darf nur eine Jahressechstel-Abrechnung gespeichert sein.",

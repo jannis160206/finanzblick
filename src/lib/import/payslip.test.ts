@@ -1,0 +1,440 @@
+import { describe, expect, it } from "vitest";
+import { payslipSchema } from "@/lib/payslip-schema";
+import { parsePayslipPages, type PayslipLine, type PayslipPage } from "./payslip";
+
+const line = (y: number, ...items: [number, string, number?][]): PayslipLine => ({
+  y, items: items.map(([x, text, width]) => ({ x, text, width })),
+});
+const table = line(510, [54, "LA-Nr."], [89, "Bezeichnung"], [254, "Menge"],
+  [329, "Satz"], [392, "Betrag"], [455, "BMG SV"], [526, "BMG LSt"]);
+const wage = (y: number, code: string, label: string, amount: string, sv = amount, tax = amount) =>
+  line(y, [54, code], [89, label], [254, "2,00"], [329, "20,00"],
+    [379, amount, 36], [451, sv, 35], [525, tax, 37]);
+
+function page(overrides: {
+  month?: string; year?: number; employer?: string; days?: string;
+  rows?: PayslipLine[]; gross?: string; tail?: PayslipLine[];
+} = {}): PayslipPage {
+  return {
+    lines: [
+      line(800, [50, `Lohn / Gehaltsabrechnung ${overrides.month ?? "Jänner"} ${overrides.year ?? 2026}`]),
+      line(765, [50, overrides.employer ?? "Fabelwald Robotik GmbH"]),
+      line(720, [50, "Arbeitnehmer: Synthetische Testperson"]),
+      line(700, [50, "Personalnummer: 777777"]),
+      line(550, [290, "LSt-Tg"], [350, "SV-Tg"]),
+      line(538, [298, overrides.days ?? "30"], [358, overrides.days ?? "30"]),
+      table,
+      ...(overrides.rows ?? [
+        wage(490, "1000", "Gehalt", "2.810,20"),
+        wage(475, "2751", "Telearbeitspauschale frei", "18,00", "", ""),
+        wage(460, "3100", "ÜStd-Grundlohn", "140,25"),
+        wage(445, "3150", "ÜStd.ZS100%pfl", "55,50"),
+        wage(430, "3160", "ÜStd.ZS100%fr", "71,30"),
+        wage(415, "4621", "Rufbereitschaft", "302,75"),
+        line(400, [54, "7590"], [89, "Telearbeitstage"], [254, "6,00"]),
+        line(385, [54, "9110"], [89, "Freibetrag §68(1)"], [525, "-49,10"]),
+        line(370, [54, "9120"], [89, "Freibetrag §68(2)"], [525, "-22,20"]),
+      ]),
+      line(340, [89, "Brutto"], [379, overrides.gross ?? "3.398,00"]),
+      line(325, [89, "Abzüge"]),
+      line(310, [89, "SV Beitrag lfd"], [379, "-604,32"], [451, "3.380,00"]),
+      line(295, [89, "LSt Beitrag lfd"], [379, "-411,60"], [525, "2.704,38"]),
+      line(280, [89, "Netto"], [379, "2.382,08"]),
+      wage(265, "7999", "Bereits überwiesen", "2.300,00"),
+      wage(250, "9590", "Betriebsrat", "7,00"),
+      ...(overrides.tail ?? []),
+    ],
+  };
+}
+
+describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
+  it("uses Betrag rather than the last money and keeps §68 wages in the sixth basis", () => {
+    const result = parsePayslipPages([page()]);
+    expect(result.issues).toEqual([]);
+    expect(result.drafts).toEqual([{
+      year: 2026, month: 1, employer: "Fabelwald Robotik GmbH", monthlyPayroll: true,
+      regularGross: 3380, specialGross: 0, baseSalary: 2810.2,
+      regularSv: 604.32, regularTax: 411.6, monthlyTaxableBase: 2704.38,
+    }]);
+    expect(payslipSchema.safeParse(result.drafts[0]).success).toBe(true);
+    expect(JSON.stringify(result)).not.toMatch(/Testperson|777777|Freibetrag|bereits überwiesen/i);
+  });
+
+  it("never subtracts BMG-only Freibeträge or quantity-only telework days from gross", () => {
+    const original = page();
+    const altered: PayslipPage = {
+      lines: original.lines.map((entry) => entry.y === 385
+        ? line(385, [54, "9110"], [89, "Freibetrag §68(1)"], [525, "-999,00"])
+        : entry.y === 400
+          ? line(400, [54, "7590"], [89, "Telearbeitstage"], [254, "28,00"])
+          : entry),
+    };
+    expect(parsePayslipPages([altered]).drafts[0].regularGross).toBe(3380);
+  });
+
+  it("reads a right-aligned amount even when its bases differ", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.345,67", "8.765,43", "9.999,99")],
+      gross: "2.345,67",
+    })]);
+    expect(result.drafts[0].regularGross).toBe(2345.67);
+    expect(result.drafts[0].baseSalary).toBe(2345.67);
+  });
+
+  it.each(["-411,60", "411,60", "411,60-"])("stores absolute regular tax %s separately from its taxable base", (tax) => {
+    const input = page();
+    const result = parsePayslipPages([{ lines: input.lines.map((entry) => entry.y === 295
+      ? line(295, [89, "LSt Beitrag lfd"], [379, tax], [525, "2.704,38"])
+      : entry) }]);
+    expect(result.drafts[0]).toMatchObject({ regularTax: 411.6, monthlyTaxableBase: 2704.38 });
+  });
+
+  it("distinguishes explicit zero regular tax from a missing regular tax amount", () => {
+    const input = page();
+    const zero = parsePayslipPages([{ lines: input.lines.map((entry) => entry.y === 295
+      ? line(295, [89, "LSt Beitrag lfd"], [379, "0,00"], [525, "2.704,38"])
+      : entry) }]);
+    const missing = parsePayslipPages([{ lines: input.lines.map((entry) => entry.y === 295
+      ? line(295, [89, "LSt Beitrag lfd"], [525, "2.704,38"])
+      : entry) }]);
+    expect(zero.drafts[0].regularTax).toBe(0);
+    expect(missing.drafts[0].regularTax).toBeUndefined();
+    expect(missing.drafts[0].monthlyTaxableBase).toBe(2704.38);
+    expect(missing.issues.join()).toMatch(/Lohnsteuerbeitrag nicht eindeutig/);
+  });
+
+  it("does not mistake special-payment tax for regular tax", () => {
+    const input = page();
+    const result = parsePayslipPages([{ lines: input.lines.filter((entry) => entry.y !== 295).concat([
+      line(295, [89, "LSt Beitrag SZ"], [379, "-125,45"], [525, "2.090,83"]),
+    ]) }]);
+    expect(result.drafts[0].regularTax).toBeUndefined();
+    expect(result.drafts[0].monthlyTaxableBase).toBeUndefined();
+  });
+
+  it("omits conflicting repeated regular tax contributions instead of adding them", () => {
+    const result = parsePayslipPages([page({ tail: [
+      line(220, [89, "LSt Beitrag lfd"], [379, "-520,10"], [525, "2.900,00"]),
+    ] })]);
+    expect(result.drafts[0].regularTax).toBeUndefined();
+    expect(result.drafts[0].monthlyTaxableBase).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Mehrere Werte/);
+  });
+
+  it("supports column layouts shifted together rather than fixed sample x-coordinates", () => {
+    const shifted = page();
+    const result = parsePayslipPages([{
+      lines: shifted.lines.map((entry) => ({ ...entry, items: entry.items.map((item) => ({
+        ...item, x: item.x + 45,
+      })) })),
+    }]);
+    expect(result.drafts[0].regularGross).toBe(3380);
+    expect(result.issues).toEqual([]);
+  });
+
+  it.each(["Urlaubszuschuss", "Weihnachtsremuneration", "Sonderzahlung", "13. Gehalt", "14.Gehalt", "13./14. Gehalt"])(
+    "separates %s and its own social insurance", (label) => {
+      const result = parsePayslipPages([page({
+        rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "5100", label, "2.510,80")],
+        gross: "5.321,00",
+        tail: [line(235, [89, "SV Beitrag SZ"], [379, "-422,45"], [451, "2.510,80"])],
+      })]);
+      expect(result.drafts[0]).toMatchObject({ regularGross: 2810.2, specialGross: 2510.8, specialSv: 422.45 });
+      expect(result.issues).toEqual([]);
+    },
+  );
+
+  it("does not count employer-only continuation pages", () => {
+    const employerOnly = {
+      pageNumber: 2,
+      lines: [
+        line(800, [50, "Lohn / Gehaltsabrechnung Jänner 2026"]),
+        line(760, [50, "Fabelwald Robotik GmbH"]),
+        line(500, [89, "Dienstgeber"], [379, "710,00"]),
+        line(480, [89, "Kommunalsteuer"], [379, "85,00"]),
+        line(460, [89, "Gesamtaufwand"], [379, "4.193,00"]),
+      ],
+    };
+    const result = parsePayslipPages([page(), employerOnly]);
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0].regularGross).toBe(3380);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("leaves unknown or exotic wages incomplete and does not leak their text", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "8000", "PrivateNotiz-XY Abfertigung", "900,00")],
+      gross: "3.710,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/nicht unterstützt/i);
+    expect(JSON.stringify(result)).not.toContain("PrivateNotiz");
+  });
+
+  it("does not assume gross eligibility for an unqualified tax-free allowance", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "8000", "Zulage steuerfrei", "50,00")],
+      gross: "2.860,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    "Reisekostenersatz steuerfrei", "Reisekostenersatz frei", "Reisekostenersatz §26",
+    "Fahrtkostenersatz steuerfrei", "Fahrtkostenersatz frei", "Fahrtkostenersatz § 26 EStG",
+    "Kilometergeld steuerfrei", "Kilometergeld frei", "Kilometergeld §26",
+  ])("excludes only explicitly tax-free expense reimbursement %s", (label) => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "2700", label, "61,23")],
+      gross: "2.871,43",
+    })]);
+    expect(result.drafts[0]).toMatchObject({ regularGross: 2810.2, specialGross: 0 });
+    expect(result.issues).toEqual([]);
+  });
+
+  it.each(["Reisekostenersatz", "Fahrtkostenersatz", "Kilometergeld", "Reisekostenersatz steuerpflichtig"])(
+    "leaves %s unknown rather than inferring tax-free status from zero BMG columns", (label) => {
+      const result = parsePayslipPages([page({
+        rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "2700", label, "61,23", "0,00", "0,00")],
+        gross: "2.871,43",
+      })]);
+      expect(result.drafts[0].regularGross).toBeUndefined();
+      expect(result.drafts[0].specialGross).toBeUndefined();
+      expect(result.issues.join()).toMatch(/Nicht unterstützter Bezugsbestandteil/);
+      expect(result.issues.join()).not.toContain(label);
+    },
+  );
+
+  it("does not allow an expense label with conflicting tax-free and taxable qualifiers", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"),
+        wage(475, "2700", "Reisekostenersatz §26 steuerpflichtig", "61,23")],
+      gross: "2.871,43",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Nicht unterstützter Bezugsbestandteil/);
+  });
+
+  it("requires reconciliation instead of silently using an incomplete total", () => {
+    const result = parsePayslipPages([page({ gross: "3.500,00" })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Bruttosumme stimmt nicht/);
+  });
+
+  it("leaves gross incomplete when Brutto is missing or duplicated", () => {
+    const input = page();
+    const missing = parsePayslipPages([{ lines: input.lines.filter((entry) => entry.y !== 340) }]);
+    const duplicate = parsePayslipPages([{ lines: [...input.lines, line(335, [89, "Brutto"], [379, "3.398,00"])] }]);
+    expect(missing.drafts[0].regularGross).toBeUndefined();
+    expect(duplicate.drafts[0].regularGross).toBeUndefined();
+  });
+
+  it("refuses to substitute BMG SV when the actual wage amount is missing", () => {
+    const result = parsePayslipPages([page({
+      rows: [line(490, [54, "1000"], [89, "Gehalt"], [451, "2.810,20"], [525, "2.810,20"])],
+      gross: "2.810,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.length).toBeGreaterThan(0);
+  });
+
+  it("refuses ambiguous two-amount cells", () => {
+    const result = parsePayslipPages([page({
+      rows: [line(490, [54, "1000"], [89, "Gehalt"], [375, "10,00"], [401, "20,00"])],
+      gross: "30,00",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+  });
+
+  it("does not let correction entries cancel positive wages into a confident result", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "1000", "Gehalt", "-100,00")],
+      gross: "2.710,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Korrektur/);
+  });
+
+  it("preserves individual months and employers without combining wages", () => {
+    const result = parsePayslipPages([
+      page(), page({ month: "Februar" }), page({ employer: "Wolkenrad Technik AG" }),
+    ]);
+    expect(result.drafts).toHaveLength(3);
+    expect(result.drafts.map((draft) => draft.regularGross)).toEqual([3380, 3380, 3380]);
+    expect(result.drafts.map((draft) => draft.month)).toEqual([1, 2, 1]);
+    expect(result.drafts[2].employer).toBe("Wolkenrad Technik AG");
+  });
+
+  it("does not sum duplicate or corrected payslips for the same employer and month", () => {
+    const result = parsePayslipPages([page(), page()]);
+    expect(result.drafts).toHaveLength(1);
+    expect(result.drafts[0]).toEqual({ year: 2026, month: 1, employer: "Fabelwald Robotik GmbH" });
+    expect(result.issues.join()).toMatch(/keine automatische Addition/);
+  });
+
+  it("flags repeated wage components rather than assuming they are additive", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "1000", "Gehalt", "2.810,20")],
+      gross: "5.620,40",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Bezugsbestandteil mehrfach/);
+  });
+
+  it("allows distinct on-call wage codes without treating them as duplicate rows", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "4621", "Rufbereitschaft", "40,00"),
+        wage(460, "4622", "Rufbereitschaft", "60,00")],
+      gross: "2.910,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBe(2910.2);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("does not turn an unsupported year into the selected or current year", () => {
+    const result = parsePayslipPages([page({ year: 2025 })]);
+    expect(result.drafts[0].year).toBeUndefined();
+    expect(result.issues.join()).toMatch(/nur 2026 und 2027/);
+  });
+
+  it("accepts the second supported year and numeric month headers", () => {
+    const input = page({ year: 2027 });
+    const numeric = { lines: input.lines.map((entry) => entry.y === 800
+      ? line(800, [50, "Gehaltsabrechnung 02/2027"]) : entry) };
+    expect(parsePayslipPages([numeric]).drafts[0]).toMatchObject({ year: 2027, month: 2 });
+  });
+
+  it("does not infer the employer from employee labels or personal numbers", () => {
+    const result = parsePayslipPages([page({ employer: "Arbeitnehmer: Nur Testperson" })]);
+    expect(result.drafts[0].employer).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Arbeitgeber nicht eindeutig/);
+    expect(JSON.stringify(result)).not.toContain("Nur Testperson");
+  });
+
+  it("accepts a clearly labelled employer without requiring a legal suffix", () => {
+    expect(parsePayslipPages([page({ employer: "Arbeitgeber: Musterbetrieb Nord" })]).drafts[0].employer)
+      .toBe("Musterbetrieb Nord");
+  });
+
+  it("does not choose between conflicting employer headers", () => {
+    const input = page();
+    const result = parsePayslipPages([{ lines: [...input.lines, line(750, [50, "Wolkenrad Technik AG"])] }]);
+    expect(result.drafts[0].employer).toBeUndefined();
+  });
+
+  it("marks a partial month and does not manufacture zero special pay", () => {
+    const result = parsePayslipPages([page({ days: "16" })]);
+    expect(result.drafts[0]).toMatchObject({ monthlyPayroll: false, regularGross: 3380 });
+    expect(result.drafts[0].specialGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Teilmonat/);
+  });
+
+  it("leaves unknown monthly status and special pay absent for manual review", () => {
+    const input = page();
+    const result = parsePayslipPages([{ lines: input.lines.filter((entry) => entry.y !== 550 && entry.y !== 538) }]);
+    expect(result.drafts[0].monthlyPayroll).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBeUndefined();
+  });
+
+  it("does not treat 31 LSt days as a confirmed standard full month", () => {
+    const result = parsePayslipPages([page({ days: "31" })]);
+    expect(result.drafts[0].monthlyPayroll).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Abrechnungstage bitte prüfen/);
+  });
+
+  it("does not manufacture regular zero for a standalone special payment", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "5100", "Urlaubszuschuss", "2.110,00")], gross: "2.110,00",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBe(2110);
+  });
+
+  it("imports explicit control values, never guesses missing YTD values", () => {
+    expect(parsePayslipPages([page()]).drafts[0].reportedSixth).toBeUndefined();
+    const result = parsePayslipPages([page({ tail: [
+      line(220, [89, "Jahressechstel"], [379, "6.710,00"]),
+      line(205, [89, "Verbrauchtes Jahressechstel"], [379, "3.100,00"]),
+      line(190, [89, "Laufende Bezüge kumuliert"], [379, "19.540,00"]),
+      line(175, [89, "Sonderzahlungen kumuliert"], [379, "3.500,00"]),
+      line(160, [89, "Steuerpflichtige Sonderzahlungen kumuliert innerhalb Jahressechstel nach SV vor 620"], [379, "2.800,00"]),
+    ] })]);
+    expect(result.drafts[0]).toMatchObject({
+      reportedSixth: 6710, usedSixth: 3100, regularGrossYtd: 19540,
+      specialGrossYtd: 3500, specialTaxableYtd: 2800,
+    });
+  });
+
+  it.each([
+    "Steuerpflichtige Sonderzahlungen kumuliert",
+    "Steuerpflichtige Sonderzahlungen YTD",
+    "Steuerpflichtige Sonderzahlungen kumuliert nach 620",
+    "Steuerpflichtige Sonderzahlungen kumuliert innerhalb Jahressechstel nach SV",
+    "Steuerpflichtige Sonderzahlungen kumuliert nach SV vor 620",
+    "Steuerpflichtige Sonderzahlungen kumuliert innerhalb Jahressechstel vor 620",
+    "Steuerpflichtige Sonderzahlungen kumuliert innerhalb Jahressechstel nach SV vor 620 inklusive Überhang",
+  ])("leaves ambiguous cumulative special-tax basis undefined: %s", (label) => {
+    const result = parsePayslipPages([page({ tail: [line(160, [89, label], [379, "2.800,00"])] })]);
+    expect(result.drafts[0].specialTaxableYtd).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Sonderzahlungs-Steuerbasis nicht eindeutig/);
+    expect(result.issues.join()).not.toContain(label);
+  });
+
+  it("accepts only an explicitly within-sixth, after-SV, before-allowance cumulative taxable basis", () => {
+    const result = parsePayslipPages([page({ tail: [
+      line(160, [89, "Steuerpflichtige Sonderzahlungen YTD innerhalb des Jahressechstels nach SV vor 620 EUR-Freibetrag"],
+        [379, "2.800,00"]),
+    ] })]);
+    expect(result.drafts[0].specialTaxableYtd).toBe(2800);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("does not choose between repeated control values", () => {
+    const result = parsePayslipPages([page({ tail: [
+      line(220, [89, "Jahressechstel"], [379, "6.710,00"]),
+      line(205, [89, "Jahressechstel"], [379, "6.900,00"]),
+    ] })]);
+    expect(result.drafts[0].reportedSixth).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Mehrere Werte/);
+  });
+
+  it("keeps unsupported tables reviewable rather than guessing amounts from line endings", () => {
+    const input = page();
+    const result = parsePayslipPages([{ lines: input.lines.filter((entry) => entry.y !== 510) }]);
+    expect(result.drafts[0]).toMatchObject({ year: 2026, month: 1 });
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Spaltenlayout/);
+  });
+
+  it("flags unassigned continuation pages and invalidates potentially partial totals", () => {
+    const result = parsePayslipPages([page(), { pageNumber: 2, lines: [line(700, [89, "Sonstiger privater Abschnitt"])] }]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Seite 2/);
+    expect(JSON.stringify(result)).not.toContain("privater Abschnitt");
+  });
+
+  it("does not treat corrections as a new complete monthly statement", () => {
+    const result = parsePayslipPages([page({ tail: [line(220, [89, "Aufrollung"])] })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.join()).toMatch(/Korrektur erkannt/);
+  });
+
+  it("rejects scans, unrelated documents and excessive page/text counts explicitly", () => {
+    expect(() => parsePayslipPages([{ lines: [] }])).toThrow(/gescannte/i);
+    expect(() => parsePayslipPages([{ lines: [line(700, [50, "Unrelated private document"])] }])).toThrow(/Keine unterstützte/);
+    expect(() => parsePayslipPages(Array.from({ length: 101 }, () => ({ lines: [] })))).toThrow(/100 Seiten/);
+    expect(() => parsePayslipPages([{ lines: [line(700, [50, "x".repeat(100_001)])] }])).toThrow(/zu viel Text/);
+  });
+
+  it("does not mutate the positioned input", () => {
+    const input = page();
+    const before = JSON.stringify(input);
+    parsePayslipPages([input]);
+    expect(JSON.stringify(input)).toBe(before);
+  });
+});

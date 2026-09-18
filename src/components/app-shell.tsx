@@ -7,6 +7,7 @@ import { useTheme } from "next-themes";
 import {
   ArrowLeftRight,
   CalendarRange,
+  Calculator,
   ChartNoAxesCombined,
   Check,
   ChevronRight,
@@ -42,6 +43,7 @@ const navigation = [
   { href: "/monate", label: "Monate", icon: CalendarRange },
   { href: "/pockets", label: "Pockets", icon: Wallet },
   { href: "/plan", label: "Budgetdetails", icon: ChartNoAxesCombined },
+  { href: "/gehalt-steuern", label: "Gehalt & Steuern", icon: Calculator },
   { href: "/einstellungen", label: "Einstellungen", icon: Settings2 },
 ];
 export function AppShell({
@@ -60,8 +62,8 @@ export function AppShell({
   const current = navigation.find((item) => item.href === pathname);
   const links = (
     <nav aria-label="Hauptnavigation" className="flex h-full flex-col gap-1.5">
-      {navigation.map((item, index) => (
-        <div key={item.href} className={index === 5 ? "mt-auto border-t pt-4" : undefined}>
+      {navigation.map((item) => (
+        <div key={item.href} className={item.href === "/einstellungen" ? "mt-auto border-t pt-4" : undefined}>
         <Link
           href={item.href}
           onClick={() => setMenuOpen(false)}

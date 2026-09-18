@@ -29,6 +29,7 @@ import {
 import { createSeed } from "@/lib/seed";
 import { assertImportSize } from "@/lib/import/limits";
 import { applyVariableBudgets } from "@/lib/variable-budgets";
+import { payslipSchema, payrollForecastSchema } from "@/lib/payslip-schema";
 
 export const sheetNames = [
   "Dashboard",
@@ -491,6 +492,10 @@ export async function parseWorkbook(
           (state.merchantRules ??= []).push(merchantRuleSchema.parse(data));
         if (kind === "fixed")
           (state.fixedReceipts ??= []).push(fixedReceiptSchema.parse(data));
+        if (kind === "payslip")
+          (state.payslips ??= []).push(payslipSchema.parse(data));
+        if (kind === "payroll-forecast")
+          (state.payrollForecasts ??= []).push(payrollForecastSchema.parse(data));
         if (kind === "planning-repairs")
           state.planningRepairs =
             appStateSchema.shape.planningRepairs.parse(data);
@@ -789,7 +794,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.reviewQueue ||
     state.importStatus ||
     state.settings.interestRates ||
-    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.annualSixth
+    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.annualSixth ||
+    state.payslips?.length || state.payrollForecasts?.length
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
       state: "hidden",
@@ -826,6 +832,12 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     );
     state.fixedReceipts?.forEach((item) =>
       automation.addRow(["fixed", JSON.stringify(item)]),
+    );
+    state.payslips?.forEach((item) =>
+      automation.addRow(["payslip", JSON.stringify(item)]),
+    );
+    state.payrollForecasts?.forEach((item) =>
+      automation.addRow(["payroll-forecast", JSON.stringify(item)]),
     );
     if (state.planningRepairs?.length)
       automation.addRow([

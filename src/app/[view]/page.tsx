@@ -5,12 +5,14 @@ import { Months } from "@/components/months";
 import { Pockets } from "@/components/pockets";
 import { Plan } from "@/components/plan";
 import { Settings } from "@/components/settings";
+import { PayrollTaxes } from "@/components/payroll-taxes";
 
 const views = {
   umsaetze: Transactions,
   monate: Months,
   pockets: Pockets,
   plan: Plan,
+  "gehalt-steuern": PayrollTaxes,
   einstellungen: Settings,
 };
 export default async function FinancePage({
