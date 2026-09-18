@@ -1,5 +1,5 @@
-import { actualBookings, classify, knownMerchantName, merchantName } from "@/lib/calc";
-import { ambiguousMerchant, hasTerminalText, merchantText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
+import { actualBookings } from "@/lib/calc";
+import { merchantText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { isSpecificMerchantKey, merchantRuleKey } from "@/lib/import/merchant-rules";
 import { bookingReviewReason } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
@@ -8,16 +8,6 @@ import type { AppState, Transaction } from "@/lib/types";
 
 const unknownMerchant = /h(?:ä|ae)ndler\s+unbekannt/i;
 type AliasBooking = Omit<Transaction, "amount"> & { amount: number | null };
-
-export function needsMerchantLookup(row: Transaction): boolean {
-  if (row.merchantAlias) return false;
-  const recovered = recoverMerchant(row);
-  if (knownMerchantName(merchantText(recovered.description))) return false;
-  return ambiguousMerchant(row) || unresolvedTerminal(recovered.description) ||
-    unknownMerchant.test(recovered.description) || merchantName(recovered.description) === "Händler unbekannt" ||
-    (hasTerminalText(row.rawDescription ?? row.description) &&
-      (row.description === recovered.description || classify(row).category === "Prüfen"));
-}
 
 // Only merchant/location text crosses the API boundary, never bank references or card details.
 function lookupText(text: string): string {
@@ -30,7 +20,7 @@ function lookupText(text: string): string {
 }
 
 export function merchantLookupQuery(row: Transaction): string | undefined {
-  const merchant = lookupText(recoverMerchant(row).description);
+  const merchant = lookupText(row.merchantAlias ?? recoverMerchant(row).description);
   if (!/\p{L}{2}/u.test(merchant)) return;
   const sources = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""];
   const locations = sources.flatMap((text) => [
@@ -50,15 +40,16 @@ export function confirmMerchantAlias(state: AppState, selected: Transaction, res
   const alias = merchantLookupResultSchema.parse(result).name;
   const ledger = actualBookings(state);
   const current = ledger.find((row) => row.id === selected.id);
-  if (!current || current.merchantAlias || merchantRuleKey(current) !== merchantRuleKey(selected))
+  if (!current || current.merchantAlias !== selected.merchantAlias || merchantRuleKey(current) !== merchantRuleKey(selected))
     throw new Error("Die Buchung wurde inzwischen geändert. Bitte erneut öffnen.");
   const key = merchantRuleKey(current);
   const canMatchTwins = isSpecificMerchantKey(key) &&
-    !!lookupText(recoverMerchant(current).description) && !unresolvedTerminal(current.description);
+    !!lookupText(current.merchantAlias ?? recoverMerchant(current).description) &&
+    (!!current.merchantAlias || !unresolvedTerminal(current.description));
   const openIds = new Set((state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" ? [item.draft.id] : item.change.bookings.map((row) => row.id)));
   const matches = (row: AliasBooking) => row.id === selected.id ||
-    (canMatchTwins && !row.merchantAlias && !row.reviewed && merchantRuleKey(row) === key &&
+    (canMatchTwins && row.merchantAlias === current.merchantAlias && !row.reviewed && merchantRuleKey(row) === key &&
       (openIds.has(row.id) || (row.amount !== null && !!bookingReviewReason(state, { ...row, amount: row.amount }))));
   const apply = <T extends AliasBooking>(row: T): T => matches(row) ? { ...row, merchantAlias: alias } : row;
   return {

@@ -59,7 +59,7 @@ import { HolidayRanges } from "@/components/holiday-ranges";
 import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { isIncomeCategory } from "@/lib/fixed";
 import { accountLabel } from "@/lib/accounts";
-import { confirmMerchantAlias, merchantLookupQuery, needsMerchantLookup } from "@/lib/merchant-lookup";
+import { confirmMerchantAlias, merchantLookupQuery } from "@/lib/merchant-lookup";
 import { lookupMerchant } from "@/lib/merchant-lookup-client";
 import type { MerchantLookupResult } from "@/lib/merchant-lookup-schema";
 import { MerchantLookupDialog } from "@/components/merchant-lookup-dialog";
@@ -427,8 +427,8 @@ const TransactionLedger = memo(function TransactionLedger({
             <Pencil className="size-3.5" />
           </Button>
           <SharedRowAction booking={row.original} />
-          {needsMerchantLookup(row.original) && <Button size="icon" variant="ghost" className="size-7 text-muted-foreground"
-            title="Name nachschlagen" aria-label={`Name nachschlagen: ${row.original.description}`}
+          <Button size="icon" variant="ghost" className="size-7 text-muted-foreground"
+            title="Name nachschlagen" aria-label={`Name nachschlagen: ${row.original.merchantAlias ?? row.original.description}`}
             disabled={lookupPending || !!storageError}
             data-ledger-action="lookup" data-booking-id={row.original.id}
             onClick={() => {
@@ -436,7 +436,7 @@ const TransactionLedger = memo(function TransactionLedger({
               void startLookup(row.original);
             }}>
             <CircleHelp className="size-3.5" />
-          </Button>}
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="icon" variant="ghost" className="size-8"
@@ -755,7 +755,7 @@ const TransactionLedger = memo(function TransactionLedger({
         returnFocus={returnActionFocus} disabled={!!storageError}
         onConfirm={(result) => {
           const current = ledger.find((row) => row.id === lookup.booking.id);
-          if (!current || current.merchantAlias || merchantRuleKey(current) !== merchantRuleKey(lookup.booking)) {
+          if (!current || current.merchantAlias !== lookup.booking.merchantAlias || merchantRuleKey(current) !== merchantRuleKey(lookup.booking)) {
             toast.error("Die Buchung wurde inzwischen geändert. Bitte erneut öffnen.");
             closeLookup();
             return;

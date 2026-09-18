@@ -4,7 +4,7 @@ import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { statementFingerprint } from "@/lib/import/identity";
 import { merchantRuleKey } from "@/lib/import/merchant-rules";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "@/lib/import/review";
-import { confirmMerchantAlias, merchantLookupQuery, needsMerchantLookup } from "@/lib/merchant-lookup";
+import { confirmMerchantAlias, merchantLookupQuery } from "@/lib/merchant-lookup";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 
@@ -18,20 +18,12 @@ const hit = { id: "123", name: "Blumenatelier", displayName: "Blumenatelier, Hau
 const fixture = (): AppState => ({ ...createSeed(), transactions: [original], fixedReceipts: [] });
 
 describe("discreet merchant lookup", () => {
-  it.each(["BILLA", "SPAR", "INTERSPAR", "Shell", "Martin Auer", "BIPA", "AMAZON", "OMV"])("does not offer lookup for known %s", (name) => {
-    expect(needsMerchantLookup({ ...original, description: `POS ${name} 9500 Villach 3,50 AT D1` })).toBe(false);
-    expect(needsMerchantLookup({ ...original, description: name })).toBe(false);
+  it.each(["BILLA", "SPAR", "INTERSPAR", "Shell", "Martin Auer", "BIPA", "AMAZON", "OMV", "Normaler Laden"])("builds a lookup query for known or ordinary merchant %s", (name) => {
+    expect(merchantLookupQuery({ ...original, description: name })).toBe(`${name}, Villach, 9500, AT`);
   });
 
-  it("offers only weak, unresolved or unknown merchant titles, also after POS recovery", () => {
-    expect(needsMerchantLookup(original)).toBe(true);
-    expect(needsMerchantLookup({ ...original, description: original.rawDescription! })).toBe(true);
-    expect(needsMerchantLookup({ ...original, description: "POS 3,50 AT D1 09.09. 11:53", rawDetails: [] })).toBe(true);
-    expect(needsMerchantLookup({ ...original, description: "BANKOMAT/POS 3,50 AT D1 09.09. 11:53", rawDetails: [] })).toBe(true);
-    expect(needsMerchantLookup({ ...original, description: "Händler unbekannt" })).toBe(true);
-    expect(needsMerchantLookup({ ...original, description: "Normaler Laden", rawDescription: undefined })).toBe(false);
-    expect(needsMerchantLookup({ ...original, merchantAlias: hit.name })).toBe(false);
-    expect(needsMerchantLookup({ ...original, description: "POS 3,50 AT D1", rawDetails: ["Händler Name: BILLA"] })).toBe(false);
+  it("searches a confirmed display name again while retaining the bank's location hints", () => {
+    expect(merchantLookupQuery({ ...original, merchantAlias: hit.name })).toBe("Blumenatelier, 9500 Villach, AT");
   });
 
   it("builds a merchant-only Austrian query, adds explicit city/postcode and strips financial metadata", () => {
@@ -60,6 +52,21 @@ describe("discreet merchant lookup", () => {
     expect(saved.merchantRules).toEqual(seed.merchantRules);
     expect(saved.financeRows).toBe(seed.financeRows);
     expect(saved.transactions[0].reviewed).toBeUndefined();
+  });
+
+  it("can recheck reviewed bookings and replace an existing alias on only the selected row and its open twins", () => {
+    const selected = { ...original, description: "POS 3,50 AT D1", merchantAlias: "Alter Name",
+      category: "Shopping" as const, categoryOverride: true, manualCategory: true, reviewed: true };
+    const twin = { ...original, id: "open-twin", merchantAlias: selected.merchantAlias };
+    const closed = { ...selected, id: "closed-twin" };
+    const differentAlias = { ...original, id: "different-alias", merchantAlias: "Anderer Name" };
+    const state = { ...fixture(), transactions: [selected, twin, closed, differentAlias] };
+    const saved = confirmMerchantAlias(state, selected, hit);
+    expect(saved.transactions).toEqual([
+      { ...selected, merchantAlias: hit.name }, { ...twin, merchantAlias: hit.name }, closed, differentAlias,
+    ]);
+    expect(statementFingerprint(saved.transactions[0])).toBe(statementFingerprint(selected));
+    expect(merchantRuleKey(saved.transactions[0])).toBe("raiffeisen|blumenatelier");
   });
 
   it("updates pending and receipt-backed twins without replacing their original texts or keys", () => {
@@ -100,5 +107,7 @@ describe("discreet merchant lookup", () => {
     expect(() => confirmMerchantAlias({ ...fixture(), transactions: [] }, original, hit)).toThrow("inzwischen geändert");
     expect(() => confirmMerchantAlias({ ...fixture(), transactions: [{ ...original, description: "Anderer Händler" }] }, original, hit)).toThrow("inzwischen geändert");
     expect(() => confirmMerchantAlias({ ...fixture(), transactions: [{ ...original, merchantAlias: "Bereits bestätigt" }] }, original, hit)).toThrow("inzwischen geändert");
+    const selected = { ...original, merchantAlias: "Alter Name" };
+    expect(() => confirmMerchantAlias({ ...fixture(), transactions: [{ ...selected, merchantAlias: "ALTER NAME" }] }, selected, hit)).toThrow("inzwischen geändert");
   });
 });
