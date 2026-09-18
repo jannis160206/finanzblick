@@ -9,9 +9,9 @@ import { normalizeAccount } from "@/lib/accounts";
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
 export function merchantRuleKey(
-  row: Pick<Transaction, "bank" | "description">,
+  row: Pick<Transaction, "bank" | "description"> & Partial<Pick<Transaction, "merchantAlias">>,
 ) {
-  const text = merchantKeyText(recoverMerchant(row).description);
+  const text = merchantKeyText(row.merchantAlias ?? recoverMerchant(row).description);
   const mandate = /mandat(?:sreferenz)?:\s*([^,;\s]+)/i.exec(text)?.[1];
   const merchant = mandate
     ? `mandat:${mandate}`
@@ -60,8 +60,7 @@ function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking =
     const key = merchantRuleKey(row);
     if (
       isSpecificMerchantKey(key) &&
-      !ambiguousMerchant(row) &&
-      !unresolvedTerminal(row.description) &&
+      (row.merchantAlias || (!ambiguousMerchant(row) && !unresolvedTerminal(row.description))) &&
       !classifyBooking(row).isTransfer
     ) addChoice(choices, key, {
       category: canonicalCategory(row.category),
@@ -150,7 +149,8 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
       (detected.category === "Prüfen" || detected.category === "Abonnements"
         ? inferred.get(key)
         : undefined);
-    return choice && isSpecificMerchantKey(key) && !row.categoryOverride && !detected.isTransfer && !ambiguousMerchant(row) && !unresolvedTerminal(row.description)
+    return choice && isSpecificMerchantKey(key) && !row.categoryOverride && !detected.isTransfer &&
+      (row.merchantAlias || (!ambiguousMerchant(row) && !unresolvedTerminal(row.description)))
       ? { ...row, category: choice.category, categoryOverride: true, includeInPlan: true,
           // Reload/repair must not apply a new booking's checkbox to old twins.
           ...(applyFixedCost && row.fixedCost === undefined && (row.amount < 0 || choice.fixedCost === false) && !isIncomeCategory(choice.category) &&

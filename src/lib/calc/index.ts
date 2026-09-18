@@ -84,12 +84,16 @@ const merchantPatterns: [RegExp, string][] = [
   [/sky chefs/i, "Sky Chefs"],
   [/filomena/i, "Filomena"],
 ];
-export function merchantName(description: string) {
+export function knownMerchantName(description: string) {
+  return merchantPatterns.find(([pattern]) => pattern.test(description))?.[1];
+}
+export function merchantName(description: string, alias?: string) {
+  if (alias) return alias;
   description = recoverMerchant({ description }).description;
   if (unresolvedTerminal(description)) return "Händler unbekannt";
-  const known = merchantPatterns.find(([pattern]) => pattern.test(description));
+  const known = knownMerchantName(description);
   return (
-    known?.[1] ??
+    known ??
     (description
       .toLocaleLowerCase("de-AT")
       .replace(/\b(?:kartenzahlung|pos|zahlung|debit|sepa)\b/g, "")
@@ -113,7 +117,7 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias">>,
 ) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
@@ -232,7 +236,7 @@ export function classify(
     isRoundUp,
     isAmazon,
     includeInPlan,
-    merchant: merchantName(description),
+    merchant: merchantName(description, transaction.merchantAlias),
     reason: sharedHoliday
       ? "Geteilt: 50 % Eigenanteil, 50 % Raphael"
       : reimbursement
@@ -277,7 +281,7 @@ export function classifyStatementRows(
   rows = rows.map(recoverMerchant);
   existing = existing.map(recoverMerchant);
   const refundMerchant = (row: Transaction) =>
-    `${row.bank.toLowerCase()}|${row.pocket ?? ""}|${merchantName(row.description.replace(/rückerstattung|erstattung|refund|gutschrift|retoure/gi, ""))}`;
+    `${row.bank.toLowerCase()}|${row.pocket ?? ""}|${merchantName(row.description.replace(/rückerstattung|erstattung|refund|gutschrift|retoure/gi, ""), row.merchantAlias)}`;
   const debits = new Map<string, Transaction[]>();
   for (const row of [...existing, ...rows].sort((a, b) =>
     b.date.localeCompare(a.date),

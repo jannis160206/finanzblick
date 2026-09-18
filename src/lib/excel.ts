@@ -254,6 +254,7 @@ export async function parseWorkbook(
         ...(native && reviewedCell
           ? { reviewed: /^(ja|true|1)$/i.test(reviewedCell) ? true : /^(nein|false|0)$/i.test(reviewedCell) ? false : reviewedCell }
           : {}),
+        ...(native && text(get("Händleralias")) ? { merchantAlias: text(get("Händleralias")) } : {}),
         ...(native && text(get("Bankreferenz"))
           ? { bankReference: text(get("Bankreferenz")) }
           : {}),
@@ -634,6 +635,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Geteilt manuell bezahlt",
     "Fixkosten",
     "Geprüft",
+    "Händleralias",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -665,6 +667,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.sharedPaidManually === undefined ? "" : row.sharedPaidManually ? "Ja" : "Nein",
       row.fixedCost === undefined ? "" : row.fixedCost ? "Ja" : "Nein",
       row.reviewed === undefined ? "" : row.reviewed ? "Ja" : "Nein",
+      row.merchantAlias ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {

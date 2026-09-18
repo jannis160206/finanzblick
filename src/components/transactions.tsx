@@ -53,12 +53,16 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { cn } from "@/lib/utils";
 import { StatementImport } from "@/components/statement-import";
 import { ReviewCount } from "@/components/review-count";
-import { rememberMerchants } from "@/lib/import/merchant-rules";
+import { merchantRuleKey, rememberMerchants } from "@/lib/import/merchant-rules";
 import { SharedCosts, SharedRowAction } from "@/components/shared-costs";
 import { HolidayRanges } from "@/components/holiday-ranges";
 import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { isIncomeCategory } from "@/lib/fixed";
 import { accountLabel } from "@/lib/accounts";
+import { confirmMerchantAlias, merchantLookupQuery, needsMerchantLookup } from "@/lib/merchant-lookup";
+import { lookupMerchant } from "@/lib/merchant-lookup-client";
+import type { MerchantLookupResult } from "@/lib/merchant-lookup-schema";
+import { MerchantLookupDialog } from "@/components/merchant-lookup-dialog";
 
 function TransactionForm({
   transaction,
@@ -254,7 +258,39 @@ const TransactionLedger = memo(function TransactionLedger({
   const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
-  const actionTrigger = useRef<{ id: string; action: "edit" | "menu" } | null>(null);
+  const [lookup, setLookup] = useState<{ booking: Transaction; results: MerchantLookupResult[] | null } | null>(null);
+  const [lookupPending, setLookupPending] = useState(false);
+  const lookupBusy = useRef(false);
+  const lookupRequest = useRef(0);
+  const actionTrigger = useRef<{ id: string; action: "edit" | "menu" | "lookup" } | null>(null);
+  function closeLookup() {
+    lookupRequest.current++;
+    setLookup(null);
+  }
+  async function startLookup(booking: Transaction) {
+    if (lookupBusy.current) return;
+    const query = merchantLookupQuery(booking);
+    if (!query) {
+      toast.error("Im Banktext fehlt ein verwendbarer Händlername für die Suche.");
+      return;
+    }
+    lookupBusy.current = true;
+    setLookupPending(true);
+    const request = ++lookupRequest.current;
+    setLookup({ booking, results: null });
+    try {
+      const results = await lookupMerchant(query);
+      if (lookupRequest.current === request) setLookup({ booking, results });
+    } catch (error) {
+      if (lookupRequest.current === request) {
+        toast.error(error instanceof Error ? error.message : "Der Name konnte nicht nachgeschlagen werden.");
+        closeLookup();
+      }
+    } finally {
+      lookupBusy.current = false;
+      setLookupPending(false);
+    }
+  }
   function returnActionFocus() {
     // Table cells can remount while a dialog is open; resolve the current button.
     const target = [...document.querySelectorAll<HTMLButtonElement>("[data-ledger-action]")]
@@ -312,7 +348,8 @@ const TransactionLedger = memo(function TransactionLedger({
       ),
     },
     {
-      accessorKey: "description",
+      id: "description",
+      accessorFn: (row) => row.merchantAlias ?? row.description,
       header: "Beschreibung",
       cell: ({ getValue }) => (
         <span
@@ -392,6 +429,16 @@ const TransactionLedger = memo(function TransactionLedger({
             <Pencil className="size-3.5" />
           </Button>
           <SharedRowAction booking={row.original} />
+          {needsMerchantLookup(row.original) && <Button size="icon" variant="ghost" className="size-7 text-muted-foreground"
+            title="Name nachschlagen" aria-label={`Name nachschlagen: ${row.original.description}`}
+            disabled={lookupPending || !!storageError}
+            data-ledger-action="lookup" data-booking-id={row.original.id}
+            onClick={() => {
+              actionTrigger.current = { id: row.original.id, action: "lookup" };
+              void startLookup(row.original);
+            }}>
+            <CircleHelp className="size-3.5" />
+          </Button>}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="icon" variant="ghost" className="size-8"
@@ -706,6 +753,19 @@ const TransactionLedger = memo(function TransactionLedger({
       {editor && (
         <TransactionForm transaction={editor} onClose={() => setEditor(null)} returnFocus={returnActionFocus} />
       )}
+      {lookup && <MerchantLookupDialog key={lookup.booking.id} results={lookup.results} onClose={closeLookup}
+        returnFocus={returnActionFocus} disabled={!!storageError}
+        onConfirm={(result) => {
+          const current = ledger.find((row) => row.id === lookup.booking.id);
+          if (!current || current.merchantAlias || merchantRuleKey(current) !== merchantRuleKey(lookup.booking)) {
+            toast.error("Die Buchung wurde inzwischen geändert. Bitte erneut öffnen.");
+            closeLookup();
+            return;
+          }
+          update((state) => confirmMerchantAlias(state, lookup.booking, result));
+          closeLookup();
+          toast.success("Händlername übernommen. Der Banktext bleibt unverändert.");
+        }} />}
       <Dialog
         open={!!deleting}
         onOpenChange={(open) => {

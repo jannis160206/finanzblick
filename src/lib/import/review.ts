@@ -71,7 +71,7 @@ function indexReviewRules(state: AppState) {
 export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
   const result = classify(row);
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
-  if (unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
+  if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
   if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
   if (payrollCategory(row) === result.category) return;

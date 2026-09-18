@@ -87,6 +87,7 @@ const transactionFieldsSchema = z.object({
   description: z.string().trim().min(1, "Beschreibung erforderlich").max(1000),
   rawDescription: z.string().max(1000).optional(),
   rawDetails: z.array(z.string().max(1000)).max(20).optional(),
+  merchantAlias: z.string().trim().min(1).max(200).optional(),
   category: categorySchema.catch("Prüfen"),
   amount: moneySchema.refine(
     (value) => value !== 0,
