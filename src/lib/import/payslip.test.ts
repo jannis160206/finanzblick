@@ -48,6 +48,59 @@ function page(overrides: {
 }
 
 describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
+  it("extracts the company name from a numbered Firma header without storing its internal ID", () => {
+    const input = page();
+    const result = parsePayslipPages([{
+      lines: input.lines.map((entry) => entry.y === 765
+        ? line(765, [54, "Firma"], [133, ":"], [144, "123456"], [218, "Fabelwald Robotik GmbH"])
+        : entry),
+    }]);
+    expect(result.issues).toEqual([]);
+    expect(result.drafts[0]).toMatchObject({
+      employer: "Fabelwald Robotik GmbH", regularGross: 3380, specialGross: 0,
+    });
+    expect(JSON.stringify(result)).not.toContain("123456");
+    expect(JSON.stringify(result)).not.toContain("Testperson");
+  });
+
+  it("recognizes a numbered employer in every month without copying it between documents", () => {
+    const result = parsePayslipPages(["Jänner", "Februar", "März", "April", "Mai", "Juni", "Juli", "August"].map((month) => ({
+      lines: page({ month }).lines.map((entry) => entry.y === 765
+        ? line(765, [54, "Firma"], [133, ":"], [144, "123456"], [218, "Fabelwald Robotik GmbH"])
+        : entry),
+    })));
+    expect(result.drafts).toHaveLength(8);
+    expect(result.drafts.every((draft) => draft.employer === "Fabelwald Robotik GmbH")).toBe(true);
+    expect(result.issues).toEqual([]);
+  });
+
+  it("does not strip digits from ordinary company names or use numbered person headers as employers", () => {
+    const input = page();
+    const realName = parsePayslipPages([{
+      lines: input.lines.map((entry) => entry.y === 765 ? line(765, [54, "Firma:"], [218, "3D Robotik GmbH"]) : entry),
+    }]);
+    expect(realName.drafts[0].employer).toBe("3D Robotik GmbH");
+    const missing = parsePayslipPages([{
+      lines: input.lines.map((entry) => entry.y === 765
+        ? line(765, [54, "Person"], [133, ":"], [144, "123456"], [218, "Fabelwald Robotik GmbH"])
+        : entry),
+    }]);
+    expect(missing.drafts[0].employer).toBeUndefined();
+    expect(missing.issues.join()).toContain("Arbeitgeber nicht eindeutig");
+  });
+
+  it("keeps conflicting numbered employer headers unresolved", () => {
+    const result = parsePayslipPages([{
+      lines: [
+        ...page().lines.filter((entry) => entry.y !== 765),
+        line(765, [54, "Firma"], [133, ":"], [144, "123456"], [218, "Fabelwald Robotik GmbH"]),
+        line(750, [54, "Firma"], [133, ":"], [144, "654321"], [218, "Wolkenrad Technik AG"]),
+      ],
+    }]);
+    expect(result.drafts[0].employer).toBeUndefined();
+    expect(result.issues.join()).toContain("Arbeitgeber nicht eindeutig");
+  });
+
   it("uses Betrag rather than the last money and keeps §68 wages in the sixth basis", () => {
     const result = parsePayslipPages([page()]);
     expect(result.issues).toEqual([]);
@@ -169,7 +222,33 @@ describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
     expect(result.drafts[0].regularGross).toBeUndefined();
     expect(result.drafts[0].specialGross).toBeUndefined();
     expect(result.issues.join()).toMatch(/nicht unterstützt/i);
+    expect(result.issues.join()).toContain("Lohnart 8000");
+    expect(result.issues.join()).toContain("01/2026");
+    expect(result.issues.join()).not.toContain("Bruttosumme stimmt nicht");
     expect(JSON.stringify(result)).not.toContain("PrivateNotiz");
+  });
+
+  it("reports an actual reconciliation difference even when a component is not classified", () => {
+    const result = parsePayslipPages([page({
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "8000", "Unbekannter Bezug", "900,00")],
+      gross: "3.720,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.issues.join()).toContain("Lohnart 8000");
+    expect(result.issues.join()).toContain("Bruttosumme stimmt nicht");
+  });
+
+  it("does not infer tax treatment from employer-specific wage code 1509 alone", () => {
+    const result = parsePayslipPages([page({
+      month: "Februar",
+      rows: [wage(490, "1000", "Gehalt", "2.810,20"), wage(475, "1509", "Nicht eindeutig ausgewiesener Bezug", "200,00")],
+      gross: "3.010,20",
+    })]);
+    expect(result.drafts[0].regularGross).toBeUndefined();
+    expect(result.drafts[0].specialGross).toBeUndefined();
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]).toContain("02/2026");
+    expect(result.issues[0]).toContain("Lohnart 1509");
   });
 
   it("does not assume gross eligibility for an unqualified tax-free allowance", () => {
@@ -343,7 +422,7 @@ describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
     const result = parsePayslipPages([page({ days: "31" })]);
     expect(result.drafts[0].monthlyPayroll).toBeUndefined();
     expect(result.drafts[0].specialGross).toBeUndefined();
-    expect(result.issues.join()).toMatch(/Abrechnungstage bitte prüfen/);
+    expect(result.issues.join()).toMatch(/Abrechnungstage sind nicht eindeutig/);
   });
 
   it("does not manufacture regular zero for a standalone special payment", () => {

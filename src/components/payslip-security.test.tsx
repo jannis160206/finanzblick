@@ -28,7 +28,7 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("keeps the payslip upload and review open through the native Explorer focus cycle", async () => {
+it("keeps automatic payslip analysis open through the native Explorer focus cycle", async () => {
   render(<SecurityModeProvider>
     <PayslipImportPanel year={2026} employer="" onImported={vi.fn()} />
   </SecurityModeProvider>);
@@ -43,11 +43,12 @@ it("keeps the payslip upload and review open through the native Explorer focus c
   fireEvent.change(screen.getByLabelText("Lohnabrechnungen als PDF auswählen"), { target: { files: [file] } });
   fireEvent(window, new Event("focus"));
 
-  expect(await screen.findByRole("dialog", { name: "Lohnabrechnung prüfen" })).toBeTruthy();
+  expect(await screen.findByText(/automatisch übernommen/)).toBeTruthy();
   expect(pdf.parse).toHaveBeenCalledWith(buffer, "synthetic-password");
   expect(getSecuritySnapshot().locked).toBe(false);
-  expect(update).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+  expect(update).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(screen.queryByRole("spinbutton")).toBeNull();
   fireEvent(window, new Event("blur"));
   expect(getSecuritySnapshot().locked).toBe(true);
 });

@@ -56,6 +56,22 @@ afterEach(() => {
 });
 
 describe("local encrypted payslip PDF lifecycle", () => {
+  it("reconstructs a split numbered company header without absorbing the adjacent employee row", async () => {
+    loading({ text: { items: [
+      ...content().items.filter((entry) => entry.transform[5] !== 760),
+      item(54, 784, "Firma"), item(133, 784, ":"), item(144, 784, "123456"),
+      item(218, 784, "Fabelwald Robotik GmbH"),
+      item(54, 773, "Person"), item(133, 773, ":"), item(144, 773, "654321"),
+      item(218, 773, "Synthetische Testperson"), item(410, 773, "SV-Nr."), item(460, 773, "9999 010190"),
+    ].reverse() } });
+    const result = await parsePayslipPdf(pdfBuffer());
+    expect(result.issues).toEqual([]);
+    expect(result.drafts[0]).toMatchObject({
+      employer: "Fabelwald Robotik GmbH", regularGross: 2810.2, specialGross: 0,
+    });
+    expect(JSON.stringify(result)).not.toMatch(/123456|654321|Testperson|9999|010190/);
+  });
+
   it("copies input before PDF.js transfers it, preserving the caller's ArrayBuffer", async () => {
     const original = pdfBuffer();
     const originalLength = original.byteLength;

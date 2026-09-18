@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzePayroll, defaultPayrollForecast, payrollTaxSources } from "@/lib/payroll-analysis";
+import { analyzePayroll, analyzePayrollAutomatically, defaultPayrollForecast, payrollTaxSources } from "@/lib/payroll-analysis";
 import type { Payslip, PayrollForecast } from "@/lib/payslip-schema";
 
 const slip = (month: number, override: Partial<Payslip> = {}): Payslip => ({
@@ -19,6 +19,154 @@ const analyze = (entries: Payslip[], forecast?: PayrollForecast) =>
 const forecastFor = (entries: Payslip[], override: Partial<PayrollForecast> = {}): PayrollForecast => ({
   ...defaultPayrollForecast(entries, 2026, "Synthetischer Testbetrieb"),
   ...override,
+});
+
+describe("automatic document-driven payroll model", () => {
+  const automatic = (entries: Payslip[]) => analyzePayrollAutomatically(entries, 2026, "Synthetischer Testbetrieb");
+  const overflowSlip = (override: Partial<Payslip> = {}) => slip(9, {
+    regularGross: 5000, regularGrossYtd: 45000, specialGrossYtd: 7000,
+    usedSixth: 7000, specialTaxableYtd: 620, baseSalary: 4000,
+    monthlyTaxableBase: 4000, regularTax: 500, ...override,
+  });
+
+  it("calculates only an explicitly unconfirmed standard model without changing legacy confirmation", () => {
+    const entries = [slip(1, { baseSalary: 3000 })];
+    const result = automatic(entries);
+    expect(result).toMatchObject({
+      mode: "automatic-standard-model", hasSpecialPaymentModel: true,
+      forecast: { standardPayrollConfirmed: false },
+      actual: { month: 1, sixth: 6000, specialGrossYtd: 0 },
+    });
+    expect(result.nextSpecial).toMatchObject({
+      month: 6, source: "scenario",
+      tax: { preferential: 112.07, tariff: 0, total: 112.07, netSpecial: 2375.83 },
+      taxIssues: [],
+    });
+    expect(result.projections.find((entry) => entry.month === 11)?.tax?.total).toBe(149.27);
+    expect(result.assumptions.join(" ")).toMatch(/unbestätigten Annahmen/);
+    expect(result.assumptions.join(" ")).toContain("Absetzbeträge");
+    expect(result.assumptions.join(" ")).toContain("nicht durch das Modell bestätigt");
+    expect(result.nextSpecial?.taxAssumptions.join(" ")).toContain("unbestätigten automatischen");
+    expect(analyze(entries).nextSpecial?.tax).toBeUndefined();
+    expect(defaultPayrollForecast(entries, 2026, entries[0].employer).standardPayrollConfirmed).toBe(false);
+  });
+
+  it("does not use or mutate persisted manual forecasts", () => {
+    const entries = [slip(1, { baseSalary: 3000 })];
+    const saved = forecastFor(entries, {
+      standardPayrollConfirmed: true,
+      months: [{ month: 11, regularGross: 99999, specialGross: 99999, specialSv: 0 }],
+    });
+    const original = structuredClone({ entries, saved });
+    expect(analyze(entries, saved).forecast.months.find((entry) => entry.month === 11)?.regularGross).toBe(99999);
+    expect(automatic(entries).forecast.months.find((entry) => entry.month === 11)).toMatchObject({
+      regularGross: 3000, specialGross: 3000, specialSv: 512.1,
+    });
+    expect({ entries, saved }).toEqual(original);
+  });
+
+  it("replaces modeled months and refreshes all remaining defaults after a newer statement", () => {
+    const january = slip(1, { baseSalary: 3000 });
+    const before = automatic([january]);
+    const after = automatic([january, slip(2, {
+      regularGross: 3500, baseSalary: 3200, monthlyTaxableBase: 2800,
+    })]);
+    expect(before.yearEnd?.regularGrossYtd).toBe(36000);
+    expect(after.actual).toMatchObject({ month: 2, regularGrossYtd: 6500 });
+    expect(after.projections[0].month).toBe(3);
+    expect(after.forecast.months.every((entry) => entry.regularGross === 3500 && entry.monthlyTaxableBase === 2800)).toBe(true);
+    expect(after.nextSpecial).toMatchObject({ month: 6, specialGross: 3200 });
+    expect(after.yearEnd?.regularGrossYtd).toBe(41500);
+  });
+
+  it("keeps missing actual months unknown instead of replacing their history with the model", () => {
+    const result = automatic([slip(1, { baseSalary: 3000 }), slip(9, { baseSalary: 3000, reportedSixth: 6000 })]);
+    expect(result.actual?.sixth).toBe(6000);
+    expect(result.actual?.specialGrossYtd).toBeUndefined();
+    expect(result.projections).toEqual([]);
+    expect(result.missingMonths).toEqual([2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  it("requires documentary historical utilization even when gross anchors allow a projection", () => {
+    const result = automatic([overflowSlip({ usedSixth: undefined, specialTaxableYtd: undefined })]);
+    expect(result.yearEnd).toBeDefined();
+    expect(result.nextSpecial?.tax).toBeUndefined();
+    expect(result.nextSpecial?.utilizationSource).toBe("gross-comparison");
+    expect(result.nextSpecial?.taxIssues.join(" ")).toContain("Sechstelverbrauch");
+  });
+
+  it("can model overflow with sufficient anchors and observed positive ordinary withholding", () => {
+    const result = automatic([overflowSlip()]);
+    expect(result.nextSpecial).toMatchObject({
+      month: 11, eligibleGross: 3000, overflowGross: 1000, taxIssues: [],
+      tax: { preferential: 149.27, tariff: 331.72, total: 480.99, signedOverflowDelta: 281.96 },
+    });
+    expect(result.forecast.standardPayrollConfirmed).toBe(false);
+    expect(result.yearEnd?.tax).toBeUndefined();
+  });
+
+  it.each([
+    { monthlyTaxableBase: undefined, expected: "LSt-Basis" },
+    { regularTax: undefined, expected: "Absetzbeträge" },
+    { regularTax: 0, expected: "nicht positiv" },
+    { regularTax: 2000, expected: "übersteigt den normalisierten Tarif" },
+    { reportedSixth: 5000, expected: "weicht" },
+  ])("retains tax safeguards in automatic mode: %j", ({ expected, ...override }) => {
+    const result = automatic([overflowSlip(override)]);
+    expect(result.nextSpecial?.tax).toBeUndefined();
+    expect(result.nextSpecial?.taxIssues.join(" ")).toContain(expected);
+  });
+
+  it("does not invent a special salary from gross, net or the ordinary tax base", () => {
+    const result = automatic([slip(1, { regularGross: 3600, monthlyTaxableBase: 2800 })]);
+    expect(result.hasSpecialPaymentModel).toBe(false);
+    expect(result.nextSpecial).toBeUndefined();
+    expect(result.yearEnd?.sixth).toBe(7200);
+    expect(result.issues.join(" ")).toContain("PDF-Abrechnung hochladen");
+    expect(automatic([slip(1, { baseSalary: 0 })]).hasSpecialPaymentModel).toBe(false);
+  });
+
+  it("never uses partial months for future projections", () => {
+    const result = automatic([slip(1, { baseSalary: 3000, monthlyPayroll: false, reportedSixth: 4000 })]);
+    expect(result.actual?.sixth).toBe(4000);
+    expect(result.projections).toEqual([]);
+    expect(result.issues.join(" ")).toContain("Teilmonate");
+  });
+
+  it("retains historical free-limit warnings despite explicit cumulative anchors", () => {
+    const result = automatic([
+      slip(1, { regularGross: 1000, specialGross: 1000, specialSv: 0 }),
+      slip(2, {
+        regularGross: 4000, specialGross: 1000, specialSv: 0,
+        usedSixth: 2000, specialTaxableYtd: 2000, baseSalary: 1000,
+      }),
+    ]);
+    expect(result.nextSpecial?.tax).toBeUndefined();
+    expect(result.nextSpecial?.taxIssues.join(" ")).toContain("Freigrenzenbehandlung");
+  });
+
+  it("blocks 2027 SV estimates without asking for manually entered amounts", () => {
+    const entries = [slip(1, { year: 2027, baseSalary: 3000 })];
+    const result = analyzePayrollAutomatically(entries, 2027, entries[0].employer);
+    expect(result.nextSpecial?.tax).toBeUndefined();
+    expect(result.nextSpecial?.taxIssues.join(" ")).toContain("SV-Tabellen 2027 sind nicht verifiziert");
+    expect(result.nextSpecial?.taxIssues.join(" ")).toContain("PDF-Abrechnung");
+    expect(result.nextSpecial?.taxAssumptions.join(" ")).not.toContain("eingetragene");
+  });
+
+  it("isolates employer and year and handles empty or completed years", () => {
+    const result = automatic([
+      slip(1, { baseSalary: 3000 }),
+      slip(9, { year: 2027, baseSalary: 9999 }),
+      slip(11, { employer: "Anderer Betrieb", baseSalary: 8888 }),
+    ]);
+    expect(result.latest?.month).toBe(1);
+    expect(result.nextSpecial?.specialGross).toBe(3000);
+    expect(automatic([])).toMatchObject({ projections: [], hasSpecialPaymentModel: false });
+    expect(automatic(months(12, { baseSalary: 3000 }))).toMatchObject({
+      actual: { month: 12, controlSixth: 6000 }, projections: [],
+    });
+  });
 });
 
 describe("payroll actual aggregation", () => {

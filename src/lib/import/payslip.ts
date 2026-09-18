@@ -110,9 +110,15 @@ function findEmployer(lines: readonly PayslipLine[]): string | undefined {
   for (const line of lines) {
     const value = text(line);
     const explicit = value.match(/^(?:arbeitgeber|dienstgeber|firma)\s*:\s*(.+)$/i);
-    if (explicit && explicit[1].length <= 120 &&
-      !/personal|versicher|arbeitnehmer|dienstnehmer|iban|\d{4}/i.test(explicit[1]))
-      labelled.push(explicit[1]);
+    if (explicit) {
+      let name = explicit[1];
+      const numbered = /^(\d{3,12})\s+(.+)$/.exec(name);
+      // Some payroll headers put a separate internal company number before the name.
+      if (numbered && line.items.some((item) => clean(item.text) === numbered[1]) &&
+        CORPORATION.test(numbered[2])) name = numbered[2];
+      if (name.length <= 120 &&
+        !/personal|versicher|arbeitnehmer|dienstnehmer|iban|\d{4}/i.test(name)) labelled.push(name);
+    }
     if (value.length <= 120 && CORPORATION.test(value)) corporations.push(value);
   }
   const candidates = [...new Set(labelled.length ? labelled : corporations)];
@@ -145,13 +151,21 @@ const REPORTED_FIELDS = [
 export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport {
   if (pages.length > MAX_PAGES) throw new PayslipImportError("Die PDF-Datei darf höchstens 100 Seiten enthalten.");
   const result: PayslipImport = { drafts: [], issues: [] };
+  const warnings = new Set<string>();
   const seen = new Map<string, PayslipDraft>();
   let textLength = 0;
   let hasText = false;
   for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
     const page = pages[pageIndex];
     const number = page.pageNumber ?? pageIndex + 1;
-    const issue = (message: string) => result.issues.push(`Seite ${number}: ${message}`);
+    let location = `Seite ${number}`;
+    const issue = (message: string) => {
+      const warning = `${location}: ${message}`;
+      if (!warnings.has(warning)) {
+        warnings.add(warning);
+        result.issues.push(warning);
+      }
+    };
     const lines = [...page.lines].sort((a, b) => b.y - a.y);
     const pageLength = lines.reduce((sum, line) => sum + line.items.reduce((count, item) => count + item.text.length, 0), 0);
     textLength += pageLength;
@@ -173,7 +187,7 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
       REGULAR.test(description(line, layout)) || SPECIAL.test(description(line, layout)));
     if (employerCosts && !hasBrutto && !hasWages) continue;
     if (titleIndex < 0) {
-      issue("Kein eindeutig zuordenbarer Abrechnungskopf. Fortsetzungen oder andere Belege bitte manuell prüfen.");
+      issue("Kein eindeutig zuordenbarer Abrechnungskopf. Bitte die vollständige Original-Abrechnung hochladen.");
       if (result.drafts.length) {
         delete result.drafts.at(-1)!.regularGross;
         delete result.drafts.at(-1)!.specialGross;
@@ -182,15 +196,16 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     }
     const draft: PayslipDraft = {};
     const period = findPeriod(lines, titleIndex);
+    if (period.month && period.year) location += ` (${String(period.month).padStart(2, "0")}/${period.year})`;
     if (period.month) draft.month = period.month;
     else issue("Abrechnungsmonat nicht eindeutig lesbar.");
     if (period.year === 2026 || period.year === 2027) draft.year = period.year;
     else issue(period.year ? "Abrechnungsjahr wird nicht unterstützt; nur 2026 und 2027 sind vorgesehen." : "Abrechnungsjahr nicht eindeutig lesbar.");
     draft.employer = findEmployer(lines.slice(0, tableIndex < 0 ? undefined : tableIndex));
-    if (!draft.employer) issue("Arbeitgeber nicht eindeutig erkannt; bitte ergänzen.");
+    if (!draft.employer) issue("Arbeitgeber nicht eindeutig erkannt; eine vollständige Abrechnung mit lesbarem Firmenkopf wird benötigt.");
     draft.monthlyPayroll = payrollDays(lines);
-    if (draft.monthlyPayroll === false) issue("Teilmonat erkannt; Hochrechnung und Sonderzahlungen bitte manuell prüfen.");
-    if (draft.monthlyPayroll === undefined) issue("Voller Abrechnungsmonat nicht bestätigt; Abrechnungstage bitte prüfen.");
+    if (draft.monthlyPayroll === false) issue("Teilmonat erkannt; die automatische Standardhochrechnung ist dafür nicht verfügbar.");
+    if (draft.monthlyPayroll === undefined) issue("Voller Abrechnungsmonat nicht bestätigt; die Abrechnungstage sind nicht eindeutig lesbar.");
 
     const readings = new Map<keyof PayslipDraft, number[]>();
     const record = (field: keyof PayslipDraft, value: number | undefined) => {
@@ -201,17 +216,17 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
         .sort((a, b) => a.x - b.x).map((item) => clean(item.text)).join(" ").replace(/:$/, "");
       if (/^steuerpflichtige\s+sonderzahlungen\s+(?:kumuliert|ytd)\b/i.test(label) &&
         !SPECIAL_TAXABLE_YTD.test(label))
-        issue("Kumulierte Sonderzahlungs-Steuerbasis nicht eindeutig als innerhalb des Jahressechstels, nach SV und vor 620-Euro-Freibetrag ausgewiesen; bitte manuell prüfen.");
+        issue("Kumulierte Sonderzahlungs-Steuerbasis nicht eindeutig als innerhalb des Jahressechstels, nach SV und vor 620-Euro-Freibetrag ausgewiesen; der Wert bleibt unbekannt.");
       for (const [field, pattern] of REPORTED_FIELDS) {
         if (!pattern.test(label)) continue;
         const values = amounts(line.items);
         if (values.length === 1 && values[0] >= 0) record(field, values[0]);
-        else issue("Ein kumulierter Kontrollwert ist nicht eindeutig lesbar; bitte manuell prüfen.");
+        else issue("Ein kumulierter Kontrollwert ist nicht eindeutig lesbar und wird nicht geschätzt.");
       }
     }
     let regular = 0;
     let special = 0;
-    let expenses = 0;
+    let listedGross = 0;
     let wageCount = 0;
     let regularCount = 0;
     let specialCount = 0;
@@ -220,7 +235,7 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     let active = false;
     let ended = false;
     const components = new Set<string>();
-    if (!layout) issue("Spaltenlayout nicht unterstützt; Bruttobezüge bitte manuell ergänzen.");
+    if (!layout) issue("Spaltenlayout nicht unterstützt; keine automatische Bruttoaufteilung möglich.");
     else {
       for (let index = tableIndex; index < lines.length; index++) {
         const line = lines[index];
@@ -247,21 +262,22 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           ended = true;
         }
         if (/^sv[- ]?beitrag\s+(?:lfd\.?|laufend|sz|sonderzahlung(?:en)?)$/i.test(label)) {
-          if (value === undefined) issue("Ein Sozialversicherungsbeitrag ist nicht eindeutig lesbar; bitte prüfen.");
+          if (value === undefined) issue("Ein Sozialversicherungsbeitrag ist nicht eindeutig lesbar und bleibt unbekannt.");
           else record(/\b(?:lfd\.?|laufend)$/i.test(label) ? "regularSv" : "specialSv", Math.abs(value));
         }
         if (/^l(?:ohn)?st[- ]?beitrag\s+(?:lfd\.?|laufend)$/i.test(label)) {
-          if (value === undefined) issue("Laufender Lohnsteuerbeitrag nicht eindeutig lesbar; bitte prüfen.");
+          if (value === undefined) issue("Laufender Lohnsteuerbeitrag nicht eindeutig lesbar und bleibt unbekannt.");
           else record("regularTax", Math.abs(value));
           const taxable = cell(line, layout, "tax");
           if (taxable !== undefined && taxable >= 0) record("monthlyTaxableBase", taxable);
-          else issue("Lohnsteuer-Bemessungsgrundlage nicht eindeutig lesbar; bitte prüfen.");
+          else issue("Lohnsteuer-Bemessungsgrundlage nicht eindeutig lesbar und bleibt unbekannt.");
         }
         if (!active || !label) continue;
         if (INFORMATIONAL.test(label) && value === undefined) continue;
+        if (value !== undefined) listedGross += value;
         if (value === undefined || value < 0) {
           complete = false;
-          issue("Ein Bezugsbestandteil ist unvollständig oder eine Korrektur; Bruttoaufteilung bitte manuell prüfen.");
+          issue("Ein Bezugsbestandteil ist unvollständig oder eine Korrektur; keine sichere automatische Bruttoaufteilung möglich.");
           continue;
         }
         const code = [...line.items].sort((a, b) => a.x - b.x).map((item) => clean(item.text))
@@ -269,7 +285,7 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
         const component = `${code ?? "?"}|${label.toLocaleLowerCase("de-AT")}`;
         if (components.has(component)) {
           complete = false;
-          issue("Bezugsbestandteil mehrfach vorhanden; mögliche Korrektur bitte manuell prüfen.");
+          issue("Bezugsbestandteil mehrfach vorhanden; eine mögliche Korrektur wird nicht automatisch verrechnet.");
         }
         components.add(component);
         if (REGULAR.test(label)) {
@@ -281,32 +297,31 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           special += value;
           wageCount++;
           specialCount++;
-        } else if (EXPENSE.test(label)) expenses += value;
-        else {
+        } else if (!EXPENSE.test(label)) {
           complete = false;
-          issue("Nicht unterstützter Bezugsbestandteil; Steuerfreiheit und Sechstelzuordnung bitte manuell prüfen.");
+          issue(`Nicht unterstützter Bezugsbestandteil${code ? ` (Lohnart ${code})` : ""}; Steuerfreiheit und Sechstelzuordnung sind nicht eindeutig erkennbar. Diese Abrechnung wird nicht automatisch übernommen.`);
         }
       }
       if (gross === undefined || !wageCount) {
         complete = false;
         issue("Bruttosumme oder eindeutige Bezüge fehlen; keine automatische Bruttoaufteilung.");
-      } else if (Math.abs(gross - regular - special - expenses) > 1) {
+      } else if (Math.abs(gross - listedGross) > 1) {
         complete = false;
-        issue("Bruttosumme stimmt nicht mit den erkannten Bestandteilen überein; bitte manuell abgleichen.");
+        issue("Bruttosumme stimmt nicht mit den erkannten Bestandteilen überein; keine sichere automatische Bruttoaufteilung möglich.");
       }
     }
     for (const [field, values] of readings) {
-      if (values.length !== 1) issue("Mehrere Werte für dasselbe Betragsfeld; bitte manuell prüfen.");
+      if (values.length !== 1) issue("Mehrere Werte für dasselbe Betragsfeld; kein eindeutiger Wert übernommen.");
       else Object.assign(draft, { [field]: values[0] / 100 });
     }
     if (rendered.filter((line) => TITLE.test(line)).length !== 1 ||
       rendered.some((line) => /\b(?:aufrollung|korrekturabrechnung|storno|nachverrechnung)\b/i.test(line))) {
       complete = false;
-      issue("Mehrere Abrechnungen oder eine Korrektur erkannt; bitte einzeln manuell abgleichen.");
+      issue("Mehrere Abrechnungen oder eine Korrektur erkannt; bitte die gültige vollständige Monatsabrechnung einzeln hochladen.");
     }
     if (complete) {
       if (regularCount) draft.regularGross = regular / 100;
-      else issue("Keine eindeutigen laufenden Bezüge; bitte ergänzen, nicht aus Sonderzahlungen ableiten.");
+      else issue("Keine eindeutigen laufenden Bezüge; sie werden nicht aus Sonderzahlungen abgeleitet.");
       if (specialCount || (regularCount && draft.monthlyPayroll === true)) draft.specialGross = special / 100;
       else issue("Fehlende Sonderzahlungen sind bei unklarem oder unvollständigem Monat nicht automatisch null.");
     }

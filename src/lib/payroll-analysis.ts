@@ -73,6 +73,20 @@ export type PayrollAnalysis = {
   yearEnd?: PayrollProjection;
 };
 
+export type AutomaticPayrollAnalysis = PayrollAnalysis & {
+  mode: "automatic-standard-model";
+  assumptions: string[];
+  hasSpecialPaymentModel: boolean;
+};
+
+const automaticPayrollAssumptions = [
+  "Automatisches Standardmodell mit unbestätigten Annahmen, keine bestätigte Steuerberechnung: Neu hochgeladene Abrechnungen ersetzen Modellmonate und aktualisieren die übrige Vorausschau.",
+  "Laufendes Brutto und belegte laufende LSt-Basis werden aus der neuesten Abrechnung unverändert fortgeschrieben. Variable Bezüge und künftige Gehaltsänderungen sind damit nicht vorhergesagt.",
+  "Nur bei ausdrücklich erkanntem Grundgehalt: je ein Grundgehalt im Juni und November. Zahlungsmonate und Höhe sind feste Modellannahmen, kein belegter vertraglicher Anspruch.",
+  "Die Steuerrechnung unterstellt unveränderte feste Absetzbeträge, keine einkommensabhängigen Begünstigungen, reguläre volle Abrechnungsmonate und nur normale Urlaubs-/Weihnachtszahlungen nach § 67 Abs. 1/2. Diese Voraussetzungen sind nicht durch das Modell bestätigt.",
+  "Die SV-Vorlage gilt nur unter der unbestätigten Annahme homogener, vollversicherter Angestelltenbezüge, nicht für Lehrlinge, gemischte SV-Zahlungen, Arbeitgeberwechsel oder andere Sonderfälle.",
+];
+
 const cents = (value: number) => Math.round((value + Number.EPSILON) * 100);
 const money = (value: number) => cents(value) / 100;
 const sum = (values: number[]) => values.reduce((total, value) => total + cents(value), 0) / 100;
@@ -280,7 +294,7 @@ function historicalUtilization(entries: Payslip[]): Utilization {
         used = sum([used, eligible]);
         if (eligible < entry.specialGross) {
           taxable = undefined;
-          issues.push("Früherer Sechstelüberhang: bestätigten Sechstelverbrauch und kumulierte begünstigte Steuerbasis aus der Lohnverrechnung ergänzen.");
+          issues.push("Früherer Sechstelüberhang: Eine Abrechnung mit belegtem Sechstelverbrauch und kumulierter begünstigter Steuerbasis aus der Lohnverrechnung fehlt. Bitte den entsprechenden PDF-Beleg hochladen.");
         } else if (entry.specialSv === undefined) {
           taxable = undefined;
           issues.push("Die SV früherer Sonderzahlungen fehlt; begünstigte Steuerbasis ist unbekannt.");
@@ -412,6 +426,34 @@ export function analyzePayroll(
   employer: string,
   savedForecast?: PayrollForecast,
 ): PayrollAnalysis {
+  return analyzePayrollScenario(payslips, year, employer, savedForecast, false);
+}
+
+export function analyzePayrollAutomatically(
+  payslips: Payslip[],
+  year: PayrollYear,
+  employer: string,
+): AutomaticPayrollAnalysis {
+  const analysis = analyzePayrollScenario(payslips, year, employer, undefined, true);
+  const hasSpecialPaymentModel = (analysis.latest?.baseSalary ?? 0) > 0;
+  if (analysis.latest && analysis.latest.month < 12 && !hasSpecialPaymentModel) {
+    analysis.issues.push("Kein positiver, ausdrücklich belegter Grundgehaltsbetrag für das Sonderzahlungsmodell. Bitte eine passende lesbare PDF-Abrechnung hochladen; laufendes Brutto oder LSt-Basis ersetzen diesen Nachweis nicht.");
+  }
+  return {
+    ...analysis,
+    mode: "automatic-standard-model",
+    assumptions: [...automaticPayrollAssumptions],
+    hasSpecialPaymentModel,
+  };
+}
+
+function analyzePayrollScenario(
+  payslips: Payslip[],
+  year: PayrollYear,
+  employer: string,
+  savedForecast: PayrollForecast | undefined,
+  automatic: boolean,
+): PayrollAnalysis {
   const entries = selectedPayslips(payslips, year, employer);
   const latest = entries.at(-1);
   const issues: string[] = [];
@@ -486,9 +528,13 @@ export function analyzePayroll(
     const overflowGross = money(month.specialGross - eligibleGross);
     used = sum([used, eligibleGross]);
     const taxIssues = [...ongoingTaxIssues];
-    if (!forecast.standardPayrollConfirmed) taxIssues.push("Prognoseannahmen für die Standard-Lohnverrechnung sind noch nicht bestätigt.");
+    if (!automatic && !forecast.standardPayrollConfirmed) taxIssues.push("Prognoseannahmen für die Standard-Lohnverrechnung sind noch nicht bestätigt.");
     if (month.specialGross > 0 && month.specialSv === undefined) {
-      taxIssues.push(year === 2027
+      taxIssues.push(automatic
+        ? year === 2027
+          ? "SV-Tabellen 2027 sind nicht verifiziert; deshalb ist keine automatische Steuer-/Nettoschätzung möglich. Tatsächliche Werte werden erst mit einer entsprechenden PDF-Abrechnung belegt."
+          : "Für die automatische Sonderzahlungs-SV fehlen ausreichende Belege. Bitte fehlende PDF-Abrechnungen mit den bisherigen Sonderzahlungen hochladen."
+        : year === 2027
         ? "SV der geplanten Sonderzahlung fehlt; SV-Tabellen 2027 sind nicht verifiziert, daher ist ein expliziter SV-Betrag erforderlich."
         : "SV der geplanten Sonderzahlung fehlt; keine Nettoberechnung ohne bestätigten SV-Betrag.");
     }
@@ -518,13 +564,18 @@ export function analyzePayroll(
       tax,
       taxIssues: unique(taxIssues),
       taxAssumptions: [
+        ...(automatic ? automaticPayrollAssumptions : []),
         "Reines Szenario ab dem letzten tatsächlichen Abrechnungsmonat; keine Aussage über bereits erfolgte spätere Zahlungen.",
         "Juni/November mit angegebenem Grundgehalt sind nur eine Vorlage, kein festgestellter Sonderzahlungsanspruch.",
         "Laufende LSt-Basis vor 132 € jährlichem Werbungskostenpauschale; unveränderte feste Absetzbeträge, keine zusätzlichen einkommensabhängigen Absetzbeträge oder Sonderfälle.",
-        "Sonderzahlungs-SV ist eine Prognoseannahme für homogene, vollversicherte Angestelltenbezüge; keine Lehrlinge oder gemischten SV-Zahlungen. Explizite Monatswerte haben Vorrang.",
+        automatic
+          ? "Sonderzahlungs-SV ist nur eine automatische Standardannahme, kein belegter zukünftiger Abzug."
+          : "Sonderzahlungs-SV ist eine Prognoseannahme für homogene, vollversicherte Angestelltenbezüge; keine Lehrlinge oder gemischten SV-Zahlungen. Explizite Monatswerte haben Vorrang.",
         ...(year === 2026
-          ? ["SV-Vorlage 2026: 14,12/15,12/16,12/17,07 % nach gesamtem Monats-SZ-Brutto, jährliche SZ-Höchstbeitragsgrundlage 13.860 €; bisheriges SZ-Brutto gilt nur im bestätigten Standardmodell als verbrauchte SV-Basis."]
-          : ["Keine automatische SV-Schätzung 2027; nur explizit eingetragene SV-Annahmen."]),
+          ? [`SV-Vorlage 2026: 14,12/15,12/16,12/17,07 % nach gesamtem Monats-SZ-Brutto, jährliche SZ-Höchstbeitragsgrundlage 13.860 €; bisheriges SZ-Brutto gilt nur im ${automatic ? "unbestätigten automatischen" : "bestätigten"} Standardmodell als verbrauchte SV-Basis.`]
+          : [automatic
+            ? "Keine automatische SV-Schätzung 2027; ohne verifizierte SV-Tabellen bleibt die Steuer-/Nettoprognose gesperrt."
+            : "Keine automatische SV-Schätzung 2027; nur explizit eingetragene SV-Annahmen."]),
         "Berechnet wird zusätzliche laufende Lohnsteuer im Auszahlungsmonat (§ 67 Abs. 10), nicht die endgültige jährliche Einkommensteuer.",
         "Optionale 30%-Einschleif-Aufrollung nach § 77 Abs. 4 und sonstige historische Korrekturen werden nicht angewendet.",
         ...(month.month === 12

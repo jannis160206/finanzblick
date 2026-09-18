@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileUp, LoaderCircle, Pencil, Trash2 } from "lucide-react";
+import { FileUp, LoaderCircle, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { SectionHeading } from "@/components/finance-ui";
@@ -24,133 +24,10 @@ const moneyFields = [
   ["specialSv", "SV Sonderzahlungen im Monat"],
   ["reportedSixth", "Jahressechstel laut Abrechnung"],
 ] as const;
-const cumulativeFields = [
-  ["regularGrossYtd", "Laufendes sechstelrelevantes Brutto seit Jänner"],
-  ["specialGrossYtd", "Sonderzahlungen brutto seit Jänner"],
-  ["specialTaxableYtd", "Begünstigte SZ-Steuerbasis seit Jänner, vor 620 Euro"],
-  ["usedSixth", "Verbrauchtes Brutto-Sechstel laut Lohnverrechnung"],
-] as const;
 
-type PendingImport = PayslipImport & { editing?: boolean };
-
-function PayslipReview({ pending, onClose, onSaved }: {
-  pending: PendingImport;
-  onClose: () => void;
-  onSaved: (entry: Payslip) => void;
-}) {
-  const { state, update, storageError } = useFinance();
-  const [drafts, setDrafts] = useState(() => pending.drafts.map((draft) => ({ ...draft, monthlyPayroll: draft.monthlyPayroll ?? false })));
-  const [checked, setChecked] = useState(false);
-  const [replace, setReplace] = useState(false);
-  const [error, setError] = useState("");
-  const parsed = drafts.map((draft) => payslipSchema.safeParse(draft));
-  const valid = drafts.length > 0 && parsed.every((entry) => entry.success);
-  const hasExisting = drafts.some(({ year, month, employer }) => year && month && employer &&
-    state.payslips?.some((saved) => payslipKey(saved) === payslipKey({
-      year, month, employer,
-    })));
-  function change(index: number, value: PayslipDraft) {
-    setDrafts((current) => current.map((draft, item) => item === index ? { ...value, monthlyPayroll: value.monthlyPayroll ?? false } : draft));
-    setChecked(false);
-    setError("");
-  }
-  function save() {
-    if (storageError) { setError(storageError); return; }
-    if (!valid || !checked) { setError("Bitte die erkannten Werte vollständig prüfen und bestätigen."); return; }
-    const entries = drafts.map((draft) => payslipSchema.parse(draft));
-    try {
-      const merged = preparePayslipMerge(state.payslips ?? [], entries);
-      if (merged.conflicts.length && !replace) {
-        setError("Für diesen Monat ist bereits eine abweichende Abrechnung gespeichert. Ersetzen bitte ausdrücklich bestätigen.");
-        return;
-      }
-      update((current) => {
-        const next = preparePayslipMerge(current.payslips ?? [], entries);
-        if (next.conflicts.length && !replace) throw new Error("Die gespeicherte Abrechnung wurde inzwischen geändert.");
-        return { ...current, payslips: next.entries,
-          payrollForecasts: current.payrollForecasts?.map((forecast) => next.changed.some((entry) =>
-            entry.year === forecast.year && payrollEmployerKey(entry.employer) === payrollEmployerKey(forecast.employer))
-            ? { ...forecast, standardPayrollConfirmed: false } : forecast),
-        };
-      });
-      onSaved(entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0]);
-      onClose();
-      toast.success(merged.duplicates === entries.length ? "Abrechnung bereits vorhanden – nicht doppelt übernommen." : "Lohnabrechnung lokal übernommen.");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Die Abrechnung konnte nicht übernommen werden.");
-    }
-  }
-  return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent>
-      <DialogHeader>
-        <DialogTitle>Lohnabrechnung prüfen</DialogTitle>
-        <DialogDescription>Die Beträge wurden lokal gelesen. Nur diese bestätigten Rechenwerte werden gespeichert, nicht PDF, Passwort, Adresse, Personalnummer oder Bankverbindung.</DialogDescription>
-      </DialogHeader>
-      <DialogBody className="space-y-5">
-        {pending.issues.length > 0 && <div role="alert" className="space-y-2 rounded-lg border border-amber-500/30 p-3 text-sm">
-          {pending.issues.map((issue, index) => <p key={index}>{issue}</p>)}
-        </div>}
-        {drafts.map((draft, index) => <section key={index} className="space-y-4 rounded-lg border p-4" aria-label={`Abrechnung ${index + 1}`}>
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="font-medium">Abrechnung {index + 1}</h3>
-            <Button variant="ghost" size="sm" onClick={() => { setDrafts(drafts.filter((_, item) => item !== index)); setChecked(false); }}>Weglassen</Button>
-          </div>
-          <label className="block space-y-1 text-xs">Arbeitgeber
-            <Input maxLength={120} disabled={pending.editing} value={draft.employer ?? ""} onChange={(event) => change(index, { ...draft, employer: event.target.value })} />
-          </label>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1 text-xs">Jahr
-              <select className="select-input w-full" disabled={pending.editing} value={draft.year ?? ""} onChange={(event) => change(index, {
-                ...draft, year: event.target.value === "2026" ? 2026 : event.target.value === "2027" ? 2027 : undefined,
-              })}>
-                <option value="">Jahr wählen</option><option value="2026">2026</option><option value="2027">2027</option>
-              </select>
-            </label>
-            <label className="space-y-1 text-xs">Abrechnungsmonat
-              <select className="select-input w-full" disabled={pending.editing} value={draft.month ?? ""} onChange={(event) => change(index, { ...draft, month: Number(event.target.value) || undefined })}>
-                <option value="">Monat wählen</option>
-                {Array.from({ length: 12 }, (_, month) => <option key={month} value={month + 1}>{monthLabel(`2026-${String(month + 1).padStart(2, "0")}`).replace(" 2026", "")}</option>)}
-              </select>
-            </label>
-            {moneyFields.map(([key, label]) => <label key={key} className="space-y-1 text-xs">{label} (€)
-              <Input type="number" min="0" max="1000000000" step="0.01" value={draft[key] ?? ""}
-                onChange={(event) => change(index, { ...draft, [key]: event.target.value === "" ? undefined : Number(event.target.value) })} />
-            </label>)}
-          </div>
-          <details className="text-xs">
-            <summary className="cursor-pointer">Kumulierte Werte / tatsächlicher Sechstelverbrauch (optional)</summary>
-            <p className="my-3 text-muted-foreground">Nur ausdrücklich ausgewiesene Werte der Lohnverrechnung. Nicht aus Netto, steuerpflichtigem Brutto oder einem einzelnen Folgemonat ableiten. Leere Felder bedeuten unbekannt, nicht 0.</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {cumulativeFields.map(([key, label]) => <label key={key} className="space-y-1">{label} (€)
-                <Input type="number" min="0" max="1000000000" step="0.01" value={draft[key] ?? ""}
-                  onChange={(event) => change(index, { ...draft, [key]: event.target.value === "" ? undefined : Number(event.target.value) })} />
-              </label>)}
-            </div>
-          </details>
-          <label className="flex items-start gap-2 text-sm">
-            <input type="checkbox" className="mt-1 accent-primary" checked={draft.monthlyPayroll ?? false}
-              onChange={(event) => change(index, { ...draft, monthlyPayroll: event.target.checked })} />
-            Reguläre volle Monatsabrechnung, keine ungeklärte Aufrollung oder Vorbezüge.
-          </label>
-          {!parsed[index].success && <p className="text-xs text-muted-foreground" role="status">Arbeitgeber, Monat, Jahr, laufendes Brutto, Sonderzahlungen (ggf. 0) und Abrechnungsart sind erforderlich. Geldbeträge benötigen höchstens zwei Nachkommastellen.</p>}
-        </section>)}
-        <p className="text-xs leading-relaxed text-muted-foreground">Zum Sechstel gehören auch laufende Zuschläge nach § 68. Steuerfreie Auslagenersätze wie die Telearbeitspauschale gehören nicht dazu. Bei Sonderzahlungen nur § 67 Abs. 1/2, nicht Abfertigungen oder andere Sonderfälle erfassen. Die LSt-Bemessungsgrundlage ist ein anderer Wert als das Brutto-Sechstel; für das Steuermodell ist sie vor dem monatlichen Werbungskostenpauschale von 11 € anzugeben.</p>
-        {hasExisting && <label className="flex items-start gap-2 text-sm">
-          <input type="checkbox" className="mt-1 accent-primary" checked={replace} onChange={(event) => setReplace(event.target.checked)} />
-          Abweichende gespeicherte Abrechnungen desselben Arbeitgebers und Monats ersetzen. Identische Importe werden nicht doppelt gezählt.
-        </label>}
-        <label className="flex items-start gap-2 text-sm">
-          <input type="checkbox" className="mt-1 accent-primary" checked={checked} onChange={(event) => setChecked(event.target.checked)} />
-          Erkannte Werte und Arbeitgeberzuordnung geprüft. Fehlende Beträge habe ich ergänzt; andere Dienstverhältnisse sind nicht enthalten.
-        </label>
-        {(error || storageError) && <p role="alert" className="text-sm text-destructive">{error || storageError}</p>}
-      </DialogBody>
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Abbrechen</Button>
-        <Button disabled={!valid || !checked || !!storageError} onClick={save}>Abrechnung übernehmen</Button>
-      </DialogFooter>
-    </DialogContent>
-  </Dialog>;
+function draftLabel(draft: PayslipDraft, index: number) {
+  return draft.year && draft.month
+    ? monthLabel(`${draft.year}-${String(draft.month).padStart(2, "0")}`) : `Abrechnung ${index + 1}`;
 }
 
 export function PayslipImportPanel({ year, employer, onImported }: {
@@ -161,15 +38,42 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const { state, update, storageError } = useFinance();
   const [password, setPassword] = useState("");
   const [filesToRetry, setFilesToRetry] = useState<File[]>([]);
-  const [pending, setPending] = useState<PendingImport | null>(null);
+  const [report, setReport] = useState<PayslipImport | null>(null);
+  const [replacement, setReplacement] = useState<Payslip[] | null>(null);
   const [deleting, setDeleting] = useState<Payslip | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const request = useRef(0);
+  const live = useRef({ state, update, storageError, onImported });
+  useEffect(() => { live.current = { state, update, storageError, onImported }; }, [state, update, storageError, onImported]);
   useEffect(() => () => { request.current++; }, []);
+
+  function storeEntries(entries: Payslip[], allowReplace: boolean) {
+    const currentFinance = live.current;
+    if (currentFinance.storageError) throw new Error(currentFinance.storageError);
+    const merged = preparePayslipMerge(currentFinance.state.payslips ?? [], entries);
+    if (merged.conflicts.length && !allowReplace) throw new Error("Eine abweichende gespeicherte Abrechnung benötigt eine Bestätigung zum Ersetzen.");
+    currentFinance.update((current) => {
+      const next = preparePayslipMerge(current.payslips ?? [], entries);
+      if (next.conflicts.length && !allowReplace) throw new Error("Die gespeicherten Abrechnungen wurden inzwischen geändert. Bitte die PDFs erneut hochladen.");
+      return { ...current, payslips: next.entries,
+        payrollForecasts: current.payrollForecasts?.map((forecast) => next.changed.some((entry) =>
+          entry.year === forecast.year && payrollEmployerKey(entry.employer) === payrollEmployerKey(forecast.employer))
+          ? { ...forecast, standardPayrollConfirmed: false } : forecast),
+      };
+    });
+    currentFinance.onImported(entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0]);
+    const message = merged.changed.length
+      ? `${merged.changed.length} Abrechnung(en) automatisch übernommen. Jahressechstel und Prognose wurden aktualisiert.`
+      : "Abrechnungen bereits vorhanden – nicht doppelt übernommen.";
+    setNotice(message);
+    toast.success(message);
+  }
+
   async function readFiles(files: File[]) {
     if (inFlight.current) return;
     if (storageError) { setError(storageError); return; }
@@ -180,20 +84,36 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     inFlight.current = true;
     setBusy(true);
     setError("");
+    setNotice("");
+    setReport(null);
+    setReplacement(null);
     setFilesToRetry([]);
     const current = ++request.current;
     try {
       const combined: PayslipImport = { drafts: [], issues: [] };
-      for (const file of files) {
+      for (const [fileIndex, file] of files.entries()) {
         if (file.size > 20 * 1024 * 1024) throw new Error("Eine Lohnabrechnung darf höchstens 20 MB groß sein.");
         const parsed = await parsePayslipPdf(await file.arrayBuffer(), password || undefined);
         if (current !== request.current) return;
         combined.drafts.push(...parsed.drafts);
-        combined.issues.push(...parsed.issues);
+        combined.issues.push(...[...new Set(parsed.issues)].map((issue) => `Datei ${fileIndex + 1}: ${issue}`));
         if (combined.drafts.length > 240) throw new Error("Ein Import darf höchstens 240 Lohnabrechnungen enthalten.");
       }
-      if (!combined.drafts.length) throw new Error("Keine auswertbare Lohnabrechnung erkannt. Bitte eine PDF mit lesbarem Text verwenden oder die Werte manuell ergänzen.");
-      setPending(combined);
+      if (!combined.drafts.length) throw new Error("Keine auswertbare Lohnabrechnung erkannt. Bitte die vollständige Original-PDF mit lesbarem Text hochladen.");
+      setReport(combined);
+      const entries = combined.drafts.flatMap((draft) => {
+        const parsed = payslipSchema.safeParse(draft);
+        return parsed.success ? [parsed.data] : [];
+      });
+      if (!entries.length) {
+        setError("Keine Abrechnung konnte vollständig automatisch ausgewertet werden. Es wurde nichts gespeichert. Bitte eine vollständige, unterstützte Text-PDF hochladen; unbekannte Bezüge werden nicht geschätzt.");
+        return;
+      }
+      const merged = preparePayslipMerge(live.current.state.payslips ?? [], entries);
+      if (merged.conflicts.length) {
+        setReplacement(entries);
+        setNotice("Auswertung abgeschlossen. Für abweichende gespeicherte Abrechnungen bitte das Ersetzen bestätigen.");
+      } else storeEntries(entries, false);
     } catch (cause) {
       if (current !== request.current) return;
       setError(cause instanceof Error ? cause.message : "Die PDF konnte nicht gelesen werden.");
@@ -204,11 +124,14 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       if (fileInput.current) fileInput.current.value = "";
     }
   }
+
+  const incomplete = report?.drafts.flatMap((draft, index) =>
+    payslipSchema.safeParse(draft).success ? [] : [draftLabel(draft, index)]) ?? [];
   const records = (state.payslips ?? []).filter((entry) => entry.year === year &&
     (!employer || payrollEmployerKey(entry.employer) === payrollEmployerKey(employer))).sort((a, b) => b.month - a.month);
   return <>
     <section className="panel mb-6 p-5 sm:p-6" aria-label="Lohnabrechnungen importieren">
-      <SectionHeading title="Lohnabrechnungen" subtitle="PDF hier hineinziehen – Entschlüsselung und Analyse bleiben vollständig in deinem Browser." />
+      <SectionHeading title="Lohnabrechnungen" subtitle="PDF hochladen – Werte und Jahressechstel werden automatisch ausgewertet. Neuere Abrechnungen aktualisieren die Berechnung." />
       <div className="grid gap-4 sm:grid-cols-[1fr_16rem]">
         <div role="group" aria-label="PDF-Ablage für Lohnabrechnungen" className={cn("rounded-xl border border-dashed p-5 text-center", dragging && "border-primary bg-primary/5")}
           onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
@@ -218,7 +141,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           <p className="mb-3 text-sm">Eine oder mehrere Lohnabrechnungen als PDF</p>
           <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple className="sr-only"
             aria-label="Lohnabrechnungen als PDF auswählen" disabled={busy || !!storageError}
-            onChange={(event) => { void readFiles(Array.from(event.target.files ?? [])); }} />
+            onChange={(event) => { if (event.target.files?.length) void readFiles(Array.from(event.target.files)); }} />
           <Button variant="outline" disabled={busy || !!storageError} onClick={() => fileInput.current?.click()}>
             {busy ? <><LoaderCircle className="size-4 animate-spin" />Analysiert lokal …</> : "PDF auswählen"}
           </Button>
@@ -229,15 +152,36 @@ export function PayslipImportPanel({ year, employer, onImported }: {
             <Input type="password" autoComplete="off" value={password} disabled={busy} maxLength={200}
               onChange={(event) => setPassword(event.target.value)} />
           </label>
-          <p className="text-xs leading-relaxed text-muted-foreground">Ein Passwort gilt für alle PDFs dieses Imports. Es bleibt nur bis zum Verlassen dieser Seite im Arbeitsspeicher und wird nie gespeichert.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Das Passwort gilt für alle PDFs dieses Imports und bleibt nur während dieses Seitenbesuchs im Arbeitsspeicher. PDF und Passwort werden nicht gespeichert oder an einen Server gesendet.</p>
           {filesToRetry.length > 0 && <Button variant="outline" disabled={busy || !password || !!storageError} onClick={() => { void readFiles(filesToRetry); }}>Mit Passwort erneut lesen</Button>}
-          <Button variant="ghost" size="sm" disabled={busy || !!storageError} onClick={() => setPending({
-            drafts: [{ year, employer, monthlyPayroll: false }], issues: [],
-          })}>Abrechnung manuell ergänzen</Button>
         </div>
       </div>
-      {error && <p role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Eine einzelne Abrechnung belegt nur ihren Abrechnungsmonat. Für den tatsächlichen aktuellen Stand alle Monate seit Jänner oder verlässliche kumulierte Werte importieren. Es werden keine Kontoumsätze erzeugt oder verändert.</p>
+      {(error || storageError) && <p role="alert" className="mt-3 text-sm text-destructive">{storageError || error}</p>}
+      {notice && <p role="status" className="mt-3 text-sm">{notice}</p>}
+      {report && <div className="mt-4 space-y-3" aria-label="Upload-Auswertung">
+        {incomplete.length > 0 && <div role="alert" className="rounded-lg border border-amber-500/30 p-3 text-sm">
+          <p>{incomplete.length} Abrechnung(en) nicht übernommen: {incomplete.join(", ")}.</p>
+          <p className="mt-2">Diese Monate bleiben unbekannt. Es sind keine Betragseingaben nötig: Die Auswertung benötigt die vollständige Original-PDF und eine eindeutig unterstützte Bezugsart. Andere vollständig erkannte Monate können unabhängig davon ausgewertet werden.</p>
+        </div>}
+        {report.issues.length > 0 && <div role="status" className="space-y-2 text-xs text-muted-foreground">
+          {report.issues.map((issue, index) => <p key={index}>{issue}</p>)}
+        </div>}
+        <details className="text-sm">
+          <summary className="cursor-pointer">Automatisch gelesene Werte</summary>
+          <div className="mt-3 space-y-3">
+            {report.drafts.map((draft, index) => <section key={index} className="rounded-lg border p-3" aria-label={`Auswertung ${index + 1}`}>
+              <h3 className="font-medium">{draftLabel(draft, index)} · {draft.employer ?? "Arbeitgeber nicht erkannt"}</h3>
+              <dl className="mt-3 grid gap-3 sm:grid-cols-2">
+                {moneyFields.map(([key, label]) => <div key={key}>
+                  <dt className="text-xs text-muted-foreground">{label}</dt>
+                  <dd className="mt-1 tabular-nums">{draft[key] === undefined ? "Nicht belegt" : currency(draft[key])}</dd>
+                </div>)}
+              </dl>
+            </section>)}
+          </div>
+        </details>
+      </div>}
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Eine einzelne Abrechnung belegt nur ihren Abrechnungsmonat. Für den tatsächlichen aktuellen Stand die Monate seit Jänner oder PDFs mit verlässlichen kumulierten Werten hochladen. Es werden keine Kontoumsätze erzeugt oder verändert.</p>
       {records.length > 0 && <div className="mt-5 overflow-x-auto">
         <table className="w-full text-left text-sm" aria-label="Gespeicherte Lohnabrechnungen">
           <thead><tr className="border-b text-xs text-muted-foreground"><th className="p-2">Abrechnung</th><th className="p-2 text-right">Laufendes Brutto</th><th className="p-2 text-right">Sonderzahlung</th><th><span className="sr-only">Aktionen</span></th></tr></thead>
@@ -246,8 +190,6 @@ export function PayslipImportPanel({ year, employer, onImported }: {
             <td className="p-2 text-right whitespace-nowrap tabular-nums">{currency(record.regularGross)}</td>
             <td className="p-2 text-right whitespace-nowrap tabular-nums">{currency(record.specialGross)}</td>
             <td className="p-2"><div className="flex justify-end">
-              <Button variant="ghost" size="icon" className="size-7" aria-label={`Abrechnung bearbeiten: ${record.month}/${record.year}`}
-                disabled={busy || !!storageError} onClick={() => setPending({ drafts: [{ ...record }], issues: [], editing: true })}><Pencil className="size-3.5" /></Button>
               <Button variant="ghost" size="icon" className="size-7" aria-label={`Abrechnung entfernen: ${record.month}/${record.year}`}
                 disabled={busy || !!storageError} onClick={() => setDeleting(record)}><Trash2 className="size-3.5" /></Button>
             </div></td>
@@ -255,7 +197,35 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         </table>
       </div>}
     </section>
-    {pending && <PayslipReview pending={pending} onClose={() => setPending(null)} onSaved={onImported} />}
+    <Dialog open={!!replacement} onOpenChange={(open) => {
+      if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Dieser Upload hat keine gespeicherten Abrechnungen geändert."); setError(""); }
+    }}>
+      <DialogContent variant="confirmation">
+        <DialogHeader>
+          <DialogTitle>Gespeicherte Abrechnungen ersetzen?</DialogTitle>
+          <DialogDescription>Der Upload enthält abweichende Werte für bereits gespeicherte Monate. Nur nach Bestätigung ersetzt die neue PDF diese Werte; es werden keine Beträge von Hand eingegeben.</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          {replacement?.map((entry) => <p key={payslipKey(entry)} className="mb-2 text-sm">
+            {draftLabel(entry, 0)} · {entry.employer}: laufend {currency(entry.regularGross)}, Sonderzahlungen {currency(entry.specialGross)}
+          </p>)}
+          {(error || storageError) && <p role="alert" className="text-sm text-destructive">{storageError || error}</p>}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { setReplacement(null); setNotice("Ersetzen abgebrochen. Dieser Upload hat keine gespeicherten Abrechnungen geändert."); setError(""); }}>Abbrechen</Button>
+          <Button disabled={!!storageError} onClick={() => {
+            if (!replacement) return;
+            try {
+              storeEntries(replacement, true);
+              setReplacement(null);
+              setError("");
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : "Die Abrechnungen konnten nicht ersetzt werden.");
+            }
+          }}>Abrechnungen ersetzen</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null); }}>
       <DialogContent variant="confirmation">
         <DialogHeader><DialogTitle>Lohnabrechnung entfernen?</DialogTitle><DialogDescription>Nur die lokalen Rechenwerte werden entfernt. Die Original-PDF und deine Kontoumsätze bleiben unverändert.</DialogDescription></DialogHeader>
