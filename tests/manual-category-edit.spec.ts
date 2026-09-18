@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createSeed } from "../src/lib/seed";
 import type { AppState, Transaction } from "../src/lib/types";
+import { normalizeAccount } from "../src/lib/accounts";
 
 test("manual POS assignment saves, reloads and inferred fixed expenses show a flag", async ({ page }) => {
   const state = createSeed();
@@ -37,7 +38,7 @@ test("manual POS assignment saves, reloads and inferred fixed expenses show a fl
   const pos = page.getByRole("row").filter({ has: page.getByRole("cell", { name: original.description, exact: true }) });
   await expect(pos).toContainText("Shopping");
   expect((await read()).transactions.find((row) => row.id === original.id)).toMatchObject({
-    ...original, category: "Shopping", categoryOverride: true, includeInPlan: true,
+    ...normalizeAccount(original), category: "Shopping", categoryOverride: true, includeInPlan: true,
   });
   const fixed = page.getByRole("row").filter({ has: page.getByRole("cell", { name: "A1 Telekom", exact: true }) });
   await expect(fixed.getByText("Fixkosten", { exact: true })).toBeVisible();

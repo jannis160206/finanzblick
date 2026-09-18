@@ -7,6 +7,7 @@ import { appStateSchema, type Transaction } from "./types";
 import { commitStatementImport, prepareStatementImport } from "./import/review";
 import { statementFingerprint } from "./import/identity";
 import type { StatementResult } from "./import/statements";
+import { normalizeAccount } from "./accounts";
 
 const salary: Transaction = {
   id: "xlsx-150", date: "2026-08-27", bank: "Raiffeisen", pocket: null,
@@ -85,6 +86,6 @@ describe("overview salary accounting", () => {
     const json = appStateSchema.parse(JSON.parse(JSON.stringify(state)));
     const restored = (await parseWorkbook(await exportWorkbook(json))).state;
     expect(calculateDashboard(restored).current).toMatchObject({ received: 2818.26, salaryPlan: 2576.43, salaryReceived: 2576.43 });
-    expect(restored.transactions).toEqual(state.transactions);
+    expect(restored.transactions).toEqual(state.transactions.map(normalizeAccount));
   });
 });

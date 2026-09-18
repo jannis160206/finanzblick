@@ -1,4 +1,5 @@
 import type { Transaction } from "@/lib/types";
+import { isRaiffeisenBank, isRaiffeisenMainAccount, normalizeAccount } from "@/lib/accounts";
 
 type PayrollSource = Pick<Transaction, "description" | "amount"> &
   Partial<Pick<Transaction, "date" | "rawDescription" | "rawDetails" | "sourceCategory">>;
@@ -14,12 +15,15 @@ export const isTTSPayroll = (row: PayrollSource) => employer.test(payrollText(ro
 // Replace only matching legacy representations, one for one, in derived views.
 // Separate bank references/installments and all stored bank facts remain intact.
 export function reconcilePayrollSources<T extends Transaction>(rows: T[]): T[] {
-  const legacy = (row: T) => /^xlsx-\d+$/.test(row.id) && !row.pocket && !row.bankReference;
+  const legacy = (row: T) => /^xlsx-\d+$/.test(row.id) &&
+    (!row.pocket || isRaiffeisenMainAccount(row)) && !row.bankReference;
   const identity = (row: T) => {
     const period = payrollPeriod(row);
     const category = payrollCategory(row);
+    const account = normalizeAccount(row);
     return isTTSPayroll(row) && period && category
-      ? JSON.stringify([row.date, row.bank.trim().toLowerCase(), row.amount.toFixed(2), period, category])
+      ? JSON.stringify([row.date, account.bank.trim().toLowerCase(), row.amount.toFixed(2), period, category,
+        isRaiffeisenBank(account.bank) ? account.pocket : null])
       : undefined;
   };
   const represented = new Map<string, number>();

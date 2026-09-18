@@ -1,4 +1,5 @@
 import type { Transaction } from "@/lib/types";
+import { isRaiffeisenBank, isRaiffeisenMainAccount, normalizeAccount } from "@/lib/accounts";
 
 const legacyContract = /^porsche\s*bank\s*[-–—:]?\s*leasing\s+([a-z]{1,3}\d{1,6}[a-z]{1,3})\s*$/i;
 const vehicleIdentifier = /\b[a-z]{1,3}\d{1,6}[a-z]{1,3}\b/gi;
@@ -13,24 +14,31 @@ export function reconcileLeasingSources<T extends Transaction>(
   rows: T[],
   categoryOf: (row: T) => Transaction["category"],
 ): T[] {
-  const key = (row: T, contract: string) => JSON.stringify([
-    row.date, row.bank.trim().toLowerCase(), row.amount.toFixed(2), contract.toUpperCase(),
-  ]);
+  const key = (row: T, contract: string) => {
+    const account = normalizeAccount(row);
+    return JSON.stringify([
+      row.date, account.bank.trim().toLowerCase(), row.amount.toFixed(2), contract.toUpperCase(),
+      isRaiffeisenBank(account.bank) ? account.pocket : null,
+    ]);
+  };
   const legacy = new Map<string, { indices: number[]; next: number }>();
+  const legacyIndices = new Set<number>();
   rows.forEach((row, index) => {
-    if (row.amount >= 0 || !/^xlsx-\d+$/.test(row.id) || row.pocket || row.bankReference) return;
+    if (row.amount >= 0 || !/^xlsx-\d+$/.test(row.id) ||
+      (row.pocket && !isRaiffeisenMainAccount(row)) || row.bankReference) return;
     const contract = legacyContract.exec(row.description.normalize("NFKC").trim())?.[1];
     if (!contract || categoryOf(row) !== "Leasing") return;
     const identity = key(row, contract);
     const group = legacy.get(identity) ?? { indices: [], next: 0 };
     group.indices.push(index);
+    legacyIndices.add(index);
     legacy.set(identity, group);
   });
   if (!legacy.size) return rows;
 
   const represented = new Set<number>();
-  const reconciled = rows.map((row): T => {
-    if (row.amount >= 0 || (!row.bankReference && !row.pocket)) return row;
+  const reconciled = rows.map((row, rowIndex): T => {
+    if (legacyIndices.has(rowIndex) || row.amount >= 0 || (!row.bankReference && !row.pocket)) return row;
     const text = [row.description, row.rawDescription, ...(row.rawDetails ?? [])].filter(Boolean).join(" ").normalize("NFKC");
     if (!/\bporsche\s*bank\b/i.test(text)) return row;
     const contracts = [...new Set((text.match(vehicleIdentifier) ?? []).map((value) => value.toUpperCase()))];

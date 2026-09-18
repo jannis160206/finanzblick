@@ -14,9 +14,11 @@ import {
 } from "@tanstack/react-table";
 import {
   ArrowDownUp,
+  Check,
   ChevronLeft,
   ChevronRight,
   ListChecks,
+  CircleHelp,
   MoreHorizontal,
   Pencil,
   Search,
@@ -56,9 +58,7 @@ import { SharedCosts, SharedRowAction } from "@/components/shared-costs";
 import { HolidayRanges } from "@/components/holiday-ranges";
 import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { isIncomeCategory } from "@/lib/fixed";
-
-const accountLabel = (row: Transaction) =>
-  `${row.bank} · ${row.pocket ?? "Hauptkonto"}`;
+import { accountLabel } from "@/lib/accounts";
 
 function TransactionForm({
   transaction,
@@ -232,6 +232,24 @@ const TransactionLedger = memo(function TransactionLedger({
     () => new Map(ledger.map((row) => [row, classifyBooking(row)])),
     [ledger, classifyBooking],
   );
+  const reviewReasons = useMemo(() => {
+    const reasons = new Map<string, string>();
+    const fixedKeys = new Set<string>();
+    for (const item of state.reviewQueue ?? []) {
+      if (item.kind === "booking") reasons.set(item.draft.id, item.message);
+      else for (const booking of item.change.bookings) {
+        reasons.set(booking.id, "Fixkostenbetrag hat sich geändert.");
+        fixedKeys.add(statementFingerprint(booking));
+      }
+    }
+    for (const row of ledger) {
+      if (fixedKeys.size && fixedKeys.has(statementFingerprint(row)))
+        reasons.set(row.id, "Fixkostenbetrag hat sich geändert.");
+      if (!reasons.has(row.id) && classifications.get(row)!.category === "Prüfen")
+        reasons.set(row.id, "Kategorie noch offen oder widersprüchlich.");
+    }
+    return reasons;
+  }, [state.reviewQueue, ledger, classifications]);
   const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
@@ -254,10 +272,11 @@ const TransactionLedger = memo(function TransactionLedger({
   const [plan, setPlan] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [assignment, setAssignment] = useState<"all" | "review" | "assigned">("all");
   const [sorting, setSorting] = useState<SortingState>([
     { id: "date", desc: true },
   ]);
-  const data = useMemo(
+  const filtered = useMemo(
     () =>
       ledger.filter((row) => {
         const result = classifications.get(row)!;
@@ -277,6 +296,10 @@ const TransactionLedger = memo(function TransactionLedger({
       }),
     [ledger, classifications, query, month, category, account, plan, from, to, showTransfers],
   );
+  const pendingCount = filtered.filter((row) => reviewReasons.has(row.id)).length;
+  const data = useMemo(() => filtered.filter((row) =>
+    assignment === "all" || reviewReasons.has(row.id) === (assignment === "review")),
+  [filtered, reviewReasons, assignment]);
   const columns: ColumnDef<AccountedTransaction>[] = [
     {
       accessorKey: "date",
@@ -304,11 +327,28 @@ const TransactionLedger = memo(function TransactionLedger({
       accessorFn: (row) => classifications.get(row)!.category,
       header: "Kategorie",
       cell: ({ getValue, row }) => (
+        <div>
         <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="rounded-md border bg-muted/30 px-2 py-1 text-[10px]">{getValue<string>()}</span>
           {classifications.get(row.original)!.isFixedCost &&
             <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">Fixkosten</span>}
         </span>
+        <span className={cn("mt-1.5 flex items-center gap-1 text-[11px]", reviewReasons.has(row.original.id) ? "text-primary" : "text-muted-foreground")}>
+          {reviewReasons.has(row.original.id) ? <><CircleHelp className="size-3 shrink-0" />Prüfung offen</> : <><Check className="size-3 shrink-0" />Zugeordnet</>}
+          <Popover>
+            <PopoverTrigger asChild>
+              <button type="button" className="ml-1 inline-flex min-h-6 min-w-6 items-center justify-center rounded-md hover:bg-muted" aria-label={`Zuordnungsdetails: ${row.original.description}`}>
+                <CircleHelp className="size-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="space-y-2 text-xs">
+              <p className="text-sm font-semibold">{reviewReasons.has(row.original.id) ? "Noch zu prüfen" : "Aktuelle Einordnung"}</p>
+              <p className="leading-relaxed text-muted-foreground">{reviewReasons.get(row.original.id) ?? "Für diese Buchung ist keine Prüfung offen."}</p>
+              <p>{classifications.get(row.original)!.reason || (classifications.get(row.original)!.includeInPlan ? "Im Alltagsbudget berücksichtigt" : "Außerhalb des Alltagsbudgets")}</p>
+            </PopoverContent>
+          </Popover>
+        </span>
+        </div>
       ),
     },
     {
@@ -405,7 +445,8 @@ const TransactionLedger = memo(function TransactionLedger({
     plan ||
     from ||
     to ||
-    showTransfers;
+    showTransfers ||
+    assignment !== "all";
   return (
     <>
       <PageHeading
@@ -415,6 +456,17 @@ const TransactionLedger = memo(function TransactionLedger({
       />
       <StatementImport reviewRequest={reviewRequest} />
       <section className="panel overflow-hidden">
+        <div className="border-b p-4">
+          <div className="flex flex-wrap gap-1 rounded-xl bg-muted/60 p-1" role="group" aria-label="Zuordnungsstatus filtern">
+            {([
+              ["all", "Alle", filtered.length],
+              ["review", "Prüfung offen", pendingCount],
+              ["assigned", "Zugeordnet", filtered.length - pendingCount],
+            ] as const).map(([value, label, count]) => <Button key={value} variant={assignment === value ? "outline" : "ghost"} size="sm" aria-pressed={assignment === value} onClick={() => setAssignment(value)} className="gap-2 text-xs">
+              {label}<span className="tabular-nums text-muted-foreground">{count}</span>
+            </Button>)}
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2 border-b p-4">
           <Button
             variant="ghost"
@@ -540,6 +592,7 @@ const TransactionLedger = memo(function TransactionLedger({
                 setPlan("");
                 setFrom("");
                 setTo("");
+                setAssignment("all");
               }}
             >
               <X className="size-3" />
@@ -548,7 +601,7 @@ const TransactionLedger = memo(function TransactionLedger({
           )}
         </div>
         <div className="overflow-x-auto">
-          <table className="data-table w-full">
+          <table className="data-table w-full" aria-label="Buchungen">
             <thead>
               {table.getHeaderGroups().map((group) => (
                 <tr key={group.id}>

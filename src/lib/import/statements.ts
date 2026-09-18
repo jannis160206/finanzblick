@@ -1,4 +1,5 @@
 import { classifyStatementRows, round, savingsPocket } from "@/lib/calc";
+import { isRaiffeisenBank, normalizeAccount, RAIFFEISEN_ACCOUNT } from "@/lib/accounts";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import {
   dateSchema,
@@ -384,7 +385,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
     let active = !hasTransactionBlocks,
       pocket =
         source === "Raiffeisen"
-          ? "Raiffeisen Giro"
+          ? RAIFFEISEN_ACCOUNT
           : source === "Amex"
             ? "AMEX Jannis"
             : "Persönliches Konto";
@@ -583,7 +584,8 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
       }
       const date = parseStatementDate(dateText);
       time ??= statementTime(description, dateText);
-      const bookingPocket = originalCurrency ? `${pocket} (${originalCurrency})` : pocket;
+      const bookingCurrency = originalCurrency || currency.trim().toUpperCase();
+      const bookingPocket = bookingCurrency !== "EUR" ? `${pocket} (${bookingCurrency})` : pocket;
       const draft: StatementDraft = {
         id: crypto.randomUUID(),
         date: date ?? "",
@@ -592,6 +594,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         pocket: bookingPocket,
         description,
         ...(rawDetails.length ? { rawDetails } : {}),
+        ...(bankReference ? { bankReference } : {}),
         amount,
         category: "Prüfen",
         includeInPlan: false,
@@ -881,7 +884,9 @@ export function deduplicateStatements<T extends Transaction>(
   const seen = new Set(numbered.map(statementFingerprint));
   // Older Excel/local rows may lack the account or reference that the re-drop
   // now supplies. Match the full original POS text, never just date + amount.
-  const terminalKey = (row: Transaction) => statementBaseKey({ ...row, pocket: null, bankReference: undefined });
+  const terminalKey = (row: Transaction) => statementBaseKey({
+    ...row, pocket: isRaiffeisenBank(row.bank) ? row.pocket : null, bankReference: undefined,
+  });
   const terminalExisting = new Map<string, Transaction[]>();
   for (const row of numbered) {
     if (!hasTerminalText(row.rawDescription ?? row.description)) continue;
@@ -896,7 +901,8 @@ export function deduplicateStatements<T extends Transaction>(
   for (const row of numberStatementRows(rows.map(recoverMerchant))) {
     const key = statementFingerprint(row);
     const legacyDuplicate = (terminalExisting.get(terminalKey(row)) ?? []).some((old) =>
-      sameTerminalBooking(old, row) && ((old.bankReference && row.bankReference) || old.occurrence === row.occurrence));
+      sameTerminalBooking(normalizeAccount(old), normalizeAccount(row)) &&
+      ((old.bankReference && row.bankReference) || old.occurrence === row.occurrence));
     if (seen.has(key) || legacyDuplicate) {
       duplicates++;
       const index = positions.get(key);

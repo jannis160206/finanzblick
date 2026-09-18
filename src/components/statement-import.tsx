@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { CategorySelect } from "@/components/category-select";
 import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { isIncomeCategory } from "@/lib/fixed";
+import { accountLabel } from "@/lib/accounts";
 
 type Pending = {
   requestId: string;
@@ -119,7 +120,7 @@ const BookingReview = memo(function BookingReview({
           Konto/Pocket
           <Input
             aria-label="Konto/Pocket"
-            value={`${draft.bank} · ${draft.pocket ?? "Hauptkonto"}`}
+            value={accountLabel(draft)}
             readOnly
           />
         </label>

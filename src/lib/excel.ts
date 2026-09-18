@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { isRaiffeisenBank } from "@/lib/accounts";
 import {
   appStateSchema,
   categorySchema,
@@ -233,13 +234,14 @@ export async function parseWorkbook(
       const get = (...names: string[]) => row.getCell(col(...names) ?? 200);
       const planCell = get("Im Plan (Eingabe)", "Im Plan");
       const fixedCostCell = text(get("Fixkosten"));
+      const bank = text(get("Bank")) || "Unbekannt";
       const candidate = {
         id: text(get("ID")) || `xlsx-${index}`,
         date: isoDate(row.getCell(dateCol), workbook.properties.date1904),
         amount,
         description,
-        bank: text(get("Bank")) || "Unbekannt",
-        pocket: native
+        bank,
+        pocket: native || isRaiffeisenBank(bank)
           ? text(get("Pocket", "Konto")) || null
           : normalizePocket(text(get("Pocket", "Konto"))),
         category: normalizeCategory(text(get("Kategorie", "Category"))),
@@ -534,8 +536,7 @@ const settingLabels: Record<
   interestStart: "Verzinsung ab",
 };
 export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
-  appStateSchema.parse(state);
-  state = applyVariableBudgets(state);
+  state = applyVariableBudgets(appStateSchema.parse(state));
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Finanzdashboard";
   workbook.created = new Date();

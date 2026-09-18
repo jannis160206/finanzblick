@@ -8,6 +8,7 @@ import { commitStatementImport, prepareStatementImport, queueLedgerReview } from
 import type { StatementResult } from "@/lib/import/statements";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { personalAmount } from "@/lib/shared-holiday";
+import { normalizeAccount } from "@/lib/accounts";
 
 const reconcileLeasingSources = (rows: Transaction[]) => reconcileSources(rows, (row) => classify(row).category);
 
@@ -142,7 +143,7 @@ describe("Leasing source reconciliation", () => {
     const json = appStateSchema.parse(JSON.parse(JSON.stringify(state)));
     const restored = (await parseWorkbook(await exportWorkbook(json))).state;
     expect(calculateDashboard(restored).current).toMatchObject({ fixed: 289.52, actualSpending: 289.52 });
-    expect(restored.transactions).toEqual(state.transactions);
+    expect(restored.transactions).toEqual(state.transactions.map(normalizeAccount));
     expect(restored.fixedReceipts).toEqual(state.fixedReceipts);
   });
 });

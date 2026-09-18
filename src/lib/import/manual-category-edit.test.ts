@@ -5,6 +5,7 @@ import { appStateSchema, type Transaction } from "@/lib/types";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { rememberMerchants } from "./merchant-rules";
 import { queueLedgerReview } from "./review";
+import { normalizeAccount } from "@/lib/accounts";
 
 const row = (overrides: Partial<Transaction> = {}): Transaction => ({
   id: "manual-pos", date: "2026-09-10", bank: "Raiffeisen", pocket: "Hauptkonto",
@@ -26,7 +27,7 @@ describe("explicit category edits", () => {
       queueLedgerReview(appStateSchema.parse(JSON.parse(JSON.stringify(saved)))),
       queueLedgerReview((await parseWorkbook(await exportWorkbook(saved))).state),
     ]) {
-      expect(restored.transactions[0]).toMatchObject({ ...selected, category: "Shopping" });
+      expect(restored.transactions[0]).toMatchObject({ ...normalizeAccount(selected), category: "Shopping" });
       expect(actualBookings(restored)).toHaveLength(1);
     }
     expect(classify(original).category).toBe("Prüfen");

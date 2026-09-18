@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { normalizeAccount } from "@/lib/accounts";
+import { normalizeStatementKey } from "@/lib/import/identity";
 import { seasonalModes, seasonalThemes } from "@/lib/seasonal-theme";
 import { allCategories, categories, canonicalCategory, type Category } from "@/lib/categories";
 export { categories, type Category } from "@/lib/categories";
@@ -76,7 +78,7 @@ export const holidayRangeSchema = z.object({ from: dateSchema, to: dateSchema })
   "Urlaub: Von–bis mit höchstens 25 Tagen erforderlich.",
 );
 export type HolidayRange = z.infer<typeof holidayRangeSchema>;
-export const transactionSchema = z.object({
+const transactionFieldsSchema = z.object({
   id: z.string().min(1),
   date: dateSchema,
   time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/).optional(),
@@ -101,6 +103,7 @@ export const transactionSchema = z.object({
   sharedWithRaphael: z.boolean().optional(),
   sharedPaidManually: z.boolean().optional(),
 });
+export const transactionSchema = transactionFieldsSchema.overwrite(normalizeAccount);
 export type Transaction = z.infer<typeof transactionSchema>;
 export const pocketSnapshotSchema = z.object({
   pocket: z.enum(pocketNames),
@@ -115,7 +118,7 @@ export const merchantRuleSchema = z.object({
   fixedCost: z.boolean().optional(),
 });
 export const fixedReceiptSchema = z.object({
-  key: z.string().max(2000),
+  key: z.string().max(2000).overwrite(normalizeStatementKey),
   merchantKey: z.string().max(1200).optional(),
   date: dateSchema,
   category: categorySchema,
@@ -147,7 +150,7 @@ export const reviewItemSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("booking"),
     id: z.string(),
-    draft: transactionSchema.extend({ amount: moneySchema.nullable() }),
+    draft: transactionFieldsSchema.extend({ amount: moneySchema.nullable() }).overwrite(normalizeAccount),
     message: z.string(),
   }),
   z.object({
@@ -262,7 +265,7 @@ export const appStateSchema = z.object({
     .optional(),
   settings: settingsSchema,
   transactions: z.array(transactionSchema).max(100_000),
-  ignoredStatementKeys: z.array(z.string().max(2000)).max(100_000).optional(),
+  ignoredStatementKeys: z.array(z.string().max(2000).overwrite(normalizeStatementKey)).max(100_000).optional(),
   pocketSnapshots: z.array(pocketSnapshotSchema).max(10_000).optional(),
   merchantRules: z.array(merchantRuleSchema).max(100_000).optional(),
   fixedReceipts: z.array(fixedReceiptSchema).max(100_000).optional(),

@@ -1,10 +1,11 @@
 import type { Transaction } from "@/lib/types";
+import { isRaiffeisenBank, normalizeAccount } from "@/lib/accounts";
 
 type Identity = Pick<Transaction, "date" | "bank" | "amount" | "description"> &
   Partial<Pick<Transaction, "pocket" | "bankReference" | "occurrence" | "rawDescription">>;
 const clean = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 const bankName = (bank: string) =>
-  clean(bank).replace(/^american express$/, "amex");
+  clean(normalizeAccount({ bank, pocket: null }).bank).replace(/^american express$/, "amex");
 export function legacyFingerprint(row: Identity) {
   return JSON.stringify([
     row.date.slice(0, 10),
@@ -14,16 +15,37 @@ export function legacyFingerprint(row: Identity) {
   ]);
 }
 export function statementBaseKey(row: Identity) {
+  const account = normalizeAccount({ bank: row.bank, pocket: row.pocket ?? null });
   return JSON.stringify([
     row.date.slice(0, 10),
-    bankName(row.bank),
-    row.pocket ?? "",
+    bankName(account.bank),
+    account.pocket ?? "",
     row.amount.toFixed(2),
     row.bankReference ? `ref:${row.bankReference}` : clean(row.rawDescription ?? row.description),
   ]);
 }
 export function statementFingerprint(row: Identity) {
   return `${statementBaseKey(row)}|${row.bankReference ? 1 : (row.occurrence ?? 1)}`;
+}
+export function normalizeStatementKey(key: string): string {
+  const match = key.match(/^(\[[\s\S]*\])(\|[1-9]\d*)?$/);
+  if (!match) return key;
+  try {
+    const parts: unknown = JSON.parse(match[1]);
+    if (!Array.isArray(parts) || !parts.every((part) => typeof part === "string")) return key;
+    if (!isRaiffeisenBank(parts[1] ?? "")) return key;
+    if (parts.length === 5 && match[2]) {
+      const account = normalizeAccount({ bank: parts[1], pocket: parts[2] || null });
+      parts[1] = bankName(account.bank);
+      parts[2] = account.pocket ?? "";
+    } else if (parts.length === 4 && !match[2]) {
+      parts[1] = bankName(parts[1]);
+    } else return key;
+    return JSON.stringify(parts) + (match[2] ?? "");
+  } catch (error) {
+    if (error instanceof SyntaxError) return key;
+    throw error;
+  }
 }
 export function numberStatementRows<T extends Transaction>(rows: T[]): T[] {
   const counts = new Map<string, number>();

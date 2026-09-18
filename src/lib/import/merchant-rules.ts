@@ -4,6 +4,7 @@ import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal
 import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
+import { normalizeAccount } from "@/lib/accounts";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -24,7 +25,7 @@ export function merchantRuleKey(
         .replace(/\b\d{5,}\b/g, " ")
         .replace(/\s+/g, " ")
         .trim();
-  const bank = row.bank
+  const bank = normalizeAccount({ bank: row.bank, pocket: null }).bank
     .trim()
     .toLowerCase()
     .replace(/^american express$/, "amex");
@@ -38,13 +39,22 @@ export function isSpecificMerchantKey(key: string): boolean {
   const merchant = key.slice(key.indexOf("|") + 1).trim();
   if (!merchant || unresolvedTerminal(merchant)) return false;
   const provider = merchant.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  return !/^(?:paypal(?: europe)?(?: s a r l)?(?: et cie)?(?: s c a)?|revolut(?: epayment| ltd| payments)?|pos|terminal|zahlung|online banking)$/.test(provider);
+  return !/^(?:paypal(?: europe)?(?: s a r l)?(?: et cie)?(?: s c a)?|revolut(?: epayment| ltd| payments)?|sumup|stripe|adyen|klarna|mollie|worldline|pos|terminal|zahlung|online banking)$/.test(provider);
 }
 type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
 export type MerchantChoice = Pick<Transaction, "category" | "fixedCost">;
 
+function addChoice(choices: Map<string, MerchantChoice | null>, key: string, choice: MerchantChoice) {
+  const previous = choices.get(key);
+  // Conflicting history is not a new decision. Keep it unresolved, independent
+  // of statement order, until the user explicitly chooses this merchant again.
+  if (previous === null) return;
+  choices.set(key, previous && previous.category !== choice.category
+    ? null : { ...previous, ...choice });
+}
+
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
-  const choices = new Map<string, MerchantChoice>();
+  const choices = new Map<string, MerchantChoice | null>();
   for (const row of rows) {
     if (!row.categoryOverride || row.category === "Prüfen" || payrollCategory(row)) continue;
     const key = merchantRuleKey(row);
@@ -53,8 +63,7 @@ function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking =
       !ambiguousMerchant(row) &&
       !unresolvedTerminal(row.description) &&
       !classifyBooking(row).isTransfer
-    ) choices.set(key, {
-      ...choices.get(key),
+    ) addChoice(choices, key, {
       category: canonicalCategory(row.category),
       ...(row.fixedCost !== undefined && row.amount < 0 && !isIncomeCategory(classifyBooking(row).category)
         ? { fixedCost: row.fixedCost } : {}),
@@ -67,13 +76,22 @@ export function rememberMerchants(
   state: AppState,
   rows: Transaction[],
 ): AppState {
-  const rules = new Map(
-    (state.merchantRules ?? []).map(({ key, ...choice }) => [storedMerchantKey(key),
-      { ...choice, category: canonicalCategory(choice.category) }] as const)
-      .filter(([key]) => isSpecificMerchantKey(key)),
-  );
+  const normalizedRules = (state.merchantRules ?? [])
+    .map((rule) => ({ ...rule, key: storedMerchantKey(rule.key), category: canonicalCategory(rule.category) }))
+    .filter((rule) => isSpecificMerchantKey(rule.key));
+  const rules = new Map<string, typeof normalizedRules>();
+  for (const rule of normalizedRules) {
+    const group = rules.get(rule.key) ?? [];
+    group.push(rule);
+    rules.set(rule.key, group);
+  }
   const choices = merchantChoices(rows);
-  for (const [key, choice] of choices) rules.set(key, { ...rules.get(key), ...choice });
+  for (const [key, choice] of choices) {
+    if (!choice) continue;
+    const previous = rules.get(key) ?? [];
+    const fixedCosts = new Set(previous.map((rule) => rule.fixedCost).filter((value) => value !== undefined));
+    rules.set(key, [{ key, ...(fixedCosts.size === 1 ? { fixedCost: [...fixedCosts][0] } : {}), ...choice }]);
+  }
   const applyChoice = (row: Transaction): Transaction => {
     const category = choices.get(merchantRuleKey(row))?.category;
     if (!category) return row;
@@ -89,7 +107,7 @@ export function rememberMerchants(
           const category = item.merchantKey ? choices.get(storedMerchantKey(item.merchantKey))?.category : undefined;
           return category ? { ...item, category, ...(item.booking ? { booking: applyChoice(item.booking) } : {}) } : item;
         }) } : {}),
-        merchantRules: [...rules].map(([key, choice]) => ({ key, ...choice })),
+        merchantRules: [...rules.values()].flat(),
       }
     : state.merchantRules?.length ? { ...state, merchantRules: [] } : state;
 }
@@ -103,30 +121,32 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
 export function createMerchantRuleApplier(state: AppState, classifyBooking: ClassifyBooking = classify, applyFixedCost = false) {
   // Inferring rules must not apply them to a discarded copy of the entire ledger.
   const remembered = merchantChoices(state.transactions, classifyBooking);
-  const inferred = new Map<string, MerchantChoice>(
-    (state.fixedReceipts ?? []).flatMap((receipt) => {
-      const key = receipt.merchantKey ? storedMerchantKey(receipt.merchantKey) : undefined;
-      return key && isSpecificMerchantKey(key) ? [[key, { category: canonicalCategory(receipt.category) }] as const] : [];
-    }),
-  );
+  const inferred = new Map<string, MerchantChoice | null>();
+  for (const receipt of state.fixedReceipts ?? []) {
+    const key = receipt.merchantKey ? storedMerchantKey(receipt.merchantKey) : undefined;
+    if (key && isSpecificMerchantKey(key))
+      addChoice(inferred, key, { category: canonicalCategory(receipt.category) });
+  }
   const rules = new Map(
     [...remembered].map(([key, choice]) => [storedMerchantKey(key), choice] as const)
       .filter(([key]) => isSpecificMerchantKey(key)),
   );
+  const explicit = new Map<string, MerchantChoice | null>();
   for (const rule of state.merchantRules ?? []) {
     const key = storedMerchantKey(rule.key);
-    if (isSpecificMerchantKey(key)) rules.set(key, {
+    if (isSpecificMerchantKey(key)) addChoice(explicit, key, {
       category: canonicalCategory(rule.category),
       ...(rule.fixedCost !== undefined ? { fixedCost: rule.fixedCost } : {}),
     });
   }
+  for (const [key, choice] of explicit) rules.set(key, choice);
   return (source: Transaction): Transaction => {
     const row = recoverMerchant(source);
     const detected = classifyBooking(row);
     if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const key = merchantRuleKey(row);
     const choice =
-      rules.get(key) ??
+      rules.has(key) ? rules.get(key) :
       (detected.category === "Prüfen" || detected.category === "Abonnements"
         ? inferred.get(key)
         : undefined);
