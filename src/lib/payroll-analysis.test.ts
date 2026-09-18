@@ -87,6 +87,114 @@ describe("automatic document-driven payroll model", () => {
     expect(result.missingMonths).toEqual([2, 3, 4, 5, 6, 7, 8]);
   });
 
+  it("shows an explicitly separate rough sixth estimate while a missing month blocks actuals and tax", () => {
+    const entries = Array.from({ length: 8 }, (_, index) => slip(index + 1, {
+      regularGross: index === 7 ? 4000 : 3000, baseSalary: 3000,
+    })).filter((entry) => entry.month !== 2);
+    const original = structuredClone(entries);
+    const result = automatic(entries);
+    expect(result.actual).toBeUndefined();
+    expect(result.projections).toEqual([]);
+    expect(result.nextSpecial).toBeUndefined();
+    expect(result.estimatedHistoryMonths).toEqual([2]);
+    expect(result.sixthEstimates.find((entry) => entry.month === 9)?.sixth).toBe(6476.19);
+    expect(result.sixthEstimates.at(-1)?.sixth).toBe(6857.14);
+    expect(entries).toEqual(original);
+  });
+
+  it("uses a printed cumulative anchor rather than estimating the months it covers", () => {
+    const result = automatic([
+      slip(3, { regularGross: 3000, regularGrossYtd: 9000, baseSalary: 3000 }),
+      slip(5, { regularGross: 4000, baseSalary: 3000 }),
+    ]);
+    expect(result.estimatedHistoryMonths).toEqual([4]);
+    expect(result.sixthEstimates[0]).toMatchObject({ month: 5, regularGrossYtd: 16500, sixth: 6600 });
+    expect(result.sixthEstimates.at(-1)?.sixth).toBe(7416.67);
+    expect(result.actual).toBeUndefined();
+    expect(result.nextSpecial).toBeUndefined();
+  });
+
+  it("can project the sixth from known running gross even if special-payment history is missing", () => {
+    const result = automatic([slip(8, { regularGross: 3000, regularGrossYtd: 24000, baseSalary: 3000 })]);
+    expect(result.estimatedHistoryMonths).toEqual([]);
+    expect(result.sixthEstimates.at(-1)?.sixth).toBe(6000);
+    expect(result.actual?.sixth).toBe(6000);
+    expect(result.nextSpecial).toBeUndefined();
+  });
+
+  it("replaces the rough estimate with documented history when the missing PDF is imported", () => {
+    const entries = [slip(1, { baseSalary: 3000 }), slip(3, { baseSalary: 3000 })];
+    const incomplete = automatic(entries);
+    expect(incomplete.estimatedHistoryMonths).toEqual([2]);
+    const complete = automatic([...entries, slip(2, { regularGross: 3600, baseSalary: 3000 })]);
+    expect(complete.estimatedHistoryMonths).toEqual([]);
+    expect(complete.actual?.sixth).toBe(6400);
+    expect(complete.sixthEstimates.at(-1)?.sixth).toBe(6100);
+    expect(complete.yearEnd?.sixth).toBe(6100);
+  });
+
+  it("does not show an indicative estimate for partial or internally conflicting payrolls", () => {
+    expect(automatic([slip(8, { monthlyPayroll: false })]).sixthEstimates).toEqual([]);
+    expect(automatic([slip(1), slip(2, { regularGrossYtd: 100 })]).sixthEstimates).toEqual([]);
+    expect(automatic([]).sixthEstimates).toEqual([]);
+  });
+
+  it("keeps a reconciled tariff-taxed bonus separate and shows both sixth hypotheses without fabricating actuals", () => {
+    const entries = [slip(1), slip(2, {
+      regularGross: 3050, unresolvedSixthBonus: 1000, specialSv: 141.2,
+      baseSalary: 3000, monthlyTaxableBase: 3309.8,
+    })];
+    const original = structuredClone(entries);
+    const result = automatic(entries);
+    expect(result.missingMonths).toEqual([]);
+    expect(result.estimatedHistoryMonths).toEqual([]);
+    expect(result.unresolvedSixthMonths).toEqual([2]);
+    expect(result.actual).toBeUndefined();
+    expect(result.projections).toEqual([]);
+    expect(result.sixthEstimates[0]).toMatchObject({ month: 2, sixth: 6050, sixthUpper: 7050 });
+    expect(result.sixthEstimates.at(-1)).toMatchObject({ sixth: 6091.67, sixthUpper: 6258.33 });
+    expect(result.forecast.months.every((entry) => entry.regularGross === 3050 && entry.monthlyTaxableBase === 2451)).toBe(true);
+    expect(result.issues.join()).toContain("§ 67 Abs. 10");
+    expect(entries).toEqual(original);
+  });
+
+  it("accounts for the bonus in the separate SV-special annual cap even though its sixth treatment is unknown", () => {
+    const result = automatic([slip(1), slip(2, {
+      unresolvedSixthBonus: 9500, specialSv: 1621.65, baseSalary: 5000,
+    })]);
+    expect(result.forecast.months.find((entry) => entry.month === 6)?.specialSv).toBe(744.25);
+    expect(result.forecast.months.find((entry) => entry.month === 11)?.specialSv).toBe(0);
+    expect(result.nextSpecial).toBeUndefined();
+    expect(automatic([slip(2, { unresolvedSixthBonus: 1000, baseSalary: 3000 })])
+      .forecast.months.find((entry) => entry.month === 6)?.specialSv).toBeUndefined();
+  });
+
+  it("lets a later cumulative regular basis replace the range but not invent historical preferential taxation", () => {
+    const entries = [
+      slip(1), slip(2, { regularGross: 3050, unresolvedSixthBonus: 1000, specialSv: 141.2 }),
+      slip(3, { regularGrossYtd: 10050, specialGrossYtd: 0, baseSalary: 3000 }),
+    ];
+    const result = automatic(entries);
+    expect(result.actual?.sixth).toBe(6700);
+    expect(result.actual?.usedSixth).toBeUndefined();
+    expect(result.unresolvedSixthMonths).toEqual([]);
+    expect(result.sixthEstimates.every((entry) => entry.sixthUpper === undefined)).toBe(true);
+    expect(result.nextSpecial?.tax).toBeUndefined();
+    const proven = automatic(entries.map((entry) => entry.month === 3 ? {
+      ...entry, usedSixth: 0, specialTaxableYtd: 0,
+    } : entry));
+    expect(proven.actual?.usedSixth).toBe(0);
+    expect(proven.nextSpecial?.tax).toBeDefined();
+  });
+
+  it("accepts an independent same-month cumulative basis inside the bonus range, never an inconsistent basis", () => {
+    const input = { regularGross: 3050, unresolvedSixthBonus: 1000, specialSv: 141.2 };
+    expect(automatic([slip(1), slip(2, { ...input, regularGrossYtd: 7050 })]).actual?.sixth).toBe(7050);
+    expect(automatic([slip(1), slip(2, { ...input, regularGrossYtd: 7051 })]).sixthEstimates).toEqual([]);
+    expect(automatic([slip(1), slip(2, { ...input, specialSv: 1001 })]).sixthEstimates).toEqual([]);
+    expect(automatic([slip(1), slip(2, input), slip(3, { regularGrossYtd: 10051 })]).sixthEstimates).toEqual([]);
+  });
+
   it("requires documentary historical utilization even when gross anchors allow a projection", () => {
     const result = automatic([overflowSlip({ usedSixth: undefined, specialTaxableYtd: undefined })]);
     expect(result.yearEnd).toBeDefined();

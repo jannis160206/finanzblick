@@ -63,12 +63,13 @@ describe("local payroll records", () => {
 
   it("round-trips payroll and forecasts through JSON and Excel without replacing earlier manual sixth values", async () => {
     const state = appStateSchema.parse({
-      ...createSeed(), payslips: [january, { ...january, month: 2 }], payrollForecasts: [forecast],
+      ...createSeed(), payslips: [january, { ...january, month: 2, unresolvedSixthBonus: 1000, specialSv: 141.2 }], payrollForecasts: [forecast],
       annualSixth: [{
         year: 2026, month: 1, employer: "Manuell", regularGross: 1000, specialGross: 0,
         plannedSpecialGross: 0, monthlyPayroll: true,
       }],
     });
+
     for (const restored of [
       appStateSchema.parse(JSON.parse(JSON.stringify(state))),
       (await parseWorkbook(await exportWorkbook(state))).state,
@@ -77,5 +78,9 @@ describe("local payroll records", () => {
       expect(restored.payrollForecasts).toEqual(state.payrollForecasts);
       expect(restored.annualSixth).toEqual(state.annualSixth);
     }
+  });
+
+  it.each([-1, 0.001, 1_000_000_000.01])("rejects invalid separate bonus amounts: %s", (unresolvedSixthBonus) => {
+    expect(payslipSchema.safeParse({ ...january, unresolvedSixthBonus }).success).toBe(false);
   });
 });

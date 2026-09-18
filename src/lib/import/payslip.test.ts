@@ -47,7 +47,74 @@ function page(overrides: {
   };
 }
 
+function bonusPage(): PayslipPage {
+  const input = page({
+    month: "Februar", gross: "4.060,00",
+    rows: [
+      wage(490, "1000", "Gehalt", "3.000,00"),
+      line(475, [61, "1509 VEB-Prämie"], [379, "1.000,00"], [451, "1.000,00"], [525, "1.000,00"]),
+      wage(460, "3160", "ÜStd.ZS100%fr", "50,00"),
+      wage(445, "2751", "Telearbeitspauschale frei", "10,00", "", ""),
+      line(430, [54, "9110"], [89, "Freibetrag §68(1)"], [525, "-50,00"]),
+    ],
+    tail: [line(302, [89, "SV Beitrag SZ"], [379, "-141,20"], [451, "1.000,00"])],
+  });
+  return { lines: input.lines.map((entry) => entry.y === 310
+    ? line(310, [89, "SV Beitrag lfd"], [379, "-549,00"], [451, "3.050,00"])
+    : entry.y === 295
+      ? line(295, [89, "LSt Beitrag lfd"], [379, "-300,00"], [525, "3.309,80"])
+      : entry) };
+}
+
 describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
+  it("imports a reconciled VEB bonus without confusing tariff taxation with sixth relevance", () => {
+    const result = parsePayslipPages([bonusPage()]);
+    expect(payslipSchema.parse(result.drafts[0])).toMatchObject({
+      month: 2, regularGross: 3050, specialGross: 0, unresolvedSixthBonus: 1000,
+      regularSv: 549, specialSv: 141.2, monthlyTaxableBase: 3309.8,
+    });
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]).toContain("VEB-Prämie erkannt");
+    expect(result.issues[0]).toContain("Schätzspanne");
+    expect(JSON.stringify(result)).not.toContain("Testperson");
+  });
+
+  it.each([
+    line(475, [61, "1509 VEB-Prämie"], [379, "1.000,00"], [451, "900,00"], [525, "1.000,00"]),
+    line(475, [61, "1509 VEB-Prämie"], [379, "1.000,00"], [451, "1.000,00"]),
+    line(310, [89, "SV Beitrag lfd"], [379, "-549,00"], [451, "3.000,00"]),
+    line(302, [89, "SV Beitrag SZ"], [379, "-141,20"], [451, "900,00"]),
+    line(295, [89, "LSt Beitrag lfd"], [379, "-300,00"], [525, "3.309,82"]),
+    line(430, [54, "9110"], [89, "Freibetrag §68(1)"]),
+    line(445, [54, "2751"], [89, "Telearbeitspauschale frei"], [379, "10,00"], [525, "10,00"]),
+  ])("rejects an unsupported or incomplete VEB reconciliation: %j", (replacement) => {
+    const result = parsePayslipPages([{
+      lines: bonusPage().lines.map((entry) => entry.y === replacement.y ? replacement : entry),
+    }]);
+    expect(payslipSchema.safeParse(result.drafts[0]).success).toBe(false);
+    expect(result.drafts[0].unresolvedSixthBonus).toBeUndefined();
+    expect(result.issues.join()).toContain("VEB-Prämie nicht eindeutig");
+  });
+
+  it.each([
+    (lines: readonly PayslipLine[]) => lines.filter((entry) => entry.y !== 302),
+    (lines: readonly PayslipLine[]) => [...lines, line(301, [89, "SV Beitrag SZ"], [379, "-141,20"], [451, "1.000,00"])],
+    (lines: readonly PayslipLine[]) => [...lines, line(290, [89, "LSt Beitrag SZ"], [379, "0,00"], [525, "100,00"])],
+  ])("does not infer VEB treatment from a missing, duplicate or competing special-payment base", (alter) => {
+    const result = parsePayslipPages([{ lines: alter(bonusPage().lines) }]);
+    expect(payslipSchema.safeParse(result.drafts[0]).success).toBe(false);
+    expect(result.issues.join()).toContain("VEB-Prämie nicht eindeutig");
+  });
+
+  it("does not whitelist wage code 1509 or unrelated premium names", () => {
+    const result = parsePayslipPages([{
+      lines: bonusPage().lines.map((entry) => entry.y === 475
+        ? line(475, [61, "1509 Andere Prämie"], [379, "1.000,00"], [451, "1.000,00"], [525, "1.000,00"]) : entry),
+    }]);
+    expect(payslipSchema.safeParse(result.drafts[0]).success).toBe(false);
+    expect(result.issues.join()).toContain("Nicht unterstützter Bezugsbestandteil (Lohnart 1509)");
+  });
+
   it("extracts the company name from a numbered Firma header without storing its internal ID", () => {
     const input = page();
     const result = parsePayslipPages([{

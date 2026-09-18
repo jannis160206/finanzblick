@@ -29,6 +29,7 @@ const MONEY = /^[+-]?(?:\d{1,3}(?:\.\d{3})+|\d+),\d{2}-?$/;
 const REGULAR = /^(?:gehalt|grundgehalt|monatsgehalt|grundlohn|monatslohn|lohn|üstd[.\s-]*grundlohn|üstd[.\s-]*zs\s*\d+\s*%\s*(?:pfl|fr)\.?|überstunden(?:grundlohn|zuschlag|pauschale)?|rufbereitschaft(?:.*)?)$/i;
 const BASE_SALARY = /^(?:gehalt|grundgehalt|monatsgehalt|grundlohn|monatslohn|lohn)$/i;
 const SPECIAL = /^(?:urlaubszuschuss|urlaubsbeihilfe|urlaubsgeld|weihnachtsremuneration|weihnachtsgeld|sonderzahlung|(?:13|14)\.(?:\s*\/\s*14\.)?\s*(?:gehalt|monatsgehalt|lohn))$/i;
+const VEB_BONUS = /^veb[- ]prämie$/i;
 const EXPENSE = /^(?:(?:telearbeits|homeoffice)[- ]?pauschale|reisekostenersatz|fahrtkostenersatz|kilometergeld|diäten)\s+(?:frei|steuerfrei|§\s*26(?:\s+estg)?)$/i;
 const INFORMATIONAL = /^(?:freibetrag\s*§\s*68\s*\(\s*[12]\s*\)|(?:telearbeits|homeoffice)[- ]?tage)$/i;
 const CORPORATION = /^(?!.*(?:personal|versicher|arbeitnehmer|dienstnehmer|iban|@|\d{4})).*[a-zäöü].*\b(?:gmbh(?:\s*&\s*co\.?\s*kg)?|ag|kg|og|e\.?\s*u\.?)$/i;
@@ -78,9 +79,10 @@ function columns(line: PayslipLine): Columns | undefined {
   };
 }
 
-function cell(line: PayslipLine, layout: Columns, column: "amount" | "tax"): number | undefined {
+function cell(line: PayslipLine, layout: Columns, column: "amount" | "sv" | "tax"): number | undefined {
   const items = line.items.filter((item) => column === "amount"
     ? center(item) >= layout.amountStart && center(item) < layout.amountEnd
+    : column === "sv" ? center(item) >= layout.amountEnd && center(item) < layout.svEnd
     : center(item) >= layout.svEnd);
   const values = amounts(items);
   return values.length === 1 ? values[0] : undefined;
@@ -230,6 +232,12 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     let wageCount = 0;
     let regularCount = 0;
     let specialCount = 0;
+    let bonus = 0;
+    let regularSvBase = 0;
+    let tariffBase = 0;
+    let bonusEvidenceComplete = true;
+    const regularSvBases: (number | undefined)[] = [];
+    const specialSvBases: (number | undefined)[] = [];
     let gross: number | undefined;
     let complete = !!layout;
     let active = false;
@@ -262,9 +270,12 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           ended = true;
         }
         if (/^sv[- ]?beitrag\s+(?:lfd\.?|laufend|sz|sonderzahlung(?:en)?)$/i.test(label)) {
+          (/\b(?:lfd\.?|laufend)$/i.test(label) ? regularSvBases : specialSvBases).push(cell(line, layout, "sv"));
           if (value === undefined) issue("Ein Sozialversicherungsbeitrag ist nicht eindeutig lesbar und bleibt unbekannt.");
           else record(/\b(?:lfd\.?|laufend)$/i.test(label) ? "regularSv" : "specialSv", Math.abs(value));
         }
+        if (/^l(?:ohn)?st[- ]?beitrag\s+(?:sz|sonderzahlung(?:en)?)$/i.test(label)
+          && (value !== 0 || cell(line, layout, "tax") !== 0)) bonusEvidenceComplete = false;
         if (/^l(?:ohn)?st[- ]?beitrag\s+(?:lfd\.?|laufend)$/i.test(label)) {
           if (value === undefined) issue("Laufender Lohnsteuerbeitrag nicht eindeutig lesbar und bleibt unbekannt.");
           else record("regularTax", Math.abs(value));
@@ -273,7 +284,14 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           else issue("Lohnsteuer-Bemessungsgrundlage nicht eindeutig lesbar und bleibt unbekannt.");
         }
         if (!active || !label) continue;
-        if (INFORMATIONAL.test(label) && value === undefined) continue;
+        if (INFORMATIONAL.test(label) && value === undefined) {
+          const reduction = cell(line, layout, "tax");
+          if (/^freibetrag/i.test(label)) {
+            if (reduction === undefined || reduction > 0) bonusEvidenceComplete = false;
+            else tariffBase += reduction;
+          }
+          continue;
+        }
         if (value !== undefined) listedGross += value;
         if (value === undefined || value < 0) {
           complete = false;
@@ -288,16 +306,30 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           issue("Bezugsbestandteil mehrfach vorhanden; eine mögliche Korrektur wird nicht automatisch verrechnet.");
         }
         components.add(component);
+        const svBase = cell(line, layout, "sv");
+        const taxBase = cell(line, layout, "tax");
         if (REGULAR.test(label)) {
           regular += value;
           wageCount++;
           regularCount++;
+          if (svBase === undefined || svBase < 0 || taxBase === undefined || taxBase < 0) bonusEvidenceComplete = false;
+          else {
+            regularSvBase += svBase;
+            tariffBase += taxBase;
+          }
           if (BASE_SALARY.test(label)) record("baseSalary", value);
         } else if (SPECIAL.test(label)) {
           special += value;
           wageCount++;
           specialCount++;
-        } else if (!EXPENSE.test(label)) {
+        } else if (VEB_BONUS.test(label)) {
+          bonus += value;
+          tariffBase += taxBase ?? 0;
+          wageCount++;
+          if (value === 0 || svBase !== value || taxBase !== value) bonusEvidenceComplete = false;
+        } else if (EXPENSE.test(label)) {
+          if ((svBase ?? 0) !== 0 || (taxBase ?? 0) !== 0) bonusEvidenceComplete = false;
+        } else {
           complete = false;
           issue(`Nicht unterstützter Bezugsbestandteil${code ? ` (Lohnart ${code})` : ""}; Steuerfreiheit und Sechstelzuordnung sind nicht eindeutig erkennbar. Diese Abrechnung wird nicht automatisch übernommen.`);
         }
@@ -308,6 +340,20 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
       } else if (Math.abs(gross - listedGross) > 1) {
         complete = false;
         issue("Bruttosumme stimmt nicht mit den erkannten Bestandteilen überein; keine sichere automatische Bruttoaufteilung möglich.");
+      }
+      if (bonus > 0) {
+        const reading = (field: keyof PayslipDraft) => readings.get(field)?.length === 1 ? readings.get(field)![0] : undefined;
+        const regularSv = reading("regularSv");
+        const specialSv = reading("specialSv");
+        const taxable = reading("monthlyTaxableBase");
+        if (!bonusEvidenceComplete || specialCount > 0 || regularSv === undefined || specialSv === undefined ||
+          specialSv > bonus || regularSv > regular || taxable === undefined || reading("regularTax") === undefined ||
+          regularSvBases.length !== 1 || regularSvBases[0] !== regularSvBase ||
+          specialSvBases.length !== 1 || specialSvBases[0] !== bonus ||
+          Math.abs(tariffBase - regularSv - specialSv - taxable) > 1) {
+          complete = false;
+          issue("VEB-Prämie nicht eindeutig mit den SV- und LSt-Bemessungsgrundlagen abgeglichen; diese Abrechnung wird nicht automatisch übernommen.");
+        }
       }
     }
     for (const [field, values] of readings) {
@@ -320,6 +366,10 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
       issue("Mehrere Abrechnungen oder eine Korrektur erkannt; bitte die gültige vollständige Monatsabrechnung einzeln hochladen.");
     }
     if (complete) {
+      if (bonus > 0) {
+        draft.unresolvedSixthBonus = bonus / 100;
+        issue("VEB-Prämie erkannt: SV-Sonderzahlung und laufender Lohnsteuertarif. Ihre Sechstelzuordnung ist im Beleg nicht ausgewiesen; die Auswertung zeigt dafür eine Schätzspanne.");
+      }
       if (regularCount) draft.regularGross = regular / 100;
       else issue("Keine eindeutigen laufenden Bezüge; sie werden nicht aus Sonderzahlungen abgeleitet.");
       if (specialCount || (regularCount && draft.monthlyPayroll === true)) draft.specialGross = special / 100;

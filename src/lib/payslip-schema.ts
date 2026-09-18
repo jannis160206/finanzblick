@@ -9,6 +9,8 @@ export const payslipSchema = z.object({
   employer: z.string().trim().min(1).max(120),
   regularGross: amount,
   specialGross: amount,
+  // Reconciled tariff-taxed SV-special bonus, excluded from both gross classes until its sixth treatment is documented.
+  unresolvedSixthBonus: amount.optional(),
   regularSv: amount.optional(),
   regularTax: amount.optional(),
   specialSv: amount.optional(),

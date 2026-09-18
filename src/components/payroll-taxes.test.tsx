@@ -85,7 +85,10 @@ it("automatically imports dropped PDFs without a form and keeps secrets and bank
   expectNoManualInputs();
   const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
   expect(actual.getAllByText(moneyText(6000)).length).toBeGreaterThan(0);
-  expect(actual.getByText(/Nicht der heutige Ist-Stand/)).toBeTruthy();
+  expect(actual.getByText(`Stand: ${monthLabel("2026-01")}`)).toBeTruthy();
+  expect(screen.getByRole("table", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByText("Monatliche Prognose anzeigen"));
+  expect(screen.getByRole("table", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(true);
   expect(screen.getByRole("table", { name: "Monatliche Gehaltsprognose" })).toBeTruthy();
 });
 
@@ -139,7 +142,7 @@ it.each([
   pdf.parse.mockResolvedValueOnce({ drafts: [draft], issues: [] });
   render(<Fixture />);
   selectPdf();
-  expect(await screen.findByText(/Keine Abrechnung konnte vollständig automatisch/)).toBeTruthy();
+  expect(await screen.findByText(/Keine Abrechnung übernommen/)).toBeTruthy();
   expect(latest.payslips).toBeUndefined();
   expect(localStorage.getItem("payroll-test")).toBeNull();
   expectNoManualInputs();
@@ -149,7 +152,7 @@ it("leaves existing records untouched after an unsupported replacement upload", 
   pdf.parse.mockResolvedValueOnce({ drafts: [{ ...january, regularGross: undefined }], issues: [] });
   render(<Fixture initial={{ ...seed(), payslips: [january] }} />);
   selectPdf();
-  await screen.findByText(/Keine Abrechnung konnte vollständig automatisch/);
+  await screen.findByText(/Keine Abrechnung übernommen/);
   expect(latest.payslips).toEqual([january]);
   expect(screen.queryByRole("dialog")).toBeNull();
 });
@@ -250,6 +253,70 @@ it("refreshes actual and projected sixth values immediately after a newer payrol
   expectNoManualInputs();
 });
 
+it("shows current and year-end estimates prominently while a missing February blocks actuals and tax", () => {
+  const payslips = Array.from({ length: 8 }, (_, index) => ({ ...january, month: index + 1 }))
+    .filter((entry) => entry.month !== 2);
+  render(<Fixture initial={{ ...seed(), payslips }} />);
+  const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
+  expect(actual.getByText("Noch offen")).toBeTruthy();
+  const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
+  const estimates = forecast.getAllByText(moneyText(6000));
+  expect(estimates).toHaveLength(2);
+  expect(estimates.every((entry) => !entry.closest("details"))).toBe(true);
+  expect(forecast.getByText(monthLabel("2026-09"))).toBeTruthy();
+  expect(forecast.getByText("Jahresende · Dezember 2026")).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toContain(`Fehlende Abrechnung: ${monthLabel("2026-02")}`);
+  const special = within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" }));
+  expect(special.getAllByText("Noch offen")).toHaveLength(2);
+  expectNoManualInputs();
+});
+
+it("keeps lengthy assumptions and diagnostic reasons collapsed instead of repeating them above the results", () => {
+  render(<Fixture initial={{ ...seed(), payslips: [january] }} />);
+  const explanation = screen.getByText(/Automatisches Standardmodell mit unbestätigten Annahmen/);
+  expect(explanation.closest("details")?.open).toBe(false);
+  const source = screen.getByRole("link", { name: /RIS · § 67/, hidden: true });
+  expect(source.closest("details")?.open).toBe(false);
+  fireEvent.click(screen.getByText("Berechnungsdetails, Annahmen & Quellen"));
+  expect(explanation.closest("details")?.open).toBe(true);
+  expect(screen.getByRole("link", { name: /RIS · § 67/ })).toBeTruthy();
+});
+
+it("replaces provisional values with the computed sixth when February closes the historical gap", async () => {
+  const payslips = Array.from({ length: 8 }, (_, index) => ({ ...january, month: index + 1 }))
+    .filter((entry) => entry.month !== 2);
+  render(<Fixture initial={{ ...seed(), payslips }} />);
+  pdf.parse.mockResolvedValueOnce({ drafts: [{ ...january, month: 2, regularGross: 3600 }], issues: [] });
+  selectPdf();
+  await waitFor(() => expect(latest.payslips).toHaveLength(8));
+  const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
+  expect(actual.getByText(moneyText(6150))).toBeTruthy();
+  const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
+  expect(forecast.getByText(moneyText(6100))).toBeTruthy();
+  expect(screen.queryByText(/Fehlende Abrechnung:/)).toBeNull();
+  expect(screen.queryByText("Vorläufig · fehlende Monate geschätzt")).toBeNull();
+});
+
+it("automatically saves a recognized February bonus and displays its sixth range without manual fields", async () => {
+  const payslips = Array.from({ length: 8 }, (_, index) => ({ ...january, month: index + 1 }))
+    .filter((entry) => entry.month !== 2);
+  render(<Fixture initial={{ ...seed(), payslips }} />);
+  pdf.parse.mockResolvedValueOnce({
+    drafts: [{ ...january, month: 2, regularGross: 3050, unresolvedSixthBonus: 1000, specialSv: 141.2 }],
+    issues: ["Seite 1 (02/2026): VEB-Prämie erkannt; Sechstelzuordnung bleibt offen."],
+  });
+  selectPdf();
+  await waitFor(() => expect(latest.payslips).toHaveLength(8));
+  expect(latest.payslips?.find((entry) => entry.month === 2)?.unresolvedSixthBonus).toBe(1000);
+  expect(screen.queryByText(/Fehlende Abrechnung:/)).toBeNull();
+  expect(screen.getByText(/Prämie erkannt, Sechstelzuordnung nicht belegt/)).toBeTruthy();
+  const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
+  expect(forecast.getByText(`${moneyText(6011.11)} – ${moneyText(6233.33)}`)).toBeTruthy();
+  expect(forecast.getByText(`${moneyText(6008.33)} – ${moneyText(6175)}`)).toBeTruthy();
+  expect(screen.getByText(/Datei 1: Seite 1 \(02\/2026\): VEB-Prämie erkannt/).closest("details")?.open).toBe(false);
+  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(2);
+  expectNoManualInputs();
+});
 it("invalidates legacy forecast confirmation after an upload without touching another employer", async () => {
   const initial = { ...seed(), payslips: [january], payrollForecasts: [
     { year: 2026 as const, employer: january.employer, months: [], standardPayrollConfirmed: true },

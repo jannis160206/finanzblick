@@ -77,6 +77,14 @@ export type AutomaticPayrollAnalysis = PayrollAnalysis & {
   mode: "automatic-standard-model";
   assumptions: string[];
   hasSpecialPaymentModel: boolean;
+  sixthEstimates: {
+    month: number;
+    sixth: number;
+    sixthUpper?: number;
+    regularGrossYtd: number;
+  }[];
+  estimatedHistoryMonths: number[];
+  unresolvedSixthMonths: number[];
 };
 
 const automaticPayrollAssumptions = [
@@ -114,7 +122,13 @@ export function defaultPayrollForecast(
   const selected = selectedPayslips(payslips, year, employer);
   const latest = selected.at(-1);
   const distinctPeriods = new Set(selected.map(payslipKey)).size === selected.length;
-  let previousSpecialGross = latest ? cumulative(selected, selected.length - 1, "specialGross", "specialGrossYtd") : undefined;
+  let previousSpecialGross = cumulativeSpecialSvGross(selected);
+  const taxableBase = latest?.monthlyTaxableBase === undefined ? undefined
+    : latest.unresolvedSixthBonus
+      ? latest.specialGross === 0 && latest.specialSv !== undefined
+        ? money(latest.monthlyTaxableBase - latest.unresolvedSixthBonus + latest.specialSv)
+        : undefined
+      : latest.monthlyTaxableBase;
   return {
     year,
     employer: employer.trim(),
@@ -132,7 +146,7 @@ export function defaultPayrollForecast(
           regularGross: latest.regularGross,
           specialGross,
           ...(specialSv === undefined ? {} : { specialSv }),
-          ...(latest.monthlyTaxableBase === undefined ? {} : { monthlyTaxableBase: latest.monthlyTaxableBase }),
+          ...(taxableBase === undefined || taxableBase < 0 ? {} : { monthlyTaxableBase: taxableBase }),
         };
       })
       : [],
@@ -179,15 +193,36 @@ function cumulative(
   gross: "regularGross" | "specialGross",
   ytd: "regularGrossYtd" | "specialGrossYtd",
 ): number | undefined {
-  let following = 0;
+  const bounds = cumulativeBounds(entries, index, gross, ytd);
+  return bounds && sameMoney(bounds.minimum, bounds.maximum) ? bounds.minimum : undefined;
+}
+
+function cumulativeBounds(
+  entries: Payslip[],
+  index: number,
+  gross: "regularGross" | "specialGross",
+  ytd: "regularGrossYtd" | "specialGrossYtd",
+): { minimum: number; maximum: number } | undefined {
+  let minimum = 0;
+  let maximum = 0;
   for (let cursor = index; cursor >= 0; cursor--) {
     const entry = entries[cursor];
-    if (entry[ytd] !== undefined) return sum([entry[ytd], following]);
-    following = sum([following, entry[gross]]);
-    if (entry.month === 1) return following;
+    if (entry[ytd] !== undefined) return {
+      minimum: sum([entry[ytd], minimum]), maximum: sum([entry[ytd], maximum]),
+    };
+    minimum = sum([minimum, entry[gross]]);
+    maximum = sum([maximum, entry[gross], entry.unresolvedSixthBonus ?? 0]);
+    if (entry.month === 1) return { minimum, maximum };
     if (entries[cursor - 1]?.month !== entry.month - 1) return undefined;
   }
   return undefined;
+}
+
+function cumulativeSpecialSvGross(entries: Payslip[]): number | undefined {
+  if (!entries.some((entry) => entry.unresolvedSixthBonus))
+    return cumulative(entries, entries.length - 1, "specialGross", "specialGrossYtd");
+  if (!entries.length || entries.some((entry, index) => entry.month !== index + 1)) return undefined;
+  return sum(entries.map((entry) => sum([entry.specialGross, entry.unresolvedSixthBonus ?? 0])));
 }
 
 function consistencyIssues(entries: Payslip[]): string[] {
@@ -204,7 +239,7 @@ function consistencyIssues(entries: Payslip[]): string[] {
     if (entry.regularSv !== undefined && entry.regularSv > entry.regularGross) {
       issues.push(`${prefix}laufende SV übersteigt das laufende Brutto.`);
     }
-    if (entry.specialSv !== undefined && entry.specialSv > entry.specialGross) {
+    if (entry.specialSv !== undefined && entry.specialSv > sum([entry.specialGross, entry.unresolvedSixthBonus ?? 0])) {
       issues.push(`${prefix}Sonderzahlungs-SV übersteigt das Sonderzahlungsbrutto.`);
     }
     for (const [gross, ytd] of [
@@ -225,12 +260,13 @@ function consistencyIssues(entries: Payslip[]): string[] {
           issues.push(`${prefix}kumuliertes Brutto widerspricht einem früheren bestätigten Jahreswert.`);
         }
       }
-      const earlierTotal = earlier.length ? cumulative(earlier, earlier.length - 1, gross, ytd) : 0;
-      if (earlierTotal !== undefined) {
-        const minimum = sum([earlierTotal, entry[gross]]);
+      const earlierBounds = earlier.length ? cumulativeBounds(earlier, earlier.length - 1, gross, ytd) : { minimum: 0, maximum: 0 };
+      if (earlierBounds !== undefined) {
+        const minimum = sum([earlierBounds.minimum, entry[gross]]);
+        const maximum = sum([earlierBounds.maximum, entry[gross], entry.unresolvedSixthBonus ?? 0]);
         if (entry[ytd] < minimum) issues.push(`${prefix}kumuliertes Brutto widerspricht früheren Abrechnungen (Korrektur prüfen).`);
         const contiguous = entry.month === 1 || earlier.at(-1)?.month === entry.month - 1;
-        if (contiguous && !sameMoney(entry[ytd], minimum)) {
+        if (contiguous && (entry[ytd] < minimum || entry[ytd] > maximum)) {
           issues.push(`${prefix}Monatsbeträge und kumuliertes Brutto stimmen nicht überein (Korrektur prüfen).`);
         }
       }
@@ -276,7 +312,12 @@ function historicalUtilization(entries: Payslip[]): Utilization {
       taxable = undefined;
       issues.push("Frühere Sonderzahlungen sind ohne lückenlose Abrechnungen oder bestätigten Sechstelverbrauch und begünstigte Steuerbasis nicht rekonstruierbar.");
     }
-    if (specialTotal === 0) {
+    if (entry.unresolvedSixthBonus) {
+      used = undefined;
+      taxable = undefined;
+      exempt = undefined;
+      issues.push("Tarifbesteuerte Prämie mit SV-Sonderzahlung: Die Abrechnung belegt nicht, ob sie das Sechstel erhöht oder nach § 67 Abs. 10 behandelt wurde. Sechstelverbrauch und begünstigte Steuerbasis bleiben ohne gesonderten Nachweis offen.");
+    } else if (specialTotal === 0 && !entries.slice(0, index).some((previous) => previous.unresolvedSixthBonus)) {
       used = 0;
       taxable = 0;
       issues = [];
@@ -439,11 +480,45 @@ export function analyzePayrollAutomatically(
   if (analysis.latest && analysis.latest.month < 12 && !hasSpecialPaymentModel) {
     analysis.issues.push("Kein positiver, ausdrücklich belegter Grundgehaltsbetrag für das Sonderzahlungsmodell. Bitte eine passende lesbare PDF-Abrechnung hochladen; laufendes Brutto oder LSt-Basis ersetzen diesen Nachweis nicht.");
   }
+  const entries = selectedPayslips(payslips, year, employer);
+  const sixthEstimates: AutomaticPayrollAnalysis["sixthEstimates"] = [];
+  let estimatedHistoryMonths: number[] = [];
+  let unresolvedSixthMonths: number[] = [];
+  if (analysis.latest && !consistencyIssues(entries).length && entries.every((entry) => entry.monthlyPayroll)) {
+    const latest = analysis.latest;
+    const anchor = entries.findLast((entry) => entry.regularGrossYtd !== undefined);
+    const uncertain = entries.filter((entry) => entry.month > (anchor?.month ?? 0) && entry.unresolvedSixthBonus);
+    unresolvedSixthMonths = uncertain.map((entry) => entry.month);
+    const uncertainGross = sum(uncertain.map((entry) => entry.unresolvedSixthBonus ?? 0));
+    let regular = cumulative(entries, entries.length - 1, "regularGross", "regularGrossYtd");
+    if (regular === undefined) {
+      estimatedHistoryMonths = analysis.missingMonths.filter((month) => month > (anchor?.month ?? 0));
+      const average = sum(entries.map((entry) => entry.regularGross)) / entries.length;
+      regular = sum([
+        anchor?.regularGrossYtd ?? 0,
+        ...entries.filter((entry) => entry.month > (anchor?.month ?? 0)).map((entry) => entry.regularGross),
+        money(estimatedHistoryMonths.length * average),
+      ]);
+    }
+    if (regular > 0) {
+      // Indicative sixth values never fill actual history or enable a tax calculation.
+      for (let month = latest.month; month <= 12; month++) {
+        if (month > latest.month) regular = sum([regular, latest.regularGross]);
+        sixthEstimates.push({
+          month, sixth: money(regular / month * 2), regularGrossYtd: regular,
+          ...(uncertainGross > 0 ? { sixthUpper: money(sum([regular, uncertainGross]) / month * 2) } : {}),
+        });
+      }
+    }
+  }
   return {
     ...analysis,
     mode: "automatic-standard-model",
     assumptions: [...automaticPayrollAssumptions],
     hasSpecialPaymentModel,
+    sixthEstimates,
+    estimatedHistoryMonths,
+    unresolvedSixthMonths,
   };
 }
 
@@ -459,7 +534,7 @@ function analyzePayrollScenario(
   const issues: string[] = [];
   const forecast = mergeForecast(
     defaultPayrollForecast(payslips, year, employer), savedForecast, issues,
-    latest ? cumulative(entries, entries.length - 1, "specialGross", "specialGrossYtd") : undefined,
+    cumulativeSpecialSvGross(entries),
   );
   const result: PayrollAnalysis = {
     latest,
@@ -483,13 +558,14 @@ function analyzePayrollScenario(
   const regularGrossYtd = cumulative(entries, entries.length - 1, "regularGross", "regularGrossYtd");
   const specialGrossYtd = cumulative(entries, entries.length - 1, "specialGross", "specialGrossYtd");
   const utilization = historicalUtilization(entries);
+  if (entries.some((entry) => entry.unresolvedSixthBonus)) issues.push(...utilization.issues);
   const monthlyPayroll = entries.every((entry) => entry.monthlyPayroll);
   if (result.missingMonths.length) {
     issues.push(`Abrechnungen für Monat ${result.missingMonths.join(", ")} fehlen. Nur bestätigte kumulierte Werte können diese Lücken überbrücken.`);
   }
   if (!monthlyPayroll) issues.push("Keine durchgehend bestätigte monatliche Abrechnung: Teilmonate oder Sonderfälle müssen von der Lohnverrechnung geklärt werden.");
-  if (regularGrossYtd === undefined) issues.push("Das kumulierte laufende Brutto ist unbekannt; ein fehlender Monat wird nicht als 0 € angenommen.");
-  if (specialGrossYtd === undefined) issues.push("Die bisherigen Sonderzahlungen sind unbekannt; fehlende Abrechnungen bedeuten nicht 0 € Sonderzahlungen.");
+  if (regularGrossYtd === undefined) issues.push("Das kumulierte sechstelrelevante Brutto ist nicht vollständig belegt; fehlende Monate und unklare Sechstelzuordnungen werden nicht als 0 € behandelt.");
+  if (specialGrossYtd === undefined) issues.push("Die bisherigen steuerlichen Sonderzahlungen sind nicht vollständig belegt; fehlende Monate und unklare Prämienzuordnungen bedeuten nicht 0 € Sonderzahlungen.");
   const beforeFirstRegularPay = regularGrossYtd === 0 && specialGrossYtd !== 0 && latest.reportedSixth === undefined;
   if (beforeFirstRegularPay) issues.push("Vor dem ersten laufenden Bezug ist ein Sechstel ohne bestätigten Abrechnungswert nicht berechenbar.");
   const sixth = latest.reportedSixth

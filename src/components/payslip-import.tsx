@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 const moneyFields = [
   ["regularGross", "Sechstelrelevantes laufendes Brutto"],
   ["specialGross", "Sonderzahlungen brutto im Monat"],
+  ["unresolvedSixthBonus", "Tarifbesteuerte Prämie · Sechstelzuordnung offen"],
   ["baseSalary", "Grundgehalt ohne variable Zulagen"],
   ["regularSv", "SV laufend"],
   ["regularTax", "Lohnsteuer laufend"],
@@ -106,7 +107,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         return parsed.success ? [parsed.data] : [];
       });
       if (!entries.length) {
-        setError("Keine Abrechnung konnte vollständig automatisch ausgewertet werden. Es wurde nichts gespeichert. Bitte eine vollständige, unterstützte Text-PDF hochladen; unbekannte Bezüge werden nicht geschätzt.");
+        setError("Keine Abrechnung übernommen. Den Grund findest du unter Importhinweise.");
         return;
       }
       const merged = preparePayslipMerge(live.current.state.payslips ?? [], entries);
@@ -131,7 +132,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     (!employer || payrollEmployerKey(entry.employer) === payrollEmployerKey(employer))).sort((a, b) => b.month - a.month);
   return <>
     <section className="panel mb-6 p-5 sm:p-6" aria-label="Lohnabrechnungen importieren">
-      <SectionHeading title="Lohnabrechnungen" subtitle="PDF hochladen – Werte und Jahressechstel werden automatisch ausgewertet. Neuere Abrechnungen aktualisieren die Berechnung." />
+      <SectionHeading title="Lohnabrechnungen" subtitle="PDF hochladen oder hineinziehen. Neuere Abrechnungen aktualisieren die Berechnung automatisch." />
       <div className="grid gap-4 sm:grid-cols-[1fr_16rem]">
         <div role="group" aria-label="PDF-Ablage für Lohnabrechnungen" className={cn("rounded-xl border border-dashed p-5 text-center", dragging && "border-primary bg-primary/5")}
           onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
@@ -152,7 +153,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
             <Input type="password" autoComplete="off" value={password} disabled={busy} maxLength={200}
               onChange={(event) => setPassword(event.target.value)} />
           </label>
-          <p className="text-xs leading-relaxed text-muted-foreground">Das Passwort gilt für alle PDFs dieses Imports und bleibt nur während dieses Seitenbesuchs im Arbeitsspeicher. PDF und Passwort werden nicht gespeichert oder an einen Server gesendet.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Nur lokal für diesen Seitenbesuch. PDF und Passwort werden nicht gespeichert oder versendet.</p>
           {filesToRetry.length > 0 && <Button variant="outline" disabled={busy || !password || !!storageError} onClick={() => { void readFiles(filesToRetry); }}>Mit Passwort erneut lesen</Button>}
         </div>
       </div>
@@ -160,12 +161,15 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       {notice && <p role="status" className="mt-3 text-sm">{notice}</p>}
       {report && <div className="mt-4 space-y-3" aria-label="Upload-Auswertung">
         {incomplete.length > 0 && <div role="alert" className="rounded-lg border border-amber-500/30 p-3 text-sm">
-          <p>{incomplete.length} Abrechnung(en) nicht übernommen: {incomplete.join(", ")}.</p>
-          <p className="mt-2">Diese Monate bleiben unbekannt. Es sind keine Betragseingaben nötig: Die Auswertung benötigt die vollständige Original-PDF und eine eindeutig unterstützte Bezugsart. Andere vollständig erkannte Monate können unabhängig davon ausgewertet werden.</p>
+          <p>Nicht vollständig erkannt: {incomplete.join(", ")}. Diese Monate wurden nicht übernommen.</p>
         </div>}
-        {report.issues.length > 0 && <div role="status" className="space-y-2 text-xs text-muted-foreground">
-          {report.issues.map((issue, index) => <p key={index}>{issue}</p>)}
-        </div>}
+        {(report.issues.length > 0 || incomplete.length > 0) && <details className="text-sm">
+          <summary className="cursor-pointer">Importhinweise</summary>
+          <div className="mt-2 space-y-2 text-xs text-muted-foreground">
+            {report.issues.map((issue, index) => <p key={index}>{issue}</p>)}
+            {incomplete.length > 0 && <p>Für diese Monate ist eine vollständige, unterstützte Text-PDF erforderlich. Unklare Beträge bleiben unbekannt; andere vollständig erkannte Monate werden unabhängig davon übernommen.</p>}
+          </div>
+        </details>}
         <details className="text-sm">
           <summary className="cursor-pointer">Automatisch gelesene Werte</summary>
           <div className="mt-3 space-y-3">
@@ -181,12 +185,14 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </div>
         </details>
       </div>}
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Eine einzelne Abrechnung belegt nur ihren Abrechnungsmonat. Für den tatsächlichen aktuellen Stand die Monate seit Jänner oder PDFs mit verlässlichen kumulierten Werten hochladen. Es werden keine Kontoumsätze erzeugt oder verändert.</p>
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Für den vollständigen Jahresstand die Abrechnungen seit Jänner hochladen. Kontoumsätze bleiben unverändert.</p>
       {records.length > 0 && <div className="mt-5 overflow-x-auto">
         <table className="w-full text-left text-sm" aria-label="Gespeicherte Lohnabrechnungen">
           <thead><tr className="border-b text-xs text-muted-foreground"><th className="p-2">Abrechnung</th><th className="p-2 text-right">Laufendes Brutto</th><th className="p-2 text-right">Sonderzahlung</th><th><span className="sr-only">Aktionen</span></th></tr></thead>
           <tbody>{records.map((record) => <tr key={payslipKey(record)} className="border-b last:border-0">
-            <td className="p-2">{monthLabel(`${record.year}-${String(record.month).padStart(2, "0")}`)}<span className="block text-xs text-muted-foreground">{record.employer}</span></td>
+            <td className="p-2">{monthLabel(`${record.year}-${String(record.month).padStart(2, "0")}`)}<span className="block text-xs text-muted-foreground">{record.employer}</span>
+              {!!record.unresolvedSixthBonus && <span className="block text-xs text-muted-foreground">Weitere Prämie: {currency(record.unresolvedSixthBonus)} · Sechstelzuordnung offen</span>}
+            </td>
             <td className="p-2 text-right whitespace-nowrap tabular-nums">{currency(record.regularGross)}</td>
             <td className="p-2 text-right whitespace-nowrap tabular-nums">{currency(record.specialGross)}</td>
             <td className="p-2"><div className="flex justify-end">
@@ -208,6 +214,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         <DialogBody>
           {replacement?.map((entry) => <p key={payslipKey(entry)} className="mb-2 text-sm">
             {draftLabel(entry, 0)} · {entry.employer}: laufend {currency(entry.regularGross)}, Sonderzahlungen {currency(entry.specialGross)}
+            {!!entry.unresolvedSixthBonus && <>; weitere Prämie {currency(entry.unresolvedSixthBonus)} mit offener Sechstelzuordnung</>}
           </p>)}
           {(error || storageError) && <p role="alert" className="text-sm text-destructive">{storageError || error}</p>}
         </DialogBody>
