@@ -124,7 +124,7 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     expect(assigned.statementImport?.error).toBeUndefined();
     expect(assigned.state.transactions).toHaveLength(1_001);
     expect(assigned.state.transactions[0]).toEqual({
-      ...initial.transactions[0], category: "Freizeit", categoryOverride: true, includeInPlan: true, fixedCost: false,
+      ...initial.transactions[0], category: "Freizeit", categoryOverride: true, manualCategory: true, reviewed: true, includeInPlan: true, fixedCost: false,
     });
     expect(assigned.state.transactions.at(-1)).toEqual(concurrent);
     expect(assigned.openReviewCount).toBe(1);

@@ -1,5 +1,6 @@
 import type { Transaction } from "@/lib/types";
 import { isRaiffeisenBank, isRaiffeisenMainAccount, normalizeAccount } from "@/lib/accounts";
+import { retainManualCategory } from "@/lib/manual-category";
 
 type PayrollSource = Pick<Transaction, "description" | "amount"> &
   Partial<Pick<Transaction, "date" | "rawDescription" | "rawDetails" | "sourceCategory">>;
@@ -26,19 +27,26 @@ export function reconcilePayrollSources<T extends Transaction>(rows: T[]): T[] {
         isRaiffeisenBank(account.bank) ? account.pocket : null])
       : undefined;
   };
-  const represented = new Map<string, number>();
-  for (const row of rows) {
+  const represented = new Map<string, { indices: number[]; next: number }>();
+  rows.forEach((row, index) => {
     const key = identity(row);
-    if (key && !legacy(row) && (row.bankReference || row.pocket))
-      represented.set(key, (represented.get(key) ?? 0) + 1);
-  }
-  return rows.filter((row) => {
-    const key = legacy(row) ? identity(row) : undefined;
-    const count = key ? represented.get(key) ?? 0 : 0;
-    if (!key || !count) return true;
-    represented.set(key, count - 1);
-    return false;
+    if (key && !legacy(row) && (row.bankReference || row.pocket)) {
+      const group = represented.get(key) ?? { indices: [], next: 0 };
+      group.indices.push(index);
+      represented.set(key, group);
+    }
   });
+  const reconciled = [...rows];
+  const replaced = new Set<number>();
+  rows.forEach((row, index) => {
+    const key = legacy(row) ? identity(row) : undefined;
+    const group = key ? represented.get(key) : undefined;
+    if (!group || group.next >= group.indices.length) return;
+    const target = group.indices[group.next++];
+    reconciled[target] = retainManualCategory(reconciled[target], row);
+    replaced.add(index);
+  });
+  return reconciled.filter((_, index) => !replaced.has(index));
 }
 
 export function payrollPeriod(row: PayrollSource): string | undefined {

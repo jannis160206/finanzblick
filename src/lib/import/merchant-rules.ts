@@ -5,6 +5,7 @@ import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
 import { normalizeAccount } from "@/lib/accounts";
+import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -56,7 +57,7 @@ function addChoice(choices: Map<string, MerchantChoice | null>, key: string, cho
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
   const choices = new Map<string, MerchantChoice | null>();
   for (const row of rows) {
-    if (!row.categoryOverride || row.category === "Prüfen" || payrollCategory(row)) continue;
+    if ((!row.categoryOverride && !hasManualCategory(row)) || row.category === "Prüfen" || payrollCategory(row)) continue;
     const key = merchantRuleKey(row);
     if (
       isSpecificMerchantKey(key) &&
@@ -92,6 +93,7 @@ export function rememberMerchants(
     rules.set(key, [{ key, ...(fixedCosts.size === 1 ? { fixedCost: [...fixedCosts][0] } : {}), ...choice }]);
   }
   const applyChoice = (row: Transaction): Transaction => {
+    if (hasCategoryChoice(row)) return row;
     const category = choices.get(merchantRuleKey(row))?.category;
     if (!category) return row;
     const updated = { ...row, category, categoryOverride: true, includeInPlan: true };
@@ -103,6 +105,7 @@ export function rememberMerchants(
         ...state,
         transactions: state.transactions.map(applyChoice),
         ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
+          if (item.booking && hasCategoryChoice(item.booking)) return item;
           const category = item.merchantKey ? choices.get(storedMerchantKey(item.merchantKey))?.category : undefined;
           return category ? { ...item, category, ...(item.booking ? { booking: applyChoice(item.booking) } : {}) } : item;
         }) } : {}),
@@ -141,6 +144,7 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
   for (const [key, choice] of explicit) rules.set(key, choice);
   return (source: Transaction): Transaction => {
     const row = recoverMerchant(source);
+    if (hasCategoryChoice(row)) return row;
     const detected = classifyBooking(row);
     if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const key = merchantRuleKey(row);

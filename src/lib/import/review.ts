@@ -38,6 +38,7 @@ import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
+import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 import {
   appendStatementRows,
   deduplicateStatements,
@@ -70,6 +71,7 @@ function indexReviewRules(state: AppState) {
 
 export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
   const result = classify(row);
+  if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
   if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
@@ -553,10 +555,10 @@ export function commitStatementImport(
   ];
   const choices = new Map(
     rows
-      .filter((row) => row.categoryOverride && isSpecificMerchantKey(merchantRuleKey(row)))
+      .filter((row) => (row.categoryOverride || hasManualCategory(row)) && row.category !== "Prüfen" && isSpecificMerchantKey(merchantRuleKey(row)))
       .map((row) => [merchantRuleKey(row), row.category]),
   );
-  const directChoices = new Map(rows.filter((row) => row.categoryOverride || row.fixedCost !== undefined).map((row) => [row.id, row]));
+  const directChoices = new Map(rows.filter((row) => row.categoryOverride || hasManualCategory(row) || row.fixedCost !== undefined).map((row) => [row.id, row]));
   const fingerprintChoices = new Map(numberStatementRows([...directChoices.values()]).map((row) => [statementFingerprint(row), row]));
   const directChoice = (row: Transaction) => directChoices.get(row.id) ?? fingerprintChoices.get(statementFingerprint(row));
   const selected = new Map(
@@ -564,19 +566,24 @@ export function commitStatementImport(
   );
   for (const item of queue) {
     if (item.kind !== "booking" || item.draft.amount === null) continue;
-    const category = choices.get(merchantRuleKey(item.draft as Transaction));
+    const direct = directChoices.get(item.draft.id);
+    if (hasCategoryChoice(item.draft) && !direct) continue;
+    const category = direct?.category ?? choices.get(merchantRuleKey(item.draft as Transaction));
     if (category) {
       const row = {
         ...item.draft,
         amount: item.draft.amount,
         category,
         categoryOverride: true,
+        ...(direct?.manualCategory !== undefined ? { manualCategory: direct.manualCategory } : {}),
+        ...(direct?.reviewed !== undefined ? { reviewed: direct.reviewed } : {}),
         includeInPlan: true,
         ...(directChoice(item.draft as Transaction)?.fixedCost !== undefined
           ? { fixedCost: directChoice(item.draft as Transaction)!.fixedCost }
           : {}),
       };
-      selected.set(statementFingerprint(row), row);
+      const key = statementFingerprint(row);
+      if (!selected.has(key) || direct || !hasManualCategory(selected.get(key)!)) selected.set(key, row);
     }
   }
   rows = [...selected.values()];
@@ -590,9 +597,13 @@ export function commitStatementImport(
   let current = applyFixedDecisions({ ...learned,
     transactions: learned.transactions.map((row) => {
       const choice = directChoice(row);
+      const direct = directChoices.get(row.id);
+      if (hasCategoryChoice(row) && !direct) return row;
       const category = choice?.category ?? choices.get(merchantRuleKey(row));
       if (!category) return row;
       const updated = { ...row, category, categoryOverride: true, includeInPlan: true,
+        ...(direct?.manualCategory !== undefined ? { manualCategory: direct.manualCategory } : {}),
+        ...(direct?.reviewed !== undefined ? { reviewed: direct.reviewed } : {}),
         ...(choice?.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}) };
       const result = classify(updated);
       return { ...updated, category: result.category, includeInPlan: result.includeInPlan };
@@ -603,9 +614,12 @@ export function commitStatementImport(
     const ledgerKeys = new Set(current.transactions.map(statementFingerprint));
     const fixedReceipts = current.fixedReceipts.flatMap((item): FixedReceipt[] => {
       const choice = directChoices.get(item.key) ?? (item.booking && directChoice(item.booking));
-      if (!choice || choice.fixedCost === undefined || !item.booking) return [item];
+      if (!choice || (choice.fixedCost === undefined && !hasManualCategory(choice)) || !item.booking) return [item];
       const updated = { ...item.booking, id: choice.id, category: choice.category,
-        categoryOverride: true, fixedCost: choice.fixedCost, includeInPlan: true };
+        categoryOverride: true, includeInPlan: true,
+        ...(choice.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}),
+        ...(choice.manualCategory !== undefined ? { manualCategory: choice.manualCategory } : {}),
+        ...(choice.reviewed !== undefined ? { reviewed: choice.reviewed } : {}) };
       const result = classify(updated);
       const booking = { ...updated, category: result.category, includeInPlan: result.includeInPlan };
       if (!ledgerKeys.has(statementFingerprint(booking))) {

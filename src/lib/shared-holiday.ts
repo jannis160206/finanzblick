@@ -1,4 +1,5 @@
 import type { AppState, Transaction } from "@/lib/types";
+import { hasManualCategory } from "@/lib/manual-category";
 
 export const alwaysLunch = (text: string) => /bipa|hotspot|mensa|mensen/i.test(text);
 const travelMerchant = /\bswiss(?:\s*(?:air|international))?\b|\bryanair\b|\beasy\s*jet\b|booking\s*\.\s*com|\bairbnb\b|\blufthansa\b|\baustrian(?:\s*airlines)?\b|\beurowings\b|\bwizz\s*air\b|\bcondor\b|\b(?:klm|airfrance|iberia|vueling|transavia|finnair|norwegian|emirates|qatar\s*airways|turkish\s*airlines|british\s*airways|tap\s*air|delta\s*airlines|united\s*airlines)\b|\bair\s*france\b|\b(?:expedia|bravofly|lastminute|agoda|hotels\.com|trip\.com|opodo|edreams)\b/i;
@@ -34,7 +35,8 @@ export function reconcileSharedHoliday(rows: Transaction[], asOf = "9999-12-31")
       ownSpend: own / 100, amount: (total - own) / 100, outstanding: row.sharedPaidManually ? 0 : (total - own) / 100 };
   }).sort((a, b) => a.date.localeCompare(b.date) || a.bookingId.localeCompare(b.bookingId));
   const repayments = new Map<string, string>();
-  const incoming = rows.filter((row) => row.date <= asOf && isRaphaelPayment(row))
+  const incoming = rows.filter((row) => row.date <= asOf && isRaphaelPayment(row) &&
+    (!hasManualCategory(row) || row.category === "Transfer" || row.category === "Transfer intern"))
     .sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
   for (const row of incoming) {
     // No arbitrary expiry: his transfer may arrive weeks after the charge.
@@ -60,7 +62,7 @@ export function reconcileSharedHoliday(rows: Transaction[], asOf = "9999-12-31")
 }
 
 export function personalAmount(row: AccountedTransaction): number {
-  if (row.holidayReimbursementFor) return 0;
+  if (row.holidayReimbursementFor && (!hasManualCategory(row) || row.category === "Transfer" || row.category === "Transfer intern")) return 0;
   return isSharedHoliday(row) ? -Math.round(cents(row.amount) / 2) / 100 : row.amount;
 }
 

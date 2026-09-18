@@ -85,8 +85,9 @@ function TransactionForm({
     amount: values.amount ?? 0,
     category: values.category ?? "Sonstiges",
     pocket: values.pocket ?? null,
-    includeInPlan: values.includeInPlan ?? true,
+    includeInPlan: true,
     categoryOverride: values.categoryOverride,
+    manualCategory: true,
     fixedCost: values.fixedCost,
     sourceCategory: values.sourceCategory,
     bank: values.bank,
@@ -96,15 +97,11 @@ function TransactionForm({
     const assignment = {
       category: value.category,
       categoryOverride: true,
+      manualCategory: true,
       reviewed: value.category !== "Prüfen",
       includeInPlan: true,
       ...(value.fixedCost !== undefined ? { fixedCost: canMarkFixed && value.fixedCost } : {}),
     };
-    const result = classify({ ...transaction, ...assignment });
-    if (result.category !== value.category) {
-      form.setError("category", { message: `Für diese Buchung gilt die feste Zuordnung „${result.category}“. Wähle diese Kategorie, um die Änderung zu übernehmen.` });
-      return;
-    }
     update((current) =>
       rememberMerchants(
         {
@@ -183,6 +180,7 @@ function TransactionForm({
               onValueChange={(category) => {
                 form.setValue("category", category, { shouldDirty: true, shouldValidate: true });
                 form.setValue("categoryOverride", true, { shouldDirty: true });
+                form.setValue("manualCategory", true, { shouldDirty: true });
               }}
               aria-describedby="tx-category-help"
               aria-invalid={!!form.formState.errors.category}
@@ -195,7 +193,7 @@ function TransactionForm({
             onChange={(checked) => form.setValue("fixedCost", checked, { shouldDirty: true, shouldValidate: true })}
             eligible={canMarkFixed}
           />
-          <p className="text-xs leading-relaxed text-muted-foreground">Speichern mit einer Kategorie schließt die Prüfung dieser Buchung ab. „Prüfen“ lässt sie offen. Die Kategorie wird für spätere Buchungen dieses Händlers gelernt, der Prüfstatus nicht. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Deine manuelle Kategorie hat für diese Buchung Vorrang vor automatischen Regeln. Speichern schließt die Prüfung ab; „Prüfen“ lässt sie offen. Händlerregeln können für spätere Buchungen gelernt werden, die manuelle Festlegung und der Prüfstatus nicht. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>

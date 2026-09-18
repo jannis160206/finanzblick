@@ -25,6 +25,7 @@ import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconci
 import { reconcileLeasingSources } from "@/lib/leasing";
 import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories, isTravelCategory } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetId, variableBudgetValue, type VariableBudgetId } from "@/lib/variable-budgets";
+import { hasManualCategory } from "@/lib/manual-category";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -117,10 +118,30 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias">>,
 ) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
+  if (hasManualCategory(transaction)) {
+    const category = canonicalCategory(transaction.category);
+    const isTransfer = category === "Transfer" || category === "Transfer intern";
+    const isFixedCost = !isTransfer && isFixedExpense({ amount, category, fixedCost: transaction.fixedCost });
+    const fixedOrIncome = isFixedCost || isIncomeCategory(category) ||
+      (amount >= 0 && transaction.fixedCost !== false && fixedCategories.includes(category));
+    return {
+      category, planCategory: category, pocket: savingsPocket(transaction.pocket),
+      isTransfer, isFixedCost, isRoundUp: false, isAmazon: amazonMerchant.test(description),
+      includeInPlan: amount !== 0 && !isTransfer && !fixedOrIncome && category !== "Prüfen" &&
+        !isTravelCategory(category) && (transaction.includeInPlan || amount > 0),
+      merchant: merchantName(description, transaction.merchantAlias),
+      reason: category === "Prüfen" ? "Zuordnung prüfen"
+        : isTransfer ? "Manuell zugeordnet: Umbuchung"
+          : fixedOrIncome ? "Manuell zugeordnet: Fixkosten / Einkommen"
+            : isSharedHoliday(transaction) ? "Manuell zugeordnet; geteilt: 50 % Eigenanteil, 50 % Raphael"
+              : isTravelCategory(category) ? "Manuell zugeordnet: Reiseausgabe"
+                : !transaction.includeInPlan ? "Manuell ausgeschlossen" : "Manuell zugeordnet",
+    };
+  }
   const sourceText = [description, transaction.rawDescription ?? transaction.description, ...(transaction.rawDetails ?? []), transaction.sourceCategory].filter(Boolean).join(" ");
   const known = knownMerchantCategory(sourceText, amount);
   const forcedLunch = alwaysLunch(description) && known !== "Prüfen";
@@ -294,7 +315,7 @@ export function classifyStatementRows(
   }
   return rows.map((row) => {
     const original =
-      row.amount > 0 && !row.categoryOverride && !classify(row).isTransfer
+      row.amount > 0 && !row.categoryOverride && !hasManualCategory(row) && !classify(row).isTransfer
         ? debits
             .get(refundMerchant(row))
             ?.find(
@@ -341,7 +362,7 @@ export function accountHolidayRanges(rows: AccountedTransaction[], ranges: Holid
     !classify(row).isTransfer && !isTravelCategory(classify(row).category) && !unresolvedTerminal(row.description)).map(holidayMerchantKey));
   return clean.map((row) => {
     const result = classify(row);
-    if (row.amount >= 0 || !inside(row.date) || result.isTransfer || result.isAmazon ||
+    if (hasManualCategory(row) || row.amount >= 0 || !inside(row.date) || result.isTransfer || result.isAmazon ||
       result.isFixedCost || isIncomeCategory(result.category) || home.has(holidayMerchantKey(row))) return row;
     return { ...row, holidayRange: true };
   });
@@ -768,9 +789,9 @@ export function actualBookings(state: AppState): AccountedTransaction[] {
       id: item.key,
       date: item.date,
       amount: item.amount,
-      category: item.category,
+      category: item.booking && hasManualCategory(item.booking) ? item.booking.category : item.category,
       categoryOverride: true,
-      includeInPlan: false,
+      includeInPlan: item.booking && hasManualCategory(item.booking) ? item.booking.includeInPlan : false,
     });
   }
   return account([...state.transactions, ...receipts]);

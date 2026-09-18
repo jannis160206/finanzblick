@@ -73,13 +73,15 @@ const BookingReview = memo(function BookingReview({
   const fixedCost = draft.fixedCost === true;
   const choices = categories.filter((category) => category !== "Prüfen");
   const classification = classify({
-    ...draft, amount: draft.amount ?? 0, categoryOverride: true, includeInPlan: true, fixedCost: false,
+    ...draft, amount: draft.amount ?? 0, categoryOverride: true, manualCategory: true, includeInPlan: true, fixedCost: false,
   });
   const canMarkFixed = draft.amount !== null && draft.amount < 0 &&
     !classification.isTransfer && !isIncomeCategory(classification.category);
   const candidate = {
     ...draft,
     categoryOverride: true,
+    manualCategory: true,
+    reviewed: draft.category !== "Prüfen",
     includeInPlan: true,
     fixedCost: canMarkFixed && fixedCost,
   };

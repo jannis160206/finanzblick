@@ -235,6 +235,7 @@ export async function parseWorkbook(
       const planCell = get("Im Plan (Eingabe)", "Im Plan");
       const fixedCostCell = text(get("Fixkosten"));
       const reviewedCell = text(get("Geprüft"));
+      const manualCategoryCell = text(get("Kategorie ausdrücklich gewählt"));
       const bank = text(get("Bank")) || "Unbekannt";
       const candidate = {
         id: text(get("ID")) || `xlsx-${index}`,
@@ -253,6 +254,9 @@ export async function parseWorkbook(
           : {}),
         ...(native && reviewedCell
           ? { reviewed: /^(ja|true|1)$/i.test(reviewedCell) ? true : /^(nein|false|0)$/i.test(reviewedCell) ? false : reviewedCell }
+          : {}),
+        ...(native && manualCategoryCell
+          ? { manualCategory: /^(ja|true|1)$/i.test(manualCategoryCell) ? true : /^(nein|false|0)$/i.test(manualCategoryCell) ? false : manualCategoryCell }
           : {}),
         ...(native && text(get("Händleralias")) ? { merchantAlias: text(get("Händleralias")) } : {}),
         ...(native && text(get("Bankreferenz"))
@@ -473,6 +477,7 @@ export async function parseWorkbook(
                 savingsGoals: true,
                 seasonalTheme: true,
                 holidayRanges: true,
+                annualSixth: true,
               })
               .parse(data),
           );
@@ -636,6 +641,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Fixkosten",
     "Geprüft",
     "Händleralias",
+    "Kategorie ausdrücklich gewählt",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -668,6 +674,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.fixedCost === undefined ? "" : row.fixedCost ? "Ja" : "Nein",
       row.reviewed === undefined ? "" : row.reviewed ? "Ja" : "Nein",
       row.merchantAlias ?? "",
+      row.manualCategory === undefined ? "" : row.manualCategory ? "Ja" : "Nein",
     ]);
   });
   for (const year of [2026, 2027]) {
@@ -782,7 +789,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.reviewQueue ||
     state.importStatus ||
     state.settings.interestRates ||
-    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges
+    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.annualSixth
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
       state: "hidden",
@@ -794,7 +801,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       state.reviewQueue ||
       state.importStatus ||
       state.settings.interestRates ||
-      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges
+      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.annualSixth
     )
       automation.addRow([
         "ux",
@@ -808,6 +815,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
           savingsGoals: state.savingsGoals,
           seasonalTheme: state.seasonalTheme,
           holidayRanges: state.holidayRanges,
+          annualSixth: state.annualSixth,
         }),
       ]);
     state.pocketSnapshots?.forEach((item) =>

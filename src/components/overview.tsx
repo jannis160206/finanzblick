@@ -38,6 +38,7 @@ import {
 import { currency, dateLabel, monthLabel, shortCurrency } from "@/lib/format";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { AnnualSixthCard } from "@/components/annual-sixth";
 
 const chartTooltip = {
   background: "var(--popover)",
@@ -158,6 +159,7 @@ export function Overview() {
           </section>
         ))}
       </div>
+      <AnnualSixthCard />
       <div className="mb-6 grid gap-5 xl:grid-cols-[1.45fr_1fr]">
         <section className="panel p-5 sm:p-6">
           <SectionHeading

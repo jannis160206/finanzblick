@@ -7,6 +7,7 @@ import { isSpecificMerchantKey, merchantRuleKey, storedMerchantKey, type Merchan
 import { statementFingerprint, legacyFingerprint } from "./identity";
 import { appendStatementRows } from "./statements";
 import { bookingReviewReason, type commitStatementImport } from "./review";
+import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 
 type BookingReview = Extract<ReviewItem, { kind: "booking" }>;
 type ReviewIndex = {
@@ -110,8 +111,11 @@ export function approveReviewedBooking(
   const updated = new Map<string, Transaction>();
   const selectedFingerprint = statementFingerprint(selected);
   for (const row of affected.values()) {
+    if (row.id !== selected.id && hasCategoryChoice(row)) continue;
     if (!ordinary(row) || ambiguousMerchant(row) || unresolvedTerminal(row.description)) return;
     const candidate = transactionSchema.parse({ ...row, category: selected.category, categoryOverride: true, includeInPlan: true,
+      ...(row.id === selected.id && selected.manualCategory !== undefined ? { manualCategory: selected.manualCategory } : {}),
+      ...(row.id === selected.id && selected.reviewed !== undefined ? { reviewed: selected.reviewed } : {}),
       ...(selected.fixedCost !== undefined && (row.id === selected.id || statementFingerprint(row) === selectedFingerprint)
         ? { fixedCost: selected.fixedCost } : {}) });
     if (!ordinary(candidate)) return;
@@ -135,14 +139,16 @@ export function approveReviewedBooking(
     transactions: state.transactions.map((row) => updated.get(row.id) ?? row),
     merchantRules: [...rules].map(([key, choice]) => ({ key, ...choice })),
   };
-  // Match the full importer: selected fingerprint first, last queue twin wins.
+  // Preserve an explicit selection when duplicate pending source drafts exist.
   const incomingByKey = new Map<string, Transaction>();
   const selectedIncoming = updated.get(selected.id);
   if (selectedIncoming && !index.byId.has(selected.id))
     incomingByKey.set(statementFingerprint(selectedIncoming), selectedIncoming);
   for (const review of reviews) {
     const row = updated.get(review.draft.id);
-    if (row && !index.byId.has(row.id)) incomingByKey.set(statementFingerprint(row), row);
+    if (row && !index.byId.has(row.id) && (!incomingByKey.has(statementFingerprint(row)) ||
+      !hasManualCategory(incomingByKey.get(statementFingerprint(row))!)))
+      incomingByKey.set(statementFingerprint(row), row);
   }
   const uniqueIncoming = [...incomingByKey.values()];
   const appended = incoming.length ? appendStatementRows(next, uniqueIncoming) : { state: next, added: 0, duplicates: 0 };

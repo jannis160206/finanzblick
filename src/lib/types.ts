@@ -96,6 +96,7 @@ const transactionFieldsSchema = z.object({
   includeInPlan: z.boolean(),
   afterBaseline: z.boolean().optional(),
   categoryOverride: z.boolean().optional(),
+  manualCategory: z.boolean().optional(),
   // Explicit acknowledgement of this booking, never inherited from a merchant rule.
   reviewed: z.boolean().optional(),
   // Only this booking: omission keeps legacy category-based accounting.
@@ -248,8 +249,31 @@ export const seasonalPreferenceSchema = z.object({
     .regex(/^#[\da-f]{6}$/i, "Gültige Akzentfarbe erforderlich")
     .optional(),
 });
+const annualSixthMoney = moneySchema.nonnegative().multipleOf(0.01);
+export const annualSixthSchema = z.object({
+  year: z.union([z.literal(2026), z.literal(2027)]),
+  month: z.number().int().min(1).max(12),
+  employer: z.string().trim().max(120),
+  regularGross: annualSixthMoney,
+  specialGross: annualSixthMoney,
+  plannedSpecialGross: annualSixthMoney,
+  reportedSixth: annualSixthMoney.optional(),
+  monthlyPayroll: z.boolean(),
+}).refine((value) => value.monthlyPayroll || value.reportedSixth !== undefined, {
+  message: "Ohne bestätigte monatliche Standardabrechnung bitte das Jahressechstel laut Lohnabrechnung angeben.",
+  path: ["reportedSixth"],
+}).refine((value) => value.regularGross > 0 ||
+  (value.specialGross === 0 && value.plannedSpecialGross === 0) || value.reportedSixth !== undefined, {
+  message: "Bei Sonderzahlungen vor dem ersten laufenden Bezug ist das Jahressechstel aus der Lohnverrechnung erforderlich.",
+  path: ["reportedSixth"],
+});
+export type AnnualSixth = z.infer<typeof annualSixthSchema>;
 export const appStateSchema = z.object({
   version: z.literal(1),
+  annualSixth: z.array(annualSixthSchema).max(2).refine(
+    (entries) => new Set(entries.map((entry) => entry.year)).size === entries.length,
+    "Für jedes Jahr darf nur eine Jahressechstel-Abrechnung gespeichert sein.",
+  ).optional(),
   holidayRanges: z.array(holidayRangeSchema).max(100).refine(
     (ranges) => {
       const sorted = [...ranges].sort((a, b) => a.from.localeCompare(b.from));

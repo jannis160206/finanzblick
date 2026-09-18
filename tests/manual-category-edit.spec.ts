@@ -89,10 +89,11 @@ test("manual POS assignment saves, reloads and inferred fixed expenses show a fl
   await page.getByRole("button", { name: "Zuordnung ändern: BIPA", exact: true }).click();
   await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Shopping");
   await dialog.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("feste Zuordnung „Mittagessen“");
-  expect((await read()).transactions.find((row) => row.id === "protected-lunch")?.category).toBe("Mittagessen");
-  expect((await read()).transactions.find((row) => row.id === "protected-lunch")?.reviewed).toBeUndefined();
-  await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(async () => (await read()).transactions.find((row) => row.id === "protected-lunch")?.category).toBe("Shopping");
+  expect((await read()).transactions.find((row) => row.id === "protected-lunch")).toMatchObject({
+    manualCategory: true, categoryOverride: true, reviewed: true,
+  });
   await page.getByRole("button", { name: `Zuordnung ändern: ${original.description}`, exact: true }).click();
   await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Prüfen");
   await dialog.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
