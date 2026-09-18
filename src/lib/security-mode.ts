@@ -19,6 +19,8 @@ const temporaryError = "Der Sicherheitsmodus konnte nicht dauerhaft gespeichert 
 let snapshot = serverSecuritySnapshot;
 let forcedLock = false;
 let automaticLock = false;
+let filePickerClick: MouseEvent | null = null;
+let filePickerTimeout: ReturnType<typeof setTimeout> | undefined;
 const listeners = new Set<() => void>();
 
 export const securityModeBootstrap = `(()=>{let locked=true;try{const value=localStorage.getItem(${JSON.stringify(SECURITY_MODE_KEY)});const fallback=sessionStorage.getItem(${JSON.stringify(SECURITY_FALLBACK_KEY)});const automatic=sessionStorage.getItem(${JSON.stringify(SECURITY_AUTO_LOCK_KEY)});const hidden=document.visibilityState==="hidden";locked=hidden||automatic==="true"||fallback==="true"||(value!==null&&value!=="false");if(hidden){localStorage.setItem(${JSON.stringify(SECURITY_MODE_KEY)},"true");sessionStorage.setItem(${JSON.stringify(SECURITY_AUTO_LOCK_KEY)},"true");}}catch{}document.documentElement.dataset.securityMode=locked?"locked":"open";})();`;
@@ -64,9 +66,44 @@ function onStorage(event: StorageEvent) {
 }
 
 function lockOnLeave() {
+  clearFilePicker();
   if (automaticLock && snapshot.locked) return;
   automaticLock = true;
   writeSecurityMode(true, true);
+}
+
+function clearFilePicker() {
+  filePickerClick = null;
+  clearTimeout(filePickerTimeout);
+  filePickerTimeout = undefined;
+}
+
+function onFilePickerClick(event: MouseEvent) {
+  const input = event.target;
+  clearFilePicker();
+  if (!(input instanceof HTMLInputElement) || input.type !== "file" || input.disabled) return;
+  if (event.defaultPrevented || snapshot.locked || document.visibilityState === "hidden") return;
+  filePickerClick = event;
+  filePickerTimeout = setTimeout(clearFilePicker, 1_000);
+}
+
+function onFilePickerClose(event: Event) {
+  if (event.target === filePickerClick?.target) clearFilePicker();
+}
+
+function onWindowBlur() {
+  const click = filePickerClick;
+  clearFilePicker();
+  // The native file picker blurs the window, but is not a switch away from the app.
+  if (click && !click.defaultPrevented && click.target instanceof HTMLInputElement &&
+    click.target.isConnected && !click.target.disabled && click.target.type === "file" &&
+    document.visibilityState !== "hidden") return;
+  lockOnLeave();
+}
+
+function onWindowReturn() {
+  clearFilePicker();
+  refresh();
 }
 
 function onVisibilityChange() {
@@ -78,9 +115,12 @@ export function subscribeSecurityMode(listener: () => void) {
   listeners.add(listener);
   if (listeners.size === 1) {
     window.addEventListener("storage", onStorage);
-    window.addEventListener("pageshow", refresh);
-    window.addEventListener("focus", refresh);
-    window.addEventListener("blur", lockOnLeave);
+    window.addEventListener("pageshow", onWindowReturn);
+    window.addEventListener("focus", onWindowReturn);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("click", onFilePickerClick, true);
+    document.addEventListener("change", onFilePickerClose, true);
+    document.addEventListener("cancel", onFilePickerClose, true);
     document.addEventListener("visibilitychange", onVisibilityChange);
     if (document.visibilityState === "hidden") lockOnLeave();
     else refresh();
@@ -89,10 +129,14 @@ export function subscribeSecurityMode(listener: () => void) {
     listeners.delete(listener);
     if (!listeners.size) {
       window.removeEventListener("storage", onStorage);
-      window.removeEventListener("pageshow", refresh);
-      window.removeEventListener("focus", refresh);
-      window.removeEventListener("blur", lockOnLeave);
+      window.removeEventListener("pageshow", onWindowReturn);
+      window.removeEventListener("focus", onWindowReturn);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("click", onFilePickerClick, true);
+      document.removeEventListener("change", onFilePickerClose, true);
+      document.removeEventListener("cancel", onFilePickerClose, true);
       document.removeEventListener("visibilitychange", onVisibilityChange);
+      clearFilePicker();
     }
   };
 }

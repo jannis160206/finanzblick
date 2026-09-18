@@ -11,6 +11,8 @@ beforeEach(() => {
 afterEach(() => {
   unsubscribe?.();
   unsubscribe = undefined;
+  document.body.replaceChildren();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -18,6 +20,13 @@ async function store() {
   const security = await import("./security-mode");
   unsubscribe = security.subscribeSecurityMode(vi.fn());
   return security;
+}
+
+function fileInput() {
+  const input = document.createElement("input");
+  input.type = "file";
+  document.body.append(input);
+  return input;
 }
 
 describe("screen privacy preference", () => {
@@ -71,6 +80,116 @@ describe("screen privacy preference", () => {
     security.setSecurityMode(false);
     expect(security.getSecuritySnapshot().locked).toBe(false);
     expect(sessionStorage.getItem(security.SECURITY_AUTO_LOCK_KEY)).toBeNull();
+  });
+
+  it.each(["change", "cancel"])("does not lock when a native file dialog opens and closes with %s", async (event) => {
+    vi.useFakeTimers();
+    const security = await store();
+    const input = fileInput();
+    input.click();
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(false);
+    expect(localStorage.getItem(security.SECURITY_MODE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(security.SECURITY_AUTO_LOCK_KEY)).toBeNull();
+    vi.advanceTimersByTime(60_000);
+    expect(security.getSecuritySnapshot().locked).toBe(false);
+    input.dispatchEvent(new Event(event, { bubbles: true }));
+    window.dispatchEvent(new Event("focus"));
+    expect(security.getSecuritySnapshot().locked).toBe(false);
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it.each(["change", "cancel", "focus"])("clears an unused file-dialog exception on %s", async (event) => {
+    const security = await store();
+    const input = fileInput();
+    input.click();
+    if (event === "focus") window.dispatchEvent(new Event(event));
+    else input.dispatchEvent(new Event(event, { bubbles: true }));
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it("exempts only one blur rather than suspending automatic locking", async () => {
+    const security = await store();
+    fileInput().click();
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(false);
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it.each([false, true])("still locks a hidden tab with a pending or open file picker (blurred: %s)", async (blurred) => {
+    const security = await store();
+    const input = fileInput();
+    input.click();
+    if (blurred) window.dispatchEvent(new Event("blur"));
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+    visibility.mockReturnValue("visible");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    window.dispatchEvent(new Event("focus"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+    expect(sessionStorage.getItem(security.SECURITY_AUTO_LOCK_KEY)).toBe("true");
+  });
+
+  it("expires the exception if a clicked file input does not open a native dialog", async () => {
+    vi.useFakeTimers();
+    const security = await store();
+    fileInput().click();
+    vi.advanceTimersByTime(1_001);
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it("clears an unused exception when another page control is clicked", async () => {
+    const security = await store();
+    fileInput().click();
+    document.body.click();
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it.each(["prevented", "disabled", "removed", "not-file"])("does not exempt %s file-input activations", async (condition) => {
+    const security = await store();
+    const input = fileInput();
+    if (condition === "prevented") input.addEventListener("click", (event) => event.preventDefault());
+    if (condition === "disabled") input.disabled = true;
+    if (condition === "not-file") input.type = "text";
+    input.click();
+    if (condition === "removed") input.remove();
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it("never unlocks an existing manual or cross-tab lock when a file dialog closes", async () => {
+    const security = await store();
+    const input = fileInput();
+    input.click();
+    window.dispatchEvent(new Event("blur"));
+    localStorage.setItem(security.SECURITY_MODE_KEY, "true");
+    window.dispatchEvent(new StorageEvent("storage", { key: security.SECURITY_MODE_KEY }));
+    input.dispatchEvent(new Event("cancel", { bubbles: true }));
+    window.dispatchEvent(new Event("focus"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+    security.setSecurityMode(true);
+    input.click();
+    window.dispatchEvent(new Event("blur"));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    window.dispatchEvent(new Event("focus"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
+  });
+
+  it("clears pending file-dialog state when the final subscriber unmounts", async () => {
+    const security = await store();
+    const input = fileInput();
+    input.click();
+    unsubscribe?.();
+    input.click();
+    unsubscribe = security.subscribeSecurityMode(vi.fn());
+    window.dispatchEvent(new Event("blur"));
+    expect(security.getSecuritySnapshot().locked).toBe(true);
   });
 
   it("locks on tab hiding, ignores another tab's unlock and preserves the local lock through reload", async () => {
