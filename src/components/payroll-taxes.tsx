@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipImportPanel } from "@/components/payslip-import";
 import { PageHeading, SectionHeading } from "@/components/finance-ui";
-import { analyzePayrollAutomatically, payrollTaxSources } from "@/lib/payroll-analysis";
+import { analyzePayrollAutomatically, estimatePayrollBonus, payrollTaxSources } from "@/lib/payroll-analysis";
 import { payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { currency, monthLabel } from "@/lib/format";
 
@@ -30,6 +30,9 @@ function PayrollWorkspace() {
   const yearEndEstimate = analysis.sixthEstimates.find((entry) => entry.month === 12);
   const nextPayment = analysis.forecast.months.find((entry) => entry.specialGross > 0 && entry.month >= nextMonth);
   const next = analysis.projections.find((entry) => entry.month === nextPayment?.month);
+  const bonus = estimatePayrollBonus(state.payslips ?? [], analysis, nextPayment?.month ?? estimateMonth);
+  const bonusRange = bonus.headroom;
+  const bonusExample = bonus.taxExample;
   const missing = analysis.missingMonths.map((month) => monthLabel(period(year, month))).join(", ");
   const rough = analysis.estimatedHistoryMonths.length > 0;
   const uncertain = analysis.unresolvedSixthMonths.length > 0;
@@ -91,6 +94,37 @@ function PayrollWorkspace() {
       </> : !analysis.hasSpecialPaymentModel && latest.month < 12 && <p className="text-sm text-muted-foreground">Ein belegtes Grundgehalt für das Sonderzahlungsmodell fehlt.</p>}
     </section>}
 
+    {latest && <section className="panel mb-6 p-5 sm:p-6" aria-label="Zusätzlicher Prämien-Spielraum">
+      <SectionHeading title="Wie viel zusätzliche Prämie ist noch drin?"
+        subtitle={`Bei Auszahlung im ${monthLabel(period(year, bonus.month))} · vorsichtige Brutto-Schätzung`} />
+      <p className="text-2xl font-semibold tabular-nums">{bonusRange
+        ? bonusRange.minimum === bonusRange.maximum ? currency(bonusRange.minimum)
+          : `${currency(bonusRange.minimum)} – ${currency(bonusRange.maximum)}`
+        : "Noch offen"}</p>
+      <p className="mt-2 text-sm text-muted-foreground">{bonusRange
+        ? bonusRange.maximum === 0 ? "Im Modell bleibt kein zusätzlicher Spielraum ohne Sechstelüberhang."
+          : "Zusätzliches Brutto ohne modellierten Sechstelüberhang – geplante Sonderzahlungen sind schon reserviert."
+        : bonus.headroomIssues[0]}</p>
+      {bonusRange && <p className="mt-2 text-xs text-muted-foreground">
+        Noch eingeplante Sonderzahlungen: {currency(bonus.reservedSpecialGross)}.
+        {bonusRange.minimum !== bonusRange.maximum && " Die Spanne berücksichtigt die offene Prämienzuordnung; orientiere dich vorsichtig am unteren Wert."}
+      </p>}
+      <p className="mt-3 text-xs text-muted-foreground">Bei begünstigungsfähigen Sonderzahlungen gilt der laufende Tarif nur für den Überhang, nicht für die ganze Prämie. Innerhalb des Sechstels gelten begünstigte Sätze, oft 6 % nach SV – nicht pauschal steuerfrei.</p>
+      <div className="mt-5 border-t pt-4" role="group" aria-label="Steuerbeispiel Zusatzprämie">
+        <p className="text-sm font-medium">Wenn 1.000 € brutto vollständig tarifpflichtig sind</p>
+        <p className="mt-1 text-xs text-muted-foreground">Isoliertes Rechenbeispiel im selben Auszahlungsmonat, keine verbindliche Abrechnung.</p>
+        {bonusExample ? <>
+          <p className="mt-3 text-sm">Laufender Tarif: durchschnittlich <strong>{bonusExample.effectiveTariffRate.toLocaleString("de-AT", { maximumFractionDigits: 2 })} %</strong> auf den Betrag nach SV.</p>
+          <dl className="mt-3 grid gap-4 sm:grid-cols-4">
+            <div><dt className="text-xs text-muted-foreground">SV-Anteil</dt><dd className="mt-1 font-semibold tabular-nums">{currency(bonusExample.sv)}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Zusätzliche Lohnsteuer</dt><dd className="mt-1 font-semibold tabular-nums">{currency(bonusExample.tax)}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Abzüge insgesamt</dt><dd className="mt-1 font-semibold tabular-nums">{currency(bonusExample.deductions)}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Von 1.000 € bleiben netto</dt><dd className="mt-1 text-xl font-semibold tabular-nums">{currency(bonusExample.net)}</dd></div>
+          </dl>
+        </> : <p className="mt-3 text-sm text-muted-foreground">Steuer und Netto noch offen: {bonus.taxIssues[0]}</p>}
+      </div>
+    </section>}
+
     <PayslipImportPanel year={year} employer={employer} onImported={(entry) => { setYear(entry.year); setSelectedEmployer(entry.employer); }} />
 
     {projectedMonths.length > 0 && <details className="panel mb-4 p-5 text-sm" aria-label="Monatliche Gehaltsprognose">
@@ -121,6 +155,11 @@ function PayrollWorkspace() {
         {analysis.issues.length > 0 && <div className="space-y-2">{analysis.issues.map((issue, index) => <p key={index}>{issue}</p>)}</div>}
         {rough && <p>Für {analysis.estimatedHistoryMonths.map((month) => monthLabel(period(year, month))).join(", ")} fehlt die laufende Bruttobasis. Nur die separat angezeigte Jahressechstel-Schätzung verwendet hierfür den Durchschnitt der verfügbaren vollen Monatsabrechnungen. Ist-Werte, Sechstelverbrauch und Steuer werden daraus nicht abgeleitet.</p>}
         {uncertain && <p>Die tarifbesteuerte VEB-Prämie ist mit der SV-Sonderzahlungsbasis abgeglichen. Laufende Tarifbesteuerung allein belegt keine Sechstelerhöhung (§ 67 Abs. 10 EStG). Die Spanne enthält deshalb beide Varianten: ohne und mit Einbeziehung in die laufende Sechstelbasis. Die Prämie wird nicht monatlich fortgeschrieben. Ein später belegter kumulierter laufender Bruttostand ersetzt diese Spanne; eine gesicherte Steuerrechnung benötigt zusätzlich belegte Verbrauchswerte.</p>}
+        {latest && <div className="space-y-2">
+          <p>Prämien-Spielraum: kleinster verbleibender Brutto-Sechstelbetrag vom gewählten Auszahlungsmonat bis Dezember, nach Abzug bisheriger und geplanter Sonderzahlungen. Das berücksichtigt auch ein sinkendes Sechstel und das Kontrollsechstel. Bereits gezahlte Sonderzahlungen werden vorsichtig vollständig reserviert, auch wenn sie früher teilweise tarifbesteuert wurden. Das kann den tatsächlich verfügbaren Spielraum unterschätzen. Eine offene Prämie wird unten vollständig als Verbrauch, oben mit dem belegten Mindestverbrauch angesetzt; dies sind Grenzen, keine bestätigte Steuerzuordnung.</p>
+          <p>Das 1.000-€-Beispiel unterstellt eine zusätzliche SV-Sonderzahlung, die vollständig dem laufenden Tarif unterliegt. Es vergleicht die fortgeschriebene laufende LSt-Basis ohne und mit dieser isolierten Zahlung. Es ist keine Simulation einer größeren Prämie aus Spielraum plus 1.000 €: weitere gleichzeitige Überhänge können den Tarif erhöhen. Die SV wird anhand der gesamten modellierten Monats-Sonderzahlung einschließlich Beispiel und bisheriger Jahres-SV-Basis proportional aufgeteilt. Beitragssatzsprünge können auch Abzüge der übrigen Sonderzahlung verändern. Persönliche Abzüge bleiben unverändert; begünstigte Steuersätze oberhalb der 6-%-Stufe und die tatsächliche Prämienvereinbarung sind gesondert zu beachten.</p>
+          {[...bonus.headroomIssues, ...bonus.taxIssues].map((issue, index) => <p key={index}>{issue}</p>)}
+        </div>}
         {next && <dl className="grid gap-3 sm:grid-cols-3">
           <div><dt>Sonderzahlung innerhalb des Sechstels · Modell</dt><dd className="mt-1 tabular-nums">{currency(next.eligibleGross)}</dd></div>
           <div><dt>Tarifpflichtiger Überhang · Modell</dt><dd className="mt-1 tabular-nums">{currency(next.overflowGross)}</dd></div>

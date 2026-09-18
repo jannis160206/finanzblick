@@ -87,6 +87,22 @@ export type AutomaticPayrollAnalysis = PayrollAnalysis & {
   unresolvedSixthMonths: number[];
 };
 
+export type PayrollBonusEstimate = {
+  month: number;
+  headroom?: { minimum: number; maximum: number };
+  reservedSpecialGross: number;
+  headroomIssues: string[];
+  taxExample?: {
+    gross: number;
+    sv: number;
+    tax: number;
+    deductions: number;
+    net: number;
+    effectiveTariffRate: number;
+  };
+  taxIssues: string[];
+};
+
 const automaticPayrollAssumptions = [
   "Automatisches Standardmodell mit unbestätigten Annahmen, keine bestätigte Steuerberechnung: Neu hochgeladene Abrechnungen ersetzen Modellmonate und aktualisieren die übrige Vorausschau.",
   "Laufendes Brutto und belegte laufende LSt-Basis werden aus der neuesten Abrechnung unverändert fortgeschrieben. Variable Bezüge und künftige Gehaltsänderungen sind damit nicht vorhergesagt.",
@@ -520,6 +536,79 @@ export function analyzePayrollAutomatically(
     estimatedHistoryMonths,
     unresolvedSixthMonths,
   };
+}
+
+export function estimatePayrollBonus(
+  payslips: Payslip[],
+  analysis: AutomaticPayrollAnalysis,
+  month: number,
+): PayrollBonusEstimate {
+  const { latest, forecast, sixthEstimates } = analysis;
+  const result: PayrollBonusEstimate = {
+    month, reservedSpecialGross: sum(forecast.months.map((entry) => entry.specialGross)),
+    headroomIssues: [], taxIssues: [],
+  };
+  if (!latest || !Number.isInteger(month) || month < latest.month || month > 12 || !sixthEstimates.length) {
+    result.headroomIssues.push("Für diesen Auszahlungsmonat fehlen auswertbare volle Abrechnungen.");
+    result.taxIssues.push("Ohne auswertbare Monatsgrundlage bleibt das Steuerbeispiel offen.");
+    return result;
+  }
+  const entries = selectedPayslips(payslips, forecast.year, forecast.employer);
+  const atLatest = sixthEstimates.find((entry) => entry.month === latest.month);
+  if (latest.reportedSixth !== undefined && atLatest &&
+    (latest.reportedSixth < atLatest.sixth || latest.reportedSixth > (atLatest.sixthUpper ?? atLatest.sixth))) {
+    result.headroomIssues.push("Das ausgewiesene Sechstel widerspricht der laufenden Basis; zunächst ist ein passender PDF-Nachweis nötig.");
+    result.taxIssues.push("Bei widersprüchlicher Sechstelbasis wird kein Steuerbeispiel berechnet.");
+    return result;
+  }
+  const paid = cumulativeBounds(entries, entries.length - 1, "specialGross", "specialGrossYtd");
+  if (!analysis.hasSpecialPaymentModel && latest.month < 11) {
+    result.headroomIssues.push("Ein belegtes Grundgehalt zur Reservierung der geplanten Sonderzahlungen fehlt.");
+  } else if (!paid || analysis.estimatedHistoryMonths.length) {
+    result.headroomIssues.push("Bisherige Bezüge sind nicht vollständig belegt; fehlende Zahlungen werden nicht als freier Prämien-Spielraum behandelt.");
+  } else {
+    // Reserve gross payments conservatively, including every later payout and December's control sixth.
+    const remaining = sixthEstimates.filter((entry) => entry.month >= month).map((entry) => {
+      const planned = sum(forecast.months.filter((payment) => payment.month <= entry.month).map((payment) => payment.specialGross));
+      return {
+        minimum: money(entry.sixth - paid.maximum - planned),
+        maximum: money((entry.sixthUpper ?? entry.sixth) - paid.minimum - planned),
+      };
+    });
+    result.headroom = {
+      minimum: Math.max(0, Math.min(...remaining.map((entry) => entry.minimum))),
+      maximum: Math.max(0, Math.min(...remaining.map((entry) => entry.maximum))),
+    };
+  }
+
+  const svGross = cumulativeSpecialSvGross(entries);
+  const payment = month === latest.month
+    ? { month, regularGross: latest.regularGross, specialGross: latest.specialGross, monthlyTaxableBase: latest.monthlyTaxableBase }
+    : forecast.months.find((entry) => entry.month === month);
+  if (forecast.year !== 2026) result.taxIssues.push("Für 2027 fehlt eine verifizierte automatische SV-Tabelle.");
+  if (svGross === undefined) result.taxIssues.push("Die bisherige SV-Sonderzahlungsbasis ist nicht vollständig bekannt.");
+  if (!analysis.hasSpecialPaymentModel && forecast.months.some((entry) => entry.month <= month && (entry.month === 6 || entry.month === 11))) {
+    result.taxIssues.push("Ohne belegtes Grundgehalt sind die modellierten Sonderzahlungen und ihr SV-Verbrauch bis zur Auszahlung offen.");
+  }
+  if (!payment || payment.monthlyTaxableBase === undefined) result.taxIssues.push("Die laufende LSt-Basis für das Steuerbeispiel fehlt.");
+  if (result.taxIssues.length || !payment || svGross === undefined) return result;
+
+  const gross = 1000;
+  const sameMonthSvGross = month === latest.month ? sum([latest.specialGross, latest.unresolvedSixthBonus ?? 0]) : payment.specialGross;
+  const precedingSvGross = month === latest.month ? money(svGross - sameMonthSvGross)
+    : sum([svGross, ...forecast.months.filter((entry) => entry.month < month).map((entry) => entry.specialGross)]);
+  const monthlySpecialGross = sum([sameMonthSvGross, gross]);
+  const sv = money(standardSpecialSv2026(monthlySpecialGross, precedingSvGross) * gross / monthlySpecialGross);
+  const taxable = money(gross - sv);
+  const tax = tariffIncrement(taxable, payment, latest, forecast.year, result.taxIssues);
+  if (tax === undefined || result.taxIssues.length) return result;
+  result.taxExample = {
+    gross, sv, tax,
+    deductions: sum([sv, tax]),
+    net: money(gross - sv - tax),
+    effectiveTariffRate: taxable === 0 ? 0 : money(tax / taxable * 100),
+  };
+  return result;
 }
 
 function analyzePayrollScenario(

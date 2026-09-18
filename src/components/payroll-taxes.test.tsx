@@ -69,6 +69,56 @@ function expectNoManualInputs() {
   expect(screen.queryByText(/Manuelle Jahressechstel-Berechnung/)).toBeNull();
 }
 
+const bonusPayslips = () => Array.from({ length: 8 }, (_, index) => ({
+  ...january, month: index + 1, regularGross: 4000, baseSalary: 3000,
+  monthlyTaxableBase: 3200, regularTax: 500,
+  ...(index === 5 ? { specialGross: 3000, specialSv: 512.1 } : {}),
+}));
+
+it("shows additional gross bonus room and an isolated tariff example prominently without manual inputs", () => {
+  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
+  const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
+  expect(bonus.getByText(moneyText(2000))).toBeTruthy();
+  expect(bonus.getByText(/Bei Auszahlung im November 2026/)).toBeTruthy();
+  expect(bonus.getByText(/Noch eingeplante Sonderzahlungen:/).textContent).toContain(currency(3000));
+  const example = within(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }));
+  expect(example.getByText("40 %")).toBeTruthy();
+  for (const value of [170.7, 331.72, 502.42, 497.58]) expect(example.getByText(moneyText(value))).toBeTruthy();
+  expect(bonus.getByText(/nicht für die ganze Prämie/)).toBeTruthy();
+  expect(bonus.getByText(/keine verbindliche Abrechnung/)).toBeTruthy();
+  expectNoManualInputs();
+});
+
+it("shows a conservative bonus range when February's sixth classification is unresolved", () => {
+  const payslips = bonusPayslips().map((entry) => entry.month === 2
+    ? { ...entry, unresolvedSixthBonus: 1000, specialSv: 141.2 } : entry);
+  render(<Fixture initial={{ ...seed(), payslips }} />);
+  const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
+  expect(bonus.getByText(`${moneyText(1000)} – ${moneyText(2166.67)}`)).toBeTruthy();
+  expect(bonus.getByText(/orientiere dich vorsichtig am unteren Wert/)).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(2);
+});
+
+it("does not substitute zero bonus room or zero net when historical payrolls are missing", () => {
+  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips().filter((entry) => entry.month !== 2) }} />);
+  const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
+  expect(bonus.getByText("Noch offen")).toBeTruthy();
+  expect(bonus.queryByText(moneyText(0))).toBeNull();
+  expect(bonus.getByText(/Steuer und Netto noch offen/)).toBeTruthy();
+});
+
+it("updates bonus headroom automatically when a newer payslip changes the model", async () => {
+  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
+  pdf.parse.mockResolvedValueOnce({ drafts: [{
+    ...january, month: 9, regularGross: 5000, baseSalary: 3000, monthlyTaxableBase: 4000, regularTax: 700,
+  }], issues: [] });
+  selectPdf();
+  await waitFor(() => expect(latest.payslips).toHaveLength(9));
+  const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
+  expect(bonus.getByText(moneyText(2545.45))).toBeTruthy();
+  expectNoManualInputs();
+});
+
 it("automatically imports dropped PDFs without a form and keeps secrets and bank data untouched", async () => {
   render(<Fixture />);
   const before = latest;

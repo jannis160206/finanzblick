@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzePayroll, analyzePayrollAutomatically, defaultPayrollForecast, payrollTaxSources } from "@/lib/payroll-analysis";
+import { analyzePayroll, analyzePayrollAutomatically, defaultPayrollForecast, estimatePayrollBonus, payrollTaxSources } from "@/lib/payroll-analysis";
 import type { Payslip, PayrollForecast } from "@/lib/payslip-schema";
 
 const slip = (month: number, override: Partial<Payslip> = {}): Payslip => ({
@@ -19,6 +19,167 @@ const analyze = (entries: Payslip[], forecast?: PayrollForecast) =>
 const forecastFor = (entries: Payslip[], override: Partial<PayrollForecast> = {}): PayrollForecast => ({
   ...defaultPayrollForecast(entries, 2026, "Synthetischer Testbetrieb"),
   ...override,
+});
+
+describe("estimated additional bonus headroom and isolated tariff example", () => {
+  const estimate = (entries: Payslip[], month = 11) => estimatePayrollBonus(
+    entries, analyzePayrollAutomatically(entries, 2026, "Synthetischer Testbetrieb"), month,
+  );
+  const paidThroughAugust = () => months(8, {
+    regularGross: 4000, baseSalary: 3000, monthlyTaxableBase: 3200, regularTax: 500,
+  }).map((entry) => entry.month === 6 ? { ...entry, specialGross: 3000, specialSv: 512.1 } : entry);
+
+  it("reserves paid and all planned special salaries, not merely the next payment", () => {
+    expect(estimate([slip(1, { regularGross: 4000, baseSalary: 3000 })], 6)).toMatchObject({
+      reservedSpecialGross: 6000, headroom: { minimum: 2000, maximum: 2000 },
+    });
+    expect(estimate(paidThroughAugust())).toMatchObject({
+      reservedSpecialGross: 3000, headroom: { minimum: 2000, maximum: 2000 },
+    });
+  });
+
+  it("uses the payment month's capacity even when December would permit a larger bonus", () => {
+    const entries = [...months(3, { regularGross: 1000 }), slip(4, { regularGross: 6000, baseSalary: 1500 })];
+    expect(estimate(entries, 4).headroom).toEqual({ minimum: 4500, maximum: 4500 });
+    expect(estimate(entries, 12).headroom).toEqual({ minimum: 6500, maximum: 6500 });
+  });
+
+  it("limits a shrinking sixth by December's control amount and clamps negative capacity to zero", () => {
+    const entries = [...months(7, { regularGross: 6000 }), slip(8, { regularGross: 2000, baseSalary: 2000 })];
+    expect(estimate(entries, 9).headroom).toEqual({ minimum: 6666.67, maximum: 6666.67 });
+    expect(estimate(paidThroughAugust().map((entry) => entry.month === 6
+      ? { ...entry, specialGross: 9000 } : entry)).headroom).toEqual({ minimum: 0, maximum: 0 });
+  });
+
+  it("shows conservative lower and upper bounds for unresolved VEB instead of unlocking actual tax", () => {
+    const entries = paidThroughAugust().map((entry) => entry.month === 2
+      ? { ...entry, unresolvedSixthBonus: 1000, specialSv: 141.2 } : entry);
+    const original = structuredClone(entries);
+    const result = estimate(entries);
+    expect(result.headroom).toEqual({ minimum: 1000, maximum: 2166.67 });
+    expect(result.taxExample).toBeDefined();
+    expect(analyzePayrollAutomatically(entries, 2026, entries[0].employer).nextSpecial).toBeUndefined();
+    expect(entries).toEqual(original);
+  });
+
+  it("never treats missing payrolls as zero previous bonuses", () => {
+    const result = estimate(paidThroughAugust().filter((entry) => entry.month !== 2));
+    expect(result.headroom).toBeUndefined();
+    expect(result.taxExample).toBeUndefined();
+    expect(result.headroomIssues.join()).toContain("nicht vollständig belegt");
+    expect(result.taxIssues.join()).toContain("SV-Sonderzahlungsbasis");
+  });
+
+  it("accepts documented cumulative history even with absent individual months", () => {
+    const result = estimate([slip(8, {
+      regularGross: 4000, regularGrossYtd: 32000, specialGrossYtd: 3000, baseSalary: 3000,
+    })]);
+    expect(result.headroom).toEqual({ minimum: 2000, maximum: 2000 });
+    expect(result.taxExample).toBeUndefined();
+  });
+
+  it("does not invent future salary reservations when base salary is absent", () => {
+    const result = estimate([slip(8, { regularGrossYtd: 24000, specialGrossYtd: 0, regularTax: 200 })]);
+    expect(result.headroom).toBeUndefined();
+    expect(result.headroomIssues.join()).toContain("Grundgehalt");
+    expect(result.taxExample).toBeUndefined();
+    expect(result.taxIssues.join()).toContain("Grundgehalt");
+  });
+
+  it("keeps the exact estimated gross limit inside the sixth while one additional cent causes overflow", () => {
+    const entries = paidThroughAugust();
+    const analysis = analyzePayrollAutomatically(entries, 2026, entries[0].employer);
+    const allowance = estimatePayrollBonus(entries, analysis, 11).headroom!.minimum;
+    const capacity = analysis.projections.filter((entry) => entry.month >= 11)
+      .map((entry) => entry.sixth - entry.specialGrossYtd);
+    expect(capacity.every((amount) => amount >= allowance)).toBe(true);
+    expect(capacity.some((amount) => amount < allowance + 0.01)).toBe(true);
+  });
+
+  it.each([
+    { entries: [] }, { entries: [slip(8, { monthlyPayroll: false })] },
+    { entries: [slip(1), slip(2, { regularGrossYtd: 100 })] },
+  ])(
+    "does not promise headroom or tax for empty, partial or conflicting records", ({ entries }) => {
+      const result = estimate(entries);
+      expect(result.headroom).toBeUndefined();
+      expect(result.taxExample).toBeUndefined();
+    },
+  );
+
+  it.each([0, 7, 13, 8.5])("rejects a bonus month outside the available model: %s", (month) => {
+    const result = estimate(paidThroughAugust(), month);
+    expect(result.headroom).toBeUndefined();
+    expect(result.headroomIssues).not.toEqual([]);
+  });
+
+  it("shows average tariff, SV, total deductions and net for a hypothetical 1000 EUR tariff-taxed bonus", () => {
+    expect(estimate(paidThroughAugust()).taxExample).toEqual({
+      gross: 1000, sv: 170.7, tax: 331.72, deductions: 502.42, net: 497.58, effectiveTariffRate: 40,
+    });
+  });
+
+  it("integrates tax bands rather than multiplying by the starting marginal rate", () => {
+    const result = estimate(paidThroughAugust().map((entry) => ({
+      ...entry, monthlyTaxableBase: 2800, regularTax: 300,
+    }))).taxExample;
+    expect(result).toMatchObject({ tax: 306.8, effectiveTariffRate: 37, net: 522.5 });
+  });
+
+  it("apportions the monthly special-payment SV and respects the annual SV cap", () => {
+    const entries = [slip(8, {
+      regularGross: 8000, regularGrossYtd: 64000, specialGrossYtd: 13000,
+      baseSalary: 3000, monthlyTaxableBase: 5000, regularTax: 1000,
+    })];
+    expect(estimate(entries).taxExample?.sv).toBe(36.7);
+    expect(estimate([{ ...entries[0], specialGrossYtd: 14000 }]).taxExample?.sv).toBe(0);
+  });
+
+  it("includes an unresolved SV-special bonus in the SV cap independently of sixth uncertainty", () => {
+    const entries = paidThroughAugust().map((entry) => entry.month === 2
+      ? { ...entry, unresolvedSixthBonus: 10000, specialSv: 1707 } : entry);
+    expect(estimate(entries).taxExample?.sv).toBe(36.7);
+  });
+
+  it("can evaluate December without charging its existing SV-special gross twice", () => {
+    const entries = [slip(12, {
+      regularGross: 4000, regularGrossYtd: 48000, specialGross: 3000, specialGrossYtd: 13000,
+      monthlyTaxableBase: 3200, regularTax: 500,
+    })];
+    expect(estimate(entries, 12)).toMatchObject({
+      reservedSpecialGross: 0, headroom: { minimum: 0, maximum: 0 }, taxExample: { sv: 164.73 },
+    });
+  });
+
+  it.each([
+    { monthlyTaxableBase: undefined }, { regularTax: undefined }, { regularTax: 0 }, { regularTax: 10000 },
+  ])("keeps existing tax safeguards and still shows gross room: %j", (override) => {
+    const result = estimate(paidThroughAugust().map((entry) => ({ ...entry, ...override })));
+    expect(result.headroom).toBeDefined();
+    expect(result.taxExample).toBeUndefined();
+    expect(result.taxIssues.length).toBeGreaterThan(0);
+  });
+
+  it("does not give a bonus allowance from a contradictory printed sixth", () => {
+    const result = estimate(paidThroughAugust().map((entry) => entry.month === 8 ? { ...entry, reportedSixth: 100 } : entry));
+    expect(result.headroom).toBeUndefined();
+    expect(result.taxExample).toBeUndefined();
+    expect(result.headroomIssues.join()).toContain("widerspricht");
+  });
+
+  it("keeps 2027 gross headroom separate from unavailable automatic SV and net estimates", () => {
+    const entries = paidThroughAugust().map((entry): Payslip => ({ ...entry, year: 2027 }));
+    const result = estimatePayrollBonus(entries, analyzePayrollAutomatically(entries, 2027, entries[0].employer), 11);
+    expect(result.headroom).toEqual({ minimum: 2000, maximum: 2000 });
+    expect(result.taxExample).toBeUndefined();
+    expect(result.taxIssues.join()).toContain("2027");
+  });
+
+  it("keeps employer and year boundaries intact", () => {
+    const entries = paidThroughAugust();
+    const original = estimate(entries);
+    expect(estimate([...entries, slip(12, { employer: "Anderer Betrieb", specialGross: 99999 }), slip(12, { year: 2027 })])).toEqual(original);
+  });
 });
 
 describe("automatic document-driven payroll model", () => {
