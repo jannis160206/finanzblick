@@ -4,7 +4,7 @@ import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { statementFingerprint } from "@/lib/import/identity";
 import { merchantRuleKey } from "@/lib/import/merchant-rules";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "@/lib/import/review";
-import { confirmMerchantAlias, merchantLookupQuery } from "@/lib/merchant-lookup";
+import { confirmMerchantAlias, merchantLookupQuery, needsMerchantLookup } from "@/lib/merchant-lookup";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 
@@ -18,6 +18,29 @@ const hit = { id: "123", name: "Blumenatelier", displayName: "Blumenatelier, Hau
 const fixture = (): AppState => ({ ...createSeed(), transactions: [original], fixedReceipts: [] });
 
 describe("discreet merchant lookup", () => {
+  it.each(["BILLA", "SPAR", "INTERSPAR", "Shell", "Martin Auer", "BIPA", "AMAZON", "OMV"])("does not offer lookup for known %s even with an open category or messy POS title", (name) => {
+    expect(needsMerchantLookup({ ...original, description: name })).toBe(false);
+    expect(needsMerchantLookup({ ...original, description: `POS ${name} 9500 Villach 3,50 AT D1` })).toBe(false);
+  });
+
+  it("offers lookup for weak, unresolved and unknown merchant titles, including recovered POS text", () => {
+    expect(needsMerchantLookup(original)).toBe(true);
+    expect(needsMerchantLookup({ ...original, description: original.rawDescription! })).toBe(true);
+    expect(needsMerchantLookup({ ...original, description: "POS 3,50 AT D1 09.09. 11:53", rawDetails: [] })).toBe(true);
+    expect(needsMerchantLookup({ ...original, description: "BANKOMAT/POS 3,50 AT D1 09.09. 11:53", rawDetails: [] })).toBe(true);
+    expect(needsMerchantLookup({ ...original, description: "Händler unbekannt" })).toBe(true);
+    expect(needsMerchantLookup({ ...original, description: "Normaler Laden", rawDescription: undefined })).toBe(false);
+    expect(needsMerchantLookup({ ...original, description: "POS 3,50 AT D1", rawDetails: ["Händler Name: BILLA"] })).toBe(false);
+  });
+
+  it("excludes credits, zero amounts, reviewed bookings and confirmed names", () => {
+    expect(needsMerchantLookup({ ...original, amount: 3.5 })).toBe(false);
+    expect(needsMerchantLookup({ ...original, amount: 0 })).toBe(false);
+    expect(needsMerchantLookup({ ...original, reviewed: true })).toBe(false);
+    expect(needsMerchantLookup({ ...original, merchantAlias: hit.name })).toBe(false);
+    expect(needsMerchantLookup({ ...original, reviewed: false })).toBe(true);
+  });
+
   it.each(["BILLA", "SPAR", "INTERSPAR", "Shell", "Martin Auer", "BIPA", "AMAZON", "OMV", "Normaler Laden"])("builds a lookup query for known or ordinary merchant %s", (name) => {
     expect(merchantLookupQuery({ ...original, description: name })).toBe(`${name}, Villach, 9500, AT`);
   });

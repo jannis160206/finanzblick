@@ -30,11 +30,11 @@ let latest: AppState;
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(lookupMerchant).mockResolvedValue(hits); });
 afterEach(cleanup);
 
-function Fixture() {
+function Fixture({ bookings }: { bookings?: Transaction[] }) {
   const [state, setState] = useState<AppState>(() => {
     const seed = createSeed();
     return queueLedgerReview({ ...seed, settings: { ...seed.settings, asOf: "2026-09-17" }, fixedReceipts: [],
-      transactions: [
+      transactions: bookings ?? [
         booking, { ...booking, id: "twin", date: "2026-09-11" },
         ...["BILLA", "SPAR", "Shell", "Martin Auer", "BIPA"].map((description) => ({ ...booking, id: description, description })),
       ],
@@ -50,11 +50,11 @@ function Fixture() {
   return <Transactions />;
 }
 
-it("shows a muted lookup icon for every merchant, including known names, without searching on render", () => {
+it("shows a muted lookup icon only for uncertain debits, never known merchants or automatically on render", () => {
   render(<Fixture />);
-  expect(screen.getAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(7);
+  expect(screen.getAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(2);
   for (const name of ["BILLA", "SPAR", "Shell", "Martin Auer", "BIPA"])
-    expect(screen.getByRole("button", { name: `Name nachschlagen: ${name}`, exact: true })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: `Name nachschlagen: ${name}`, exact: true })).toBeNull();
   const button = screen.getAllByTitle("Name nachschlagen")[0];
   expect(button.className).toContain("size-7");
   expect(button.className).toContain("text-muted-foreground");
@@ -79,23 +79,38 @@ it("requires an explicit result and confirmation, then displays aliases without 
   expect(latest.transactions.slice(0, 2)).toEqual(before.map((row) => ({ ...row, merchantAlias: "Spielwarenladen" })));
   expect(merchantRuleKey(latest.transactions[0])).toBe("raiffeisen|spielwarenladen");
   expect(within(screen.getByRole("table", { name: "Buchungen" })).getAllByText("Spielwarenladen")).toHaveLength(2);
-  expect(screen.getAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(7);
-  expect(screen.getAllByRole("button", { name: "Name nachschlagen: Spielwarenladen", exact: true })).toHaveLength(2);
+  expect(screen.queryAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(0);
 });
 
-it("looks up a known merchant and allows checking its confirmed alias again without changing bank facts", async () => {
-  render(<Fixture />);
-  const before = latest.transactions.find((row) => row.id === "BILLA")!;
-  fireEvent.click(screen.getByRole("button", { name: "Name nachschlagen: BILLA", exact: true }));
+it("hides lookup on reviewed bookings, confirmed aliases, credits and zero amounts", () => {
+  render(<Fixture bookings={[
+    booking,
+    { ...booking, id: "reviewed", reviewed: true, category: "Shopping", categoryOverride: true, manualCategory: true },
+    { ...booking, id: "aliased", merchantAlias: "Blumenatelier" },
+    { ...booking, id: "credit", amount: 3.5 },
+    { ...booking, id: "zero", amount: 0 },
+  ]} />);
+  const buttons = screen.getAllByRole("button", { name: /^Name nachschlagen:/ });
+  expect(buttons).toHaveLength(1);
+  expect(buttons[0].dataset.bookingId).toBe(booking.id);
+  expect(lookupMerchant).not.toHaveBeenCalled();
+});
+
+it("does not apply a result if the selected booking was reviewed while the dialog was open", async () => {
+  render(<Fixture bookings={[booking]} />);
+  fireEvent.click(originalLookup());
   fireEvent.click(await screen.findByRole("radio", { name: /Blumenatelier/ }));
-  expect(lookupMerchant).toHaveBeenLastCalledWith("BILLA, Villach, 9500, AT");
+  act(() => useFinance().update((state) => ({
+    ...state,
+    transactions: state.transactions.map((row) => row.id === booking.id
+      ? { ...row, reviewed: true, category: "Shopping", categoryOverride: true, manualCategory: true }
+      : row),
+  })));
+  const reviewedState = latest;
   fireEvent.click(screen.getByRole("button", { name: "Diesen Namen verwenden" }));
-  expect(latest.transactions.find((row) => row.id === "BILLA")).toEqual({ ...before, merchantAlias: "Blumenatelier" });
-  fireEvent.click(screen.getByRole("button", { name: "Name nachschlagen: Blumenatelier", exact: true }));
-  fireEvent.click(await screen.findByRole("radio", { name: /Spielwarenladen/ }));
-  expect(lookupMerchant).toHaveBeenLastCalledWith("Blumenatelier, Villach, 9500, AT");
-  fireEvent.click(screen.getByRole("button", { name: "Diesen Namen verwenden" }));
-  expect(latest.transactions.find((row) => row.id === "BILLA")).toEqual({ ...before, merchantAlias: "Spielwarenladen" });
+  expect(latest).toBe(reviewedState);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(toast.error).toHaveBeenCalledWith("Die Buchung wurde inzwischen geändert. Bitte erneut öffnen.");
 });
 
 it("cancels without learning from a result and leaves the row unchanged on network failure", async () => {

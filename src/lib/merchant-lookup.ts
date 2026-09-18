@@ -1,5 +1,5 @@
-import { actualBookings } from "@/lib/calc";
-import { merchantText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
+import { actualBookings, classify, knownMerchantName, merchantName } from "@/lib/calc";
+import { ambiguousMerchant, hasTerminalText, merchantText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { isSpecificMerchantKey, merchantRuleKey } from "@/lib/import/merchant-rules";
 import { bookingReviewReason } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
@@ -8,6 +8,16 @@ import type { AppState, Transaction } from "@/lib/types";
 
 const unknownMerchant = /h(?:ä|ae)ndler\s+unbekannt/i;
 type AliasBooking = Omit<Transaction, "amount"> & { amount: number | null };
+
+export function needsMerchantLookup(row: Transaction): boolean {
+  if (row.amount >= 0 || row.reviewed || row.merchantAlias) return false;
+  const recovered = recoverMerchant(row);
+  if (knownMerchantName(merchantText(recovered.description))) return false;
+  return ambiguousMerchant(row) || unresolvedTerminal(recovered.description) ||
+    unknownMerchant.test(recovered.description) || merchantName(recovered.description) === "Händler unbekannt" ||
+    (hasTerminalText(row.rawDescription ?? row.description) &&
+      (row.description === recovered.description || classify(row).category === "Prüfen"));
+}
 
 // Only merchant/location text crosses the API boundary, never bank references or card details.
 function lookupText(text: string): string {
