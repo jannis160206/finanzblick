@@ -19,6 +19,14 @@ const disallowedHeaders: HeadersInit[] = [
   { "Sec-Fetch-Site": "cross-site" },
   { "Sec-Fetch-Site": "same-site" },
 ];
+const mismatchedHostHeaders: HeadersInit[] = [
+  { Origin: "https://evil.example", Host: "127.0.0.1:3000" },
+  { Origin: "http://127.0.0.1:3001", Host: "127.0.0.1:3000" },
+  { Origin: "https://127.0.0.1:3000", Host: "127.0.0.1:3000" },
+  { Origin: "http://127.0.0.1:3000", Host: "127.0.0.1:3000", "Sec-Fetch-Site": "cross-site" },
+  { Origin: "https://evil.example", Host: "localhost:3000", "X-Forwarded-Host": "evil.example", "X-Forwarded-Proto": "https" },
+  { Origin: "http://localhost:3000", Host: "127.0.0.1:3000" },
+];
 
 function request(body: unknown = { query: "Billa" }, headers: HeadersInit = {}) {
   const requestHeaders = new Headers({
@@ -139,6 +147,31 @@ describe("merchant lookup route", () => {
     expect(response.status).toBe(403);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each(["127.0.0.1:3000", "localhost:3000", "[::1]:3000", "finanzblick.example"])(
+    "uses the incoming Host for same-origin requests when Next normalizes the internal URL: %s",
+    async (host) => {
+      const incoming = request(undefined, {
+        Origin: `http://${host}`, Host: host, "Sec-Fetch-Site": "same-origin",
+      });
+      expect(new URL(incoming.url).hostname).toBe("localhost");
+      expect((await POST(incoming)).status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(mismatchedHostHeaders)("does not bypass the origin boundary for mismatched or forwarded headers: %j", async (headers) => {
+    expect((await POST(request(undefined, headers))).status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["", "localhost:3000/path", "user@localhost:3000", "localhost:3000?query", "localhost:3000#fragment", "localhost:bad"])(
+    "rejects malformed Host values without contacting Nominatim: %s",
+    async (host) => {
+      expect((await POST(request(undefined, { Host: host }))).status).toBe(403);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("allows JSON requests without browser origin headers", async () => {
     const incoming = request();

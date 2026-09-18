@@ -269,6 +269,13 @@ describe("browser merchant lookup transport", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("distinguishes an app origin rejection from an unavailable search provider", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: "Diese Händlersuche ist nicht erlaubt." }, { status: 403 }));
+    await expect(lookupMerchant("Billa")).rejects.toThrow("für diese Seitenadresse blockiert");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  });
+
   it.each([
     {},
     { results: null },

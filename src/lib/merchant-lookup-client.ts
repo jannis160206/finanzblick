@@ -125,6 +125,9 @@ async function requestLookup(query: string): Promise<MerchantLookupResult[]> {
         : "Die Händlersuche ist nicht erreichbar. Bitte die Internetverbindung prüfen.");
     }
     if (!response.ok) {
+      if (response.status === 403) {
+        throw new Error("Die Händlersuche wurde für diese Seitenadresse blockiert. Bitte die Seite neu laden.");
+      }
       if (response.status === 429) {
         throw new Error("Die Händlersuche ist gerade ausgelastet. Bitte kurz warten und erneut versuchen.");
       }

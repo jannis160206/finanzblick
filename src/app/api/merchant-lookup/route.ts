@@ -114,11 +114,27 @@ async function search(query: string): Promise<Outcome> {
   }
 }
 
+function matchesRequestOrigin(request: Request, origin: string): boolean {
+  const url = new URL(request.url);
+  const host = request.headers.get("host");
+  if (host === null) return origin === url.origin;
+  try {
+    // Next can normalize request.url to localhost even when the browser used 127.0.0.1.
+    const incoming = new URL(`${url.protocol}//${host}`);
+    if (incoming.username || incoming.password || incoming.pathname !== "/" || incoming.search || incoming.hash)
+      return false;
+    return origin === incoming.origin;
+  } catch (error) {
+    if (error instanceof TypeError) return false;
+    throw error;
+  }
+}
+
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
   if (
-    (origin !== null && origin !== new URL(request.url).origin) ||
+    (origin !== null && !matchesRequestOrigin(request, origin)) ||
     (site !== null && site !== "same-origin" && site !== "none")
   ) {
     return respond({ status: 403, error: "Diese Händlersuche ist nicht erlaubt." });
