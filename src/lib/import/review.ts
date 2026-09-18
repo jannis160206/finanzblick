@@ -69,8 +69,9 @@ function indexReviewRules(state: AppState) {
 }
 
 export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
-  if (unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   const result = classify(row);
+  if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
+  if (unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
   if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
   if (payrollCategory(row) === result.category) return;
@@ -179,8 +180,18 @@ export function queueLedgerReview(state: AppState): AppState {
   }
   const byId = new Map(ledger.map((row) => [row.id, row]));
   const keys = new Set(ledger.map(statementFingerprint));
-  const queue: ReviewItem[] = (state.reviewQueue ?? []).filter((item) => item.kind === "fixed" ||
-    (!byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction)))));
+  const reviewed = ledger.filter((row) => row.reviewed && row.categoryOverride && !bookingReviewReason(state, row, rules));
+  const reviewedIds = new Set(reviewed.map((row) => row.id));
+  for (const receipt of state.fixedReceipts ?? [])
+    if (reviewedIds.has(receipt.key) && receipt.booking) reviewedIds.add(receipt.booking.id);
+  const queue = (state.reviewQueue ?? []).flatMap((item): ReviewItem[] => {
+    if (item.kind === "fixed") {
+      const bookings = item.change.bookings.filter((row) =>
+        !reviewedIds.has(row.id) && !reviewedIds.has(statementFingerprint(row)));
+      return bookings.length ? [{ ...item, change: { ...item.change, bookings } }] : [];
+    }
+    return !byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction))) ? [item] : [];
+  });
   for (const draft of ledger) {
     const message = bookingReviewReason(state, draft, rules);
     if (!message) continue;

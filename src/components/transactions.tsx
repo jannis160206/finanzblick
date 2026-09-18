@@ -92,6 +92,7 @@ function TransactionForm({
     const assignment = {
       category: value.category,
       categoryOverride: true,
+      reviewed: value.category !== "Prüfen",
       includeInPlan: true,
       ...(value.fixedCost !== undefined ? { fixedCost: canMarkFixed && value.fixedCost } : {}),
     };
@@ -135,7 +136,7 @@ function TransactionForm({
         [{ ...transaction, ...assignment }],
       ),
     );
-    toast.success("Umsatz aktualisiert");
+    toast.success(assignment.reviewed ? "Zuordnung gespeichert und Buchung als geprüft markiert" : "Zuordnung zur Prüfung offengelassen");
     onClose();
   }
   const error = (name: keyof Transaction) =>
@@ -190,7 +191,7 @@ function TransactionForm({
             onChange={(checked) => form.setValue("fixedCost", checked, { shouldDirty: true, shouldValidate: true })}
             eligible={canMarkFixed}
           />
-          <p className="text-xs leading-relaxed text-muted-foreground">Die Zuordnung wird auch für spätere Buchungen dieses Händlers gelernt. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Speichern mit einer Kategorie schließt die Prüfung dieser Buchung ab. „Prüfen“ lässt sie offen. Die Kategorie wird für spätere Buchungen dieses Händlers gelernt, der Prüfstatus nicht. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
@@ -243,7 +244,7 @@ const TransactionLedger = memo(function TransactionLedger({
       }
     }
     for (const row of ledger) {
-      if (fixedKeys.size && fixedKeys.has(statementFingerprint(row)))
+      if (!(row.reviewed && row.categoryOverride) && fixedKeys.size && fixedKeys.has(statementFingerprint(row)))
         reasons.set(row.id, "Fixkostenbetrag hat sich geändert.");
       if (!reasons.has(row.id) && classifications.get(row)!.category === "Prüfen")
         reasons.set(row.id, "Kategorie noch offen oder widersprüchlich.");
@@ -334,7 +335,7 @@ const TransactionLedger = memo(function TransactionLedger({
             <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">Fixkosten</span>}
         </span>
         <span className={cn("mt-1.5 flex items-center gap-1 text-[11px]", reviewReasons.has(row.original.id) ? "text-primary" : "text-muted-foreground")}>
-          {reviewReasons.has(row.original.id) ? <><CircleHelp className="size-3 shrink-0" />Prüfung offen</> : <><Check className="size-3 shrink-0" />Zugeordnet</>}
+          {reviewReasons.has(row.original.id) ? <><CircleHelp className="size-3 shrink-0" />Prüfung offen</> : <><Check className="size-3 shrink-0" />{row.original.reviewed && row.original.categoryOverride ? "Geprüft" : "Zugeordnet"}</>}
           <Popover>
             <PopoverTrigger asChild>
               <button type="button" className="ml-1 inline-flex min-h-6 min-w-6 items-center justify-center rounded-md hover:bg-muted" aria-label={`Zuordnungsdetails: ${row.original.description}`}>
@@ -343,7 +344,7 @@ const TransactionLedger = memo(function TransactionLedger({
             </PopoverTrigger>
             <PopoverContent className="space-y-2 text-xs">
               <p className="text-sm font-semibold">{reviewReasons.has(row.original.id) ? "Noch zu prüfen" : "Aktuelle Einordnung"}</p>
-              <p className="leading-relaxed text-muted-foreground">{reviewReasons.get(row.original.id) ?? "Für diese Buchung ist keine Prüfung offen."}</p>
+              <p className="leading-relaxed text-muted-foreground">{reviewReasons.get(row.original.id) ?? (row.original.reviewed && row.original.categoryOverride ? "Diese Buchung wurde manuell geprüft." : "Für diese Buchung ist keine Prüfung offen.")}</p>
               <p>{classifications.get(row.original)!.reason || (classifications.get(row.original)!.includeInPlan ? "Im Alltagsbudget berücksichtigt" : "Außerhalb des Alltagsbudgets")}</p>
             </PopoverContent>
           </Popover>

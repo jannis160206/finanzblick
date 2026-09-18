@@ -95,6 +95,8 @@ const transactionFieldsSchema = z.object({
   includeInPlan: z.boolean(),
   afterBaseline: z.boolean().optional(),
   categoryOverride: z.boolean().optional(),
+  // Explicit acknowledgement of this booking, never inherited from a merchant rule.
+  reviewed: z.boolean().optional(),
   // Only this booking: omission keeps legacy category-based accounting.
   fixedCost: z.boolean().optional(),
   sourceCategory: z.string().max(200).optional(),
