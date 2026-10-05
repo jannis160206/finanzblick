@@ -225,7 +225,7 @@ describe("Geteilt UI", () => {
     const transfer = { ...booking("transfer"), category: "Transfer" as const, description: "Pocket Transfer", pocket: "Motorrad" };
     const shared = { ...booking("shared"), sharedWithRaphael: true };
     renderLedger(fixture([income, transfer, shared]));
-    fireEvent.click(screen.getByText("Weitere Filter"));
+    fireEvent.click(screen.getByRole("button", { name: "Weitere Filter" }));
     fireEvent.click(screen.getByLabelText("Transfers anzeigen"));
     for (const row of [income, transfer, shared]) {
       fireEvent.click(screen.getByLabelText(`Weitere Aktionen: ${row.description}`));

@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FileUp, LoaderCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -290,7 +291,10 @@ function FixedReview({
   );
 }
 
-export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number }) {
+export function StatementImport({ reviewRequest = 0, fileButtonContainer }: {
+  reviewRequest?: number;
+  fileButtonContainer?: HTMLElement | null;
+}) {
   const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -450,6 +454,17 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       setUI({ busy: false });
     }
   }
+  const fileButton = <Button
+    size="sm"
+    variant="outline"
+    className="ml-auto shrink-0"
+    aria-label="Dateien auswählen"
+    disabled={!ready || !!storageError || ui.busy || !!ui.pending}
+    onClick={() => fileInput.current?.click()}
+  >
+    {ui.busy ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
+    {ui.busy ? "Dateien werden geprüft …" : fileButtonContainer ? "Dateien" : "Dateien auswählen"}
+  </Button>;
   return (
     <>
       <section
@@ -500,20 +515,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
             void selectFiles(files);
           }}
         />
-        <Button
-          size="sm"
-          variant="outline"
-          className="ml-auto shrink-0"
-          disabled={!ready || !!storageError || ui.busy || !!ui.pending}
-          onClick={() => fileInput.current?.click()}
-        >
-          {ui.busy ? (
-            <LoaderCircle className="size-4 animate-spin" />
-          ) : (
-            <FileUp className="size-4" />
-          )}
-          {ui.busy ? "Dateien werden geprüft …" : "Dateien auswählen"}
-        </Button>
+        {fileButtonContainer ? createPortal(fileButton, fileButtonContainer) : fileButton}
       </section>
       {state.importStatus && (
         <div

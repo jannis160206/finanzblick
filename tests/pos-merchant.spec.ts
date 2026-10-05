@@ -41,10 +41,12 @@ test("multi-file CSV/PDF drop repairs POS, learns the merchant and uses matching
   const search = page.getByLabel("Umsätze durchsuchen");
   const dropzone = page.getByRole("region", { name: "Kontoauszüge importieren" });
   const filesButton = page.getByRole("button", { name: "Dateien auswählen", exact: true });
-  await expect(dropzone.getByRole("button")).toHaveCount(1);
+  const toolbar = page.getByRole("group", { name: "Umsatz-Werkzeugleiste" });
+  await expect(dropzone.getByRole("button")).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: "Dateien auswählen", exact: true })).toHaveCount(1);
   const buttonBox = (await filesButton.boundingBox())!;
-  const zoneBox = (await dropzone.boundingBox())!;
-  expect(zoneBox.x + zoneBox.width - buttonBox.x - buttonBox.width).toBeLessThan(20);
+  const toolbarBox = (await toolbar.boundingBox())!;
+  expect(toolbarBox.x + toolbarBox.width - buttonBox.x - buttonBox.width).toBeLessThan(20);
   const iconBox = (await control.boundingBox())!;
   expect(iconBox.x + iconBox.width).toBeLessThan((await search.boundingBox())!.x);
   await expect(control.getByLabel("1 offene Zuordnungen")).toBeVisible();

@@ -62,7 +62,7 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
   </Dialog>;
 }
 
-export function SharedCosts({ bookings, items }: { bookings: AccountedTransaction[]; items: HolidayReceivable[] }) {
+export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: AccountedTransaction[]; items: HolidayReceivable[]; iconOnly?: boolean }) {
   const { update, storageError } = useFinance();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState("search");
@@ -90,9 +90,9 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>
     <DialogTrigger asChild>
-    <Button size="sm" variant="outline" disabled={!!storageError} aria-label="Geteilt">
-      <Users className="size-3.5" />Geteilt
-      {count > 0 && <span aria-label={`${count} offene Teilungen`} className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">{count}</span>}
+    <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
+      <Users className="size-3.5" />{!iconOnly && "Geteilt"}
+      {count > 0 && <span aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</span>}
     </Button>
     </DialogTrigger>
       <DialogContent variant="work" showCloseButton={false}>
@@ -100,7 +100,7 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
         <DialogHeader>
           <DialogTitle>Geteilt</DialogTitle>
           <DialogDescription>Meine Hälfte 50 % · Raphael 50 %</DialogDescription>
-          <Button size="icon" variant="ghost" className="absolute top-3 right-3 size-11 sm:top-4 sm:right-4" aria-label="Geteilt schließen" onClick={() => changeOpen(false)}><X className="size-4" /></Button>
+          <Button size="icon" variant="ghost" className="absolute top-3 right-3 size-11 rounded-full text-muted-foreground hover:text-foreground sm:top-4 sm:right-4" aria-label="Geteilt schließen" onClick={() => changeOpen(false)}><X className="size-4" /></Button>
         <Tabs.List aria-label="Geteilt-Ansicht" className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
           <Tabs.Trigger value="search" className="min-h-10 rounded px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Suchen</Tabs.Trigger>
           <Tabs.Trigger value="open" className="min-h-10 rounded px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Offen · {openItems.length}</Tabs.Trigger>

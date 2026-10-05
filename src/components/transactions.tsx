@@ -251,6 +251,7 @@ const TransactionLedger = memo(function TransactionLedger({
 }: Pick<ReturnType<typeof useFinance>, "state" | "update" | "openReviewCount" | "storageError">) {
   "use no memo";
   const [reviewRequest, setReviewRequest] = useState(0);
+  const [fileButtonContainer, setFileButtonContainer] = useState<HTMLDivElement | null>(null);
   const ledger = useMemo(() => actualBookings(state), [state]);
   // General updates validate/clone the ledger. Category approvals retain only
   // unchanged bank rows, so their derived classifications remain reusable.
@@ -534,7 +535,7 @@ const TransactionLedger = memo(function TransactionLedger({
         title="Umsätze"
         description={`${ledger.length.toLocaleString("de-AT")} Buchungen`}
       />
-      <StatementImport reviewRequest={reviewRequest} />
+      <StatementImport reviewRequest={reviewRequest} fileButtonContainer={fileButtonContainer} />
       <section className="panel overflow-hidden">
         <div className="border-b p-4">
           <div className="flex flex-wrap gap-1 rounded-xl bg-muted/60 p-1" role="group" aria-label="Zuordnungsstatus filtern">
@@ -547,7 +548,7 @@ const TransactionLedger = memo(function TransactionLedger({
             </Button>)}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 border-b p-4">
+        <div role="group" aria-label="Umsatz-Werkzeugleiste" className="flex flex-wrap items-center gap-2 border-b p-4">
           <Button
             variant="ghost"
             size="icon"
@@ -560,8 +561,8 @@ const TransactionLedger = memo(function TransactionLedger({
             <ListChecks className="size-4" />
             <ReviewCount count={openReviewCount} className="absolute -top-2 -right-2" />
           </Button>
-          <SharedCosts bookings={ledger} items={holiday.receivables} />
-          <HolidayRanges />
+          <SharedCosts bookings={ledger} items={holiday.receivables} iconOnly />
+          <HolidayRanges iconOnly />
           <div className="relative min-w-52 flex-1">
             <Search className="absolute top-2.5 left-3 size-4 text-muted-foreground" />
             <Input
@@ -613,7 +614,7 @@ const TransactionLedger = memo(function TransactionLedger({
           </select>
           <Popover>
             <PopoverTrigger asChild>
-              <Button type="button" variant="outline"><SlidersHorizontal className="size-4" />Weitere Filter{(plan || from || to || showTransfers) && <span className="size-2 rounded-full bg-primary" aria-label="Zusätzliche Filter aktiv" />}</Button>
+              <Button type="button" variant="outline" size="icon" className="relative" aria-label="Weitere Filter" title="Weitere Filter"><SlidersHorizontal className="size-4" />{(plan || from || to || showTransfers) && <span className="absolute top-1 right-1 size-2 rounded-full bg-primary" aria-label="Zusätzliche Filter aktiv" />}</Button>
             </PopoverTrigger>
             <PopoverContent aria-label="Weitere Filter" className="max-h-[var(--radix-popover-content-available-height)] space-y-4 overflow-y-auto">
               <p className="text-sm font-semibold">Umsätze eingrenzen</p>
@@ -661,8 +662,10 @@ const TransactionLedger = memo(function TransactionLedger({
           </Popover>
           {filtersActive && (
             <Button
-              size="sm"
+              size="icon"
               variant="ghost"
+              aria-label="Zurücksetzen"
+              title="Zurücksetzen"
               onClick={() => {
                 setQuery("");
                 setMonth(null);
@@ -675,10 +678,10 @@ const TransactionLedger = memo(function TransactionLedger({
                 setAssignment("all");
               }}
             >
-              <X className="size-3" />
-              Zurücksetzen
+              <X className="size-4" />
             </Button>
           )}
+          <div ref={setFileButtonContainer} className="ml-auto flex shrink-0" />
         </div>
         <div className="overflow-x-auto">
           <table className="data-table w-full" aria-label="Buchungen">

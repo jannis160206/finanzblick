@@ -10,7 +10,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, Dia
 import { appStateSchema } from "@/lib/types";
 import { dateLabel } from "@/lib/format";
 
-export function HolidayRanges() {
+export function HolidayRanges({ iconOnly = false }: { iconOnly?: boolean }) {
   const { state, update, storageError } = useFinance();
   const [open, setOpen] = useState(false);
   const [from, setFrom] = useState("");
@@ -33,7 +33,7 @@ export function HolidayRanges() {
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" disabled={!!storageError}><CalendarDays className="size-3.5" />Urlaub</Button>
+        <Button size={iconOnly ? "icon" : "sm"} variant="outline" disabled={!!storageError} aria-label="Urlaub" title="Urlaub"><CalendarDays className="size-3.5" />{!iconOnly && "Urlaub"}</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader><DialogTitle>Urlaubs-Zeiträume</DialogTitle><DialogDescription>Max. 25 Tage je Zeitraum · Wiederkehrende Heimkosten bleiben im Alltag.</DialogDescription></DialogHeader>
