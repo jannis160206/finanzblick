@@ -178,6 +178,7 @@ export const reviewItemSchema = z.discriminatedUnion("kind", [
       "Datum und Beschreibung erforderlich.",
     ),
     message: z.string(),
+    importIssues: z.array(z.string()).optional(),
   }),
   z.object({
     kind: z.literal("fixed"),

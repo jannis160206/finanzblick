@@ -81,6 +81,11 @@ describe("Amex app screenshot facts", () => {
     expect(result.issues.map((issue) => [issue.draft?.description, issue.draft?.date, issue.draft?.amount])).toEqual([
       ["SPAR", "2026-10-04", null], ["BIPA", "", -5.55], ["DM DROGERIE", "", -8.99],
     ]);
+    expect(result.issues.map((issue) => issue.message)).toEqual([
+      "Amex-Screenshot: Betrag prüfen.",
+      "Amex-Screenshot: Datum fehlt – bitte ergänzen.",
+      "Amex-Screenshot: Datum fehlt – bitte ergänzen.",
+    ]);
     const state = createSeed();
     const prepared = prepareStatementImport([result], state);
     expect(prepared.automatic).toEqual([]);

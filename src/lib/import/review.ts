@@ -40,7 +40,7 @@ import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
-import { reconcileScreenshotReviews } from "./screenshot-review";
+import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
 import {
   appendStatementRows,
   deduplicateStatements,
@@ -204,10 +204,14 @@ export function queueLedgerReview(state: AppState): AppState {
     }
     return !byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction))) ? [item] : [];
   });
+  const linkedIssues = new Map((state.reviewQueue ?? []).flatMap((item) =>
+    item.kind === "booking" && item.importIssues ? [[item.draft.id, item.importIssues] as const] : [],
+  ));
   for (const draft of ledger) {
     const message = bookingReviewReason(state, draft, rules);
     if (!message) continue;
-    queue.push({ kind: "booking", id: draft.id, draft, message });
+    const importIssues = linkedIssues.get(draft.id);
+    queue.push({ kind: "booking", id: draft.id, draft, message, ...(importIssues ? { importIssues } : {}) });
   }
   return { ...state, reviewQueue: queue };
 }
@@ -440,23 +444,37 @@ export function prepareStatementImport(
       });
     else automatic.push(row);
   }
-  const screenshotIssues = new Set(
+  const screenshotIssueKey = (draft: Extract<ReviewItem, { kind: "booking" }>["draft"]) =>
+    JSON.stringify([draft.date, draft.amount, draft.description, draft.rawDetails]);
+  const screenshotIssues = new Map(
     (state.reviewQueue ?? []).flatMap((item) => item.kind === "booking" && isAmexScreenshot(item.draft)
-      ? [JSON.stringify([item.draft.date, item.draft.amount, item.draft.description, item.draft.rawDetails])] : []),
+      ? [[screenshotIssueKey(item.draft), item] as const] : []),
   );
+  const updatedReviews = new Map<string, ReviewItem>();
+  const legacyIssues = legacyScreenshotIssues(state.reviewQueue ?? [], state.importStatus?.issues ?? []);
+  const confirmedDate = confirmedScreenshotDateMatcher(actualBookings(state));
+  const issues: string[] = [];
   for (const result of results) for (const issue of result.issues) {
+    if (issue.draft && isAmexScreenshot(issue.draft) && confirmedDate(issue.draft)) continue;
+    const sourceIssue = `${issue.file}${issue.line ? `, Zeile ${issue.line}` : ""}: ${issue.message}`;
+    issues.push(sourceIssue);
     if (!issue.draft || !isAmexScreenshot(issue.draft)) continue;
-    const key = JSON.stringify([issue.draft.date, issue.draft.amount, issue.draft.description, issue.draft.rawDetails]);
-    if (screenshotIssues.has(key)) continue;
-    screenshotIssues.add(key);
-    review.push({ kind: "booking", id: issue.draft.id, draft: issue.draft, message: issue.message });
+    const key = screenshotIssueKey(issue.draft);
+    const existing = screenshotIssues.get(key);
+    if (existing) {
+      const updated = { ...existing, importIssues: [...new Set([
+        ...(existing.importIssues ?? []), ...(legacyIssues.get(existing.id) ?? []), sourceIssue,
+      ])] };
+      screenshotIssues.set(key, updated);
+      updatedReviews.set(updated.id, updated);
+      continue;
+    }
+    const item: Extract<ReviewItem, { kind: "booking" }> = {
+      kind: "booking", id: issue.draft.id, draft: issue.draft, message: issue.message, importIssues: [sourceIssue],
+    };
+    screenshotIssues.set(key, item);
+    review.push(item);
   }
-  const issues = results.flatMap((result) =>
-    result.issues.map(
-      (issue) =>
-        `${issue.file}${issue.line ? `, Zeile ${issue.line}` : ""}: ${issue.message}`,
-    ),
-  );
   return {
     automatic,
     review,
@@ -466,7 +484,7 @@ export function prepareStatementImport(
       merchantRepairs: candidates.filter((row) => !!row.rawDescription),
       // Reconciliation still needs evidence when every new row was a duplicate.
       screenshotRepairs: candidates.filter(isAmexScreenshot),
-      reviewQueue: review,
+      reviewQueue: [...new Map([...review, ...updatedReviews.values()].map((item) => [item.id, item])).values()],
       issues,
       reparsedFiles: [...new Set(results.filter((result) => result.source !== null).map((result) => result.file))],
       accountSnapshots: results.flatMap(
@@ -555,6 +573,7 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  const previousQueue = state.reviewQueue ?? [];
   const screenshotRepairs = [...actualBookings(state), ...(metadata.screenshotRepairs ?? [])];
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, screenshotRepairs) };
@@ -599,6 +618,8 @@ export function commitStatementImport(
     if (item.kind !== "booking" || item.draft.amount === null || !transactionSchema.safeParse(item.draft).success) continue;
     const direct = directChoices.get(item.draft.id);
     if (hasCategoryChoice(item.draft) && !direct) continue;
+    if (!direct && isAmexScreenshot(item.draft) && item.draft.rawDetails?.includes("OCR-Händler unklar") &&
+      !(item.draft.reviewed && (item.draft.manualCategory || item.draft.categoryOverride))) continue;
     const category = direct?.category ?? choices.get(merchantRuleKey(item.draft as Transaction));
     if (category) {
       const row = {
@@ -724,6 +745,13 @@ export function commitStatementImport(
   });
   const importedCount = metadata.issues !== undefined || state.importStatus
     ? actualBookings(merged).length - actualBookings(state).length : 0;
+  const pendingIssues = new Set(pending.flatMap((item) => item.kind === "booking" ? item.importIssues ?? [] : []));
+  const pendingIds = new Set(pending.map((item) => item.id));
+  const legacyIssues = legacyScreenshotIssues(previousQueue, state.importStatus?.issues ?? []);
+  const resolvedIssues = new Set([...previousQueue, ...(metadata.reviewQueue ?? [])].flatMap((item) =>
+    item.kind === "booking" && !pendingIds.has(item.id)
+      ? [...(item.importIssues ?? []), ...(legacyIssues.get(item.id) ?? [])].filter((issue) => !pendingIssues.has(issue)) : [],
+  ));
   return {
     ...appended,
     state: {
@@ -738,12 +766,12 @@ export function commitStatementImport(
               issues: [
                 ...new Set([
                   ...(state.importStatus?.issues ?? []).filter((issue) =>
-                    !(metadata.reparsedFiles ?? []).some((file) =>
+                    !resolvedIssues.has(issue) && !(metadata.reparsedFiles ?? []).some((file) =>
                       issue.startsWith(`${file}: `) ||
                       (issue.startsWith(`${file}, Zeile `) && /^\d+: /.test(issue.slice(file.length + 8))),
                     ),
                   ),
-                  ...(metadata.issues ?? []),
+                  ...(metadata.issues ?? []).filter((issue) => !resolvedIssues.has(issue)),
                 ]),
               ],
             },

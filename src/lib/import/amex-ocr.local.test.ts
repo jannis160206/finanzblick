@@ -13,6 +13,7 @@ import { synchronizePlan } from "@/lib/planning";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "./review";
 import { parseAmexText } from "./amex-pdf";
 import { GET } from "@/app/api/ocr/[asset]/route";
+import { transactionSchema } from "@/lib/types";
 
 const exampleDirectory = process.env.AMEX_SCREENSHOT_DIR ?? path.join(process.cwd(), "import-example");
 const example = path.join(exampleDirectory, "WhatsApp Image 2026-10-05 at 09.43.39.jpeg");
@@ -96,6 +97,10 @@ it.skipIf(!process.env.AMEX_SCREENSHOT_DIR)("recognizes the complete supplied sc
     }
     const issues = results.flatMap((result) => result.issues);
     expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({
+      file: "WhatsApp Image 2026-10-05 at 09.43.40.jpeg", line: 10,
+      message: "Amex-Screenshot: Datum fehlt – bitte ergänzen.",
+    });
     expect(issues[0].draft).toMatchObject({ date: "", bank: "Amex", pocket: "Amex" });
     expect(issues[0].draft?.amount).toBeLessThan(0);
     expect(issues[0].draft?.description).toMatch(/^AMZN MKTP/);
@@ -112,5 +117,15 @@ it.skipIf(!process.env.AMEX_SCREENSHOT_DIR)("recognizes the complete supplied sc
     const again = prepareStatementImport(results, saved);
     expect(again.automatic).toEqual([]);
     expect(again.review).toEqual([]);
+    // This date is a synthetic user confirmation, never an OCR inference.
+    const corrected = transactionSchema.parse({ ...issues[0].draft, date: "2026-09-21",
+      category: "Shopping", categoryOverride: true, manualCategory: true, reviewed: true });
+    const confirmed = queueLedgerReview(commitStatementImport(saved, [corrected]).state);
+    expect(confirmed.importStatus?.issues).toEqual([]);
+    expect(confirmed.reviewQueue?.some((item) => item.kind === "booking" && !item.draft.date)).toBe(false);
+    const redropped = prepareStatementImport(results, confirmed);
+    expect(redropped.automatic).toEqual([]);
+    expect(redropped.review).toEqual([]);
+    expect(redropped.issues).toEqual([]);
   });
 }, 120_000);

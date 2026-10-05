@@ -8,6 +8,21 @@ const repayment = /^zahlung\s*\/\s*überweisung\s+erhalten\b/i;
 const untouched = (row: Draft) => !row.reviewed && !row.manualCategory &&
   !row.categoryOverride && row.fixedCost === undefined && row.merchantAlias === undefined;
 
+export function legacyScreenshotIssues(items: ReviewItem[], issues: string[]): Map<string, string[]> {
+  const byMessage = new Map<string, string | null>();
+  for (const item of items) {
+    if (item.kind !== "booking" || !isAmexScreenshot(item.draft)) continue;
+    byMessage.set(item.message, byMessage.has(item.message) ? null : item.id);
+  }
+  const linked = new Map<string, string[]>();
+  for (const [message, id] of byMessage) {
+    if (id === null || !message.startsWith("Amex-Screenshot:")) continue;
+    const matches = issues.filter((issue) => issue.endsWith(`: ${message}`));
+    if (matches.length === 1) linked.set(id, matches);
+  }
+  return linked;
+}
+
 function screenshotDetails(row: Draft) {
   if (!isAmexScreenshot(row) || row.rawDetails?.includes("OCR-Händler unklar")) return null;
   const details = row.rawDetails!.filter((text) => text !== "Amex-Screenshot");
@@ -40,7 +55,33 @@ function screenshotFacts(row: Draft, legacy = false): Transaction | null {
   return facts;
 }
 
+function croppedOrderKey(row: Draft): string | null {
+  const details = screenshotDetails(row);
+  if (!details || details.lines.some((line) => screenshotDate(line) !== null)) return null;
+  const description = details.lines.join(" ").trim();
+  if (!/\b(?:AMAZON\.[A-Z.]+|AMZN\s+MKTP\s+[A-Z]{2}|AIRBNB)\s*\*\s*[A-Z0-9]{6,}\b/i.test(description) ||
+    clean(row.rawDescription ?? row.description) !== clean(description)) return null;
+  const key = amexBookingKey({ ...row, date: "", amount: details.amount });
+  return key ? JSON.stringify([key, row.occurrence ?? 1, row.bankReference ?? null, row.rawDetails]) : null;
+}
+
+export function confirmedScreenshotDateMatcher(candidates: Transaction[]): (row: Draft) => boolean {
+  const dates = new Map<string, Set<string>>();
+  for (const row of candidates) {
+    if (!row.reviewed || !(row.manualCategory || row.categoryOverride) || !transactionSchema.safeParse(row).success) continue;
+    const key = croppedOrderKey(row);
+    if (!key) continue;
+    const values = dates.get(key) ?? new Set<string>();
+    values.add(row.date);
+    dates.set(key, values);
+  }
+  // Only reuse a confirmed date correction for the same raw, identifiable order.
+  // Same merchant/amount alone must never resolve another cropped purchase.
+  return (row) => !row.date && dates.get(croppedOrderKey(row) ?? "")?.size === 1;
+}
+
 export function reconcileScreenshotReviews(items: ReviewItem[], candidates: Transaction[]): ReviewItem[] {
+  const confirmedDate = confirmedScreenshotDateMatcher(candidates);
   const keys = new Set(candidates.flatMap((row) => {
     if (!isAmexScreenshot(row) || !transactionSchema.safeParse(row).success) return [];
     const facts = screenshotFacts(row);
@@ -50,6 +91,7 @@ export function reconcileScreenshotReviews(items: ReviewItem[], candidates: Tran
     if (item.kind !== "booking" || !untouched(item.draft) ||
       transactionSchema.safeParse(item.draft).success) return true;
     const row = item.draft;
+    if (confirmedDate(row)) return false;
     const details = screenshotDetails(row);
     if (!details) return true;
     // A confirmed incoming card repayment is never income, even without a readable date.

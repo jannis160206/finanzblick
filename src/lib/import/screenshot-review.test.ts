@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createSeed } from "@/lib/seed";
-import { appStateSchema, type AppState, type ReviewItem, type Transaction } from "@/lib/types";
+import { appStateSchema, transactionSchema, type AppState, type ReviewItem, type Transaction } from "@/lib/types";
+import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "./review";
 import { merchantRuleKey } from "./merchant-rules";
 import type { StatementDraft, StatementResult } from "./statements";
@@ -47,9 +48,129 @@ function redrop(state: AppState, results: StatementResult[]) {
   return { prepared, committed, state: queueLedgerReview(committed.state) };
 }
 
+function croppedOrder(id = "cropped"): StatementDraft {
+  const description = "AMZN MKTP DE*TESTORDER9 AMZN.COM/BILL";
+  return oldDraft(id, { description, amount: -100.84, pocket: "Amex",
+    rawDetails: ["Amex-Screenshot", "AMZN MKTP DE*TESTORDER9", "AMZN.COM/BILL", "€ 100,84"] });
+}
+
 const ids = (state: AppState) => state.reviewQueue?.map((item) => item.id);
 
 describe("conservative stale screenshot review reconciliation", () => {
+  it("clears only the corrected row's warning and remembers its confirmed date across JSON/Excel and redrops", async () => {
+    const results = [screenshot([], [croppedOrder()], "cropped.jpeg")];
+    const initial = redrop(fixture(), results).state;
+    initial.importStatus!.issues.push("other.csv: Andere Warnung");
+    const before = (await parseWorkbook(await exportWorkbook(initial))).state;
+    expect(before.reviewQueue).toEqual(initial.reviewQueue);
+    const draft = before.reviewQueue?.find((item) => item.kind === "booking")?.draft;
+    expect(draft?.date).toBe("");
+    const corrected = transactionSchema.parse({
+      ...draft, date: "2026-09-21", category: "Shopping", categoryOverride: true, manualCategory: true, reviewed: true,
+    });
+    const saved = queueLedgerReview(commitStatementImport(before, [corrected]).state);
+    expect(saved.transactions).toHaveLength(1);
+    expect(saved.reviewQueue).toEqual([]);
+    expect(saved.importStatus?.issues).toEqual(["other.csv: Andere Warnung"]);
+    const reloaded = appStateSchema.parse(JSON.parse(JSON.stringify(saved)));
+    const restored = (await parseWorkbook(await exportWorkbook(reloaded))).state;
+    for (const state of [reloaded, restored]) {
+      const again = redrop(state, results);
+      expect(again.prepared.automatic).toEqual([]);
+      expect(again.prepared.review).toEqual([]);
+      expect(again.prepared.issues).toEqual([]);
+      expect(again.state.transactions).toEqual(state.transactions);
+      expect(again.state.importStatus?.issues).toEqual(["other.csv: Andere Warnung"]);
+    }
+  });
+
+  it("links all overlapping-file warnings to one existing legacy review without losing edits", () => {
+    const old = croppedOrder();
+    const state = fixture([review(old)]);
+    state.importStatus = { imported: 0, issues: [`one.jpeg, Zeile 1: ${message}`] };
+    const results = [screenshot([], [{ ...old, id: "one" }], "one.jpeg"),
+      screenshot([], [{ ...old, id: "two" }], "two.jpeg")];
+    const imported = redrop(state, results);
+    expect(imported.prepared.review).toEqual([]);
+    expect(imported.state.reviewQueue).toHaveLength(1);
+    expect(imported.state.reviewQueue?.[0]).toMatchObject({ id: old.id, importIssues: [
+      `one.jpeg, Zeile 1: ${message}`, `two.jpeg, Zeile 1: ${message}`,
+    ] });
+    const corrected = transactionSchema.parse({ ...old, date: "2026-09-21",
+      category: "Shopping", manualCategory: true, categoryOverride: true, reviewed: true });
+    expect(commitStatementImport(imported.state, [corrected]).state.importStatus?.issues).toEqual([]);
+  });
+
+  it("does not erase ambiguous legacy warnings belonging to other incomplete rows", () => {
+    const one = croppedOrder("one");
+    const two = oldDraft("two");
+    const warnings = [`one.jpeg, Zeile 1: ${message}`, `two.jpeg, Zeile 2: ${message}`];
+    const state = fixture([review(one), review(two)]);
+    state.importStatus = { imported: 0, issues: warnings };
+    const corrected = transactionSchema.parse({ ...one, date: "2026-09-21",
+      category: "Shopping", manualCategory: true, categoryOverride: true, reviewed: true });
+    expect(commitStatementImport(state, [corrected]).state.importStatus?.issues).toEqual(warnings);
+  });
+
+  it("clears an old unambiguous warning after the screenshot is reimported under a new filename", () => {
+    const draft = croppedOrder();
+    const state = fixture([review(draft)]);
+    state.importStatus = { imported: 0, issues: [`old.jpeg, Zeile 1: ${message}`] };
+    const imported = redrop(state, [screenshot([], [{ ...draft, id: "new" }], "renamed.jpeg")]).state;
+    const corrected = transactionSchema.parse({ ...draft, date: "2026-09-21",
+      category: "Shopping", manualCategory: true, categoryOverride: true, reviewed: true });
+    expect(commitStatementImport(imported, [corrected]).state.importStatus?.issues).toEqual([]);
+  });
+
+  it.each([false, true])("keeps another uncertain OCR merchant and its linked warning until explicit confirmation (stored=%s)", (stored) => {
+    const uncertain = (id: string, amount: number): StatementDraft => ({
+      ...booking(id), pocket: "Amex", description: "SPAR Testmarkt", amount,
+      rawDetails: ["Amex-Screenshot", "OCR-Händler unklar", "SPAR Testmarkt", "20 Sep 2026",
+        `€ ${Math.abs(amount).toFixed(2).replace(".", ",")}`],
+    });
+    const first = uncertain("first", -12);
+    const second = uncertain("second", -14);
+    let state = redrop(fixture(), [screenshot([], [first, second])]).state;
+    if (stored) state = queueLedgerReview({ ...state, transactions: [transactionSchema.parse(second)] });
+    const choose = (draft: StatementDraft) => transactionSchema.parse({ ...draft,
+      category: "Lebensmittel", manualCategory: true, categoryOverride: true, reviewed: true });
+    state = queueLedgerReview(commitStatementImport(state, [choose(first)]).state);
+    expect(state.transactions).toHaveLength(stored ? 2 : 1);
+    expect(state.reviewQueue).toHaveLength(1);
+    expect(state.reviewQueue?.[0]).toMatchObject({ id: second.id, importIssues: [`synthetic.png, Zeile 2: ${message}`] });
+    expect(state.importStatus?.issues).toEqual([`synthetic.png, Zeile 2: ${message}`]);
+    state = queueLedgerReview(commitStatementImport(state, [choose(second)]).state);
+    expect(state.transactions).toHaveLength(2);
+    expect(state.reviewQueue).toEqual([]);
+    expect(state.importStatus?.issues).toEqual([]);
+  });
+
+  it.each([
+    ["unconfirmed row", { reviewed: false }],
+    ["changed amount", { amount: -101 }],
+    ["different holder", { pocket: "AMEX Raphael" }],
+    ["different order", { description: "AMZN MKTP DE*OTHERORDER AMZN.COM/BILL" }],
+    ["different occurrence", { occurrence: 2 }],
+    ["different reference", { bankReference: "other" }],
+    ["uncertain merchant", { rawDetails: [...croppedOrder().rawDetails!, "OCR-Händler unklar"] }],
+  ] satisfies [string, Partial<Transaction>][])("keeps the missing-date review for %s", (_, change) => {
+    const corrected = transactionSchema.parse({ ...croppedOrder(), id: "saved", date: "2026-09-21",
+      category: "Shopping", manualCategory: true, categoryOverride: true, reviewed: true, ...change });
+    const result = redrop(fixture([], [corrected]), [screenshot([], [croppedOrder()])]);
+    expect(result.prepared.review).toHaveLength(1);
+    expect(result.prepared.issues).toHaveLength(1);
+  });
+
+  it("does not use an ordinary same-price purchase or conflicting confirmed dates to close a crop", () => {
+    const corrected = transactionSchema.parse({ ...croppedOrder(), id: "saved", date: "2026-09-21",
+      category: "Shopping", manualCategory: true, categoryOverride: true, reviewed: true });
+    const conflicting = { ...corrected, id: "other-date", date: "2026-09-20" };
+    expect(redrop(fixture([], [corrected, conflicting]), [screenshot([], [croppedOrder()])]).prepared.review).toHaveLength(1);
+    const ordinary = { ...croppedOrder(), description: "SPAR", rawDetails: ["Amex-Screenshot", "SPAR", "€ 100,84"] };
+    expect(redrop(fixture([], [{ ...corrected, ...ordinary, date: corrected.date, amount: -100.84 }]),
+      [screenshot([], [ordinary])]).prepared.review).toHaveLength(1);
+  });
+
   it("reconciles legacy date/holder and null-amount drafts without multiplying a genuinely cropped order", () => {
     const second = booking("new-second", { date: "2026-09-19", amount: -4.8,
       rawDetails: ["Amex-Screenshot", merchant, "19 Sep 2026 - RAPHAEL PIBER", "€ 4,80"] });

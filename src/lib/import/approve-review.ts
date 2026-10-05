@@ -96,7 +96,7 @@ export function approveReviewedBooking(
     !ordinary(selected)) return;
   const item = state.reviewQueue?.find((entry): entry is BookingReview =>
     entry.kind === "booking" && entry.draft.id === selected.id);
-  if (!item || item.draft.amount === null) return;
+  if (!item || item.draft.amount === null || !item.draft.date || item.importIssues?.length) return;
   if (selected.merchantAlias || item.draft.merchantAlias) return;
   const key = merchantRuleKey(item.draft);
   if (!isSpecificMerchantKey(key) || ambiguousMerchant(item.draft) || unresolvedTerminal(item.draft.description)) return;
@@ -106,7 +106,7 @@ export function approveReviewedBooking(
   if (index.byId.has(selected.id) ? merchantRuleKey(selected) !== key
     : statementFingerprint(source) !== statementFingerprint(selected)) return;
   const reviews = index.reviews.get(key) ?? [];
-  if (reviews.some((entry) => entry.draft.amount === null)) return;
+  if (reviews.some((entry) => entry.draft.amount === null || !entry.draft.date || entry.importIssues?.length)) return;
   const affected = new Map([[source.id, source], ...(index.merchants.get(key) ?? []).map((row) => [row.id, row] as const)]);
   for (const review of reviews)
     if (!affected.has(review.draft.id)) affected.set(review.draft.id, transactionSchema.parse(review.draft));

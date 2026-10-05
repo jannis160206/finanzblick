@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { FileUp, LoaderCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -41,6 +41,7 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { accountLabel } from "@/lib/accounts";
 import { isAmexScreenshot } from "@/lib/import/identity";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
+import { screenshotReviewMessage } from "@/lib/import/amex-screenshot";
 
 type Pending = {
   requestId: string;
@@ -74,6 +75,7 @@ const BookingReview = memo(function BookingReview({
   skip: () => void;
 }) {
   const repairOcr = isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:");
+  const feedbackId = useId();
   const [editingName, setEditingName] = useState(false);
   const nameInput = useRef<HTMLInputElement>(null);
   const nameMissing = editingName && draft.merchantAlias !== undefined && !draft.merchantAlias.trim();
@@ -100,14 +102,16 @@ const BookingReview = memo(function BookingReview({
       className="panel space-y-3 p-4"
       aria-label={`Buchung prüfen: ${item.draft.description}`}
     >
-      <p className="text-xs text-muted-foreground break-words">
-        {item.message}
-        {repairOcr && " Ausgaben −, Gutschriften +."}
+      <p id={feedbackId} className="text-xs text-muted-foreground break-words">
+        {repairOcr ? screenshotReviewMessage(draft) : item.message}
+        {repairOcr && item.draft.amount === null && " Ausgaben −, Gutschriften +."}
       </p>
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
         <label className="space-y-1 text-xs">
           Datum
           <Input aria-label="Datum" type="date" value={draft.date} readOnly={!repairOcr}
+            aria-invalid={repairOcr && !transactionSchema.shape.date.safeParse(draft.date).success}
+            aria-describedby={repairOcr ? feedbackId : undefined}
             onChange={repairOcr ? (event) => changeDraft(item.id, { ...draft, date: event.target.value }) : undefined} />
         </label>
         <div className="space-y-1 text-xs">

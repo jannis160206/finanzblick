@@ -78,6 +78,21 @@ function approve(state: AppState, selected: Transaction) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("incremental booking review approval", () => {
+  it("uses full reconciliation for linked import warnings and incomplete-date merchant twins", () => {
+    const first = booking("first", { bank: "Amex", pocket: "Amex", description: "AMZN MKTP DE*TESTORDER9" });
+    const state = fixture([first]);
+    state.reviewQueue = [{ kind: "booking", id: first.id, draft: first, message: "OCR-Hinweis",
+      importIssues: ["synthetic.jpeg: OCR-Hinweis"] }];
+    const selected = choose(state, first.id);
+    expect(approveReviewedBooking(state, selected)).toBeUndefined();
+    expect(reference(state, selected).state.importStatus).toBeUndefined();
+    state.reviewQueue = [pending(first), {
+      kind: "booking", id: "cropped", message: "Amex-Screenshot: Datum fehlt – bitte ergänzen.",
+      draft: { ...first, id: "cropped", date: "", rawDetails: ["Amex-Screenshot", first.description, "€ 24,00"] },
+    }];
+    expect(approveReviewedBooking(state, selected)).toBeUndefined();
+  });
+
   it("updates every stored booking of the merchant, without crossing bank boundaries", () => {
     const state = fixture([
       booking("first"),

@@ -43,6 +43,20 @@ export function screenshotAmount(text: string): number | null {
 const dateLike = (text: string) => /^\d{1,2}[.\s]+[a-zä?.]+(?:\s+\S+)?$/i.test(text) || datePattern.test(text);
 const chrome = (text: string) => /^(?:Filtern|Sortieren nach|(?:Aktuelle|Kürzliche)\s*(?:Transaktionen)?|Transaktionen|\d+\s+Transaktionen|Vorgemerkt|Ausstehend)$/i.test(text);
 
+export function screenshotReviewMessage(draft: StatementDraft): string {
+  const parsed = transactionSchema.safeParse(draft);
+  const invalid = parsed.success ? [] : parsed.error.issues.map((issue) => issue.path[0]);
+  const fields = [
+    ["description", "Händler"], ["date", "Datum"], ["amount", "Betrag"],
+  ].filter(([field]) => invalid.includes(field)).map(([, label]) => label);
+  if (draft.rawDetails?.includes("OCR-Händler unklar") && !fields.includes("Händler")) fields.unshift("Händler");
+  if (draft.pocket === "AMEX ungeklärt") fields.push("Karteninhaber");
+  if (fields.length === 1 && fields[0] === "Datum" && !draft.date)
+    return "Amex-Screenshot: Datum fehlt – bitte ergänzen.";
+  return fields.length ? `Amex-Screenshot: ${fields.join(", ")} prüfen.`
+    : "Amex-Screenshot: Angaben bestätigen.";
+}
+
 export function screenshotContentTop(lines: ScreenshotLine[]): number | null {
   const period = lines.find((line) => /\d{1,2}\.\d{1,2}\.\d{4}\s*[-–]\s*Aktuell/i.test(line.text));
   const card = lines.find((line) => /Karte[nm]*ummer\s*[-:•* ]+\d+/i.test(line.text));
@@ -109,7 +123,7 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
     } else {
       result.skipped++;
       result.issues.push({ file, line: groups.indexOf(group) + 1, draft,
-        message: "Amex-Screenshot: Händler, Datum oder Eurobetrag nicht eindeutig lesbar – bitte mit dem Bild abgleichen." });
+        message: screenshotReviewMessage(draft) });
     }
     if (result.rows.length + result.issues.length > MAX_STATEMENT_ROWS) throw new Error("Zu viele Buchungen im Screenshot.");
   }
