@@ -31,6 +31,7 @@ export type StatementResult = {
   issues: StatementIssue[];
   pocketSnapshots?: PocketSnapshot[];
   accountSnapshots?: AppState["accountSnapshots"];
+  amexBalanceSnapshots?: AppState["amexBalanceSnapshots"];
 };
 export type StatementPreview = {
   rows: Transaction[];

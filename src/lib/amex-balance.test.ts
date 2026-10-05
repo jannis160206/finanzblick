@@ -6,7 +6,6 @@ import { amexFunding } from "./amex-balance";
 import { exportWorkbook, parseWorkbook } from "./excel";
 import { refreshPlanning } from "./planning";
 import { monthlyVariableBudget } from "./variable-budgets";
-import { matchPlannedOneOffs } from "./planned-one-offs";
 import { appStateSchema, type AppState, type Transaction } from "./types";
 import { legacyFingerprint } from "./import/identity";
 
@@ -25,10 +24,127 @@ function fixture(transactions: Transaction[] = [], reserved = 0): AppState {
 }
 function funding(state: AppState) {
   const bookings = actualBookings(state);
-  return amexFunding(state, bookings, matchPlannedOneOffs(state.plannedOneOffs, bookings));
+  return amexFunding(state, bookings);
 }
 
 describe("Amex funding gap", () => {
+  it("uses the 1619.19 EUR current bill instead of accumulating historical statements, then deducts halves and repayment reserve", () => {
+    const state = fixture([
+      booking("historical", -7650.34, { date: "2026-08-15", sharedWithRaphael: true }),
+      booking("ikea", -207.82, { date: "2026-10-02", description: "IKEA Klagenfurt", sharedWithRaphael: true }),
+      booking("airbnb", -126, { date: "2026-10-03", description: "Airbnb", sharedWithRaphael: true }),
+      booking("tapeso", -164.9, { date: "2026-10-02", description: "Mollie Tapeso", sharedWithRaphael: true }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 }];
+    state.accountSnapshots = [{ bank: "Revolut", name: "Amex Rückzahlung", date: "2026-10-04", balance: 954 }];
+    const before = structuredClone(state);
+    expect(funding(state)).toMatchObject({
+      outstanding: 1619.19, ownOutstanding: 1369.83, reserved: 954, shortfall: 415.83, additional: 415.83,
+    });
+    expect(calculateDashboard(state).current.amexOpen).toBe(415.83);
+    expect(state).toEqual(before);
+  });
+
+  it("subtracts only current Raphael card spending, not old shared payments or other Revolut pockets", () => {
+    const state = fixture([
+      booking("old-shared", -500, { date: "2026-08-15", sharedWithRaphael: true }),
+      booking("raphael", -50, { date: "2026-09-25", pocket: "AMEX Raphael" }),
+      booking("shared", -100, { date: "2026-09-26", sharedWithRaphael: true }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-05", balance: 300 }];
+    state.accountSnapshots = [
+      { bank: "Revolut", name: "Amex Rückzahlung (EUR)", date: "2026-10-03", balance: 75 },
+      { bank: "Revolut", name: "Sparkonto", date: "2026-10-04", balance: 999 },
+      { bank: "Revolut", name: "Amex Raphael", date: "2026-10-04", balance: 999 },
+    ];
+    expect(funding(state)).toMatchObject({ outstanding: 300, ownOutstanding: 200, reserved: 75, additional: 125 });
+    state.accountSnapshots[0].balance = 500;
+    expect(funding(state).additional).toBe(0);
+  });
+
+  it("applies payments and new charges only after a captured balance, deduping a bank/card repayment pair", () => {
+    const state = fixture([
+      booking("historic", -9999, { date: "2026-08-01" }),
+      booking("shared", -200, { date: "2026-09-25", sharedWithRaphael: true }),
+      booking("covered-payment", -999, { date: "2026-09-30", bank: "Raiffeisen", description: "American Express Europe" }),
+      booking("bank-payment", -100, { date: "2026-10-03", bank: "Raiffeisen", description: "Amex Abrechnung" }),
+      booking("card-payment", 100, { date: "2026-10-04", description: "ZAHLUNG/ÜBERWEISUNG ERHALTEN" }),
+      booking("new", -20, { date: "2026-10-05" }),
+    ]);
+    state.amexBalanceSnapshots = [
+      { periodStart: "2026-08-11", date: "2026-09-01", balance: 9999 },
+      { periodStart: "2026-09-11", date: "2026-10-02", balance: 200 },
+      { periodStart: "2026-10-11", date: "2026-10-12", balance: 9000 },
+    ];
+    expect(funding(state)).toMatchObject({ outstanding: 120, ownOutstanding: 70, additional: 70 });
+  });
+
+  it("keeps a header credit available for later purchases and uses each snapshot only once", () => {
+    const state = fixture([booking("new", -20, { date: "2026-10-05" })]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-02", balance: -10 }];
+    expect(funding(state)).toMatchObject({ outstanding: 10, ownOutstanding: 10, additional: 10 });
+    state.amexBalanceSnapshots.push({ periodStart: "2026-09-11", date: "2026-10-05", balance: 10 });
+    expect(funding(state).outstanding).toBe(10);
+  });
+
+  it.each([
+    ["2026-10-01", "2026-10-03", "2026-10-02"],
+    ["2026-10-03", "2026-10-01", "2026-10-02"],
+    ["2026-09-10", "2026-09-12", "2026-09-11"],
+  ])("does not deduct a repayment twice across the captured balance: bank %s, card %s, snapshot %s", (bankDate, cardDate, captureDate) => {
+    const state = fixture([
+      booking("purchase", -200, { date: "2026-09-11" }),
+      booking("bank-payment", -100, { date: bankDate, bank: "Raiffeisen", description: "Amex Abrechnung" }),
+      booking("card-payment", 100, { date: cardDate, description: "ZAHLUNG/ÜBERWEISUNG ERHALTEN" }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: captureDate, balance: 100 }];
+    expect(funding(state)).toMatchObject({ outstanding: 100, ownOutstanding: 100, additional: 100 });
+  });
+
+  it("retains overpayments after an authoritative balance as credit for subsequent purchases", () => {
+    const state = fixture([
+      booking("settlement", -150, { date: "2026-10-03", bank: "Raiffeisen", description: "Amex Abrechnung" }),
+      booking("purchase", -75, { date: "2026-10-04" }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-02", balance: 100 }];
+    expect(funding(state)).toMatchObject({ outstanding: 25, ownOutstanding: 25, additional: 25 });
+  });
+
+  it.each([
+    { pocket: "Amex Raphael" },
+    { sharedWithRaphael: true },
+    { pocket: "Amex" },
+  ])("does not reuse exhausted captured account credit for a later personal purchase: %j", (patch) => {
+    const state = fixture([
+      booking("first", -100, { date: "2026-10-03", ...patch }),
+      booking("personal", -100, { date: "2026-10-04" }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-02", balance: -100 }];
+    expect(funding(state)).toMatchObject({ outstanding: 100, ownOutstanding: 100, additional: 100 });
+  });
+
+  it("reduces a partial captured balance with later Raphael refunds and carries excess credit across cardholders", () => {
+    const state = fixture([
+      booking("refund", 20, { date: "2026-10-03", pocket: "Amex Raphael" }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-02", balance: 100 }];
+    expect(funding(state)).toMatchObject({ outstanding: 80, ownOutstanding: 80, additional: 80 });
+    state.transactions[0].amount = 120;
+    state.transactions.push(booking("purchase", -75, { date: "2026-10-04" }));
+    expect(funding(state)).toMatchObject({ outstanding: 55, ownOutstanding: 55, additional: 55 });
+  });
+
+  it("subtracts a shared refund from the personal half instead of subtracting it a second time from the header", () => {
+    const state = fixture([
+      booking("shared", -400, { date: "2026-09-25", description: "IKEA", sharedWithRaphael: true }),
+      booking("refund", 100, { date: "2026-09-26", description: "IKEA" }),
+    ]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-02", balance: 300 }];
+    expect(funding(state)).toMatchObject({ outstanding: 300, ownOutstanding: 150, additional: 150 });
+    state.transactions.push(booking("later-refund", 100, { date: "2026-10-04", description: "IKEA" }));
+    expect(funding(state)).toMatchObject({ outstanding: 200, ownOutstanding: 100, additional: 100 });
+  });
+
   it("subtracts the available Amex reserve from net imported charges, then reduces surplus once", () => {
     const state = fixture([booking("one", -1000), booking("two", -619.19), booking("credit", 112.70)], 500);
     const d = calculateDashboard(state);
@@ -122,35 +238,35 @@ describe("Amex funding gap", () => {
     expect(funding(state)).toMatchObject({ outstanding: 50.02, ownOutstanding: 25.01, additional: 25.01 });
   });
 
-  it("keeps already planned variable spending within the unchanged allowance, adding only the excess", () => {
+  it("shows the complete funding gap without subtracting a variable allowance", () => {
     const state = fixture([
       booking("grocery", -300, { date: "2026-10-01", description: "BILLA", category: "Lebensmittel", includeInPlan: true }),
     ]);
-    expect(funding(state)).toMatchObject({ shortfall: 300, plannedCoverage: 250, additional: 50 });
+    expect(funding(state)).toMatchObject({ shortfall: 300, plannedCoverage: 0, additional: 300 });
     const before = state.financeRows;
     const d = calculateDashboard(state);
     expect(state.financeRows).toBe(before);
     expect(d.plan.rows.find((row) => row.id === "food")?.total).toBe(250);
     state.transactions.push(booking("paid-grocery", -50, { bank: "Raiffeisen", date: "2026-10-02", description: "BILLA", category: "Lebensmittel", includeInPlan: true }));
-    expect(funding(state)).toMatchObject({ plannedCoverage: 200, additional: 100 });
+    expect(funding(state)).toMatchObject({ plannedCoverage: 0, additional: 300 });
   });
 
-  it("does not consume an allowance for refunded card spending", () => {
+  it("reduces the gap by real refunds, not by a budget allowance", () => {
     const state = fixture([
       booking("grocery", -300, { date: "2026-10-01", description: "BILLA", category: "Lebensmittel", includeInPlan: true }),
       booking("refund", 100, { date: "2026-10-02", description: "BILLA", category: "Lebensmittel", includeInPlan: true }),
     ]);
-    expect(funding(state)).toMatchObject({ ownOutstanding: 200, plannedCoverage: 200, additional: 0 });
+    expect(funding(state)).toMatchObject({ ownOutstanding: 200, plannedCoverage: 0, additional: 200 });
   });
 
-  it("restores budget capacity for a refund of a paid bank purchase, independently of import order", () => {
+  it("does not treat a refunded bank purchase as money in the Amex reserve", () => {
     const rows = [
       booking("paid", -100, { bank: "Raiffeisen", date: "2026-10-01", description: "BILLA", category: "Lebensmittel", includeInPlan: true }),
       booking("refund", 100, { bank: "Raiffeisen", date: "2026-10-02", description: "BILLA", category: "Lebensmittel", includeInPlan: true }),
       booking("card", -250, { date: "2026-10-03", description: "BILLA", category: "Lebensmittel", includeInPlan: true }),
     ];
-    expect(funding(fixture(rows))).toMatchObject({ plannedCoverage: 250, additional: 0 });
-    expect(funding(fixture(rows.reverse()))).toMatchObject({ plannedCoverage: 250, additional: 0 });
+    expect(funding(fixture(rows))).toMatchObject({ plannedCoverage: 0, additional: 250 });
+    expect(funding(fixture(rows.reverse()))).toMatchObject({ plannedCoverage: 0, additional: 250 });
   });
 
   it.each([100, 400])("matches a %s EUR refund to the shared merchant instead of a preceding personal purchase", (refund) => {
@@ -172,18 +288,18 @@ describe("Amex funding gap", () => {
     expect(funding(state)).toMatchObject({ outstanding: 0, ownOutstanding: 0, additional: 0 });
   });
 
-  it("does not count fixed costs and matched one-offs twice, including shared halves", () => {
+  it("does not erase unpaid fixed or planned card charges by treating plans as cash reserves", () => {
     const state = fixture([
       booking("fee", -65, { date: "2026-10-01", description: "Monatsgebühr", category: "AMEX Monatsgebühr" }),
       booking("cabinet", -400, { date: "2026-10-02", sharedWithRaphael: true }),
     ]);
     state.financeRows.push({ id: "fee", kind: "fixed", label: "AMEX Monatsgebühr", planCategory: "AMEX Monatsgebühr", values: { "2026-10": 65 } });
     state.plannedOneOffs = [{ id: "cabinet", name: "Schrank", date: "2026-10-02", amount: 400, pocket: "Giro", installments: 1, sharedWithRaphael: true }];
-    expect(funding(state)).toMatchObject({ ownOutstanding: 265, plannedCoverage: 265, additional: 0 });
+    expect(funding(state)).toMatchObject({ ownOutstanding: 265, plannedCoverage: 0, additional: 265 });
     const d = calculateDashboard(state);
     expect(d.current.fixed).toBe(65);
     expect(d.current.plannedOneOffs).toBe(200);
-    expect(d.current.amexOpen).toBe(0);
+    expect(d.current.amexOpen).toBe(265);
   });
 
   it("includes Amex fixed receipts in the liability exactly once when their ledger booking is also present", () => {
@@ -192,9 +308,9 @@ describe("Amex funding gap", () => {
     const key = legacyFingerprint(row);
     state.fixedReceipts = [{ key, date: row.date, amount: row.amount, category: row.category, booking: row }];
     state.financeRows.push({ id: "fee", kind: "fixed", label: "AMEX Monatsgebühr", values: { "2026-10": 65 } });
-    expect(funding(state)).toMatchObject({ outstanding: 65, ownOutstanding: 65, additional: 0 });
+    expect(funding(state)).toMatchObject({ outstanding: 65, ownOutstanding: 65, additional: 65 });
     state.transactions = [];
-    expect(funding(state)).toMatchObject({ outstanding: 65, ownOutstanding: 65, additional: 0 });
+    expect(funding(state)).toMatchObject({ outstanding: 65, ownOutstanding: 65, additional: 65 });
   });
 
   it("counts unresolved and manually excluded card purchases as liabilities without changing their classification", () => {
@@ -220,5 +336,14 @@ describe("Amex funding gap", () => {
     expect(calculateDashboard(restored).current.surplus).toBe(original.current.surplus);
     expect(restored.financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
     expect(restored.transactions).toEqual(state.transactions);
+  });
+
+  it("persists captured bill totals in JSON and Excel, including a snapshot without any imported rows", async () => {
+    const state = fixture([], 500);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 }];
+    for (const loaded of [appStateSchema.parse(JSON.parse(JSON.stringify(state))), (await parseWorkbook(await exportWorkbook(state))).state]) {
+      expect(loaded.amexBalanceSnapshots).toEqual(state.amexBalanceSnapshots);
+      expect(funding(loaded)).toMatchObject({ outstanding: 1619.19, additional: 1119.19 });
+    }
   });
 });

@@ -403,7 +403,7 @@ export function Months() {
                     "Amex offen",
                     timeline.map((row) => row.amexOpen),
                     false,
-                    `Karte ${currency(d.amex.outstanding)} · Eigenanteil ${currency(d.amex.ownOutstanding)} · Rücklage ${currency(d.amex.reserved)} · Bereits im Plan ${currency(d.amex.plannedCoverage)}`,
+                    `Karte ${currency(d.amex.outstanding)} · Eigenanteil ${currency(d.amex.ownOutstanding)} · Rücklage ${currency(d.amex.reserved)}`,
                   )}
                   {calculatedRow(
                     kind === "income"

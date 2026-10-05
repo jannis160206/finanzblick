@@ -24,8 +24,10 @@ export async function recognizeAmexScreenshot(worker: Worker, image: ImageLike):
   // Re-read isolated amounts: sparse OCR can omit the decimal comma on dark mode.
   // A disagreement between two valid readings is never silently accepted.
   for (const line of lines) {
-    if (line.bbox.y0 <= top) continue;
-    const money = line.bbox.x0 > right * 0.7;
+    const headerMoney = line.bbox.y1 <= top && line.text.includes("€");
+    if (line.bbox.y0 <= top && !headerMoney) continue;
+    if (headerMoney && screenshotAmount(line.text) !== null && line.confidence >= 65) continue;
+    const money = headerMoney || line.bbox.x0 > right * 0.7;
     const date = screenshotDate(line.text) !== null;
     const orderCode = /\b(?:AMAZON\.[A-Z.]+|AIRBNB)\s*\*/i.test(line.text);
     if (!money && (!date || line.confidence >= 75) && (!orderCode || line.confidence >= 85)) continue;

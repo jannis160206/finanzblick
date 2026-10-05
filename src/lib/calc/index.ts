@@ -746,7 +746,7 @@ export function calculateMonthTotals(
   bookings: AccountedTransaction[] = actualBookings(state),
   actuals = indexMonthlyActuals(bookings, state.settings.asOf),
   occurrences: PlannedOccurrence[] = matchPlannedOneOffs(state.plannedOneOffs, bookings),
-  amex = amexFunding(state, bookings, occurrences),
+  amex = amexFunding(state, bookings),
 ) {
   const goalExtras = sum(savingsGoals(state).map((goal) => goalExtraIncome(goal, month)));
   const income = round(goalExtras + sum(
@@ -836,7 +836,7 @@ export function calculateDashboard(state: AppState) {
   const bookings = actualBookings(state);
   const actuals = indexMonthlyActuals(bookings, state.settings.asOf);
   const plannedOneOffs = matchPlannedOneOffs(state.plannedOneOffs, bookings);
-  const amex = amexFunding(state, bookings, plannedOneOffs);
+  const amex = amexFunding(state, bookings);
   const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs, amex);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);

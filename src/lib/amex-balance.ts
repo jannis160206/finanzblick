@@ -1,15 +1,11 @@
 import type { AppState, Transaction } from "@/lib/types";
-import { classify } from "@/lib/calc";
-import { matchingFixedRow } from "@/lib/fixed";
 import { personalAmount, type AccountedTransaction } from "@/lib/shared-holiday";
-import type { PlannedOccurrence } from "@/lib/planned-one-offs";
-import { monthlyVariableBudget, variableBudgetId } from "@/lib/variable-budgets";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 
 const cents = (value: number) => Math.round(value * 100);
 const key = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("de-AT");
 const isCard = (row: Transaction) => /^(amex|american express)$/.test(key(row.bank));
-const ownPocket = (name: string | null) => /^(amex(?: jannis| konto| pocket)?|american express)$/.test(key(name ?? ""));
+const reservePocket = (name: string | null) => /^(amex(?: jannis| konto| pocket| rückzahlung| ruckzahlung| rueckzahlung)?|american express)(?: \(eur\))?$/.test(key(name ?? ""));
 const partner = (row: Transaction) => /\braphael\b/i.test(row.pocket ?? "");
 const source = (row: Transaction) => [row.description, row.rawDescription, ...(row.rawDetails ?? [])].join(" ");
 const cardPayment = (row: Transaction) => isCard(row) && row.amount > 0 &&
@@ -23,10 +19,10 @@ const bankPayment = (row: Transaction) => !isCard(row) && row.amount < 0 &&
 
 function reservedBalance(state: AppState) {
   const snapshot = (state.accountSnapshots ?? [])
-    .filter((item) => ownPocket(item.name) && item.date <= state.settings.asOf)
+    .filter((item) => item.bank === "Revolut" && reservePocket(item.name) && item.date <= state.settings.asOf)
     .sort((a, b) => b.date.localeCompare(a.date))[0];
   const movements = state.transactions.filter((row) => /^revolut$/i.test(row.bank) &&
-    ownPocket(row.pocket) && row.date <= state.settings.asOf && (!snapshot || row.date > snapshot.date));
+    reservePocket(row.pocket) && row.date <= state.settings.asOf && (!snapshot || row.date > snapshot.date));
   return Math.max(0, cents(snapshot?.balance ?? 0) + movements.reduce((total, row) => total + cents(row.amount), 0));
 }
 
@@ -35,7 +31,6 @@ type OpenCharge = {
   remaining: number;
   ownRemaining: number;
   refundable: number;
-  ownRefunded: number;
   merchant: string | undefined;
 };
 
@@ -43,50 +38,88 @@ type OpenCharge = {
 export function amexFunding(
   state: AppState,
   bookings: AccountedTransaction[],
-  occurrences: PlannedOccurrence[],
 ) {
+  const snapshot = (state.amexBalanceSnapshots ?? []).filter((item) => item.date <= state.settings.asOf)
+    .sort((a, b) => b.date.localeCompare(a.date) || b.periodStart.localeCompare(a.periodStart))[0];
   const rows = bookings.filter((row) => row.date <= state.settings.asOf);
   const cards = rows.filter(isCard);
   const payments = rows.filter(bankPayment);
   const matched = new Set<string>();
+  const covered = new Set<string>();
   for (const row of cards.filter(cardPayment)) {
     const duplicate = payments.find((payment) => !matched.has(payment.id) &&
       cents(-payment.amount) === cents(row.amount) &&
       Math.abs(Date.parse(payment.date) - Date.parse(row.date)) <= 3 * 86_400_000);
-    if (duplicate) matched.add(duplicate.id);
+    if (duplicate) {
+      matched.add(duplicate.id);
+      if (snapshot && duplicate.date <= snapshot.date) covered.add(row.id);
+    }
   }
-  const events = [...cards, ...payments.filter((row) => !matched.has(row.id))]
+  const events = [...cards.filter((row) => !covered.has(row.id)), ...payments.filter((row) => !matched.has(row.id))]
+    .filter((row) => !snapshot || row.date >= snapshot.periodStart)
     .sort((a, b) => a.date.localeCompare(b.date) ||
       Number(a.amount > 0 || bankPayment(a)) - Number(b.amount > 0 || bankPayment(b)));
   const open: OpenCharge[] = [];
   const credit = new Map<boolean, number>();
+  let snapshotCredit = 0;
   let ownCredit = 0;
-  const unmatchedRefunds = new Map<string, number>();
+  const repay = (amount: number) => {
+    for (const charge of open) {
+      if (!charge.remaining) continue;
+      const paid = Math.min(charge.remaining, amount);
+      charge.ownRemaining -= Math.round(paid * charge.ownRemaining / charge.remaining);
+      charge.remaining -= paid;
+      amount -= paid;
+      if (!amount) break;
+    }
+    return amount;
+  };
+  let aligned = false;
+  const alignSnapshot = () => {
+    if (!snapshot || aligned) return;
+    aligned = true;
+    const balance = cents(snapshot.balance);
+    const known = open.reduce((total, charge) => total + charge.remaining, 0);
+    credit.clear();
+    ownCredit = 0;
+    if (known > Math.max(0, balance)) repay(known - Math.max(0, balance));
+    if (balance < 0) {
+      snapshotCredit = -balance;
+      ownCredit = -balance;
+    } else if (balance > known) {
+      // A partial scroll still has the full bill. This gap is not a saved booking.
+      const missing = balance - known;
+      open.push({ row: { id: "amex-unlisted-balance", date: snapshot.periodStart, bank: "Amex", pocket: "Amex",
+        description: "Amex-Saldo", amount: -missing / 100, category: "Prüfen", includeInPlan: false },
+        remaining: missing, ownRemaining: missing, refundable: missing, merchant: undefined });
+    }
+  };
   for (const row of events) {
+    if (snapshot && row.date > snapshot.date) alignSnapshot();
     const repayment = cardPayment(row) || bankPayment(row);
+    if (snapshot && repayment && row.date <= snapshot.date) continue;
     if (!repayment && row.amount < 0) {
-      const available = credit.get(partner(row)) ?? 0;
+      const available = aligned ? snapshotCredit : credit.get(partner(row)) ?? 0;
       const used = Math.min(available, cents(-row.amount));
-      credit.set(partner(row), available - used);
+      if (aligned) snapshotCredit -= used;
+      else credit.set(partner(row), available - used);
       const own = partner(row) ? 0 : cents(-personalAmount(row));
-      const ownUsed = Math.min(ownCredit, own);
+      const ownUsed = Math.min(ownCredit, own, aligned ? used : Infinity);
       ownCredit -= ownUsed;
+      if (aligned) ownCredit = Math.min(ownCredit, snapshotCredit);
       const remaining = cents(-row.amount) - used;
       open.push({ row, remaining, ownRemaining: Math.min(remaining, own - ownUsed),
-        refundable: cents(-row.amount), ownRefunded: 0, merchant: merchantAliasSourceKey(row) });
+        refundable: cents(-row.amount), merchant: merchantAliasSourceKey(row) });
       continue;
     }
     let amount = cents(Math.abs(row.amount));
     if (repayment) {
-      for (const charge of open) {
-        if (!charge.remaining) continue;
-        const paid = Math.min(charge.remaining, amount);
-        charge.ownRemaining -= Math.round(paid * charge.ownRemaining / charge.remaining);
-        charge.remaining -= paid;
-        amount -= paid;
-        if (!amount) break;
+      const excess = repay(amount);
+      if (aligned) {
+        snapshotCredit += excess;
+        ownCredit += excess;
       }
-      // Excess old settlements can belong to statements that were never imported.
+      // Without a snapshot, excess settlements may belong to missing old statements.
       continue;
     }
     const merchant = merchantAliasSourceKey(row);
@@ -101,18 +134,20 @@ export function amexFunding(
       const before = Math.round((gross - charge.refundable) * own / gross);
       charge.refundable -= refund;
       const share = Math.round((gross - charge.refundable) * own / gross) - before;
-      charge.ownRefunded += share;
       ownRefund += share;
       unmatched -= refund;
       if (!unmatched) break;
     }
     if (!partner(row)) {
       ownRefund += unmatched;
-      unmatchedRefunds.set(row.id, unmatched);
     }
     const preferred = new Set(matches);
     const refundable = [...matches, ...open.filter((charge) =>
       !preferred.has(charge) && partner(charge.row) === partner(row))];
+    if (aligned) {
+      const included = new Set(refundable);
+      refundable.push(...open.filter((charge) => !included.has(charge)));
+    }
     for (const charge of refundable) {
       const paid = Math.min(charge.remaining, amount);
       charge.remaining -= paid;
@@ -126,9 +161,12 @@ export function amexFunding(
       if (!ownRefund) break;
     }
     for (const charge of refundable) charge.ownRemaining = Math.min(charge.ownRemaining, charge.remaining);
-    credit.set(partner(row), (credit.get(partner(row)) ?? 0) + amount);
+    if (aligned) snapshotCredit += amount;
+    else credit.set(partner(row), (credit.get(partner(row)) ?? 0) + amount);
     ownCredit += ownRefund;
+    if (aligned) ownCredit = Math.min(ownCredit, snapshotCredit);
   }
+  alignSnapshot();
   const ownOpen = open.filter((item) => !partner(item.row)).map((item) => ({
     row: item.row,
     amount: item.ownRemaining,
@@ -139,61 +177,5 @@ export function amexFunding(
   const shortfall = Math.max(0, ownOutstanding - reserved);
   const balance = { outstanding: outstanding / 100, ownOutstanding: ownOutstanding / 100,
     reserved: reserved / 100, shortfall: shortfall / 100 };
-  if (!shortfall) return { ...balance, plannedCoverage: 0, additional: 0 };
-  const month = state.settings.asOf.slice(0, 7);
-  const capacities = new Map<string, number>();
-  for (const row of monthlyVariableBudget(month, state.holidayRanges).rows)
-    capacities.set(`budget:${row.id}`, cents(row.total));
-  for (const row of state.financeRows.filter((row) => row.kind === "fixed"))
-    capacities.set(`fixed:${row.id}`, cents(Math.max(0, row.values[month] ?? 0)));
-  const planned = new Map(occurrences.filter((item) => item.bookingId && item.date.slice(0, 7) === month)
-    .map((item) => [item.bookingId!, item]));
-  for (const item of planned.values()) capacities.set(item.id, cents(item.ownAmount));
-  const coverageKeys = new Map<string, string | undefined>();
-  const findCoverage = (row: AccountedTransaction) => {
-    const occurrence = planned.get(row.id);
-    if (occurrence) return occurrence.id;
-    if (row.date.slice(0, 7) !== month) return;
-    const result = classify(row);
-    if (result.isTransfer) return;
-    if (result.isFixedCost) {
-      const fixed = matchingFixedRow(state, result.category, row) ??
-        (isCard(row) && /^monatsgeb/i.test(row.description)
-          ? matchingFixedRow(state, "AMEX Monatsgebühr", row) : undefined);
-      return fixed ? `fixed:${fixed.id}` : undefined;
-    }
-    const budget = result.includeInPlan ? variableBudgetId(result.category, row.fixedCost) : undefined;
-    return budget ? `budget:${budget}` : undefined;
-  };
-  const coverageKey = (row: AccountedTransaction) => {
-    if (!coverageKeys.has(row.id)) coverageKeys.set(row.id, findCoverage(row));
-    return coverageKeys.get(row.id);
-  };
-  const openById = new Map(ownOpen.map((item) => [item.row.id, item.amount]));
-  const refundedById = new Map(open.map((item) => [item.row.id, item.ownRefunded]));
-  const consumed = new Map<string, number>();
-  // The same allowance cannot cover both paid purchases and the outstanding card bill.
-  for (const row of rows) {
-    const group = coverageKey(row);
-    if (!group || partner(row)) continue;
-    const used = isCard(row) && row.amount > 0
-      ? -(unmatchedRefunds.get(row.id) ?? 0)
-      : cents(-personalAmount(row)) - (openById.get(row.id) ?? 0) - (refundedById.get(row.id) ?? 0);
-    consumed.set(group, (consumed.get(group) ?? 0) + used);
-  }
-  for (const [group, used] of consumed)
-    capacities.set(group, Math.max(0, (capacities.get(group) ?? 0) - Math.max(0, used)));
-  let plannedCoverage = 0;
-  for (const item of ownOpen) {
-    const group = coverageKey(item.row);
-    if (!group) continue;
-    const covered = Math.min(item.amount, capacities.get(group) ?? 0);
-    plannedCoverage += covered;
-    capacities.set(group, (capacities.get(group) ?? 0) - covered);
-  }
-  return {
-    ...balance,
-    plannedCoverage: Math.min(shortfall, plannedCoverage) / 100,
-    additional: Math.max(0, shortfall - plannedCoverage) / 100,
-  };
+  return { ...balance, plannedCoverage: 0, additional: shortfall / 100 };
 }

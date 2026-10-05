@@ -19,6 +19,37 @@ const booking = (merchant: string, y: number, date = "4 Okt 2026", amount = "€
 const parse = (rows: ScreenshotLine[], file = "screen.png") => parseAmexScreenshotLines([...header, ...rows], file);
 
 describe("Amex app screenshot facts", () => {
+  it("stores the current total separately from bookings and repairs a duplicate-only import", () => {
+    const screenshot = parseAmexScreenshotLines([
+      line("11.09.2026 - Aktuell", 50), line("Kartennummer -12345", 80),
+      line("€ 1.619,19", 150), line("45 Transaktionen", 180),
+      ...booking("IKEA", 280),
+    ], "WhatsApp Image 2026-10-05 at 09.43.39.jpeg");
+    expect(screenshot.amexBalanceSnapshots).toEqual([{ periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 }]);
+    expect(screenshot.rows).toHaveLength(1);
+    const seed = createSeed();
+    seed.transactions = screenshot.rows;
+    const prepared = prepareStatementImport([screenshot, screenshot], seed);
+    expect(prepared.automatic).toEqual([]);
+    expect(prepared.duplicates).toBe(2);
+    const saved = commitStatementImport(seed, [], [], prepared.metadata).state;
+    expect(saved.transactions).toHaveLength(1);
+    expect(saved.amexBalanceSnapshots).toEqual(screenshot.amexBalanceSnapshots);
+    const again = prepareStatementImport([screenshot], saved);
+    expect(commitStatementImport(saved, [], [], again.metadata).state.amexBalanceSnapshots).toEqual(saved.amexBalanceSnapshots);
+  });
+
+  it.each([
+    { text: "€ 161919", confidence: 95 },
+    { text: "€ 1.619,19", confidence: 20 },
+    { text: "€ 1.619,19", confidence: 95, uncertain: true },
+  ])("never uses an uncertain header total as a saved balance ($text, $confidence)", (total) => {
+    const result = parse([ { ...line(total.text, 150), ...total }, line("45 Transaktionen", 180), ...booking("IKEA", 280) ]);
+    expect(result.amexBalanceSnapshots).toBeUndefined();
+    expect(result.rows).toHaveLength(1);
+    expect(result.issues[0].message).toContain("Amex-Saldo");
+  });
+
   it.each([["€ 12,34", -12.34], ["-€ 12,34", 12.34], ["−€ 1.234,56", 1234.56], ["€ -12,34", 12.34]])("reads ledger sign for %s", (text, expected) => {
     expect(screenshotAmount(text)).toBe(expected);
   });

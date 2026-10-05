@@ -6,7 +6,7 @@ import { createWorker, OEM, type Worker } from "tesseract.js";
 import { localOcrLanguages, recognizeAmexScreenshot } from "./amex-ocr";
 import { parseAmexScreenshotLines } from "./amex-screenshot";
 import { prepareStatementPreview } from "./statements";
-import { classifyStatementRows } from "@/lib/calc";
+import { calculateDashboard, classifyStatementRows } from "@/lib/calc";
 import { createSeed } from "@/lib/seed";
 import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
 import { synchronizePlan } from "@/lib/planning";
@@ -54,6 +54,7 @@ it.skipIf(!existsSync(example))("recognizes both private local examples without 
     }
     const upper = results.find((result) => result.rows.some((row) => row.description.startsWith("AIRBNB")))!;
     const lower = results.find((result) => result.rows.some((row) => row.description.includes("PLAYSTATION")))!;
+    expect(upper.amexBalanceSnapshots).toEqual([{ periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 }]);
     expect(upper.rows.map((row) => row.amount)).toEqual([-126, -15.43, -28.93, -6.97, -207.82, -164.9, -12.3, -90.9]);
     expect(lower.rows.map((row) => row.amount)).toEqual([-15.99, -2.48, -32.64, -55.38, 11, -19.98, -19.95, -12.99, -25.71, 112.7]);
     expect(upper.rows.map((row) => row.date)).toEqual(["2026-10-03", "2026-10-03", ...Array(6).fill("2026-10-02")]);
@@ -80,6 +81,8 @@ it.skipIf(!existsSync(example))("recognizes both private local examples without 
     expect(state.reviewQueue).toEqual([]);
     expect(state.transactions.filter((row) => row.sharedWithRaphael).map((row) => row.amount)).toEqual([-126, -207.82, -164.9]);
     expect(state.transactions).toHaveLength(18);
+    expect(state.amexBalanceSnapshots).toEqual(upper.amexBalanceSnapshots);
+    expect(calculateDashboard(state).amex).toMatchObject({ outstanding: 1619.19, ownOutstanding: 1369.83 });
     expect(state.plannedOneOffs?.some((item) => item.name === "Teppich")).toBe(false);
     expect(prepareStatementImport(results, state)).toMatchObject({ automatic: [], review: [], duplicates: 18 });
   });

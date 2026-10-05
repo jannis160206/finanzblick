@@ -54,6 +54,7 @@ export type ImportMetadata = {
   pocketSnapshots?: PocketSnapshot[];
   fixedReceipts?: FixedReceipt[];
   accountSnapshots?: AppState["accountSnapshots"];
+  amexBalanceSnapshots?: AppState["amexBalanceSnapshots"];
   reviewQueue?: ReviewItem[];
   issues?: string[];
   reparsedFiles?: string[];
@@ -243,6 +244,9 @@ function receipt(row: Transaction, rowId?: string): FixedReceipt {
   };
 }
 function mergeMetadata(state: AppState, metadata: ImportMetadata): AppState {
+  const amexBalances = new Map((state.amexBalanceSnapshots ?? []).map((item) =>
+    [`${item.periodStart}|${item.date}`, item]));
+  for (const item of metadata.amexBalanceSnapshots ?? []) amexBalances.set(`${item.periodStart}|${item.date}`, item);
   const snapshots = new Map(
     (state.pocketSnapshots ?? []).map((item) => [
       `${item.pocket}|${item.date}`,
@@ -280,6 +284,7 @@ function mergeMetadata(state: AppState, metadata: ImportMetadata): AppState {
     accounts.set(`${item.name}|${item.date}`, item);
   return {
     ...state,
+    ...(amexBalances.size ? { amexBalanceSnapshots: [...amexBalances.values()] } : {}),
     ...(accounts.size ? { accountSnapshots: [...accounts.values()] } : {}),
     ...(snapshots.size
       ? {
@@ -505,6 +510,7 @@ export function prepareStatementImport(
       accountSnapshots: results.flatMap(
         (result) => result.accountSnapshots ?? [],
       ),
+      amexBalanceSnapshots: results.flatMap((result) => result.amexBalanceSnapshots ?? []),
       pocketSnapshots: results.flatMap(
         (result) => result.pocketSnapshots ?? [],
       ),

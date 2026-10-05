@@ -152,6 +152,11 @@ export const accountSnapshotSchema = z.object({
   date: dateSchema,
   balance: moneySchema,
 });
+export const amexBalanceSnapshotSchema = z.object({
+  periodStart: dateSchema,
+  date: dateSchema,
+  balance: moneySchema,
+}).refine((snapshot) => snapshot.periodStart <= snapshot.date, "Amex-Zeitraum beginnt nach dem Saldo-Datum");
 export const trBalanceSchema = z.object({
   date: dateSchema,
   balance: moneySchema.nonnegative(),
@@ -367,6 +372,7 @@ export const appStateSchema = z.object({
     .max(100_000)
     .optional(),
   accountSnapshots: z.array(accountSnapshotSchema).max(100_000).optional(),
+  amexBalanceSnapshots: z.array(amexBalanceSnapshotSchema).max(10_000).optional(),
   trBalances: z.array(trBalanceSchema).max(10_000).optional(),
   reviewQueue: z.array(reviewItemSchema).max(100_000).optional(),
   importStatus: z

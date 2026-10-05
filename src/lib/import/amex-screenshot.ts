@@ -1,5 +1,6 @@
 import { classifyStatementRows } from "@/lib/calc";
-import { transactionSchema } from "@/lib/types";
+import { amexBalanceSnapshotSchema, transactionSchema } from "@/lib/types";
+import { localToday } from "@/lib/planning";
 import { numberStatementRows } from "./identity";
 import { MAX_STATEMENT_ROWS } from "./limits";
 import { recoverMerchant } from "./merchant-description";
@@ -74,6 +75,19 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
     result.issues.push({ file, message: "Screenshot nicht eindeutig als Amex-Umsatzliste erkannt. Bitte Zeitraum und Kartennummer mit aufnehmen." });
     return result;
   }
+  const period = lines.find((line) => /\d{1,2}\.\d{1,2}\.\d{4}\s*[-–]\s*Aktuell/i.test(line.text));
+  const periodStart = period && !period.uncertain && period.confidence >= 65
+    ? parseStatementDate(period.text.match(/\d{1,2}\.\d{1,2}\.\d{4}/)![0]) : null;
+  const captureDate = parseStatementDate(file.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? localToday());
+  const headerAmounts = lines.filter((line) => line.bbox.y1 <= top && line.text.includes("€"));
+  const totals = headerAmounts.filter((line) => !line.uncertain && line.confidence >= 65)
+    .map((line) => screenshotAmount(line.text)).filter((amount) => amount !== null);
+  if (totals.length === 1) {
+    const snapshot = amexBalanceSnapshotSchema.safeParse({ periodStart, date: captureDate, balance: -totals[0] });
+    if (snapshot.success) result.amexBalanceSnapshots = [snapshot.data];
+  }
+  if (headerAmounts.length && !result.amexBalanceSnapshots)
+    result.issues.push({ file, message: "Amex-Saldo nicht eindeutig lesbar – bitte einen scharfen Screenshot mit Zeitraum und Gesamtbetrag verwenden." });
   const content = lines.map((line) => ({ ...line, text: clean(line.text) }))
     .filter((line) => line.bbox.y0 > top && line.text && !chrome(line.text));
   const right = Math.max(...lines.map((line) => line.bbox.x1));

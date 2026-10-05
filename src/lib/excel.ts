@@ -484,6 +484,7 @@ export async function parseWorkbook(
             appStateSchema
               .pick({
                 accountSnapshots: true,
+                amexBalanceSnapshots: true,
                 trBalances: true,
                 reviewQueue: true,
                 importStatus: true,
@@ -810,6 +811,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.fixedReceipts?.length ||
     state.planningRepairs?.length ||
     state.accountSnapshots ||
+    state.amexBalanceSnapshots ||
     state.trBalances ||
     state.reviewQueue ||
     state.importStatus ||
@@ -823,6 +825,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     automation.addRow(["Typ", "Auszugsdaten"]);
     if (
       state.accountSnapshots ||
+      state.amexBalanceSnapshots ||
       state.trBalances ||
       state.reviewQueue ||
       state.importStatus ||
@@ -833,6 +836,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
         "ux",
         JSON.stringify({
           accountSnapshots: state.accountSnapshots,
+          amexBalanceSnapshots: state.amexBalanceSnapshots,
           trBalances: state.trBalances,
           reviewQueue: state.reviewQueue,
           importStatus: state.importStatus,

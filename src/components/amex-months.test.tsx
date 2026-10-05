@@ -6,6 +6,8 @@ import { FinanceProvider, useFinance } from "./finance-provider";
 import { Months } from "./months";
 import { createSeed } from "@/lib/seed";
 import { currency, number } from "@/lib/format";
+import { parseAmexScreenshotLines, type ScreenshotLine } from "@/lib/import/amex-screenshot";
+import { prepareStatementImport } from "@/lib/import/review";
 import type { AppState } from "@/lib/types";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
@@ -82,4 +84,44 @@ it("shows the automatic gap inside variable costs and updates surplus after rese
   expect(monthCell("Amex offen", 10).textContent).toBe(number(175));
   act(() => restored.read().update((state) => ({ ...state, transactions: state.transactions.filter((item) => item.id !== "card") })));
   expect(monthCell("Amex offen", 10).textContent).toBe(number(0));
+});
+
+it("replaces the historical total with the screenshot balance on a duplicate-only import and persists the exact remaining gap", () => {
+  const initial = fixture();
+  initial.transactions[0].date = "2026-08-01";
+  initial.transactions[0].amount = -7650.34;
+  initial.transactions.push(...[
+    { id: "ikea", description: "IKEA KLAGENFURT", amount: -207.82 },
+    { id: "airbnb", description: "AIRBNB LONDON", amount: -126 },
+    { id: "tapeso", description: "MOLLIE TAPESO", amount: -164.9 },
+  ].map((row) => ({ ...initial.transactions[0], ...row, date: "2026-10-02", sharedWithRaphael: true })));
+  initial.accountSnapshots = [{ bank: "Revolut", name: "Amex Rückzahlung", date: "2026-10-04", balance: 954 }];
+  const view = mount(initial);
+  const before = structuredClone(view.read().state.transactions);
+  const line = (text: string, y: number, x = 30): ScreenshotLine =>
+    ({ text, confidence: 95, bbox: { x0: x, x1: x + 160, y0: y, y1: y + 20 } });
+  const result = parseAmexScreenshotLines([
+    line("11.09.2026 - Aktuell", 50), line("Kartennummer -12345", 80),
+    line("€ 1.619,19", 120), line("45 Transaktionen", 160),
+    ...initial.transactions.slice(1).flatMap((row, index) => [
+      line(row.description, 240 + index * 100), line("2 Okt 2026", 270 + index * 100),
+      line(`€ ${(-row.amount).toFixed(2).replace(".", ",")}`, 255 + index * 100, 500),
+    ]),
+  ], "WhatsApp Image 2026-10-05 at 09.43.39.jpeg");
+  const prepared = prepareStatementImport([result], view.read().state);
+  expect(prepared.automatic).toEqual([]);
+  expect(prepared.duplicates).toBe(3);
+  act(() => view.read().appendStatements([], prepared.duplicates, "capture-balance", [], prepared.metadata));
+  expect(view.read().state.transactions).toEqual(before);
+  expect(view.read().state.amexBalanceSnapshots).toEqual([{ periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 }]);
+  expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83));
+  expect(monthCell("Amex offen", 11).textContent).toBe(number(0));
+  expect(view.read().dashboard.amex).toMatchObject({ outstanding: 1619.19, ownOutstanding: 1369.83, reserved: 954 });
+  expect(view.read().saved).toBe(true);
+  view.unmount();
+  const loaded = mount();
+  expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83));
+  act(() => loaded.read().update((state) => ({ ...state, accountSnapshots: state.accountSnapshots!.map((row) =>
+    row.name === "Amex Rückzahlung" ? { ...row, balance: 854 } : row) })));
+  expect(monthCell("Amex offen", 10).textContent).toBe(number(515.83));
 });
