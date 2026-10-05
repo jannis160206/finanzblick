@@ -355,7 +355,9 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       }
       const prepared = prepareStatementImport(results, latestState.current);
       importMetadata.current = prepared.metadata;
-      if (prepared.issues.length) toast.error(prepared.issues.join("\n"));
+      if (prepared.issues.length) toast.error(prepared.issues.length === 1
+        ? prepared.issues[0]
+        : `${prepared.issues.length} Importhinweise – Details unter „Importhinweise“, unklare Buchungen im Prüfdialog.`);
       setUI({ review: prepared.review, open: prepared.review.length > 0 });
       commit(prepared.automatic, prepared.duplicates);
     } catch (error) {

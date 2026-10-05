@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
 import { expect, it } from "vitest";
@@ -14,8 +14,9 @@ import { commitStatementImport, prepareStatementImport, queueLedgerReview } from
 import { parseAmexText } from "./amex-pdf";
 import { GET } from "@/app/api/ocr/[asset]/route";
 
-const example = path.join(process.cwd(), "import-example", "WhatsApp Image 2026-10-05 at 09.43.39.jpeg");
-it.skipIf(!existsSync(example))("recognizes both private local examples without network OCR", async () => {
+const exampleDirectory = process.env.AMEX_SCREENSHOT_DIR ?? path.join(process.cwd(), "import-example");
+const example = path.join(exampleDirectory, "WhatsApp Image 2026-10-05 at 09.43.39.jpeg");
+async function withLocalWorker(run: (worker: Worker) => Promise<void>) {
   const resources = createServer(async (request, response) => {
     try {
       const asset = request.url?.split("/").at(-1) ?? "";
@@ -34,6 +35,14 @@ it.skipIf(!existsSync(example))("recognizes both private local examples without 
     worker = await createWorker(localOcrLanguages, OEM.LSTM_ONLY, {
       langPath: `http://127.0.0.1:${address.port}/api/ocr`, cacheMethod: "none",
     });
+    await run(worker);
+  } finally {
+    await worker?.terminate();
+    await new Promise<void>((resolve, reject) => resources.close((error) => error ? reject(error) : resolve()));
+  }
+}
+it.skipIf(!existsSync(example))("recognizes both private local examples without network OCR", async () => {
+  await withLocalWorker(async (worker) => {
     const results = [];
     for (const file of [example, example.replace(".jpeg", " (1).jpeg")]) {
       const parsed = parseAmexScreenshotLines(await recognizeAmexScreenshot(worker, readFileSync(file)), path.basename(file));
@@ -72,8 +81,36 @@ it.skipIf(!existsSync(example))("recognizes both private local examples without 
     expect(state.transactions).toHaveLength(18);
     expect(state.plannedOneOffs?.some((item) => item.name === "Teppich")).toBe(false);
     expect(prepareStatementImport(results, state)).toMatchObject({ automatic: [], review: [], duplicates: 18 });
-  } finally {
-    await worker?.terminate();
-    await new Promise<void>((resolve, reject) => resources.close((error) => error ? reject(error) : resolve()));
-  }
+  });
+}, 120_000);
+
+it.skipIf(!process.env.AMEX_SCREENSHOT_DIR)("recognizes the complete supplied scroll without guessing its cropped date", async () => {
+  await withLocalWorker(async (worker) => {
+    const files = readdirSync(exampleDirectory).filter((file) => /^WhatsApp Image.*\.jpe?g$/i.test(file)).sort();
+    expect(files).toHaveLength(5);
+    const results = [];
+    for (const file of files) {
+      results.push(parseAmexScreenshotLines(
+        await recognizeAmexScreenshot(worker, readFileSync(path.join(exampleDirectory, file))), file,
+      ));
+    }
+    const issues = results.flatMap((result) => result.issues);
+    expect(issues).toHaveLength(1);
+    expect(issues[0].draft).toMatchObject({ date: "", bank: "Amex", pocket: "Amex" });
+    expect(issues[0].draft?.amount).toBeLessThan(0);
+    expect(issues[0].draft?.description).toMatch(/^AMZN MKTP/);
+    const preview = prepareStatementPreview(results, []);
+    expect(preview.rows).toHaveLength(43);
+    expect(preview.duplicates).toBe(3);
+    expect(preview.rows.filter((row) => row.pocket === "AMEX Raphael")).toHaveLength(2);
+    expect(preview.rows.some((row) => /ZAHLUNG\/ÜBERWEISUNG/i.test(row.description))).toBe(false);
+    expect(prepareStatementPreview(results, preview.rows).rows).toEqual([]);
+    const seed = createSeed();
+    const prepared = prepareStatementImport(results, seed);
+    const saved = queueLedgerReview(commitStatementImport(seed, prepared.automatic, [], prepared.metadata).state);
+    expect(saved.reviewQueue?.filter((item) => item.kind === "booking" && !item.draft.date)).toHaveLength(1);
+    const again = prepareStatementImport(results, saved);
+    expect(again.automatic).toEqual([]);
+    expect(again.review).toEqual([]);
+  });
 }, 120_000);

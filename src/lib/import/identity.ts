@@ -13,7 +13,9 @@ export function isAmexScreenshot(row: Pick<Transaction, "bank" | "rawDetails">):
 
 export function amexBookingKey(row: Identity): string | null {
   if (bankName(row.bank) !== "amex") return null;
-  if (!["", "amex", "amex jannis"].includes(clean(row.pocket ?? ""))) return null;
+  const pocket = clean(row.pocket ?? "");
+  const holder = ["", "amex", "amex jannis"].includes(pocket) ? "jannis" : pocket === "amex raphael" ? "raphael" : null;
+  if (!holder) return null;
   // Retain order codes. Only common glyph confusions within a code are equivalent;
   // unrelated equal-price orders and named secondary cardholders stay distinct.
   const merchant = (row.rawDescription ?? row.description)
@@ -21,7 +23,7 @@ export function amexBookingKey(row: Identity): string | null {
       (_, merchant: string, code: string) => `${merchant}*${code.toUpperCase().replace(/[IL]/g, "1").replace(/O/g, "0")}`)
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-  return merchant ? JSON.stringify([row.date.slice(0, 10), row.amount.toFixed(2), merchant]) : null;
+  return merchant ? JSON.stringify([holder, row.date.slice(0, 10), row.amount.toFixed(2), merchant]) : null;
 }
 export function legacyFingerprint(row: Identity) {
   return JSON.stringify([

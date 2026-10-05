@@ -19,11 +19,17 @@ const months: Record<string, string> = {
   nov: "11", november: "11", dez: "12", dezember: "12",
 };
 
+const datePattern = /^(\d{1,2})\.?\s+([a-zä]+)\.?\s+(\d{4})(?:\s+[•·–-]\s*(.+))?$/i;
 export function screenshotDate(text: string): string | null {
-  const match = clean(text).match(/^(\d{1,2})\.?\s+([a-zä]+)\.?\s+(\d{4})$/i);
+  const match = clean(text).match(datePattern);
   return match && months[match[2].toLowerCase()]
     ? parseStatementDate(`${match[1]}.${months[match[2].toLowerCase()]}.${match[3]}`)
     : null;
+}
+export function screenshotPocket(text: string): string {
+  const holder = clean(text).match(datePattern)?.[4];
+  if (!holder || /^jannis(?:\s+br(?:ü|ue)hl)?$/i.test(holder)) return "Amex";
+  return /^raphael(?:\s+piber)?$/i.test(holder) ? "AMEX Raphael" : "AMEX ungeklärt";
 }
 
 export function screenshotAmount(text: string): number | null {
@@ -34,7 +40,7 @@ export function screenshotAmount(text: string): number | null {
   return amount === null ? null : -amount;
 }
 
-const dateLike = (text: string) => /^\d{1,2}[.\s]+[a-zä?.]+(?:\s+\S+)?$/i.test(text) || screenshotDate(text) !== null;
+const dateLike = (text: string) => /^\d{1,2}[.\s]+[a-zä?.]+(?:\s+\S+)?$/i.test(text) || datePattern.test(text);
 const chrome = (text: string) => /^(?:Filtern|Sortieren nach|(?:Aktuelle|Kürzliche)\s*(?:Transaktionen)?|Transaktionen|\d+\s+Transaktionen|Vorgemerkt|Ausstehend)$/i.test(text);
 
 export function screenshotContentTop(lines: ScreenshotLine[]): number | null {
@@ -84,17 +90,22 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
     const uncertainMerchant = merchants.some((line) => line.uncertain) || !!name && name.confidence < 35;
     const description = clean(merchants.map((line) => line.text).join(" "));
     const date = dates.length === 1 && !dates[0].uncertain ? screenshotDate(dates[0].text) : null;
+    const pocket = dates.length === 1 ? screenshotPocket(dates[0].text) : "Amex";
     const amount = amounts.length === 1 && !amounts[0].uncertain ? screenshotAmount(amounts[0].text) : null;
+    // Card repayments are not new income, even when OCR misses their date.
+    if (amount !== null && amount > 0 && /^zahlung\s*\/\s*überweisung\s+erhalten\b/i.test(description)) {
+      result.skipped++;
+      continue;
+    }
     const draft: StatementDraft = {
-      id: crypto.randomUUID(), bank: "Amex", pocket: "Amex", date: date ?? "", description: description.slice(0, 1000),
+      id: crypto.randomUUID(), bank: "Amex", pocket, date: date ?? "", description: description.slice(0, 1000),
       amount, category: "Prüfen", includeInPlan: true,
       rawDetails: ["Amex-Screenshot", ...(uncertainMerchant ? ["OCR-Händler unklar"] : []),
         ...[...group, ...amounts].map((line) => line.text.slice(0, 1000))].slice(0, 20),
     };
     const parsed = transactionSchema.safeParse(recoverMerchant(draft));
-    if (parsed.success && !uncertainMerchant) {
-      if (parsed.data.amount > 0 && /zahlung\s*\/\s*überweisung erhalten/i.test(description)) result.skipped++;
-      else result.rows.push(parsed.data);
+    if (parsed.success && !uncertainMerchant && pocket !== "AMEX ungeklärt") {
+      result.rows.push(parsed.data);
     } else {
       result.skipped++;
       result.issues.push({ file, line: groups.indexOf(group) + 1, draft,

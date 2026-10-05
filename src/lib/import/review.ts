@@ -40,6 +40,7 @@ import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
+import { reconcileScreenshotReviews } from "./screenshot-review";
 import {
   appendStatementRows,
   deduplicateStatements,
@@ -55,6 +56,7 @@ export type ImportMetadata = {
   issues?: string[];
   reparsedFiles?: string[];
   merchantRepairs?: Transaction[];
+  screenshotRepairs?: Transaction[];
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
 
@@ -168,6 +170,8 @@ function repairPayrollBookings(state: AppState): AppState {
 }
 
 export function queueLedgerReview(state: AppState): AppState {
+  if (state.reviewQueue) state = { ...state,
+    reviewQueue: reconcileScreenshotReviews(state.reviewQueue, actualBookings(state)) };
   state = repairPayrollBookings(repairMerchantBookings(state));
   const rules = indexReviewRules(state);
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
@@ -399,6 +403,8 @@ export function prepareStatementImport(
   state: AppState,
 ) {
   const candidates = results.flatMap((result) => numberStatementRows(result.rows.map(recoverMerchant)));
+  if (state.reviewQueue) state = { ...state,
+    reviewQueue: reconcileScreenshotReviews(state.reviewQueue, [...actualBookings(state), ...candidates]) };
   state = repairPayrollBookings(repairMerchantBookings(state, candidates));
   const split = splitFixedBookings(
     {
@@ -458,6 +464,8 @@ export function prepareStatementImport(
     issues,
     metadata: {
       merchantRepairs: candidates.filter((row) => !!row.rawDescription),
+      // Reconciliation still needs evidence when every new row was a duplicate.
+      screenshotRepairs: candidates.filter(isAmexScreenshot),
       reviewQueue: review,
       issues,
       reparsedFiles: [...new Set(results.filter((result) => result.source !== null).map((result) => result.file))],
@@ -547,12 +555,15 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  const screenshotRepairs = [...actualBookings(state), ...(metadata.screenshotRepairs ?? [])];
+  if (state.reviewQueue) state = { ...state,
+    reviewQueue: reconcileScreenshotReviews(state.reviewQueue, screenshotRepairs) };
   state = repairPayrollBookings(repairMerchantBookings(state, metadata.merchantRepairs));
   const queueMap = new Map(
     (state.reviewQueue ?? []).map((item) => [item.id, item]),
   );
   for (const item of metadata.reviewQueue ?? []) queueMap.set(item.id, item);
-  const queue = [...queueMap.values()];
+  const queue = reconcileScreenshotReviews([...queueMap.values()], screenshotRepairs);
   const related = queue.flatMap((item) => {
     if (item.kind !== "fixed") return [];
     const decision = decisions.find(

@@ -35,10 +35,11 @@ export async function recognizeAmexScreenshot(worker: Worker, image: ImageLike):
       await worker.setParameters({ tessedit_pageseg_mode: "7" as import("tesseract.js").PSM, user_defined_dpi: "300" });
     }
     const { x0, y0, x1, y1 } = line.bbox;
-    const { data: retry } = await worker.recognize(image, { rectangle: {
+    const rectangle = {
       left: Math.max(0, x0 - 12), top: Math.max(0, y0 - 12),
       width: x1 - x0 + 24, height: y1 - y0 + 24,
-    } });
+    };
+    const { data: retry } = await worker.recognize(image, { rectangle });
     if (orderCode && !money && !date) {
       if (retry.confidence > line.confidence && /\b(?:AMAZON\.[A-Z.]+|AIRBNB)\s*\*/i.test(retry.text)) {
         line.text = retry.text.trim();
@@ -49,13 +50,24 @@ export async function recognizeAmexScreenshot(worker: Worker, image: ImageLike):
       continue;
     }
     const parse = money ? screenshotAmount : screenshotDate;
-    const first = parse(line.text);
-    const second = parse(retry.text);
-    if (first !== null && second !== null && first !== second) line.uncertain = true;
-    else if (second !== null && (second === first || retry.confidence >= 65)) {
-      line.text = retry.text.trim();
-      line.confidence = retry.confidence;
-    } else if (first === null || line.confidence < 65) line.uncertain = true;
+    const readings = [line, retry].map(({ text, confidence }) => ({ text, confidence, value: parse(text) }));
+    let valid = readings.filter((reading) => reading.value !== null);
+    if (money && valid.length < 2 && !valid.some((reading) => reading.confidence >= 65)) {
+      // Raw-line segmentation can read dark-mode digits that single-line OCR misses.
+      await worker.setParameters({ tessedit_pageseg_mode: "13" as import("tesseract.js").PSM });
+      const { data: raw } = await worker.recognize(image, { rectangle });
+      await worker.setParameters({ tessedit_pageseg_mode: "7" as import("tesseract.js").PSM });
+      readings.push({ text: raw.text, confidence: raw.confidence, value: parse(raw.text) });
+      valid = readings.filter((reading) => reading.value !== null);
+    }
+    if (new Set(valid.map((reading) => reading.value)).size > 1 ||
+      (!valid.some((reading) => reading.confidence >= 65) && valid.length < 2)) line.uncertain = true;
+    else {
+      const best = valid.reduce((best, reading) => reading.confidence > best.confidence ? reading : best);
+      // A date retry may omit the cardholder suffix; retain the original metadata.
+      if (money) line.text = best.text.trim();
+      line.confidence = best.confidence;
+    }
   }
   return lines;
 }

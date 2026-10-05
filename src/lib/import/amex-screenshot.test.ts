@@ -31,6 +31,30 @@ describe("Amex app screenshot facts", () => {
     expect(screenshotDate("29 Feb 2026")).toBeNull();
     expect(screenshotDate("4 Okt 2O26")).toBeNull();
   });
+  it.each(["•", "·", "-", "–"])("separates the date and named additional cardholder (%s)", (separator) => {
+    const result = parse(booking("McDonalds Filiale", 140, `20 Sep 2026 ${separator} RAPHAEL PIBER`, "€ 3,30"));
+    expect(result.issues).toEqual([]);
+    expect(result.rows[0]).toMatchObject({
+      description: "McDonalds Filiale", date: "2026-09-20", pocket: "AMEX Raphael", amount: -3.3,
+    });
+    expect(result.rows[0].rawDetails).toContain(`20 Sep 2026 ${separator} RAPHAEL PIBER`);
+  });
+  it("does not silently assign an unknown cardholder to the primary card", () => {
+    const result = parse(booking("SPAR", 140, "20 Sep 2026 • ANDERE PERSON"));
+    expect(result.rows).toEqual([]);
+    expect(result.issues[0].draft).toMatchObject({ date: "2026-09-20", pocket: "AMEX ungeklärt" });
+  });
+  it("skips card repayments with an unreadable date but keeps genuine credits and expenses", () => {
+    const result = parse([
+      line("ZAHLUNG/ÜBERWEISUNG", 140), line("ERHALTEN BESTEN DANK", 170),
+      line("WAS AS", 200), line("-€ 1.234,56", 155, 500),
+      ...booking("Entertainment Gutschrift", 300, "15 Sep 2026", "-€ 4,00"),
+      ...booking("ZAHLUNG/ÜBERWEISUNG ERHALTEN", 410, "14 Sep 2026", "€ 3,00"),
+    ]);
+    expect(result.issues).toEqual([]);
+    expect(result.skipped).toBe(1);
+    expect(result.rows.map((row) => row.amount)).toEqual([4, -3]);
+  });
   it("ignores chrome/totals and retains wrapped merchants, pending charges, order and credit signs", () => {
     const result = parse([
       line("Kürzliche Transaktionen", 110), line("€ 9.876,54", 150), line("87 Transaktionen", 180),
@@ -163,6 +187,16 @@ describe("overlapping screenshots and later Amex statements", () => {
     const second = pdfFirst ? screenshot : partner;
     expect(deduplicateStatements(second.rows, first.rows).rows).toHaveLength(1);
   });
+  it.each([true, false])("deduplicates additional-card screenshots against that holder's PDF (%s)", (pdfFirst) => {
+    const screenshot = parse(booking("McDonalds Filiale", 140, "20 Sep 2026 • RAPHAEL PIBER", "€ 3,30"));
+    const pdf = parseAmexText(["05.10.2026\nUmsatz vom Buchung am Betrag in EUR\nNeue Belastungen für HERRN RAPHAEL PIBER\n20.09 20.09 McDonalds Filiale 3,30"]);
+    const first = pdfFirst ? pdf : screenshot;
+    const second = pdfFirst ? screenshot : pdf;
+    expect(deduplicateStatements(second.rows, first.rows).rows).toEqual([]);
+    const primary = parse(booking("McDonalds Filiale", 140, "20 Sep 2026", "€ 3,30"));
+    expect(prepareStatementPreview([primary, screenshot, screenshot], []).rows).toHaveLength(2);
+    expect(deduplicateStatements(primary.rows, first.rows).rows).toHaveLength(1);
+  });
   it("does not rebook screenshot subscriptions already represented by PDF receipts", () => {
     const parsed = parse(booking("PAYPAL *SPOTIFY", 140));
     const bookingRow = { ...parsed.rows[0], pocket: "AMEX Jannis", rawDetails: [] };
@@ -189,5 +223,37 @@ describe("local-only OCR safety", () => {
     const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(worker, "local-image"));
     expect(result.rows).toEqual([]);
     expect(result.issues[0].draft?.amount).toBeNull();
+  });
+  it.each([["€ 9,68", -9.68], ["€ 8,68", null]] as const)(
+    "retries low-confidence dark-mode amounts without ignoring disagreement (%s)", async (retry, expected) => {
+      const rows = booking("SPAR", 140, "15 Sep 2026", "€ 9,68");
+      rows[2].confidence = 0;
+      const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines: [...header, ...rows] }] }] } })
+        .mockResolvedValueOnce({ data: { text: "SE)", confidence: 15 } })
+        .mockResolvedValueOnce({ data: { text: retry, confidence: 86 } });
+      const setParameters = vi.fn();
+      const worker = { setParameters, reinitialize: vi.fn(), recognize } as unknown as Worker;
+      const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(worker, "local-image"));
+      expect(setParameters).toHaveBeenCalledWith({ tessedit_pageseg_mode: "13" });
+      expect(setParameters).toHaveBeenLastCalledWith({ tessedit_pageseg_mode: "7" });
+      if (expected === null) {
+        expect(result.rows).toEqual([]);
+        expect(result.issues[0].draft?.amount).toBeNull();
+      } else {
+        expect(result.issues).toEqual([]);
+        expect(result.rows[0].amount).toBe(expected);
+      }
+    },
+  );
+  it("retains the cardholder suffix when a date retry only reads the date", async () => {
+    const rows = booking("SPAR", 140, "20 Sep 2026 • RAPHAEL PIBER", "€ 3,30");
+    rows[1].confidence = 60;
+    const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines: [...header, ...rows] }] }] } })
+      .mockResolvedValueOnce({ data: { text: "20 Sep 2026", confidence: 95 } })
+      .mockResolvedValueOnce({ data: { text: "€ 3,30", confidence: 95 } });
+    const worker = { setParameters: vi.fn(), reinitialize: vi.fn(), recognize } as unknown as Worker;
+    const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(worker, "local-image"));
+    expect(result.issues).toEqual([]);
+    expect(result.rows[0]).toMatchObject({ date: "2026-09-20", pocket: "AMEX Raphael", amount: -3.3 });
   });
 });
