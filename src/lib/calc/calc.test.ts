@@ -130,11 +130,11 @@ describe("savings and interest", () => {
       Sparkonto: 180,
       Urlaub: 0,
     }));
-  it("caps the goal and sends overflow to Urlaub after the floor", () => {
+  it("caps the goal and redirects overflow to savings only during the vacation pause", () => {
     expect(splitSurplus(1000, settings.bikeTarget - 100, { ...settings, asOf: "2026-10-01" })).toMatchObject({
       Motorrad: 100,
-      Sparkonto: 180,
-      Urlaub: 720,
+      Sparkonto: 900,
+      Urlaub: 0,
     });
     expect(splitSurplus(1000, settings.bikeTarget, settings)).toMatchObject({
       Motorrad: 0,
@@ -249,6 +249,6 @@ describe("savings and interest", () => {
     expect(
       calculateDashboard(state).timeline.find((row) => row.month === "2026-11")!
         .rates,
-    ).toMatchObject({ Motorrad: 0, Sparkonto: 180, Urlaub: 820 });
+    ).toMatchObject({ Motorrad: 0, Sparkonto: 1000, Urlaub: 0 });
   });
 });

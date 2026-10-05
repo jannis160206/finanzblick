@@ -22,6 +22,23 @@ const transfer = (pocket: string, amount: number, date = "2026-09-14"): Transact
 });
 
 describe("automatic savings floor and goals", () => {
+  it.each(["2026-10", "2026-11", "2026-12", "2027-01", "2027-02"])("sends the whole remainder to savings while vacation is paused in %s", (month) => {
+    expect(allocateGoals(1300.56, [], {}, month)).toEqual({ savings: 1300.56, vacation: 0, goals: {} });
+    expect(allocateGoals(-100, [], {}, month)).toEqual({ savings: 0, vacation: 0, goals: {} });
+    expect(allocateGoals(0.01, [], {}, month)).toEqual({ savings: 0.01, vacation: 0, goals: {} });
+  });
+  it.each(["2026-09", "2027-03", "2027-04"])("preserves the regular floor and vacation allocation outside the pause in %s", (month) => {
+    expect(allocateGoals(1300.56, [], {}, month)).toEqual({ savings: 180, vacation: 1120.56, goals: {} });
+  });
+  it("checks off the full savings instruction without double-counting its imported transfer", () => {
+    const state = stateFor(1300.56);
+    state.settings.asOf = "2026-10-14";
+    state.savingsGoals = [];
+    state.transactions = [transfer("Sparen", 1300.56, "2026-10-14")];
+    const dashboard = calculateDashboard(state);
+    expect(dashboard.monthlyFunding).toEqual([{ id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 1300.56, done: true }]);
+    expect(dashboard.current).toMatchObject({ end: { Sparkonto: 1300.56 } });
+  });
   it.each([-100, 0, 0.01, 175, 180, 200, 1000, 10000])("always protects Sparkonto for surplus %s", (surplus) => {
     const split = allocateGoals(surplus, [goal("Motorrad")], {}, "2026-09");
     expect(split.savings).toBe(Math.min(180, Math.max(0, surplus)));
@@ -66,7 +83,7 @@ describe("automatic savings floor and goals", () => {
     expect(dashboard.timeline.find((row) => row.month === "2026-10")?.goalRates.Kamera).toBe(0);
     state.settings.asOf = "2026-10-15";
     state.transactions.push(transfer("Kamera", -820, "2026-10-01"));
-    expect(calculateDashboard(state).monthlyFunding.map((item) => item.name)).toEqual(["Sparkonto", "Urlaub"]);
+    expect(calculateDashboard(state).monthlyFunding.map((item) => item.name)).toEqual(["Sparkonto"]);
   });
   it("does not double-count an executed rate in the forecast", () => {
     const state = stateFor();

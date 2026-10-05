@@ -35,7 +35,6 @@ export function HolidayRanges() {
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" disabled={!!storageError}><CalendarDays className="size-3.5" />Urlaub</Button>
       </DialogTrigger>
-      {!open && chips}
       <DialogContent>
         <DialogHeader><DialogTitle>Urlaubs-Zeiträume</DialogTitle><DialogDescription>Max. 25 Tage je Zeitraum · Wiederkehrende Heimkosten bleiben im Alltag.</DialogDescription></DialogHeader>
         <DialogForm noValidate onSubmit={(event) => {

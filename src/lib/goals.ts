@@ -1,6 +1,7 @@
 import type { AppState, SavingsGoal } from "@/lib/types";
 
 export const SAVINGS_FLOOR = 180;
+export const vacationSavingPaused = (month: string) => month >= "2026-10" && month < "2027-03";
 const cents = (amount: number) => Math.round(Math.max(0, amount) * 100);
 
 export function savingsGoals(state: AppState): SavingsGoal[] {
@@ -99,7 +100,9 @@ export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: R
     funding[goal.id] = amount / 100 + (outsideBikeWindow ? 0 : goalExtraIncome(goal, month));
     remaining -= amount;
   }
-  return { savings: savings / 100, goals: funding, vacation: remaining / 100 };
+  const pauseVacation = vacationSavingPaused(month);
+  return { savings: (savings + (pauseVacation ? remaining : 0)) / 100,
+    goals: funding, vacation: pauseVacation ? 0 : remaining / 100 };
 }
 
 export function transferMatches(planned: number, incoming: number): boolean {

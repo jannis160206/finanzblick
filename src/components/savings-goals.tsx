@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { savingsGoalSchema, type SavingsGoal } from "@/lib/types";
-import { pocketKey, savingsGoals } from "@/lib/goals";
+import { pocketKey, savingsGoals, vacationSavingPaused } from "@/lib/goals";
 import { currency, dateLabel } from "@/lib/format";
 
 export function SavingsGoals() {
@@ -23,6 +23,7 @@ export function SavingsGoals() {
   const addButton = useRef<HTMLButtonElement>(null);
   const returnTarget = useRef<{ id: string; action: "edit" | "menu" } | null>(null);
   const goals = savingsGoals(state);
+  const pauseVacation = vacationSavingPaused(state.settings.asOf.slice(0, 7));
   function edit(goal: SavingsGoal, origin: "add" | "edit" | "menu" = "edit") {
     returnTarget.current = origin === "add" ? null : { id: goal.id, action: origin };
     setError(""); setErrorField(null); setEditing({ ...goal });
@@ -38,7 +39,7 @@ export function SavingsGoals() {
   }
   return (
     <section ref={sectionRef} id="sparziele" className="panel p-4" aria-label="Sparziele">
-      <SectionHeading title="Sparziele" subtitle="Sparkonto → Ziele nach Termin → Urlaub">
+      <SectionHeading title="Sparziele" subtitle={pauseVacation ? "Rest ins Sparkonto · Urlaub ab März 2027" : "Sparkonto → Ziele nach Termin → Urlaub"}>
         <Button ref={addButton} type="button" variant="outline" size="icon" aria-label="Sparziel hinzufügen" disabled={goals.length >= 50}
           onClick={() => edit({ id: crypto.randomUUID(), name: "", pocket: "", target: 0, date: state.settings.asOf }, "add")}>
           <Plus className="size-4" />
@@ -73,7 +74,9 @@ export function SavingsGoals() {
           </article>;
         })}
       </div>
-      {!goals.length && <p className="text-xs text-muted-foreground">Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub.</p>}
+      {!goals.length && <p className="text-xs text-muted-foreground">{pauseVacation
+        ? "Keine Sparziele. Überschuss ins Sparkonto."
+        : "Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub."}</p>}
       <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}>
         <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
           <DialogHeader><DialogTitle>Sparziel {goals.some((goal) => goal.id === editing?.id) ? "bearbeiten" : "hinzufügen"}</DialogTitle><DialogDescription>Was möchtest du bis wann ansparen?</DialogDescription></DialogHeader>

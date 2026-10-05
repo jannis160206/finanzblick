@@ -117,7 +117,8 @@ describe("earmarked motorcycle funding", () => {
     ]);
     expect(rows[3]).toMatchObject({ goalEnd: { "existing-bike": 5821 }, end: { Motorrad: 5821 } });
     expect(d.plan).toEqual(calculateDashboard(fixture()).plan);
-    expect(rows.every((row) => row.rates.Sparkonto === 180 && row.rates.Urlaub === 820)).toBe(true);
+    expect(rows.filter((row) => row.month < "2027-03").every((row) => row.rates.Sparkonto === 1000 && row.rates.Urlaub === 0)).toBe(true);
+    expect(rows.filter((row) => row.month >= "2027-03").every((row) => row.rates.Sparkonto === 180 && row.rates.Urlaub === 820)).toBe(true);
     expect(rows.every((row) => row.remaining === 1000)).toBe(true);
     expect(rows[2].income).toBe(state.financeRows[0].values["2026-12"]! + 800);
     expect(rows[2].salaryPlan).toBe(state.financeRows[0].values["2026-12"]);
@@ -126,9 +127,9 @@ describe("earmarked motorcycle funding", () => {
   it("never replaces the Sparkonto floor or diverts normal salary to the bike", () => {
     const goals = savingsGoals(initialize());
     expect(allocateGoals(1000, goals, { "existing-bike": 2445 }, "2026-12"))
-      .toEqual({ savings: 180, vacation: 820, goals: { "existing-bike": 800 } });
+      .toEqual({ savings: 1000, vacation: 0, goals: { "existing-bike": 800 } });
     expect(allocateGoals(1000, goals, { "existing-bike": 3245 }, "2027-01"))
-      .toEqual({ savings: 180, vacation: 820, goals: { "existing-bike": 2576 } });
+      .toEqual({ savings: 1000, vacation: 0, goals: { "existing-bike": 2576 } });
     expect(allocateGoals(100, goals, { "existing-bike": 2445 }, "2026-12"))
       .toEqual({ savings: 100, vacation: 0, goals: { "existing-bike": 800 } });
   });

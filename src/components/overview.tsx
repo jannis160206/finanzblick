@@ -36,6 +36,7 @@ import {
   pocketIcons,
 } from "@/components/finance-ui";
 import { currency, dateLabel, monthLabel, number, shortCurrency } from "@/lib/format";
+import { vacationSavingPaused } from "@/lib/goals";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
@@ -322,7 +323,9 @@ export function Overview() {
               <span>{goal.name}<span className="block text-xs text-muted-foreground">Bis {dateLabel(goal.date)}</span></span>
               <span>{currency(d.actualGoals[goal.id])} / {currency(goal.target)}</span>
             </div>)}
-            {!d.goals.length && <p className="text-sm text-muted-foreground">Sparkonto zuerst, Rest an Urlaub.</p>}
+            {!d.goals.length && <p className="text-sm text-muted-foreground">{vacationSavingPaused(d.currentMonth)
+              ? "Überschuss ins Sparkonto · Urlaub ab März 2027."
+              : "Sparkonto zuerst, Rest an Urlaub."}</p>}
           </div>
           <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
         </section>}

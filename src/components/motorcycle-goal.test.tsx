@@ -48,6 +48,22 @@ function mount(initial = fixture(), settings = false) {
 }
 
 describe("motorcycle overview and existing goal editor", () => {
+  it.each([
+    ["2026-10-05", 0], ["2026-11-05", 0], ["2026-12-05", 800],
+    ["2027-01-05", 2576], ["2027-02-28", 0], ["2027-03-01", 0],
+  ] as const)("shows the actual savings/vacation schedule and motorcycle extras on %s", (asOf, bikeAmount) => {
+    const state = fixture();
+    state.settings.asOf = asOf;
+    const dashboard = calculateDashboard(state);
+    mount(state);
+    const split = screen.getByLabelText("Pocket-Verteilung diesen Monat");
+    const paused = asOf < "2027-03-01";
+    expect(split.querySelector('[data-funding-pot="Sparkonto"]')?.textContent)
+      .toContain(currency(paused ? dashboard.current.surplus - dashboard.current.goalExtras : 180));
+    expect(!!split.querySelector('[data-funding-pot="Urlaub"]')).toBe(!paused);
+    expect(!!split.querySelector('[data-funding-pot="Motorrad"]')).toBe(bikeAmount > 0);
+    if (bikeAmount) expect(split.querySelector('[data-funding-pot="Motorrad"]')?.textContent).toContain(currency(bikeAmount));
+  });
   it("shows the exact quiet line, bike-only target, saved balance and zero normal monthly rate", () => {
     mount();
     expect(screen.getByLabelText("Motorrad-Finanzierung").textContent)
