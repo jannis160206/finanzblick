@@ -29,6 +29,7 @@ import {
 import {
   applyMerchantRules,
   createMerchantRuleApplier,
+  merchantAliasSourceKey,
   merchantRuleKey,
   isSpecificMerchantKey,
   rememberMerchants,
@@ -615,7 +616,8 @@ export function commitStatementImport(
         change.amount === item.change.amount &&
         change.bookings.some((row) =>
           item.change.bookings.some(
-            (other) => merchantRuleKey(row) === merchantRuleKey(other),
+            (other) => merchantRuleKey(row) === merchantRuleKey(other) ||
+              (merchantAliasSourceKey(row) !== undefined && merchantAliasSourceKey(row) === merchantAliasSourceKey(other)),
           ),
         ),
     );
@@ -623,9 +625,24 @@ export function commitStatementImport(
   });
   decisions = [
     ...new Map(
-      [...decisions, ...related].map((item) => [item.change.id, item]),
+      [...related, ...decisions].map((item) => [item.change.id, item]),
     ).values(),
   ];
+  const aliases = new Map(decisions.flatMap(({ change }) => change.bookings.flatMap((row) =>
+    row.merchantAlias ? [[statementFingerprint(row), row.merchantAlias] as const] : [])));
+  if (aliases.size) {
+    const rename = (row: Transaction): Transaction => {
+      const merchantAlias = aliases.get(statementFingerprint(row));
+      return merchantAlias && merchantAlias !== row.merchantAlias ? { ...row, merchantAlias } : row;
+    };
+    // A reviewed ledger row or receipt must also receive its explicitly edited name.
+    state = { ...state, transactions: state.transactions.map(rename),
+      ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
+        if (!item.booking) return item;
+        const booking = rename(item.booking);
+        return booking === item.booking ? item : { ...item, booking, merchantKey: merchantRuleKey(booking) };
+      }) } : {}) };
+  }
   const choices = new Map(
     rows
       .filter((row) => (row.categoryOverride || hasManualCategory(row)) && row.category !== "Prüfen" && isSpecificMerchantKey(merchantRuleKey(row)))

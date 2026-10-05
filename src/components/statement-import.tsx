@@ -213,6 +213,83 @@ const BookingReview = memo(function BookingReview({
   );
 });
 
+function FixedReview({
+  item,
+  disabled,
+  save,
+}: {
+  item: Extract<ReviewItem, { kind: "fixed" }>;
+  disabled: boolean;
+  save: (decision: FixedDecision) => void;
+}) {
+  const [names, setNames] = useState<Record<string, string>>({});
+  const bookings = item.change.bookings.map((booking) => {
+    const name = names[booking.id];
+    return name === undefined || name === (booking.merchantAlias ?? booking.description)
+      ? transactionSchema.safeParse(booking)
+      : transactionSchema.safeParse({ ...booking, merchantAlias: name, categoryOverride: true, reviewed: true });
+  });
+  const invalid = bookings.some((booking) => !booking.success);
+  const confirm = (accept: boolean) => {
+    if (invalid) return;
+    save({ accept, change: { ...item.change, bookings: bookings.flatMap((booking) => booking.success ? [booking.data] : []) } });
+  };
+  return (
+    <section className="panel space-y-3 p-4" aria-label={`${item.change.category} prüfen`}>
+      <p className="text-xs text-muted-foreground">{monthLabel(item.change.month)}</p>
+      {item.change.bookings.map((booking, index) => (
+        <div key={booking.id} className="rounded-lg border p-3 text-sm" aria-label={`Erkannte Buchung: ${booking.description}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-1 items-start gap-1">
+              {names[booking.id] !== undefined ? (
+                <Input
+                  autoFocus
+                  aria-label="Händlername"
+                  maxLength={200}
+                  value={names[booking.id]}
+                  disabled={disabled}
+                  aria-invalid={!bookings[index].success}
+                  onChange={(event) => setNames((previous) => ({ ...previous, [booking.id]: event.target.value }))}
+                />
+              ) : (
+                <>
+                  <p className="min-w-0 break-words font-medium">{booking.merchantAlias ?? booking.description}</p>
+                  <Button type="button" variant="ghost" size="icon-xs" className="shrink-0"
+                    aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
+                    onClick={() => setNames((previous) => ({ ...previous, [booking.id]: booking.merchantAlias ?? booking.description }))}>
+                    <Pencil className="size-3" aria-hidden="true" />
+                  </Button>
+                </>
+              )}
+            </div>
+            <span className="shrink-0 font-mono">{currency(booking.amount)}</span>
+          </div>
+          {!bookings[index].success && <p className="mt-1 text-xs text-destructive">Bitte einen Händlernamen mit 1–200 Zeichen eingeben.</p>}
+          {(booking.merchantAlias || names[booking.id] !== undefined) && (
+            <details className="mt-1 text-xs text-muted-foreground">
+              <summary>Originalbuchung</summary>
+              <p className="break-words">{booking.description}</p>
+            </details>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>
+        </div>
+      ))}
+      <p className="text-sm">
+        {item.change.category} bisher {currency(item.change.previous)}, Auszug {currency(item.change.amount)} — neuen Monatsbetrag übernehmen?
+      </p>
+      <p className="text-xs text-muted-foreground">Gilt ab {monthLabel(item.change.month)}.</p>
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" disabled={disabled || invalid} onClick={() => confirm(false)}>
+          Bisherigen Dauerbetrag behalten
+        </Button>
+        <Button variant="outline" size="sm" disabled={disabled || invalid} onClick={() => confirm(true)}>
+          Neuen Dauerbetrag übernehmen
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number }) {
   const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
@@ -491,61 +568,12 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
                   skip={skip}
                 />
               ) : (
-                <section
-                  className="panel space-y-3 p-4"
+                <FixedReview
                   key={item.id}
-                  aria-label={`${item.change.category} prüfen`}
-                >
-                  <p className="text-xs text-muted-foreground">
-                    {monthLabel(item.change.month)}
-                  </p>
-                  {item.change.bookings.map((booking) => (
-                    <div key={booking.id} className="rounded-lg border p-3 text-sm" aria-label={`Erkannte Buchung: ${booking.description}`}>
-                      <div className="flex items-start justify-between gap-3">
-                        <p className="min-w-0 break-words font-medium">{booking.merchantAlias ?? booking.description}</p>
-                        <span className="shrink-0 font-mono">{currency(booking.amount)}</span>
-                      </div>
-                      {booking.merchantAlias && booking.merchantAlias !== booking.description &&
-                        <p className="mt-1 break-words text-xs text-muted-foreground">{booking.description}</p>}
-                      <p className="mt-1 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>
-                    </div>
-                  ))}
-                  <p className="text-sm">
-                    {item.change.category} bisher{" "}
-                    {currency(item.change.previous)}, Auszug{" "}
-                    {currency(item.change.amount)} — neuen Monatsbetrag
-                    übernehmen?
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Gilt ab {monthLabel(item.change.month)}.
-                  </p>
-                  <div className="flex justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={!!ui.pending}
-                      onClick={() =>
-                        commit([], 0, item.id, [
-                          { change: item.change, accept: false },
-                        ])
-                      }
-                    >
-                      Bisherigen Dauerbetrag behalten
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={!!ui.pending}
-                      onClick={() =>
-                        commit([], 0, item.id, [
-                          { change: item.change, accept: true },
-                        ])
-                      }
-                    >
-                      Neuen Dauerbetrag übernehmen
-                    </Button>
-                  </div>
-                </section>
+                  item={item}
+                  disabled={!!ui.pending}
+                  save={(decision) => commit([], 0, item.id, [decision])}
+                />
               ),
             )}
             {ui.review.length > 20 && (

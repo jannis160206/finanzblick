@@ -7,6 +7,10 @@ import { StatementImport } from "./statement-import";
 import { createSeed } from "@/lib/seed";
 import { accountLabel } from "@/lib/accounts";
 import { currency, dateLabel } from "@/lib/format";
+import { actualBookings } from "@/lib/calc";
+import { statementFingerprint } from "@/lib/import/identity";
+import { merchantRuleKey } from "@/lib/import/merchant-rules";
+import { prepareStatementImport } from "@/lib/import/review";
 import type { AppState, Transaction } from "@/lib/types";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
@@ -85,4 +89,80 @@ it("persists the transfer conversion on loading and does not bring old categorie
   expect(JSON.parse(localStorage.getItem("finanzdashboard.v1")!).transactions).toEqual(view.read().state.transactions);
   view.unmount();
   expect(mount().read().state.transactions[0].category).toBe("Transfer");
+});
+
+it.each([
+  { accept: true, stored: "pending" }, { accept: false, stored: "pending" },
+  { accept: true, stored: "ledger" }, { accept: false, stored: "ledger" },
+  { accept: true, stored: "receipt" }, { accept: false, stored: "receipt" },
+])("saves a fixed-review alias and remembers later imports ($stored, accept: $accept)", async ({ accept, stored }) => {
+  const initial = fixture();
+  const change = initial.reviewQueue![0];
+  if (change.kind !== "fixed") throw new Error("Expected fixed review");
+  initial.financeRows[0].values["2026-11"] = 63.25;
+  const original = { ...booking, merchantAlias: undefined,
+    description: "SEPA-Lastschrift TEST4711 IBAN Zahlungsempfaenger: AT000000000000000001 BIC Zahlungsempfaenger: TESTATXX",
+    rawDetails: ["Originale Bankdetails"], bankReference: "synthetic-reference", manualCategory: true };
+  change.change.bookings = [original, { ...original, id: "second", date: "2026-10-03" }];
+  if (stored === "ledger") initial.transactions = [original];
+  if (stored === "receipt") initial.fixedReceipts = [{
+    key: statementFingerprint(original), merchantKey: merchantRuleKey(original), rowId: "insurance-plan",
+    date: original.date, amount: original.amount, category: original.category, booking: original,
+  }];
+  const view = mount(initial);
+  fireEvent.click(screen.getByRole("button", { name: "Prüfung öffnen" }));
+  const region = within(screen.getByRole("region", { name: "Versicherungen prüfen" }));
+  const recognized = within(region.getAllByLabelText(`Erkannte Buchung: ${original.description}`)[0]);
+  fireEvent.click(recognized.getByRole("button", { name: "Händlername bearbeiten" }));
+  const name = recognized.getByRole("textbox", { name: "Händlername" });
+  expect(document.activeElement).toBe(name);
+  fireEvent.change(name, { target: { value: "  Meine Versicherung  " } });
+  expect(recognized.getByText("Originalbuchung").closest("details")?.open).toBe(false);
+  expect(actualBookings(view.read().state).find((row) => row.id === original.id)?.merchantAlias).toBeUndefined();
+  expect(view.read().state.merchantRules ?? []).toEqual([]);
+  fireEvent.click(region.getByRole("button", { name: accept ? "Neuen Dauerbetrag übernehmen" : "Bisherigen Dauerbetrag behalten" }));
+  await waitFor(() => expect(view.read().openReviewCount).toBe(0));
+  const saved = view.read().state;
+  const renamed = actualBookings(saved).find((row) => statementFingerprint(row) === statementFingerprint(original))!;
+  expect(renamed).toMatchObject({ ...original, id: renamed?.id, merchantAlias: "Meine Versicherung" });
+  expect(statementFingerprint(renamed)).toBe(statementFingerprint(original));
+  expect(actualBookings(saved)).toHaveLength(2);
+  expect(saved.financeRows.find((row) => row.id === "insurance-plan")!.values["2026-10"]).toBe(accept ? 65 : 63.25);
+  expect(saved.financeRows.find((row) => row.id === "insurance-plan")!.values["2026-09"]).toBe(63.25);
+  expect(saved.merchantRules).toContainEqual(expect.objectContaining({
+    key: merchantRuleKey(original), merchantAlias: "Meine Versicherung", category: "Versicherungen",
+  }));
+  expect(view.read().saved).toBe(true);
+  view.unmount();
+  const loaded = mount().read().state;
+  expect(actualBookings(loaded).find((row) => statementFingerprint(row) === statementFingerprint(original))?.merchantAlias).toBe("Meine Versicherung");
+  const future = { ...original, id: "future", date: "2026-11-02", amount: -70, categoryOverride: undefined, manualCategory: undefined };
+  const prepared = prepareStatementImport([{
+    file: "synthetic.csv", source: "Raiffeisen", rows: [future], issues: [], skipped: 0,
+  }], loaded);
+  expect(prepared.review).toHaveLength(1);
+  expect(prepared.review[0]).toMatchObject({ kind: "fixed", change: { rowId: "insurance-plan",
+    bookings: [expect.objectContaining({ merchantAlias: "Meine Versicherung", category: "Versicherungen" })] } });
+});
+
+it("rejects empty aliases and discards an unconfirmed fixed-review rename on close", () => {
+  const view = mount();
+  const before = view.read().state;
+  const open = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Prüfung öffnen" }));
+    return within(screen.getByRole("region", { name: "Versicherungen prüfen" }));
+  };
+  const region = open();
+  fireEvent.click(region.getAllByRole("button", { name: "Händlername bearbeiten" })[0]);
+  const name = region.getByRole("textbox", { name: "Händlername" });
+  fireEvent.change(name, { target: { value: "  " } });
+  for (const label of ["Bisherigen Dauerbetrag behalten", "Neuen Dauerbetrag übernehmen"])
+    expect(region.getByRole<HTMLButtonElement>("button", { name: label }).disabled).toBe(true);
+  expect(name.getAttribute("aria-invalid")).toBe("true");
+  expect(region.getByText(/Bitte einen Händlernamen/)).toBeTruthy();
+  fireEvent.change(name, { target: { value: "Anderer Name" } });
+  fireEvent.click(screen.getByRole("button", { name: "Prüfung schließen" }));
+  expect(view.read().state).toBe(before);
+  expect(open().queryByRole("textbox", { name: "Händlername" })).toBeNull();
+  expect(screen.getByText("Meine Haftpflicht")).toBeTruthy();
 });

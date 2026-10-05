@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { actualBookings, classify } from "@/lib/calc";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { createSeed } from "@/lib/seed";
-import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
+import { appStateSchema, type AppState, type FixedChange, type Transaction } from "@/lib/types";
 import { approveReviewedBooking } from "./approve-review";
 import { statementFingerprint } from "./identity";
 import { applyMerchantRules, merchantRuleKey, rememberMerchants } from "./merchant-rules";
@@ -167,5 +167,36 @@ describe("remembered review merchant names", () => {
     expect(actualBookings(saved)).toHaveLength(1);
     expect(actualBookings(saved)[0]).toMatchObject({ merchantAlias: "Hausverwaltung", category: "Miete" });
     expect(statementFingerprint(actualBookings(saved)[0])).toBe(key);
+  });
+
+  it.each([true, false])("keeps fixed-rate twins linked when an alias changes and survives Excel (accept=%s)", async (accept) => {
+    const original = booking({ description: "ALLIANZ Vertrag SYNTHETIC", category: "Versicherungen", categoryOverride: true });
+    const earlier = { ...original, id: "earlier", date: "2026-08-01" };
+    const other = { ...original, id: "other", description: "Andere Versicherung SYNTHETIC" };
+    const change: FixedChange = {
+      id: "current", category: "Versicherungen", month: "2026-09", previous: 5, amount: 3,
+      rowId: "insurance", bookings: [original],
+    };
+    const earlierChange = { ...change, id: "earlier-change", month: "2026-08", bookings: [earlier] };
+    const otherChange = { ...change, id: "other-change", rowId: "other-plan", bookings: [other] };
+    const state = fixture({
+      financeRows: [{ id: "insurance", label: "Haftpflicht", kind: "fixed", planCategory: "Versicherungen",
+        values: { "2026-07": 5, "2026-08": 5, "2026-09": 5 } }],
+      reviewQueue: [change, earlierChange, otherChange].map((change) => ({ kind: "fixed", id: change.id, change })),
+    });
+    const saved = queueLedgerReview(commitStatementImport(state, [], [{
+      accept, change: { ...change, bookings: [{ ...original, merchantAlias: "Meine Versicherung", reviewed: true }] },
+    }]).state);
+    expect(saved.reviewQueue).toEqual([{ kind: "fixed", id: otherChange.id, change: otherChange }]);
+    expect(actualBookings(saved)).toHaveLength(2);
+    expect(actualBookings(saved).map((row) => row.merchantAlias)).toEqual(["Meine Versicherung", "Meine Versicherung"]);
+    expect(saved.financeRows[0].values).toMatchObject({ "2026-07": 5, "2026-08": accept ? 3 : 5, "2026-09": accept ? 3 : 5 });
+    const restored = (await parseWorkbook(await exportWorkbook(saved))).state;
+    expect(restored.merchantRules).toEqual(saved.merchantRules);
+    expect(actualBookings(restored).map((row) => row.merchantAlias)).toEqual(["Meine Versicherung", "Meine Versicherung"]);
+    const repeat = prepareStatementImport([statement([{ ...original, id: "reimport" }])], restored);
+    expect(repeat.automatic).toEqual([]);
+    expect(repeat.review).toEqual([]);
+    expect(repeat.duplicates).toBe(1);
   });
 });
