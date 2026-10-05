@@ -1,7 +1,6 @@
 "use client";
 
 import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { FileUp, LoaderCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -291,9 +290,8 @@ function FixedReview({
   );
 }
 
-export function StatementImport({ reviewRequest = 0, fileButtonContainer }: {
+export function StatementImport({ reviewRequest = 0 }: {
   reviewRequest?: number;
-  fileButtonContainer?: HTMLElement | null;
 }) {
   const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
@@ -463,7 +461,7 @@ export function StatementImport({ reviewRequest = 0, fileButtonContainer }: {
     onClick={() => fileInput.current?.click()}
   >
     {ui.busy ? <LoaderCircle className="size-4 animate-spin" /> : <FileUp className="size-4" />}
-    {ui.busy ? "Dateien werden geprüft …" : fileButtonContainer ? "Dateien" : "Dateien auswählen"}
+    {ui.busy ? "Dateien werden geprüft …" : "Dateien auswählen"}
   </Button>;
   return (
     <>
@@ -515,7 +513,7 @@ export function StatementImport({ reviewRequest = 0, fileButtonContainer }: {
             void selectFiles(files);
           }}
         />
-        {fileButtonContainer ? createPortal(fileButton, fileButtonContainer) : fileButton}
+        {fileButton}
       </section>
       {state.importStatus && (
         <div

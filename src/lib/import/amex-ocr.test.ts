@@ -72,7 +72,7 @@ describe("local OCR resource route", () => {
   });
   it("explicitly traces every dynamically served OCR resource, without private or unrelated files", () => {
     const includes = nextConfig.outputFileTracingIncludes;
-    expect(Object.keys(includes ?? {})).toEqual(["/api/ocr/*"]);
+    expect(Object.keys(includes ?? {})).toEqual(["/api/ocr/*", "/api/amex-balance-recovery"]);
     const files = includes?.["/api/ocr/*"] ?? [];
     expect(files).toHaveLength(9);
     expect(files.every((file) => file.startsWith("./node_modules/") && existsSync(file))).toBe(true);
@@ -82,5 +82,12 @@ describe("local OCR resource route", () => {
         expect(files).toContain(`./node_modules/tesseract.js-core/tesseract-core${variant}-lstm${extension}`);
     for (const language of ["deu", "eng"])
       expect(files).toContain(`./node_modules/@tesseract.js-data/${language}/4.0.0_best_int/${language}.traineddata.gz`);
+    const recoveryFiles = includes?.["/api/amex-balance-recovery"] ?? [];
+    expect(recoveryFiles.every((file) => file.startsWith("./node_modules/"))).toBe(true);
+    expect(recoveryFiles).toContain("./node_modules/tesseract.js/src/worker-script/**/*");
+    expect(recoveryFiles).toContain("./node_modules/tesseract.js-core/**/*");
+    for (const language of ["deu", "eng"])
+      expect(recoveryFiles).toContain(`./node_modules/@tesseract.js-data/${language}/4.0.0_best_int/${language}.traineddata.gz`);
+    expect(nextConfig.serverExternalPackages).toContain("tesseract.js");
   });
 });

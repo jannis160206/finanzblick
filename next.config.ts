@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   devIndicators: false,
-  serverExternalPackages: ["exceljs"],
+  serverExternalPackages: ["exceljs", "tesseract.js"],
   outputFileTracingIncludes: {
     "/api/ocr/*": [
       "./node_modules/tesseract.js/dist/worker.min.js",
@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
       "./node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm",
       "./node_modules/tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm.js",
       "./node_modules/tesseract.js-core/tesseract-core-relaxedsimd-lstm.wasm",
+      "./node_modules/@tesseract.js-data/deu/4.0.0_best_int/deu.traineddata.gz",
+      "./node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
+    ],
+    "/api/amex-balance-recovery": [
+      "./node_modules/tesseract.js/src/worker-script/**/*",
+      "./node_modules/tesseract.js-core/**/*",
       "./node_modules/@tesseract.js-data/deu/4.0.0_best_int/deu.traineddata.gz",
       "./node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz",
     ],

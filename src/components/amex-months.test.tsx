@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { useEffect, type ReactNode } from "react";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FinanceProvider, useFinance } from "./finance-provider";
+import { toast } from "sonner";
 import { Months } from "./months";
 import { createSeed } from "@/lib/seed";
 import { currency, number } from "@/lib/format";
 import { parseAmexScreenshotLines, type ScreenshotLine } from "@/lib/import/amex-screenshot";
 import { prepareStatementImport } from "@/lib/import/review";
+import { amexBookingKey } from "@/lib/import/identity";
 import type { AppState } from "@/lib/types";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
@@ -23,6 +25,7 @@ afterEach(() => {
   localStorage.clear();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 function fixture(): AppState {
   const state = createSeed();
@@ -124,4 +127,58 @@ it("replaces the historical total with the screenshot balance on a duplicate-onl
   act(() => loaded.read().update((state) => ({ ...state, accountSnapshots: state.accountSnapshots!.map((row) =>
     row.name === "Amex Rückzahlung" ? { ...row, balance: 854 } : row) })));
   expect(monthCell("Amex offen", 10).textContent).toBe(number(515.83));
+});
+
+it("repairs an already saved legacy screenshot automatically, without a second import, lost edits or duplicate bookings", async () => {
+  const initial = fixture();
+  initial.transactions[0].date = "2026-08-01";
+  initial.transactions[0].amount = -7650.34;
+  initial.transactions.push(...[
+    { id: "ikea", description: "IKEA KLAGENFURT", amount: -207.82 },
+    { id: "airbnb", description: "AIRBNB LONDON", amount: -126 },
+    { id: "tapeso", description: "MOLLIE TAPESO", amount: -164.9 },
+  ].map((row) => ({ ...initial.transactions[0], ...row, date: "2026-10-02",
+    rawDetails: ["Amex-Screenshot"], sharedWithRaphael: true })));
+  initial.accountSnapshots = [{ bank: "Revolut", name: "Amex Rückzahlung (EUR)", date: "2026-10-04", balance: 954 }];
+  localStorage.setItem("finanzdashboard.v1", JSON.stringify(initial));
+  let resolve!: (response: Response) => void;
+  const fetch = vi.fn(() => new Promise<Response>((done) => { resolve = done; }));
+  vi.stubGlobal("fetch", fetch);
+  const view = mount();
+  await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+  act(() => view.read().update((state) => ({ ...state, transactions: state.transactions.map((row) =>
+    row.id === "airbnb" ? { ...row, merchantAlias: "Unsere Unterkunft", manualCategory: true } : row) })));
+  const before = structuredClone(view.read().state.transactions);
+  await act(async () => resolve(Response.json({ recoveries: [{
+    snapshot: { periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 },
+    bookingKeys: initial.transactions.slice(1).map(amexBookingKey),
+  }] })));
+  await waitFor(() => expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83)));
+  expect(view.read().state.transactions).toEqual(before);
+  expect(view.read().saved).toBe(true);
+  expect(view.read().dashboard.amex).toMatchObject({ outstanding: 1619.19, ownOutstanding: 1369.83, reserved: 954 });
+  view.unmount();
+  const reloaded = mount();
+  expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83));
+  expect(reloaded.read().state.transactions).toEqual(before);
+  expect(fetch).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { status: 500, body: { error: "OCR failed" } },
+  { status: 200, body: { recoveries: [{ snapshot: { balance: 100 }, bookingKeys: [] }] } },
+  { status: 200, body: { recoveries: [] } },
+])("surfaces an unavailable or unverifiable header without overwriting saved bookings: $status $body", async ({ status, body }) => {
+  const initial = fixture();
+  initial.transactions[0].rawDetails = ["Amex-Screenshot"];
+  localStorage.setItem("finanzdashboard.v1", JSON.stringify(initial));
+  vi.mocked(toast.error).mockClear();
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json(body, { status })));
+  const view = mount();
+  const before = structuredClone(view.read().state.transactions);
+  await waitFor(() => expect(toast.error).toHaveBeenCalledOnce());
+  expect(view.read().state.transactions).toEqual(before);
+  expect(view.read().state.amexBalanceSnapshots).toBeUndefined();
+  expect(view.read().saved).toBe(true);
+  expect(JSON.parse(localStorage.getItem("finanzdashboard.v1")!).transactions).toEqual(before);
 });

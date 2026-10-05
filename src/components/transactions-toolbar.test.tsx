@@ -22,26 +22,26 @@ function mount(storageError: string | null = null) {
   return { update, state };
 }
 
-it("moves the existing file action to the right and keeps every other toolbar action icon-only", () => {
+it("keeps statement upload directly in the drop zone and toolbar actions icon-only", () => {
   const { update } = mount();
   const toolbar = screen.getByRole("group", { name: "Umsatz-Werkzeugleiste" });
   const buttons = within(toolbar).getAllByRole("button");
-  expect(buttons.filter((button) => button.textContent?.trim() === "Dateien")).toHaveLength(1);
-  for (const button of buttons.filter((button) => button.textContent?.trim() !== "Dateien")) {
+  expect(within(toolbar).queryByRole("button", { name: "Dateien auswählen" })).toBeNull();
+  for (const button of buttons) {
     expect(button.getAttribute("data-size")).toBe("icon");
     expect(button.querySelector("svg")).toBeTruthy();
   }
-  const files = within(toolbar).getByRole("button", { name: "Dateien auswählen" });
-  expect(files.parentElement).toBe(toolbar.lastElementChild);
-  expect(screen.getAllByRole("button", { name: "Dateien auswählen" })).toHaveLength(1);
   const drop = screen.getByRole("region", { name: "Kontoauszüge importieren" });
-  expect(within(drop).queryByRole("button")).toBeNull();
+  const files = within(drop).getByRole("button", { name: "Dateien auswählen" });
+  expect(screen.getAllByRole("button", { name: "Dateien auswählen" })).toHaveLength(1);
   const input = screen.getByLabelText<HTMLInputElement>("Kontoauszüge auswählen");
   const click = vi.spyOn(input, "click");
   fireEvent.click(files);
   expect(click).toHaveBeenCalledOnce();
   expect(input.accept).toContain(".pdf");
   expect(input.accept).toContain(".jpeg");
+  fireEvent.change(screen.getByRole("textbox", { name: "Umsätze durchsuchen" }), { target: { value: "BILLA" } });
+  expect(within(drop).getByRole("button", { name: "Dateien auswählen" })).toBe(files);
   fireEvent.click(within(toolbar).getByRole("button", { name: "Geteilt" }));
   expect(screen.getByRole("dialog", { name: "Geteilt" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
@@ -56,7 +56,8 @@ it("moves the existing file action to the right and keeps every other toolbar ac
 it("retains filter reset and disables the same existing actions on storage errors", () => {
   mount("Speichern fehlgeschlagen");
   const toolbar = within(screen.getByRole("group", { name: "Umsatz-Werkzeugleiste" }));
-  for (const label of ["Dateien auswählen", "Geteilt", "Urlaub", "Zuordnung prüfen"])
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Dateien auswählen" }).disabled).toBe(true);
+  for (const label of ["Geteilt", "Urlaub", "Zuordnung prüfen"])
     expect(toolbar.getByRole<HTMLButtonElement>("button", { name: label }).disabled).toBe(true);
   fireEvent.change(screen.getByRole("textbox", { name: "Umsätze durchsuchen" }), { target: { value: "BILLA" } });
   const reset = toolbar.getByRole("button", { name: "Zurücksetzen" });

@@ -30,6 +30,7 @@ import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
 import { initializeMotorcycleGoal } from "@/lib/goals";
 import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 import { FINANCE_STORAGE_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
+import { amexBalanceRecoveryResponseSchema, needsAmexBalanceRecovery, recoverAmexBalance, type AmexBalanceRecovery } from "@/lib/import/amex-balance-recovery";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -61,6 +62,7 @@ type Action =
       blocked?: boolean;
     }
   | { type: "update"; updater: (state: AppState) => AppState }
+  | { type: "recoverAmexBalance"; recoveries: AmexBalanceRecovery[] }
   | { type: "saved" }
   | { type: "error"; message: string }
   | { type: "retry" };
@@ -74,6 +76,11 @@ type AppendAction = {
 };
 function reducer(store: Store, action: Action | AppendAction): Store {
   switch (action.type) {
+    case "recoverAmexBalance": {
+      if (store.blocked || store.error) return store;
+      const data = recoverAmexBalance(store.data, action.recoveries);
+      return data === store.data ? store : { ...store, data, saved: false };
+    }
     case "appendStatements": {
       try {
         const approval = action.rows.length === 1 && !action.decisions?.length &&
@@ -200,6 +207,7 @@ export function FinanceProvider({
   });
   const storage = useRef(new FinanceStorage()).current;
   const hydrated = useRef(false);
+  const amexRecoveryNeeded = useMemo(() => needsAmexBalanceRecovery(store.data), [store.data]);
   const latest = useRef(store);
   useEffect(() => { latest.current = store; }, [store]);
   const load = useCallback((fallback: AppState) => {
@@ -272,6 +280,31 @@ export function FinanceProvider({
       dispatch({ type: "error", message: financeStorageMessage(error) });
     }
   }, [store.data, store.ready, store.blocked, store.saved, storage]);
+  useEffect(() => {
+    if (!store.ready || store.blocked || store.error || !amexRecoveryNeeded) return;
+    const controller = new AbortController();
+    async function recover() {
+      try {
+        const response = await fetch("/api/amex-balance-recovery", {
+          cache: "no-store", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Amex-Saldo konnte nicht nachgetragen werden. Bitte den Screenshot mit Gesamtbetrag erneut auswählen.");
+        const result = amexBalanceRecoveryResponseSchema.safeParse(await response.json());
+        if (!result.success) throw new Error("Amex-Saldoreparatur lieferte ungültige Daten. Bitte den Screenshot mit Gesamtbetrag erneut auswählen.");
+        if (!controller.signal.aborted) {
+          if (needsAmexBalanceRecovery(latest.current.data) &&
+            recoverAmexBalance(latest.current.data, result.data.recoveries) === latest.current.data)
+            toast.error("Amex-Gesamtbetrag fehlt. Bitte den Screenshot mit Gesamtbetrag erneut auswählen.");
+          dispatch({ type: "recoverAmexBalance", recoveries: result.data.recoveries });
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) toast.error(error instanceof Error
+          ? error.message : "Amex-Saldo konnte nicht nachgetragen werden. Bitte den Screenshot erneut auswählen.");
+      }
+    }
+    void recover();
+    return () => controller.abort();
+  }, [store.ready, store.blocked, store.error, amexRecoveryNeeded]);
   const getDashboard = useMemo(() => createDashboardGetter(store.data), [store.data]);
   const update = useCallback<FinanceContextValue["update"]>(
     (updater) => dispatch({ type: "update", updater }),

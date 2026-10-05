@@ -251,7 +251,6 @@ const TransactionLedger = memo(function TransactionLedger({
 }: Pick<ReturnType<typeof useFinance>, "state" | "update" | "openReviewCount" | "storageError">) {
   "use no memo";
   const [reviewRequest, setReviewRequest] = useState(0);
-  const [fileButtonContainer, setFileButtonContainer] = useState<HTMLDivElement | null>(null);
   const ledger = useMemo(() => actualBookings(state), [state]);
   // General updates validate/clone the ledger. Category approvals retain only
   // unchanged bank rows, so their derived classifications remain reusable.
@@ -535,7 +534,7 @@ const TransactionLedger = memo(function TransactionLedger({
         title="Umsätze"
         description={`${ledger.length.toLocaleString("de-AT")} Buchungen`}
       />
-      <StatementImport reviewRequest={reviewRequest} fileButtonContainer={fileButtonContainer} />
+      <StatementImport reviewRequest={reviewRequest} />
       <section className="panel overflow-hidden">
         <div className="border-b p-4">
           <div className="flex flex-wrap gap-1 rounded-xl bg-muted/60 p-1" role="group" aria-label="Zuordnungsstatus filtern">
@@ -681,7 +680,6 @@ const TransactionLedger = memo(function TransactionLedger({
               <X className="size-4" />
             </Button>
           )}
-          <div ref={setFileButtonContainer} className="ml-auto flex shrink-0" />
         </div>
         <div className="overflow-x-auto">
           <table className="data-table w-full" aria-label="Buchungen">
