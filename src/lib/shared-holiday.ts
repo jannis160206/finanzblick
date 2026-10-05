@@ -1,12 +1,13 @@
 import type { AppState, PlannedOneOff, Transaction } from "@/lib/types";
 import { hasManualCategory } from "@/lib/manual-category";
 import { matchPlannedOneOffs, plannedOccurrences } from "@/lib/planned-one-offs";
+import { isNamedTransfer } from "@/lib/transfers";
 
 export const alwaysLunch = (text: string) => /bipa|hotspot|mensa|mensen/i.test(text);
 const travelMerchant = /\bswiss(?:\s*(?:air|international))?\b|\bryanair\b|\beasy\s*jet\b|booking\s*\.\s*com|\bairbnb\b|\blufthansa\b|\baustrian(?:\s*airlines)?\b|\beurowings\b|\bwizz\s*air\b|\bcondor\b|\b(?:klm|airfrance|iberia|vueling|transavia|finnair|norwegian|emirates|qatar\s*airways|turkish\s*airlines|british\s*airways|tap\s*air|delta\s*airlines|united\s*airlines)\b|\bair\s*france\b|\b(?:expedia|bravofly|lastminute|agoda|hotels\.com|trip\.com|opodo|edreams)\b/i;
 export const isTravelMerchant = (description: string) => travelMerchant.test(description);
-export function isSharedHoliday(row: Pick<Transaction, "amount"> & Partial<Pick<Transaction, "sharedWithRaphael">>) {
-  return row.amount < 0 && row.sharedWithRaphael === true;
+export function isSharedHoliday(row: Pick<Transaction, "amount"> & Partial<Pick<Transaction, "sharedWithRaphael" | "description" | "rawDescription" | "merchantAlias">>) {
+  return row.amount < 0 && row.sharedWithRaphael === true && !isNamedTransfer({ ...row, description: row.description ?? "" });
 }
 export const isRaphaelPayment = (row: Pick<Transaction, "description" | "amount"> & Partial<Pick<Transaction, "rawDescription" | "rawDetails">>) =>
   row.amount > 0 && /\b(?:raphael|piber)\b/i.test([row.description, row.rawDescription, ...(row.rawDetails ?? [])].join(" "));

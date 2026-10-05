@@ -42,7 +42,8 @@ describe("precise statement facts", () => {
     const parsed = parseStatementCsv(fixture("revolut.csv"));
     expect(parsed.issues).toEqual([]);
     expect(parsed.rows.map((item) => item.amount)).toEqual([700, -100, -0.47, 0.47]);
-    expect(parsed.rows.every((item) => item.category === "Transfer intern" && !item.includeInPlan)).toBe(true);
+    expect(parsed.rows.map((item) => item.category)).toEqual(["Transfer intern", "Transfer", "Transfer intern", "Transfer intern"]);
+    expect(parsed.rows.every((item) => !item.includeInPlan)).toBe(true);
     expect(parsed.rows.map((item) => item.pocket)).toEqual(["Persönliches Konto", "Persönliches Konto", "Persönliches Konto", "Sparen"]);
     expect(classify(parsed.rows[2]).isRoundUp).toBe(true);
     const seed = createSeed(); seed.settings.asOf = "2026-09-16";

@@ -29,6 +29,7 @@ import { hasManualCategory } from "@/lib/manual-category";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 import { amexFunding } from "@/lib/amex-balance";
+import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -125,6 +126,15 @@ export function classify(
 ) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
+  if (isNamedTransfer(recovered)) {
+    return {
+      category: "Transfer" as const, planCategory: "Transfer" as const,
+      pocket: savingsPocket(transaction.pocket),
+      isTransfer: true, isFixedCost: false, isRoundUp: false, isAmazon: false,
+      includeInPlan: false, merchant: merchantName(description, transaction.merchantAlias),
+      reason: "Transfer erkannt",
+    };
+  }
   if (hasManualCategory(transaction)) {
     const category = canonicalCategory(transaction.category);
     const isTransfer = category === "Transfer" || category === "Transfer intern";
@@ -302,7 +312,7 @@ export function classifyStatementRows(
   rows: Transaction[],
   existing: Transaction[] = [],
 ): Transaction[] {
-  rows = rows.map(recoverMerchant);
+  rows = rows.map((row) => applyNamedTransfer(recoverMerchant(row)));
   existing = existing.map(recoverMerchant);
   const refundMerchant = (row: Transaction) =>
     `${row.bank.toLowerCase()}|${row.pocket ?? ""}|${merchantName(row.description.replace(/rückerstattung|erstattung|refund|gutschrift|retoure/gi, ""), row.merchantAlias)}`;

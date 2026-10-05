@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
-import { currency, monthLabel } from "@/lib/format";
+import { currency, dateLabel, monthLabel } from "@/lib/format";
 import {
   categories,
   transactionSchema,
@@ -499,6 +499,17 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
                   <p className="text-xs text-muted-foreground">
                     {monthLabel(item.change.month)}
                   </p>
+                  {item.change.bookings.map((booking) => (
+                    <div key={booking.id} className="rounded-lg border p-3 text-sm" aria-label={`Erkannte Buchung: ${booking.description}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="min-w-0 break-words font-medium">{booking.merchantAlias ?? booking.description}</p>
+                        <span className="shrink-0 font-mono">{currency(booking.amount)}</span>
+                      </div>
+                      {booking.merchantAlias && booking.merchantAlias !== booking.description &&
+                        <p className="mt-1 break-words text-xs text-muted-foreground">{booking.description}</p>}
+                      <p className="mt-1 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>
+                    </div>
+                  ))}
                   <p className="text-sm">
                     {item.change.category} bisher{" "}
                     {currency(item.change.previous)}, Auszug{" "}

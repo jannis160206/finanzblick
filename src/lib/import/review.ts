@@ -40,6 +40,7 @@ import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
+import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
 import {
   appendStatementRows,
@@ -79,6 +80,7 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
     !(row.reviewed && (hasManualCategory(row) || row.categoryOverride)))
     return "Amex-Screenshot: Händlertext unsicher erkannt – bitte mit dem Bild abgleichen.";
   const result = classify(row);
+  if (isNamedTransfer(row)) return;
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
   if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
@@ -98,6 +100,9 @@ export function openReviewCount(items: ReviewItem[]): number {
 }
 
 export function repairMerchantBookings(state: AppState, candidates: Transaction[] = []): AppState {
+  if (state.merchantRules) state = { ...state, merchantRules: state.merchantRules.map((rule) =>
+    isNamedTransfer({ description: rule.key.slice(rule.key.indexOf("|") + 1), merchantAlias: rule.merchantAlias })
+      ? { ...rule, category: "Transfer", ...(rule.fixedCost !== undefined ? { fixedCost: false } : {}) } : rule) };
   const recovered = candidates.map(recoverMerchant).filter((row) => row.rawDescription && !unresolvedTerminal(row.description));
   // Rule inference, rule application and repair inspect the same immutable rows.
   // Share results only for this pass; the next edit always gets a fresh cache.
@@ -126,19 +131,28 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
     if (updated.category === "Prüfen" && !updated.categoryOverride && !updated.includeInPlan)
       updated = { ...updated, includeInPlan: true };
     applyRule ??= createMerchantRuleApplier(state, classifyBooking);
-    const learned = applyRule(updated);
+    const learned = applyNamedTransfer(applyRule(updated));
     const result = classifyBooking(learned);
     return learned.category === result.category && learned.includeInPlan === result.includeInPlan ? learned
       : { ...learned, category: result.category, includeInPlan: result.includeInPlan };
   };
   return { ...state,
     transactions: state.transactions.map(repair),
-    ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.map((item) => item.kind === "booking"
-      ? { ...item, draft: item.draft.amount === null ? recoverMerchant(item.draft) : repair(item.draft as Transaction) }
-      : item) } : {}),
+    ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.flatMap((item): ReviewItem[] => {
+      if (item.kind === "booking")
+        return [{ ...item, draft: item.draft.amount === null ? applyNamedTransfer(recoverMerchant(item.draft)) : repair(item.draft as Transaction) }];
+      const transfers = item.change.bookings.filter(isNamedTransfer);
+      const bookings = item.change.bookings.filter((row) => !isNamedTransfer(row));
+      return [
+        ...(bookings.length ? [{ ...item, change: { ...item.change, bookings } }] : []),
+        ...transfers.map((row): ReviewItem => ({ kind: "booking", id: row.id, draft: applyNamedTransfer(row), message: "Transfer erkannt" })),
+      ];
+    }) } : {}),
     ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
       if (!item.booking) return item;
       const booking = repair(item.booking);
+      if (isNamedTransfer(booking))
+        return { ...item, booking, category: booking.category, rowId: undefined, merchantKey: merchantRuleKey(booking) };
       return booking === item.booking ? item : { ...item, booking, category: booking.category, merchantKey: merchantRuleKey(booking) };
     }) } : {}),
   };
@@ -505,9 +519,12 @@ export function applyFixedDecisions(
   const ignored = new Set(state.ignoredStatementKeys ?? []);
   let financeRows = state.financeRows;
   const fixedAmountDecisions = [...(state.fixedAmountDecisions ?? [])];
-  for (const { change, accept } of [...decisions].sort((a, b) =>
+  for (const { change: original, accept } of [...decisions].sort((a, b) =>
     a.change.month.localeCompare(b.change.month),
   )) {
+    const bookings = original.bookings.filter((row) => !isNamedTransfer(row));
+    if (!bookings.length) continue;
+    const change = { ...original, bookings };
     change.bookings.forEach((row) => ignored.add(statementFingerprint(row)));
     for (const booking of change.bookings) {
       const merchantKey = merchantRuleKey(booking);
@@ -573,6 +590,12 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  rows = [...rows.map(applyNamedTransfer), ...decisions.flatMap(({ change }) =>
+    change.bookings.filter(isNamedTransfer).map(applyNamedTransfer))];
+  decisions = decisions.flatMap(({ change, accept }) => {
+    const bookings = change.bookings.filter((row) => !isNamedTransfer(row));
+    return bookings.length ? [{ change: { ...change, bookings }, accept }] : [];
+  });
   const previousQueue = state.reviewQueue ?? [];
   const screenshotRepairs = [...actualBookings(state), ...(metadata.screenshotRepairs ?? [])];
   if (state.reviewQueue) state = { ...state,
