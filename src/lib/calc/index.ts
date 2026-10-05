@@ -28,6 +28,7 @@ import { monthlyVariableBudget, variableBudgetId, variableBudgetValue, type Vari
 import { hasManualCategory } from "@/lib/manual-category";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
+import { amexFunding } from "@/lib/amex-balance";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -735,6 +736,7 @@ export function calculateMonthTotals(
   bookings: AccountedTransaction[] = actualBookings(state),
   actuals = indexMonthlyActuals(bookings, state.settings.asOf),
   occurrences: PlannedOccurrence[] = matchPlannedOneOffs(state.plannedOneOffs, bookings),
+  amex = amexFunding(state, bookings, occurrences),
 ) {
   const goalExtras = sum(savingsGoals(state).map((goal) => goalExtraIncome(goal, month)));
   const income = round(goalExtras + sum(
@@ -755,9 +757,11 @@ export function calculateMonthTotals(
   const variableRows = state.financeRows.filter(
     (row) => row.kind === "variable",
   );
-  const variablePlan = month >= monthKey(state.settings.asOf)
+  const variableBudget = month >= monthKey(state.settings.asOf)
     ? monthlyVariableBudget(month, state.holidayRanges).total
     : state.months[month]?.variableOverride ?? sum(variableRows.map((row) => financeRowValue(row, month, plan, state.holidayRanges)));
+  const amexOpen = month === monthKey(state.settings.asOf) ? amex.additional : 0;
+  const variablePlan = round(variableBudget + amexOpen);
   const { actualSpending, received, salaryReceived } = actuals.get(month) ??
     { actualSpending: 0, received: 0, salaryReceived: 0 };
   const plannedOneOffs = sum(occurrences.filter((item) => monthKey(item.date) === month).map((item) => item.ownAmount));
@@ -768,6 +772,7 @@ export function calculateMonthTotals(
     salaryReceived,
     received,
     fixed,
+    amexOpen,
     variablePlan,
     actualSpending,
     plannedOneOffs,
@@ -821,7 +826,8 @@ export function calculateDashboard(state: AppState) {
   const bookings = actualBookings(state);
   const actuals = indexMonthlyActuals(bookings, state.settings.asOf);
   const plannedOneOffs = matchPlannedOneOffs(state.plannedOneOffs, bookings);
-  const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs);
+  const amex = amexFunding(state, bookings, plannedOneOffs);
+  const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs, amex);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);
   const baselineMonth = monthKey(state.settings.baselineDate);
@@ -915,7 +921,7 @@ export function calculateDashboard(state: AppState) {
       ...[...goals].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)).map((goal) => ({ ...goal, amount: currentRow?.goalRates[goal.id] ?? 0 })),
       { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: currentRow?.rates.Urlaub ?? 0 },
     ].filter((item) => item.amount > 0).map((item) => ({ ...item, done: transferMatches(item.amount, incomingPocketTransfers(state, item.pocket, currentMonth, [item.name])) })),
-    currentMonth, current, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
+    currentMonth, current, amex, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
     totalAssets: sum([...Object.values(actual), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => actualGoals[goal.id]),
       motorcycle?.openingBalance ? actualGoals[motorcycle.id] - actual.Motorrad : 0]),
     countdown, nextTransfer, allocationMonth, ninetyDays,

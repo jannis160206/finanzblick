@@ -189,9 +189,10 @@ export function Months() {
     label: string,
     values: (number | null)[],
     strong = false,
+    title?: string,
   ) => (
     <tr className={strong ? "summary-row" : ""}>
-      <th className="sticky-label font-normal">{label}</th>
+      <th className="sticky-label font-normal" title={title}>{label}</th>
       {values.map((value, index) => (
         <td
           key={months[index]}
@@ -398,6 +399,12 @@ export function Months() {
                         ))}
                       </tr>
                     ))}
+                  {kind === "variable" && calculatedRow(
+                    "Amex offen",
+                    timeline.map((row) => row.amexOpen),
+                    false,
+                    `Karte ${currency(d.amex.outstanding)} · Eigenanteil ${currency(d.amex.ownOutstanding)} · Rücklage ${currency(d.amex.reserved)} · Bereits im Plan ${currency(d.amex.plannedCoverage)}`,
+                  )}
                   {calculatedRow(
                     kind === "income"
                       ? "Einnahmen gesamt"

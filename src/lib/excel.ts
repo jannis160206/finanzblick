@@ -744,6 +744,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     const calculations = {
       income: "Einnahmen",
       fixed: "Fixkosten",
+      amexOpen: "Amex offen",
       variablePlan: "Variable Ausgaben",
       surplus: "Überschuss",
       bikeTransfer: "Motorradrate",
