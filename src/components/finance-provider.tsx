@@ -25,6 +25,7 @@ import { localToday, refreshPlanning, synchronizePlan } from "@/lib/planning";
 import { restoreLegacySourceCategories } from "@/lib/legacy-source";
 import { approveReviewedBooking } from "@/lib/import/approve-review";
 import { useSecurityMode } from "@/components/security-mode-provider";
+import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -109,7 +110,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
     case "hydrate":
       return {
         data: refreshPlanning(
-          queueLedgerReview(restoreLegacySourceCategories(action.data, action.reference)),
+          queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
         ),
         ready: true,
         error: action.error ?? null,

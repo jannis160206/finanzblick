@@ -26,6 +26,8 @@ import { reconcileLeasingSources } from "@/lib/leasing";
 import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories, isTravelCategory } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetId, variableBudgetValue, type VariableBudgetId } from "@/lib/variable-budgets";
 import { hasManualCategory } from "@/lib/manual-category";
+import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
+import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -143,7 +145,7 @@ export function classify(
     };
   }
   const sourceText = [description, transaction.rawDescription ?? transaction.description, ...(transaction.rawDetails ?? []), transaction.sourceCategory].filter(Boolean).join(" ");
-  const known = knownMerchantCategory(sourceText, amount);
+  const known = knownMerchantCategory(sourceText, amount) ?? amexMerchantCategory({ ...recovered, description, amount });
   const forcedLunch = alwaysLunch(description) && known !== "Prüfen";
   const sharedHoliday = isSharedHoliday(transaction);
   const reimbursement = !!transaction.holidayReimbursementFor;
@@ -732,6 +734,7 @@ export function calculateMonthTotals(
   plan: { currentMonth: string },
   bookings: AccountedTransaction[] = actualBookings(state),
   actuals = indexMonthlyActuals(bookings, state.settings.asOf),
+  occurrences: PlannedOccurrence[] = matchPlannedOneOffs(state.plannedOneOffs, bookings),
 ) {
   const income = sum(
     state.financeRows
@@ -756,6 +759,7 @@ export function calculateMonthTotals(
     : state.months[month]?.variableOverride ?? sum(variableRows.map((row) => financeRowValue(row, month, plan, state.holidayRanges)));
   const { actualSpending, received, salaryReceived } = actuals.get(month) ??
     { actualSpending: 0, received: 0, salaryReceived: 0 };
+  const plannedOneOffs = sum(occurrences.filter((item) => monthKey(item.date) === month).map((item) => item.ownAmount));
   return {
     income,
     salaryPlan,
@@ -764,12 +768,13 @@ export function calculateMonthTotals(
     fixed,
     variablePlan,
     actualSpending,
-    surplus: round(income - fixed - variablePlan),
+    plannedOneOffs,
+    surplus: round(income - fixed - variablePlan - plannedOneOffs),
   };
 }
 export function actualBookings(state: AppState): AccountedTransaction[] {
   const account = (rows: Transaction[]) => accountHolidayRanges(
-    reconcileSharedHoliday(reconcileLeasingSources(reconcilePayrollSources(rows), (row) => classify(row).category), state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+    reconcileSharedHoliday(reconcileLeasingSources(reconcilePayrollSources(rows), (row) => classify(row).category), state.settings.asOf, state.plannedOneOffs).bookings, state.holidayRanges, state.settings.asOf);
   if (!state.fixedReceipts?.length) return account(state.transactions);
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [
@@ -813,7 +818,8 @@ export function calculateDashboard(state: AppState) {
   // Reconcile receipt fingerprints once, not twice for each forecast month.
   const bookings = actualBookings(state);
   const actuals = indexMonthlyActuals(bookings, state.settings.asOf);
-  const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals);
+  const plannedOneOffs = matchPlannedOneOffs(state.plannedOneOffs, bookings);
+  const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);
   const baselineMonth = monthKey(state.settings.baselineDate);
@@ -838,7 +844,8 @@ export function calculateDashboard(state: AppState) {
     }
     const interest = available ? monthlyInterest(month === currentMonth && latestTRBalance(state, snapshotDate) ? latestTRBalance(state, snapshotDate)!.balance : start.Notgroschen, month, state.settings) : 0;
     if (month === currentMonth) projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, Math.max(0, actualGoals[goal.id] - incomingPocketTransfers(state, goal.pocket, month, [goal.name]))]));
-    const allocation = allocateGoals(historical ? 0 : totals.surplus, goals, projectedGoals, month);
+    // Dated purchases reduce available surplus, never the existing goal instructions.
+    const allocation = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs, goals, projectedGoals, month);
     const split = { ...emptyPockets(), Sparkonto: allocation.savings, Urlaub: allocation.vacation };
     for (const goal of goals) {
       if (pocketKey(goal.pocket) === "motorrad") split.Motorrad += allocation.goals[goal.id];
@@ -889,7 +896,7 @@ export function calculateDashboard(state: AppState) {
       ...[...goals].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)).map((goal) => ({ ...goal, amount: currentRow?.goalRates[goal.id] ?? 0 })),
       { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: currentRow?.rates.Urlaub ?? 0 },
     ].filter((item) => item.amount > 0).map((item) => ({ ...item, done: transferMatches(item.amount, incomingPocketTransfers(state, item.pocket, currentMonth, [item.name])) })),
-    currentMonth, current, missingFixed: missingFixedCosts(state), timeline, actual,
+    currentMonth, current, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
     totalAssets: sum([...Object.values(actual), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => actualGoals[goal.id])]),
     countdown, nextTransfer, allocationMonth, ninetyDays,
     currentRoundUp: roundUpTotal(state.transactions.filter((t) => t.date <= state.settings.asOf), currentMonth),

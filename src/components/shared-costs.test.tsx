@@ -59,6 +59,23 @@ function rowShare(row: Transaction) {
 }
 
 describe("Geteilt UI", () => {
+  it("keeps a planned half in the same open list and confirms its manual payment without a ledger booking", () => {
+    const state = fixture([]);
+    state.plannedOneOffs = [{ id: "planned", name: "Schrank", date: "2026-09-20", amount: 400,
+      pocket: "Giro", installments: 1, sharedWithRaphael: true }];
+    const view = renderLedger(state);
+    expect(screen.getByLabelText("1 offene Teilungen")).toBeTruthy();
+    openModal();
+    const panel = switchTab("Offen");
+    expect(within(panel).getByText("Schrank")).toBeTruthy();
+    fireEvent.click(within(panel).getByRole("button", { name: "Als bezahlt markieren: Schrank" }));
+    expect(view.read().plannedOneOffs?.[0].paidOccurrences).toBeUndefined();
+    fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
+    expect(view.read().plannedOneOffs?.[0].paidOccurrences).toEqual(["2026-09-20"]);
+    expect(view.read().transactions).toEqual([]);
+    expect(screen.queryByLabelText("1 offene Teilungen")).toBeNull();
+  });
+
   it("keeps all open shares exclusively in the modal, not stacked on the Umsatz page", () => {
     const open = Array.from({ length: 11 }, (_, i) => ({ ...booking(`open-${i}`), sharedWithRaphael: true }));
     const paid = { ...booking("paid"), sharedWithRaphael: true, sharedPaidManually: true };

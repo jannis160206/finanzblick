@@ -1,0 +1,163 @@
+"use client";
+
+import { useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useFinance } from "@/components/finance-provider";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { addMonths, calculateMonthTotals, daysInMonth } from "@/lib/calc";
+import { dateLabel, monthLabel } from "@/lib/format";
+import { parseStatementAmount } from "@/lib/import/statements";
+import { plannedOccurrences } from "@/lib/planned-one-offs";
+import { dateSchema, plannedOneOffSchema, type PlannedOneOff } from "@/lib/types";
+
+const amountLabel = (value: number) => `${new Intl.NumberFormat("de-AT", { maximumFractionDigits: 2 }).format(value)} €`;
+const nextMonthLabel = (date: string) => new Intl.DateTimeFormat("de-AT", { month: "short", timeZone: "UTC" })
+  .format(new Date(`${date}T12:00:00Z`)).replace(/\.$/, "");
+
+export function PlannedOneOffLines() {
+  const { state, dashboard } = useFinance();
+  const open = dashboard.plannedOneOffs.filter((item) => !item.bookingId);
+  const current = open.filter((item) => item.date.startsWith(dashboard.currentMonth));
+  const horizon = new Date(`${state.settings.asOf}T12:00:00Z`);
+  horizon.setUTCDate(horizon.getUTCDate() + 30);
+  const upcoming = open.filter((item) => !item.date.startsWith(dashboard.currentMonth) &&
+    item.date > state.settings.asOf && item.date <= horizon.toISOString().slice(0, 10));
+  if (!current.length && !upcoming.length) return null;
+  return <div className="mb-5 space-y-1 text-xs text-muted-foreground" aria-label="Geplante Ausgaben">
+    {current.length > 0 && <p>{current.map((item) => `${item.name} ${amountLabel(item.ownAmount)}`).join(" · ")}</p>}
+    {upcoming.length > 0 && <p>{upcoming.map((item, index) =>
+      `${!index || upcoming[index - 1].date.slice(0, 7) !== item.date.slice(0, 7) ? `${nextMonthLabel(item.date)} · ` : ""}${item.name} ${amountLabel(item.ownAmount)}`,
+    ).join(" · ")}</p>}
+  </div>;
+}
+
+export function PlannedOneOffs() {
+  const finance = useFinance();
+  const { state, update, storageError } = finance;
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<string>();
+  const [deleting, setDeleting] = useState<string>();
+  const [name, setName] = useState("");
+  const [date, setDate] = useState(state.settings.asOf);
+  const [month, setMonth] = useState(state.settings.asOf.slice(0, 7));
+  const [amount, setAmount] = useState("");
+  const [pocket, setPocket] = useState<PlannedOneOff["pocket"]>("Giro");
+  const [installments, setInstallments] = useState("1");
+  const [total, setTotal] = useState("");
+  const [shared, setShared] = useState(false);
+  const [error, setError] = useState("");
+  const items = state.plannedOneOffs ?? [];
+  const reset = () => {
+    setEditing(undefined); setDeleting(undefined); setName(""); setDate(state.settings.asOf);
+    setMonth(state.settings.asOf.slice(0, 7)); setAmount(""); setPocket("Giro");
+    setInstallments("1"); setTotal(""); setShared(false); setError("");
+  };
+  const changeOpen = (value: boolean) => { setOpen(value); reset(); };
+  const draft = {
+    id: editing ?? "preview", name, date, amount: parseStatementAmount(amount),
+    pocket, installments: Number(installments || "1"), sharedWithRaphael: shared,
+    ...(total ? { total: parseStatementAmount(total) } : {}),
+    ...(editing ? { paidOccurrences: items.find((item) => item.id === editing)?.paidOccurrences } : {}),
+  };
+  const preview = plannedOneOffSchema.safeParse({ ...draft, name: name || "Vorschau" });
+  let remaining: number | undefined;
+  if (open && preview.success) {
+    const month = date.slice(0, 7);
+    const dashboard = finance.dashboard;
+    const totals = dashboard.timeline.find((row) => row.month === month) ??
+      calculateMonthTotals(state, month, { currentMonth: dashboard.currentMonth });
+    const previous = dashboard.plannedOneOffs.filter((item) => item.itemId === editing && item.date.startsWith(month))
+      .reduce((sum, item) => sum + item.ownAmount, 0);
+    remaining = Math.round((totals.surplus + previous - plannedOccurrences([preview.data])[0].ownAmount) * 100) / 100;
+  }
+  const marked = new Set(plannedOccurrences(items).map((item) => item.date));
+  const offset = (new Date(`${month}-01T12:00:00Z`).getUTCDay() + 6) % 7;
+  const edit = (item: PlannedOneOff) => {
+    setEditing(item.id); setDeleting(undefined); setName(item.name); setDate(item.date);
+    setMonth(item.date.slice(0, 7)); setAmount(String(item.amount).replace(".", ","));
+    setPocket(item.pocket); setInstallments(String(item.installments));
+    setTotal(item.total === undefined ? "" : String(item.total).replace(".", ","));
+    setShared(item.sharedWithRaphael === true); setError("");
+  };
+  return <Dialog open={open} onOpenChange={changeOpen}>
+    <DialogTrigger asChild><Button size="sm" variant="outline" disabled={!!storageError}>Geplante Ausgaben</Button></DialogTrigger>
+    <DialogContent>
+      <DialogHeader><DialogTitle>Geplante Ausgaben</DialogTitle><DialogDescription>Einmalige Beträge mit Datum. Raten bleiben ein Eintrag.</DialogDescription></DialogHeader>
+      <DialogForm noValidate onSubmit={(event) => {
+        event.preventDefault();
+        if (storageError) { setError(storageError); return; }
+        if (deleting) {
+          update((current) => ({ ...current, plannedOneOffs: current.plannedOneOffs?.filter((item) => item.id !== deleting) }));
+          reset(); return;
+        }
+        const parsed = plannedOneOffSchema.safeParse(draft);
+        if (!parsed.success) { setError(parsed.error.issues[0].message); return; }
+        const item = { ...parsed.data, id: editing ?? crypto.randomUUID() };
+        update((current) => ({ ...current,
+          plannedOneOffs: [...(current.plannedOneOffs ?? []).filter((row) => row.id !== editing), item],
+        }));
+        reset();
+      }}>
+        <DialogBody className="space-y-5">
+          {deleting ? <p className="text-sm">„{items.find((item) => item.id === deleting)?.name}“ wirklich löschen?</p> : <>
+            <div><Label htmlFor="one-off-name">Name</Label><Input id="one-off-name" className="mt-2" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></div>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div><Label htmlFor="one-off-date">Datum</Label><Input id="one-off-date" className="mt-2" type="date" value={date} onChange={(event) => {
+                setDate(event.target.value);
+                if (dateSchema.safeParse(event.target.value).success) setMonth(event.target.value.slice(0, 7));
+              }} /></div>
+              <div><Label htmlFor="one-off-pocket">Pocket</Label><select id="one-off-pocket" className="select-input mt-2 w-full" value={pocket}
+                onChange={(event) => setPocket(event.target.value === "Sparkonto" ? "Sparkonto" : "Giro")}><option>Giro</option><option>Sparkonto</option></select></div>
+            </div>
+            <div className="max-w-64" aria-label="Monatskalender">
+              <div className="mb-2 flex items-center justify-between">
+                <Button type="button" size="icon" variant="ghost" aria-label="Voriger Monat" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="size-4" /></Button>
+                <span className="text-xs">{monthLabel(month)}</span>
+                <Button type="button" size="icon" variant="ghost" aria-label="Nächster Monat" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="size-4" /></Button>
+              </div>
+              <div className="grid grid-cols-7 gap-1 text-center text-xs">
+                {["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map((day) => <span key={day} className="text-muted-foreground">{day}</span>)}
+                {Array.from({ length: offset }, (_, index) => <span key={`space-${index}`} />)}
+                {Array.from({ length: daysInMonth(month) }, (_, index) => {
+                  const day = `${month}-${String(index + 1).padStart(2, "0")}`;
+                  return <button key={day} type="button" className="relative rounded py-2 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+                    aria-label={`${dateLabel(day)}${marked.has(day) ? " · Geplante Ausgabe" : ""}`}
+                    onClick={() => setDate(day)}>{index + 1}{marked.has(day) && <span aria-hidden="true" className="absolute bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full bg-primary" />}</button>;
+                })}
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="one-off-amount">Betrag (€)</Label><Input id="one-off-amount" className="mt-2" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} />
+              {remaining !== undefined && <p role="status" className={`mt-2 text-xs ${remaining < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                {remaining < 0 ? `Fehlen ${amountLabel(-remaining)}` : `Danach ${amountLabel(remaining)}`}
+              </p>}
+            </div>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-primary" checked={shared} onChange={(event) => setShared(event.target.checked)} />Mit Raphael teilen</label>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div><Label htmlFor="one-off-installments">N × ab Datum</Label><Input id="one-off-installments" className="mt-2" type="number" min={1} max={120} value={installments} onChange={(event) => { setInstallments(event.target.value); setTotal(""); }} /></div>
+              {Number(installments) > 1 && <div><Label htmlFor="one-off-total">Gesamt (€), optional</Label><Input id="one-off-total" className="mt-2" inputMode="decimal" value={total} onChange={(event) => setTotal(event.target.value)} /></div>}
+            </div>
+            {items.length > 0 && <section className="space-y-3 border-t pt-4">
+              {items.map((item) => {
+                const booked = finance.dashboard.plannedOneOffs.filter((occurrence) => occurrence.itemId === item.id && occurrence.bookingId).length;
+                return <div key={item.id} className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="min-w-0 flex-1">{item.name} · {dateLabel(item.date)} · {amountLabel(item.amount)}{item.installments > 1 ? ` · ${item.installments}×` : ""}{booked ? item.installments === 1 ? " · Gebucht" : ` · ${booked}/${item.installments} gebucht` : ""}</span>
+                  <Button type="button" size="sm" variant="ghost" aria-label={`Bearbeiten: ${item.name}`} onClick={() => edit(item)}>Bearbeiten</Button>
+                  <Button type="button" size="sm" variant="ghost" disabled={!!storageError} aria-label={`Löschen: ${item.name}`} onClick={() => { setDeleting(item.id); setError(""); }}>Löschen</Button>
+                </div>;
+              })}
+            </section>}
+          </>}
+          {(error || storageError) && <p role="alert" className="text-sm text-destructive">{error || storageError}</p>}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => deleting ? setDeleting(undefined) : changeOpen(false)}>Abbrechen</Button>
+          <Button type="submit" disabled={!!storageError}>{deleting ? "Löschen bestätigen" : editing ? "Änderung speichern" : "Ausgabe speichern"}</Button>
+        </DialogFooter>
+      </DialogForm>
+    </DialogContent>
+  </Dialog>;
+}

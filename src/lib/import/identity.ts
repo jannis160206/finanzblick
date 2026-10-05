@@ -6,6 +6,23 @@ type Identity = Pick<Transaction, "date" | "bank" | "amount" | "description"> &
 const clean = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
 const bankName = (bank: string) =>
   clean(normalizeAccount({ bank, pocket: null }).bank).replace(/^american express$/, "amex");
+
+export function isAmexScreenshot(row: Pick<Transaction, "bank" | "rawDetails">): boolean {
+  return bankName(row.bank) === "amex" && !!row.rawDetails?.includes("Amex-Screenshot");
+}
+
+export function amexBookingKey(row: Identity): string | null {
+  if (bankName(row.bank) !== "amex") return null;
+  if (!["", "amex", "amex jannis"].includes(clean(row.pocket ?? ""))) return null;
+  // Retain order codes. Only common glyph confusions within a code are equivalent;
+  // unrelated equal-price orders and named secondary cardholders stay distinct.
+  const merchant = (row.rawDescription ?? row.description)
+    .replace(/\b(AMAZON\.[A-Z.]+|AIRBNB)\s*\*\s*([A-Z0-9]+)/gi,
+      (_, merchant: string, code: string) => `${merchant}*${code.toUpperCase().replace(/[IL]/g, "1").replace(/O/g, "0")}`)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  return merchant ? JSON.stringify([row.date.slice(0, 10), row.amount.toFixed(2), merchant]) : null;
+}
 export function legacyFingerprint(row: Identity) {
   return JSON.stringify([
     row.date.slice(0, 10),

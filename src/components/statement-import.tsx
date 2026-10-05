@@ -24,6 +24,7 @@ import {
 } from "@/lib/types";
 import {
   parseStatementFile,
+  parseStatementAmount,
   type StatementDraft,
   type StatementResult,
 } from "@/lib/import/statements";
@@ -38,6 +39,7 @@ import { CategorySelect } from "@/components/category-select";
 import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { isIncomeCategory } from "@/lib/fixed";
 import { accountLabel } from "@/lib/accounts";
+import { isAmexScreenshot } from "@/lib/import/identity";
 
 type Pending = {
   requestId: string;
@@ -70,6 +72,7 @@ const BookingReview = memo(function BookingReview({
   save: (row: Transaction, id: string) => void;
   skip: () => void;
 }) {
+  const repairOcr = isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:");
   const fixedCost = draft.fixedCost === true;
   const choices = categories.filter((category) => category !== "Prüfen");
   const classification = classify({
@@ -93,11 +96,13 @@ const BookingReview = memo(function BookingReview({
     >
       <p className="text-xs text-muted-foreground break-words">
         {item.message}
+        {repairOcr && " Ausgaben negativ, Gutschriften positiv eingeben."}
       </p>
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
         <label className="space-y-1 text-xs">
           Datum
-          <Input aria-label="Datum" type="date" value={draft.date} readOnly />
+          <Input aria-label="Datum" type="date" value={draft.date} readOnly={!repairOcr}
+            onChange={repairOcr ? (event) => changeDraft(item.id, { ...draft, date: event.target.value }) : undefined} />
         </label>
         <label className="space-y-1 text-xs">
           Text
@@ -105,15 +110,19 @@ const BookingReview = memo(function BookingReview({
             aria-label="Text"
             maxLength={1000}
             value={draft.description}
-            readOnly
+            readOnly={!repairOcr}
+            onChange={repairOcr ? (event) => changeDraft(item.id, { ...draft, description: event.target.value }) : undefined}
           />
         </label>
         <label className="space-y-1 text-xs">
           Betrag (€)
           <Input
             aria-label="Betrag"
-            value={draft.amount === null ? "" : currency(draft.amount)}
-            readOnly
+            {...(repairOcr ? {
+              defaultValue: draft.amount === null ? "" : String(draft.amount).replace(".", ","),
+              inputMode: "decimal" as const,
+              onChange: (event: React.ChangeEvent<HTMLInputElement>) => changeDraft(item.id, { ...draft, amount: parseStatementAmount(event.target.value) }),
+            } : { value: draft.amount === null ? "" : currency(draft.amount), readOnly: true })}
           />
         </label>
       </div>
@@ -267,7 +276,15 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
     // reducer runs. The reducer still applies to the latest state, not a copy.
     setTimeout(() => appendStatements(rows, duplicates, requestId, decisions, metadata), 0);
   }, [appendStatements, ready, storageError]);
-  const saveBooking = useCallback((row: Transaction, id: string) => commit([row], 0, id), [commit]);
+  const saveBooking = useCallback((row: Transaction, id: string) => {
+    const original = latestState.current.reviewQueue?.find((item) => item.id === id);
+    if (original?.kind === "booking" && (original.draft.date !== row.date ||
+      original.draft.amount !== row.amount || original.draft.description !== row.description)) {
+      // Corrected bank facts need full reconciliation, not category-only approval.
+      importMetadata.current = { ...importMetadata.current, reviewQueue: [{ ...original, draft: row }] };
+    }
+    commit([row], 0, id);
+  }, [commit]);
   const skip = useCallback(() => {
     setUI({ open: false, drafts: {} });
   }, []);
@@ -354,7 +371,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           <div>
             <p className="text-sm font-medium">Kontoauszüge hier ablegen</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Raiffeisen, Revolut oder Amex · CSV/XLSX/PDF · sichere Buchungen
+              Raiffeisen, Revolut oder Amex · CSV/XLSX/PDF oder Amex-Screenshot · sichere Buchungen
               automatisch · max. 20 MB je Datei
             </p>
           </div>
@@ -363,7 +380,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           ref={fileInput}
           type="file"
           multiple
-          accept=".csv,.xlsx,.pdf"
+          accept=".csv,.xlsx,.pdf,.png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"
           className="hidden"
           aria-label="Kontoauszüge auswählen"
           onChange={(event) => {

@@ -91,6 +91,21 @@ function renderFinance(initialState: AppState, children?: ReactNode) {
 }
 
 describe("FinanceProvider lazy dashboard and assignment integration", () => {
+  it("persists the one-off seed once and never restores deliberately deleted plans", async () => {
+    const view = renderFinance(fixture(0));
+    expect(view.read().state.plannedOneOffs).toHaveLength(5);
+    expect(view.read().state.plannedOneOffsSeeded).toBe(true);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)!);
+    expect(saved.plannedOneOffs).toHaveLength(5);
+    act(() => view.read().update((state) => ({ ...state, plannedOneOffs: [] })));
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    view.unmount();
+    const restored = renderFinance(fixture(0));
+    expect(restored.read().state.plannedOneOffs).toEqual([]);
+    expect(restored.read().state.plannedOneOffsSeeded).toBe(true);
+  });
+
   it("assigns real ledger reviews without any dashboard work, persists and prevents duplicate submissions", () => {
     const dashboard = vi.spyOn(calc, "calculateDashboard");
     const commit = vi.spyOn(review, "commitStatementImport");

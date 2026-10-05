@@ -380,7 +380,7 @@ describe("file handling and Excel compatibility", () => {
       "PDF-Datei konnte nicht gelesen werden",
     );
     await expect(parseStatementFile(file("test.txt", "text"))).rejects.toThrow(
-      "CSV-, XLSX- oder PDF",
+      "CSV-, XLSX- oder PDF-Format oder einen Amex-Screenshot (PNG, JPEG, WebP)",
     );
     await expect(
       parseStatementFile({

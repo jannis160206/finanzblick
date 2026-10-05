@@ -478,6 +478,8 @@ export async function parseWorkbook(
                 savingsGoals: true,
                 seasonalTheme: true,
                 holidayRanges: true,
+                plannedOneOffs: true,
+                plannedOneOffsSeeded: true,
                 annualSixth: true,
               })
               .parse(data),
@@ -794,7 +796,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.reviewQueue ||
     state.importStatus ||
     state.settings.interestRates ||
-    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.annualSixth ||
+    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth ||
     state.payslips?.length || state.payrollForecasts?.length
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
@@ -807,7 +809,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       state.reviewQueue ||
       state.importStatus ||
       state.settings.interestRates ||
-      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.annualSixth
+      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth
     )
       automation.addRow([
         "ux",
@@ -821,6 +823,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
           savingsGoals: state.savingsGoals,
           seasonalTheme: state.seasonalTheme,
           holidayRanges: state.holidayRanges,
+          plannedOneOffs: state.plannedOneOffs,
+          plannedOneOffsSeeded: state.plannedOneOffsSeeded,
           annualSixth: state.annualSixth,
         }),
       ]);

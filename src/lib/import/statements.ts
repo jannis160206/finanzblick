@@ -9,7 +9,7 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "@/lib/import/limits";
-import { numberStatementRows, statementBaseKey, statementFingerprint } from "./identity";
+import { amexBookingKey, isAmexScreenshot, numberStatementRows, statementBaseKey, statementFingerprint } from "./identity";
 import { hasTerminalText, recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 export { statementFingerprint } from "./identity";
 
@@ -817,12 +817,16 @@ export async function parseStatementFile(
   file: Pick<File, "name" | "size" | "arrayBuffer">,
 ): Promise<StatementResult> {
   assertImportSize(file.size);
-  if (!/\.(csv|xlsx|pdf)$/i.test(file.name))
+  if (!/\.(csv|xlsx|pdf|png|jpe?g|webp)$/i.test(file.name))
     throw new Error(
-      "Bitte Kontoauszüge im CSV-, XLSX- oder PDF-Format auswählen.",
+      "Bitte Kontoauszüge im CSV-, XLSX- oder PDF-Format oder einen Amex-Screenshot (PNG, JPEG, WebP) auswählen.",
     );
   const buffer = await file.arrayBuffer();
   assertImportSize(buffer.byteLength);
+  if (/\.(png|jpe?g|webp)$/i.test(file.name)) {
+    const { parseAmexScreenshot } = await import("./amex-ocr");
+    return parseAmexScreenshot(buffer, file.name);
+  }
   if (/\.pdf$/i.test(file.name)) {
     const { parseAmexPdf } = await import("./amex-pdf");
     return parseAmexPdf(buffer, file.name);
@@ -882,6 +886,12 @@ export function deduplicateStatements<T extends Transaction>(
 ): { rows: T[]; duplicates: number } {
   const numbered = numberStatementRows(existing);
   const seen = new Set(numbered.map(statementFingerprint));
+  const amex = new Map<string, Transaction[]>();
+  const rememberAmex = (row: Transaction) => {
+    const key = amexBookingKey(row);
+    if (key) amex.set(key, [...(amex.get(key) ?? []), row]);
+  };
+  numbered.forEach(rememberAmex);
   // Older Excel/local rows may lack the account or reference that the re-drop
   // now supplies. Match the full original POS text, never just date + amount.
   const terminalKey = (row: Transaction) => statementBaseKey({
@@ -903,7 +913,10 @@ export function deduplicateStatements<T extends Transaction>(
     const legacyDuplicate = (terminalExisting.get(terminalKey(row)) ?? []).some((old) =>
       sameTerminalBooking(normalizeAccount(old), normalizeAccount(row)) &&
       ((old.bankReference && row.bankReference) || old.occurrence === row.occurrence));
-    if (seen.has(key) || legacyDuplicate) {
+    const amexKey = amexBookingKey(row);
+    const screenshotDuplicate = amexKey !== null && (amex.get(amexKey) ?? []).some((old) =>
+      (isAmexScreenshot(old) || isAmexScreenshot(row)) && old.occurrence === row.occurrence);
+    if (seen.has(key) || legacyDuplicate || screenshotDuplicate) {
       duplicates++;
       const index = positions.get(key);
       if (index !== undefined && unresolvedTerminal(unique[index].description) && !unresolvedTerminal(row.description))
@@ -913,6 +926,7 @@ export function deduplicateStatements<T extends Transaction>(
       seen.add(key);
       positions.set(key, unique.length);
       unique.push(row);
+      rememberAmex(row);
     }
   }
   return { rows: unique, duplicates };

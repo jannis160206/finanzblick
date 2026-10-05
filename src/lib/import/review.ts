@@ -11,6 +11,7 @@ import {
 import {
   fixedCategories,
   durableCategories,
+  transactionSchema,
   type AppState,
   type FinanceRow,
   type FixedReceipt,
@@ -20,7 +21,7 @@ import {
   type ReviewItem,
 } from "@/lib/types";
 export type { FixedChange, ReviewItem } from "@/lib/types";
-import { legacyFingerprint, numberStatementRows } from "./identity";
+import { isAmexScreenshot, legacyFingerprint, numberStatementRows } from "./identity";
 import {
   matchingFixedRow as matchingGridRow,
   isIncomeCategory as isIncome,
@@ -70,6 +71,11 @@ function indexReviewRules(state: AppState) {
 }
 
 export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
+  if (isAmexScreenshot(row) && !transactionSchema.safeParse(row).success)
+    return "Buchungsdaten unvollständig – bitte Datum, Händler und Betrag prüfen.";
+  if (isAmexScreenshot(row) && row.rawDetails?.includes("OCR-Händler unklar") &&
+    !(row.reviewed && (hasManualCategory(row) || row.categoryOverride)))
+    return "Amex-Screenshot: Händlertext unsicher erkannt – bitte mit dem Bild abgleichen.";
   const result = classify(row);
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
@@ -165,10 +171,10 @@ export function queueLedgerReview(state: AppState): AppState {
   state = repairPayrollBookings(repairMerchantBookings(state));
   const rules = indexReviewRules(state);
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
-    item.kind === "booking" && item.draft.amount !== null ? [item.draft as Transaction] : []);
+    item.kind === "booking" && transactionSchema.safeParse(item.draft).success ? [item.draft as Transaction] : []);
   let ledger = actualBookings(state);
   if (pending.length) {
-    const accounted = accountHolidayRanges(reconcileSharedHoliday([...ledger, ...pending], state.settings.asOf).bookings, state.holidayRanges, state.settings.asOf);
+    const accounted = accountHolidayRanges(reconcileSharedHoliday([...ledger, ...pending], state.settings.asOf, state.plannedOneOffs).bookings, state.holidayRanges, state.settings.asOf);
     const safePending = accounted.slice(accounted.length - pending.length).filter((row) =>
       !bookingReviewReason(state, row, rules));
     if (safePending.length) {
@@ -283,8 +289,11 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
     state.transactions,
   );
   const existing = actualBookings(state);
-  const accounted = reconcileSharedHoliday([...existing, ...classified], state.settings.asOf).bookings.slice(existing.length);
-  const deduped = deduplicateStatements(accounted, state.transactions);
+  const accounted = reconcileSharedHoliday([...existing, ...classified], state.settings.asOf, state.plannedOneOffs).bookings.slice(existing.length);
+  const hasScreenshot = candidates.some(isAmexScreenshot);
+  const screenshotReceipts = (state.fixedReceipts ?? []).flatMap((item) =>
+    item.booking && (isAmexScreenshot(item.booking) || (hasScreenshot && /^(?:amex|american express)$/i.test(item.booking.bank))) ? [item.booking] : []);
+  const deduped = deduplicateStatements(accounted, [...state.transactions, ...screenshotReceipts]);
   const rows: Transaction[] = [];
   const receipts: FixedReceipt[] = [];
   const changes = new Map<string, FixedChange>();
@@ -399,7 +408,7 @@ export function prepareStatementImport(
         ...(state.reviewQueue ?? []).flatMap((item) =>
           item.kind === "fixed"
             ? item.change.bookings
-            : item.draft.amount !== null
+            : transactionSchema.safeParse(item.draft).success
               ? [item.draft as Transaction]
               : [],
         ),
@@ -424,6 +433,17 @@ export function prepareStatementImport(
         message,
       });
     else automatic.push(row);
+  }
+  const screenshotIssues = new Set(
+    (state.reviewQueue ?? []).flatMap((item) => item.kind === "booking" && isAmexScreenshot(item.draft)
+      ? [JSON.stringify([item.draft.date, item.draft.amount, item.draft.description, item.draft.rawDetails])] : []),
+  );
+  for (const result of results) for (const issue of result.issues) {
+    if (!issue.draft || !isAmexScreenshot(issue.draft)) continue;
+    const key = JSON.stringify([issue.draft.date, issue.draft.amount, issue.draft.description, issue.draft.rawDetails]);
+    if (screenshotIssues.has(key)) continue;
+    screenshotIssues.add(key);
+    review.push({ kind: "booking", id: issue.draft.id, draft: issue.draft, message: issue.message });
   }
   const issues = results.flatMap((result) =>
     result.issues.map(
@@ -565,7 +585,7 @@ export function commitStatementImport(
     numberStatementRows(rows).map((row) => [statementFingerprint(row), row]),
   );
   for (const item of queue) {
-    if (item.kind !== "booking" || item.draft.amount === null) continue;
+    if (item.kind !== "booking" || item.draft.amount === null || !transactionSchema.safeParse(item.draft).success) continue;
     const direct = directChoices.get(item.draft.id);
     if (hasCategoryChoice(item.draft) && !direct) continue;
     const category = direct?.category ?? choices.get(merchantRuleKey(item.draft as Transaction));
@@ -663,12 +683,13 @@ export function commitStatementImport(
     }
   }
   const resolved = new Set(rows.map(statementFingerprint));
+  const resolvedIds = new Set(rows.map((row) => row.id));
   const resolvedChanges = new Set(decisions.map(({ change }) => change.id));
   const pending = queue.filter((item) =>
     item.kind === "fixed"
       ? !resolvedChanges.has(item.id)
-      : item.draft.amount === null ||
-        !resolved.has(statementFingerprint(item.draft as Transaction)),
+      : !resolvedIds.has(item.draft.id) && (item.draft.amount === null ||
+        !resolved.has(statementFingerprint(item.draft as Transaction))),
   );
   for (const change of split.changes)
     if (!pending.some((item) => item.id === change.id))

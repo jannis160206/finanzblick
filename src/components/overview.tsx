@@ -38,6 +38,7 @@ import {
 import { currency, dateLabel, monthLabel, shortCurrency } from "@/lib/format";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
 
 const chartTooltip = {
   background: "var(--popover)",
@@ -85,7 +86,7 @@ export function Overview() {
     {
       label: "Überschuss · Plan",
       value: d.current.surplus,
-      note: "Nach Fixkosten & Variablen",
+      note: d.current.plannedOneOffs ? "Nach Fixkosten, Variablen & geplanten Ausgaben" : "Nach Fixkosten & Variablen",
       icon: Wallet,
       color: d.current.surplus >= 0 ? "text-primary" : "text-destructive",
     },
@@ -112,6 +113,7 @@ export function Overview() {
             />
             {monthLabel(d.currentMonth)}
           </span>
+          <PlannedOneOffs />
           <Button asChild size="sm">
             <Link href="/umsaetze">
               Kontoauszüge importieren
@@ -120,6 +122,7 @@ export function Overview() {
           </Button>
         </PageHeading>
       </div>
+      <PlannedOneOffLines />
       {monthSplit.length > 0 && (
         <section
           className="panel mb-5 px-4 py-3 text-sm"

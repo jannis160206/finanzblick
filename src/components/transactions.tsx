@@ -253,7 +253,7 @@ const TransactionLedger = memo(function TransactionLedger({
     }
     return reasons;
   }, [state.reviewQueue, ledger, classifications]);
-  const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf), [ledger, state.settings.asOf]);
+  const holiday = useMemo(() => reconcileSharedHoliday(ledger, state.settings.asOf, state.plannedOneOffs), [ledger, state.settings.asOf, state.plannedOneOffs]);
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const [lookup, setLookup] = useState<{ booking: Transaction; results: MerchantLookupResult[] | null } | null>(null);

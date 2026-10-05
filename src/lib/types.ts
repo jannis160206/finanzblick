@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normalizeAccount } from "@/lib/accounts";
-import { normalizeStatementKey } from "@/lib/import/identity";
+import { isAmexScreenshot, normalizeStatementKey } from "@/lib/import/identity";
 import { seasonalModes, seasonalThemes } from "@/lib/seasonal-theme";
 import { payslipKey, payslipSchema, payrollEmployerKey, payrollForecastSchema } from "@/lib/payslip-schema";
 import { allCategories, categories, canonicalCategory, type Category } from "@/lib/categories";
@@ -79,6 +79,19 @@ export const holidayRangeSchema = z.object({ from: dateSchema, to: dateSchema })
   "Urlaub: Von–bis mit höchstens 25 Tagen erforderlich.",
 );
 export type HolidayRange = z.infer<typeof holidayRangeSchema>;
+export const plannedOneOffSchema = z.object({
+  id: z.string().min(1).max(100),
+  name: z.string().trim().min(1, "Name erforderlich").max(100),
+  date: dateSchema,
+  amount: moneySchema.positive("Betrag muss größer als null sein").multipleOf(0.01),
+  pocket: z.enum(["Giro", "Sparkonto"]).default("Giro"),
+  installments: z.number().int().min(1).max(120).default(1),
+  total: moneySchema.positive().multipleOf(0.01).optional(),
+  sharedWithRaphael: z.boolean().optional(),
+  paidOccurrences: z.array(dateSchema).max(120).optional(),
+}).refine((item) => item.total === undefined || item.total > item.amount * (item.installments - 1),
+  "Gesamtbetrag muss nach den regulären Raten einen positiven Rest ergeben.");
+export type PlannedOneOff = z.infer<typeof plannedOneOffSchema>;
 const transactionFieldsSchema = z.object({
   id: z.string().min(1),
   date: dateSchema,
@@ -155,7 +168,14 @@ export const reviewItemSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("booking"),
     id: z.string(),
-    draft: transactionFieldsSchema.extend({ amount: moneySchema.nullable() }).overwrite(normalizeAccount),
+    draft: transactionFieldsSchema.extend({
+      amount: moneySchema.nullable(),
+      date: dateSchema.or(z.literal("")),
+      description: z.string().trim().max(1000),
+    }).overwrite(normalizeAccount).refine(
+      (draft) => isAmexScreenshot(draft) || (!!draft.date && !!draft.description),
+      "Datum und Beschreibung erforderlich.",
+    ),
     message: z.string(),
   }),
   z.object({
@@ -290,6 +310,11 @@ export const appStateSchema = z.object({
     },
     "Urlaubszeiträume dürfen sich nicht überschneiden.",
   ).optional(),
+  plannedOneOffs: z.array(plannedOneOffSchema).max(500).refine(
+    (items) => new Set(items.map((item) => item.id)).size === items.length,
+    "Einmalige Ausgaben müssen eindeutige IDs haben.",
+  ).optional(),
+  plannedOneOffsSeeded: z.boolean().optional(),
   seasonalTheme: seasonalPreferenceSchema.optional(),
   savingsGoals: z.array(savingsGoalSchema).max(50).refine(
     (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,
