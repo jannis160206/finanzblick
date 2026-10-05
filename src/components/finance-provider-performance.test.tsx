@@ -9,6 +9,8 @@ import * as review from "@/lib/import/review";
 import * as approvals from "@/lib/import/approve-review";
 import { createSeed } from "@/lib/seed";
 import type { AppState, Transaction } from "@/lib/types";
+import { synchronizePlan } from "@/lib/planning";
+import { toast } from "sonner";
 
 vi.mock("next-themes", () => ({
   ThemeProvider: ({ children }: { children: ReactNode }) => children,
@@ -91,6 +93,47 @@ function renderFinance(initialState: AppState, children?: ReactNode) {
 }
 
 describe("FinanceProvider lazy dashboard and assignment integration", () => {
+  function fullTable(marked = false, count = 1) {
+    const state = synchronizePlan(fixture(0));
+    state.financeRows.push(...Array.from({ length: 200 - state.financeRows.length }, (_, index) => ({
+      id: `manual-${index}`, label: `Manuelle Position ${index}`, kind: "fixed" as const, values: {},
+    })));
+    state.transactions = Array.from({ length: count }, (_, index) => ({
+      ...booking(`capacity-${index}`), description: `Kapazitätsvertrag ${String.fromCharCode(65 + index)}`,
+      category: "Shopping" as const, categoryOverride: true, manualCategory: true, reviewed: true, fixedCost: marked,
+    }));
+    return state;
+  }
+
+  it("rejects automatic row overflow without losing data or blocking ordinary editing", () => {
+    const view = renderFinance(fullTable());
+    const before = view.read().state;
+    act(() => view.read().update((state) => ({ ...state, transactions: state.transactions.map((row) => ({ ...row, fixedCost: true })) })));
+    expect(view.read().state).toBe(before);
+    expect(view.read().storageError).toBeNull();
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Maximal 200"));
+    act(() => view.read().update((state) => ({ ...state, financeRows: state.financeRows.filter((row) => row.id !== "manual-0") })));
+    act(() => view.read().update((state) => ({ ...state, transactions: state.transactions.map((row) => ({ ...row, fixedCost: true })) })));
+    expect(view.read().state.financeRows).toHaveLength(200);
+    expect(view.read().state.financeRows.some((row) => row.fixedSource)).toBe(true);
+  });
+
+  it("loads a full pre-feature table safely and allows incremental recovery from overflow", () => {
+    const initial = fullTable(true, 3);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+    const view = renderFinance(initial);
+    expect(view.read().ready).toBe(true);
+    expect(view.read().state).toEqual(initial);
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Maximal 200"));
+    for (let index = 0; index < 3; index++) {
+      act(() => view.read().update((state) => ({ ...state, transactions: state.transactions.map((row) =>
+        row.id === `capacity-${index}` ? { ...row, fixedCost: false } : row) })));
+      expect(view.read().state.transactions[index].fixedCost).toBe(false);
+    }
+    expect(view.read().state.financeRows).toHaveLength(200);
+    expect(view.read().storageError).toBeNull();
+  });
+
   it("migrates the stored motorcycle goal once and preserves its plan through reload and removal", async () => {
     vi.setSystemTime(new Date("2026-10-05T12:00:00Z"));
     const initial = fixture(0);

@@ -323,6 +323,19 @@ export async function parseWorkbook(
           const parsedCategory = categorySchema.safeParse(category);
           if (parsedCategory.success) item.planCategory = parsedCategory.data;
           const overrides = text(row.getCell(17));
+          const fixedSource = text(row.getCell(19));
+          if (fixedSource) {
+            let source: unknown;
+            try {
+              source = JSON.parse(fixedSource);
+            } catch (error) {
+              if (error instanceof SyntaxError) throw new Error("Ungültige Fixkosten-Verknüpfung in der Excel-Sicherung.");
+              throw error;
+            }
+            const parsedSource = financeRowSchema.shape.fixedSource.safeParse(source);
+            if (!parsedSource.success) throw new Error("Ungültige Fixkosten-Verknüpfung in der Excel-Sicherung.");
+            item.fixedSource = parsedSource.data;
+          }
           if (overrides) {
             try {
               item.overrides = {
@@ -699,6 +712,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       "ID",
       "Monats-Overrides",
       "Exportreferenzwerte",
+      "Fixkosten-Verknüpfung",
     ]);
     state.financeRows.forEach((row) =>
       sheet.addRow([
@@ -711,10 +725,12 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
         row.id,
         row.overrides === undefined ? "" : JSON.stringify(row.overrides),
         JSON.stringify(row.values),
+        row.fixedSource ? JSON.stringify(row.fixedSource) : "",
       ]),
     );
     sheet.getColumn(17).hidden = true;
     sheet.getColumn(18).hidden = true;
+    sheet.getColumn(19).hidden = true;
     sheet.addRow([
       "input",
       "Variabel gesamt (Override)",

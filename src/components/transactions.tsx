@@ -74,14 +74,18 @@ function TransactionForm({
   returnFocus: () => void;
 }) {
   const { update } = useFinance();
+  const [editingName, setEditingName] = useState(false);
   const form = useForm<Transaction>({
     resolver: zodResolver(transactionSchema),
     defaultValues: transaction,
   });
   const values = useWatch({ control: form.control });
+  const merchantName = values.merchantAlias ?? transaction.description;
+  const nameMissing = editingName && !merchantName.trim();
   const preview = classify({
     ...transaction,
     description: values.description ?? "",
+    merchantAlias: values.merchantAlias,
     amount: values.amount ?? 0,
     category: values.category ?? "Sonstiges",
     pocket: values.pocket ?? null,
@@ -100,6 +104,8 @@ function TransactionForm({
       manualCategory: true,
       reviewed: value.category !== "Prüfen",
       includeInPlan: true,
+      ...(editingName && value.merchantAlias !== transaction.merchantAlias
+        ? { merchantAlias: value.merchantAlias } : {}),
       ...(value.fixedCost !== undefined ? { fixedCost: canMarkFixed && value.fixedCost } : {}),
     };
     update((current) =>
@@ -157,14 +163,42 @@ function TransactionForm({
         <DialogHeader>
           <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            Kategorie und Fixkosten ändern · Banktext bleibt erhalten.
+            Name, Kategorie und Fixkosten ändern · Banktext bleibt erhalten.
           </DialogDescription>
         </DialogHeader>
         <DialogForm onSubmit={form.handleSubmit(save)}>
           <DialogBody className="space-y-6">
           <section aria-label="Originalbuchung" className="rounded-xl bg-muted/50 p-4">
             <p className="text-xs font-medium text-muted-foreground">Originalbuchung</p>
-            <p className="mt-2 break-words text-base font-medium">{transaction.description}</p>
+            <div className="mt-2 flex items-start gap-2">
+              {editingName ? (
+                <Input
+                  autoFocus
+                  aria-label="Händlername"
+                  maxLength={200}
+                  value={merchantName}
+                  aria-invalid={nameMissing || !!form.formState.errors.merchantAlias}
+                  aria-describedby={nameMissing ? "tx-name-error" : undefined}
+                  onFocus={(event) => event.currentTarget.select()}
+                  onChange={(event) => form.setValue("merchantAlias", event.target.value, { shouldDirty: true, shouldValidate: true })}
+                />
+              ) : (
+                <p className="min-w-0 break-words text-base font-medium">{merchantName}</p>
+              )}
+              {!editingName && (
+                <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground"
+                  aria-label="Händlername bearbeiten" title="Händlername bearbeiten"
+                  onClick={() => setEditingName(true)}>
+                  <Pencil className="size-3.5" />
+                </Button>
+              )}
+            </div>
+            {nameMissing ? (
+              <p id="tx-name-error" className="mt-1 text-xs text-destructive" role="alert">Bitte einen Händlernamen eingeben.</p>
+            ) : error("merchantAlias")}
+            {(editingName || merchantName !== transaction.description) && (
+              <p className="mt-2 break-words text-xs text-muted-foreground">{transaction.description}</p>
+            )}
             <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">{currency(transaction.amount)}</p>
             <dl className="mt-4 space-y-2 text-sm">
               <div className="flex flex-wrap justify-between gap-2"><dt className="text-muted-foreground">Datum</dt><dd>{dateLabel(transaction.date)}</dd></div>
@@ -199,7 +233,7 @@ function TransactionForm({
             <Button type="button" variant="outline" onClick={onClose}>
               Abbrechen
             </Button>
-            <Button type="submit">Zuordnung übernehmen</Button>
+            <Button type="submit" disabled={nameMissing}>Zuordnung übernehmen</Button>
           </DialogFooter>
         </DialogForm>
       </DialogContent>

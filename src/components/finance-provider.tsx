@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { ThemeProvider } from "next-themes";
-import { Toaster } from "sonner";
+import { toast, Toaster } from "sonner";
 import { actualPockets, calculateDashboard, synchronizeGoals, type Dashboard } from "@/lib/calc";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import {
@@ -27,6 +27,7 @@ import { approveReviewedBooking } from "@/lib/import/approve-review";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
 import { initializeMotorcycleGoal } from "@/lib/goals";
+import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -40,6 +41,8 @@ type Store = {
   error: string | null;
   saved: boolean;
   blocked: boolean;
+  planCapacityBlocked?: boolean;
+  actionError?: { message: string };
   statementImport?: {
     requestId: string;
     added: number;
@@ -86,6 +89,8 @@ function reducer(store: Store, action: Action | AppendAction): Store {
           data: approval ? refreshPlanning(result.state)
             : appStateSchema.parse(refreshPlanning(queueLedgerReview(result.state))),
           saved: false,
+          planCapacityBlocked: false,
+          actionError: undefined,
           statementImport: {
             requestId: action.requestId,
             added: result.added,
@@ -109,23 +114,40 @@ function reducer(store: Store, action: Action | AppendAction): Store {
       }
     }
     case "hydrate": {
-      const data = refreshPlanning(
-        queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
-      );
-      return {
-        data: synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad)),
-        ready: true,
-        error: action.error ?? null,
-        saved: false,
-        blocked: action.blocked ?? false,
-      };
+      try {
+        const data = refreshPlanning(
+          queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
+        );
+        return {
+          data: synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad)),
+          ready: true,
+          error: action.error ?? null,
+          saved: false,
+          blocked: action.blocked ?? false,
+        };
+      } catch (error) {
+        if (!(error instanceof FixedPlanCapacityError)) throw error;
+        return { data: action.data, ready: true, saved: true, blocked: action.blocked ?? false,
+          error: action.error ?? null, planCapacityBlocked: true, actionError: { message: error.message } };
+      }
     }
-    case "update":
-      return {
-        ...store,
-        data: appStateSchema.parse(synchronizePlan(queueLedgerReview(action.updater(store.data)))),
-        saved: false,
-      };
+    case "update": {
+      const updated = action.updater(store.data);
+      try {
+        return {
+          ...store,
+          data: appStateSchema.parse(synchronizePlan(queueLedgerReview(updated))),
+          saved: false, planCapacityBlocked: false, actionError: undefined,
+        };
+      } catch (error) {
+        if (!(error instanceof FixedPlanCapacityError)) throw error;
+        return { ...store,
+          data: store.planCapacityBlocked ? appStateSchema.parse(updated) : store.data,
+          saved: store.planCapacityBlocked ? false : store.saved,
+          actionError: { message: error.message },
+        };
+      }
+    }
     case "saved":
       return { ...store, saved: true, error: null };
     case "error":
@@ -175,6 +197,9 @@ export function FinanceProvider({
     saved: false,
     blocked: false,
   });
+  useEffect(() => {
+    if (store.actionError) toast.error(store.actionError.message);
+  }, [store.actionError]);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);

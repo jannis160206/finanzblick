@@ -188,6 +188,10 @@ export const reviewItemSchema = z.discriminatedUnion("kind", [
 ]);
 export type ReviewItem = z.infer<typeof reviewItemSchema>;
 export type FixedChange = z.infer<typeof fixedChangeSchema>;
+const financeValuesSchema = z.record(
+  z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
+  moneySchema.nonnegative().nullable(),
+);
 export const financeRowSchema = z.object({
   id: z.string().min(1),
   label: z.string().trim().min(1).max(100),
@@ -199,10 +203,18 @@ export const financeRowSchema = z.object({
       moneySchema.nonnegative().nullable(),
     )
     .optional(),
-  values: z.record(
-    z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
-    moneySchema.nonnegative().nullable(),
-  ),
+  values: financeValuesSchema,
+  fixedSource: z.object({
+    key: z.string(),
+    bookingIds: z.array(z.string()),
+    merchantKeys: z.array(z.string()),
+    pocket: z.string().nullable(),
+    appliedLabel: z.string().max(100).optional(),
+    labelOverride: z.string().max(100).optional(),
+    applied: financeValuesSchema,
+    overrides: financeValuesSchema.optional(),
+    originalValues: financeValuesSchema.optional(),
+  }).optional(),
 });
 export type FinanceRow = z.infer<typeof financeRowSchema>;
 export const monthInputSchema = z.object({

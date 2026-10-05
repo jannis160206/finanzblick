@@ -641,14 +641,14 @@ export function missingFixedCosts(state: AppState) {
         !receipts.some(
           (item) =>
             item.rowId === row.id || (!item.rowId && category && canonicalCategory(item.category) === category &&
-              (!groupedContractCategories.includes(category) ||
+              (!(row.fixedSource || groupedContractCategories.includes(category)) ||
                 (item.booking && matchingFixedRow(state, category, item.booking)?.id === row.id))),
         ) &&
         !bookings.some(
           (item) =>
             (category && classify(item).category === category &&
-              (!groupedContractCategories.includes(category) || matchingFixedRow(state, category, item)?.id === row.id)) ||
-            item.description.toLowerCase().includes(row.label.toLowerCase()),
+              (!(row.fixedSource || groupedContractCategories.includes(category)) || matchingFixedRow(state, category, item)?.id === row.id)) ||
+            (!row.fixedSource && item.description.toLowerCase().includes(row.label.toLowerCase())),
         )
       );
     })

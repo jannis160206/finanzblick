@@ -6,6 +6,8 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { canonicalCategory, groupedContractCategories, suggestCategory } from "@/lib/categories";
+import { normalizeAccount } from "@/lib/accounts";
+import { merchantAliasSourceKey, merchantRuleKey } from "@/lib/import/merchant-rules";
 
 const patterns: [Category, RegExp][] = [
   ["Gehalt", /gehalt|lohn/i],
@@ -33,6 +35,7 @@ export function isFixedExpense(
 }
 export function fixedRowCategory(row: FinanceRow): Category | undefined {
   if (row.kind === "variable") return undefined;
+  if (row.fixedSource && row.planCategory) return canonicalCategory(row.planCategory);
   if (row.planCategory && fixedCategories.includes(row.planCategory))
     return canonicalCategory(row.planCategory);
   const detected = patterns.find(([, pattern]) => pattern.test(row.label))?.[0] ??
@@ -42,8 +45,21 @@ export function fixedRowCategory(row: FinanceRow): Category | undefined {
 export function matchingFixedRow(state: AppState, category: Category, booking?: Transaction, merchantKey?: string) {
   if (booking?.fixedCost === false && !isIncomeCategory(category)) return;
   const canonical = canonicalCategory(category);
+  const sources = state.financeRows.filter((row) => row.kind === "fixed" && row.fixedSource);
+  if (booking && sources.length) {
+    const sourceKey = merchantAliasSourceKey(booking);
+    const key = merchantKey ?? merchantRuleKey(booking);
+    const byId = sources.filter((row) => row.fixedSource?.bookingIds.includes(booking.id));
+    const samePocket = sources.filter((row) => row.fixedSource?.pocket === normalizeAccount(booking).pocket);
+    const bySource = sourceKey ? samePocket.filter((row) => row.fixedSource?.merchantKeys.includes(sourceKey)) : [];
+    const linked = byId.length ? byId : bySource.length ? bySource :
+      samePocket.filter((row) => row.fixedSource?.merchantKeys.includes(key));
+    if (linked.length === 1) return linked[0];
+    if (linked.length > 1) return;
+  }
   const candidates = state.financeRows.filter(
     (row) =>
+      !row.fixedSource &&
       row.kind === (isIncomeCategory(canonical) ? "income" : "fixed") &&
       (fixedRowCategory(row) === canonical || row.label === canonical),
   );
@@ -51,7 +67,17 @@ export function matchingFixedRow(state: AppState, category: Category, booking?: 
   // ledger now groups them under one category. Never take the first insurance.
   const legacy = patterns.find(([name]) => name === category && name !== canonical);
   if (legacy) return candidates.find((row) => legacy[1].test(row.label));
-  if (!groupedContractCategories.includes(canonical)) return candidates[0];
+  if (!groupedContractCategories.includes(canonical)) {
+    if (booking?.fixedCost === true) {
+      const known = new Set((state.fixedReceipts ?? []).filter((item) =>
+        item.rowId && ((merchantKey && item.merchantKey === merchantKey) ||
+          item.booking?.id === booking.id)).map((item) => item.rowId));
+      const text = [booking.description, booking.merchantAlias, booking.rawDescription].filter(Boolean).join(" ").toLocaleLowerCase("de");
+      return candidates.find((row) => known.has(row.id) || row.label === canonical ||
+        text.includes(row.label.toLocaleLowerCase("de")));
+    }
+    return candidates[0];
+  }
   if (booking) {
     const knownIds = new Set((state.fixedReceipts ?? []).filter((item) =>
       item.rowId && ((merchantKey && item.merchantKey === merchantKey) ||

@@ -29,6 +29,7 @@ import {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CategorySelect } from "@/components/category-select";
+import { removeFixedPlanRow } from "@/lib/fixed-plan";
 
 function RowEditor({
   row,
@@ -75,14 +76,18 @@ function RowEditor({
               });
               return;
             }
-            update((current) => ({
-              ...current,
-              financeRows: row
-                ? current.financeRows.map((item) =>
-                    item.id === row.id ? value : item,
-                  )
-                : [...current.financeRows, value],
-            }));
+            update((current) => {
+              if (row?.fixedSource && value.kind !== "fixed") {
+                const next = removeFixedPlanRow(current, row);
+                return { ...next, financeRows: [...next.financeRows, { ...value, fixedSource: undefined }] };
+              }
+              return {
+                ...current,
+                financeRows: row
+                  ? current.financeRows.map((item) => item.id === row.id ? value : item)
+                  : [...current.financeRows, value],
+              };
+            });
             close();
             toast.success("Position gespeichert");
           })}
@@ -443,6 +448,7 @@ export function Months() {
             <p className="text-sm">
               „{deleting?.label}“ mit allen Werten für 2026 und 2027 entfernen.
             </p>
+            {deleting?.fixedSource && <p className="text-sm">Buchungen bleiben erhalten; Fixkosten-Markierungen entfallen.</p>}
             {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
           </DialogBody>
           <DialogFooter>
@@ -453,12 +459,8 @@ export function Months() {
               variant="destructive"
               disabled={!!storageError}
               onClick={() => {
-                update((current) => ({
-                  ...current,
-                  financeRows: current.financeRows.filter(
-                    (row) => row.id !== deleting?.id,
-                  ),
-                }));
+                if (!deleting) return;
+                update((current) => removeFixedPlanRow(current, deleting));
                 setDeleting(null);
                 toast.success("Position gelöscht");
               }}

@@ -2,12 +2,13 @@ import { synchronizeGoals } from "@/lib/calc";
 import { type AppState } from "@/lib/types";
 import { applyVariableBudgets } from "@/lib/variable-budgets";
 import { synchronizePlannedOneOffs } from "@/lib/planned-one-offs";
+import { synchronizeFixedPlan } from "@/lib/fixed-plan";
 
 export function localToday(now = new Date()) {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 export function synchronizePlan(state: AppState): AppState {
-  return synchronizeGoals(applyVariableBudgets(synchronizePlannedOneOffs(state)));
+  return synchronizeGoals(applyVariableBudgets(synchronizePlannedOneOffs(synchronizeFixedPlan(state))));
 }
 
 export function refreshPlanning(
