@@ -1,7 +1,7 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import { FileUp, LoaderCircle } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { FileUp, LoaderCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,7 @@ import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { isIncomeCategory } from "@/lib/fixed";
 import { accountLabel } from "@/lib/accounts";
 import { isAmexScreenshot } from "@/lib/import/identity";
+import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 
 type Pending = {
   requestId: string;
@@ -73,11 +74,16 @@ const BookingReview = memo(function BookingReview({
   skip: () => void;
 }) {
   const repairOcr = isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:");
+  const [editingName, setEditingName] = useState(false);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const nameMissing = editingName && draft.merchantAlias !== undefined && !draft.merchantAlias.trim();
   const fixedCost = draft.fixedCost === true;
   const choices = categories.filter((category) => category !== "Prüfen");
   const classification = classify({
     ...draft, amount: draft.amount ?? 0, categoryOverride: true, manualCategory: true, includeInPlan: true, fixedCost: false,
   });
+  const canRememberName = draft.amount !== null && draft.amount < 0 && !classification.isTransfer &&
+    merchantAliasSourceKey(item.draft) !== undefined;
   const canMarkFixed = draft.amount !== null && draft.amount < 0 &&
     !classification.isTransfer && !isIncomeCategory(classification.category);
   const candidate = {
@@ -104,16 +110,39 @@ const BookingReview = memo(function BookingReview({
           <Input aria-label="Datum" type="date" value={draft.date} readOnly={!repairOcr}
             onChange={repairOcr ? (event) => changeDraft(item.id, { ...draft, date: event.target.value }) : undefined} />
         </label>
-        <label className="space-y-1 text-xs">
-          Text
-          <Input
-            aria-label="Text"
-            maxLength={1000}
-            value={draft.description}
-            readOnly={!repairOcr}
-            onChange={repairOcr ? (event) => changeDraft(item.id, { ...draft, description: event.target.value }) : undefined}
-          />
-        </label>
+        <div className="space-y-1 text-xs">
+          <p>Text</p>
+          <div className="relative">
+            <Input
+              ref={nameInput}
+              aria-label="Text"
+              maxLength={repairOcr ? 1000 : 200}
+              value={repairOcr ? draft.description : draft.merchantAlias ?? draft.description}
+              readOnly={!repairOcr && !editingName}
+              disabled={disabled}
+              className={!repairOcr ? "pr-10" : undefined}
+              aria-invalid={nameMissing}
+              onChange={(event) => changeDraft(item.id, { ...draft,
+                ...(repairOcr ? { description: event.target.value } : { merchantAlias: event.target.value }) })}
+            />
+            {!repairOcr && (
+              <Button type="button" variant="ghost" size="icon-xs" className="absolute right-2 top-2"
+                aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
+                onClick={() => {
+                  setEditingName(true);
+                  nameInput.current?.focus();
+                  nameInput.current?.select();
+                }}>
+                <Pencil className="size-3" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
+          {editingName && <p className="text-muted-foreground">
+            {nameMissing ? "Bitte einen Händlernamen eingeben." : canRememberName
+              ? "Name, Kategorie und Fixkosten-Auswahl werden für künftige Ausgänge dieses Händlers gemerkt."
+              : "Ohne eindeutigen Händlertext gilt der Name nur für diese Buchung."}
+          </p>}
+        </div>
         <label className="space-y-1 text-xs">
           Betrag (€)
           <Input

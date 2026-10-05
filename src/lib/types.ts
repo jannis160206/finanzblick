@@ -134,6 +134,7 @@ export const merchantRuleSchema = z.object({
   key: z.string().min(1).max(1200),
   category: categorySchema,
   fixedCost: z.boolean().optional(),
+  merchantAlias: transactionFieldsSchema.shape.merchantAlias,
 });
 export const fixedReceiptSchema = z.object({
   key: z.string().max(2000).overwrite(normalizeStatementKey),

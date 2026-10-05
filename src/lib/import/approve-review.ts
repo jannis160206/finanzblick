@@ -72,6 +72,7 @@ function reviewIndex(state: AppState): ReviewIndex {
     if (isSpecificMerchantKey(key)) index.rules.set(key, {
       category: canonicalCategory(rule.category),
       ...(rule.fixedCost !== undefined ? { fixedCost: rule.fixedCost } : {}),
+      ...(rule.merchantAlias ? { merchantAlias: rule.merchantAlias } : {}),
     });
   }
   cacheIndex(state, index);
@@ -96,6 +97,7 @@ export function approveReviewedBooking(
   const item = state.reviewQueue?.find((entry): entry is BookingReview =>
     entry.kind === "booking" && entry.draft.id === selected.id);
   if (!item || item.draft.amount === null) return;
+  if (selected.merchantAlias || item.draft.merchantAlias) return;
   const key = merchantRuleKey(item.draft);
   if (!isSpecificMerchantKey(key) || ambiguousMerchant(item.draft) || unresolvedTerminal(item.draft.description)) return;
   const index = reviewIndex(state);

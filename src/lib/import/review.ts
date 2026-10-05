@@ -597,6 +597,7 @@ export function commitStatementImport(
         categoryOverride: true,
         ...(direct?.manualCategory !== undefined ? { manualCategory: direct.manualCategory } : {}),
         ...(direct?.reviewed !== undefined ? { reviewed: direct.reviewed } : {}),
+        ...(direct?.merchantAlias !== undefined ? { merchantAlias: direct.merchantAlias } : {}),
         includeInPlan: true,
         ...(directChoice(item.draft as Transaction)?.fixedCost !== undefined
           ? { fixedCost: directChoice(item.draft as Transaction)!.fixedCost }
@@ -624,6 +625,7 @@ export function commitStatementImport(
       const updated = { ...row, category, categoryOverride: true, includeInPlan: true,
         ...(direct?.manualCategory !== undefined ? { manualCategory: direct.manualCategory } : {}),
         ...(direct?.reviewed !== undefined ? { reviewed: direct.reviewed } : {}),
+        ...(choice?.merchantAlias !== undefined ? { merchantAlias: choice.merchantAlias } : {}),
         ...(choice?.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}) };
       const result = classify(updated);
       return { ...updated, category: result.category, includeInPlan: result.includeInPlan };
@@ -639,7 +641,8 @@ export function commitStatementImport(
         categoryOverride: true, includeInPlan: true,
         ...(choice.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}),
         ...(choice.manualCategory !== undefined ? { manualCategory: choice.manualCategory } : {}),
-        ...(choice.reviewed !== undefined ? { reviewed: choice.reviewed } : {}) };
+        ...(choice.reviewed !== undefined ? { reviewed: choice.reviewed } : {}),
+        ...(choice.merchantAlias !== undefined ? { merchantAlias: choice.merchantAlias } : {}) };
       const result = classify(updated);
       const booking = { ...updated, category: result.category, includeInPlan: result.includeInPlan };
       if (!ledgerKeys.has(statementFingerprint(booking))) {
