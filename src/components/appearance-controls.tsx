@@ -95,7 +95,7 @@ export function AppearanceControls({
           Bewegung reduzieren
         </label>
         <p className="text-xs text-muted-foreground">
-          Saisonale Details folgen dem Kalender. Deine Akzentfarbe bleibt erhalten.
+          Saisonale Details automatisch · Akzentfarbe bleibt.
         </p>
       </div>
     </div>

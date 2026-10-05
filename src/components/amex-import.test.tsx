@@ -32,6 +32,7 @@ it("accepts screenshots through the existing statement input without a second up
   ]);
   vi.mocked(parseStatementFile).mockResolvedValueOnce(parsed);
   render(<StatementImport />);
+  expect(screen.getByText("CSV/XLSX/PDF/PNG/JPEG/WebP · sichere Buchungen automatisch · max. 20 MB je Datei")).toBeTruthy();
   const input = screen.getByLabelText<HTMLInputElement>("Kontoauszüge auswählen");
   expect(input.accept).toContain(".jpeg");
   expect(input.accept).toContain(".pdf");
@@ -79,7 +80,7 @@ it("summarizes multiple OCR warnings without hiding their review drafts or detai
       target: { files: [new File(["pixels"], "Amex.jpeg", { type: "image/jpeg" })] },
     });
   });
-  expect(toast.error).toHaveBeenCalledWith("2 Importhinweise – Details unter „Importhinweise“, unklare Buchungen im Prüfdialog.");
+  expect(toast.error).toHaveBeenCalledWith("2 Importhinweise – Details unter „Importhinweise“.");
   act(() => { vi.advanceTimersByTime(1); });
   const metadata = appendStatements.mock.calls[0][4];
   expect(metadata.reviewQueue).toHaveLength(2);

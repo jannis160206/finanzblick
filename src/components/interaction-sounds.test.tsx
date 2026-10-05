@@ -35,12 +35,12 @@ it("offers an accessible, immediately persisted local switch without synthetic p
     name: "Interaktionsklänge",
   }) as HTMLInputElement;
   expect(toggle.checked).toBe(true);
-  expect(getByText(/Gilt sofort und nur in diesem Browser/)).toBeTruthy();
+  expect(getByText("Sofort wirksam · nur in diesem Browser.")).toBeTruthy();
   fireEvent.click(toggle);
   expect(toggle.checked).toBe(false);
   expect(localStorage.getItem(interactionSoundsKey)).toBe("off");
   expect(getByRole("status").textContent).toBe(
-    "Alle Interaktionsklänge sind stumm.",
+    "Stumm.",
   );
   fireEvent.click(toggle);
   expect(localStorage.getItem(interactionSoundsKey)).toBe("on");
@@ -86,7 +86,7 @@ it("offers a silent accessible volume adjustment and an explicit test button", (
   expect(slider.getAttribute("aria-valuetext")).toBe("0 Prozent – stumm");
   expect(preview.disabled).toBe(true);
   expect(getByRole("status").textContent).toBe(
-    "Alle Interaktionsklänge sind stumm.",
+    "Stumm.",
   );
   fireEvent.click(getByRole("switch"));
   expect(slider.disabled).toBe(true);

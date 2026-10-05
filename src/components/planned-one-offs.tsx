@@ -85,7 +85,7 @@ export function PlannedOneOffs() {
   return <Dialog open={open} onOpenChange={changeOpen}>
     <DialogTrigger asChild><Button size="sm" variant="outline" disabled={!!storageError}>Geplante Ausgaben</Button></DialogTrigger>
     <DialogContent>
-      <DialogHeader><DialogTitle>Geplante Ausgaben</DialogTitle><DialogDescription>Einmalige Beträge mit Datum. Raten bleiben ein Eintrag.</DialogDescription></DialogHeader>
+      <DialogHeader><DialogTitle>Geplante Ausgaben</DialogTitle><DialogDescription>Einmalig oder in Raten.</DialogDescription></DialogHeader>
       <DialogForm noValidate onSubmit={(event) => {
         event.preventDefault();
         if (storageError) { setError(storageError); return; }

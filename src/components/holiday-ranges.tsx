@@ -59,11 +59,10 @@ export function HolidayRanges() {
             </div>
             {error && <p id="holiday-range-error" role="alert" className="text-sm text-destructive">{error}</p>}
             {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
-            <p className="text-xs text-muted-foreground">„Zeitraum speichern“ übernimmt den Zeitraum sofort. Fertig oder Schließen verwirft nur noch nicht gespeicherte Datumsangaben.</p>
+            <p className="text-xs text-muted-foreground">Speichern und Entfernen wirken sofort.</p>
             {ranges.length > 0 && <section className="space-y-3 border-t pt-5">
               <h3 className="text-sm font-medium">Gespeicherte Zeiträume</h3>
               {chips}
-              <p className="text-xs text-muted-foreground">Das Entfernen eines Zeitraums wird sofort übernommen.</p>
             </section>}
           </DialogBody>
           <DialogFooter><Button type="button" variant="outline" onClick={() => changeOpen(false)}>Fertig</Button><Button type="submit" disabled={!!storageError}>Zeitraum speichern</Button></DialogFooter>

@@ -41,13 +41,13 @@ export function Plan() {
         </summary>
         <div className="panel mb-6 p-5 text-sm">
           Mittagessen: {plan.lunch.homeOfficeDays} Homeoffice-Tage × 5,00 € + {plan.lunch.officeDays} Bürotage × 5,50 € = {currency(plan.lunch.total)}
-          <p className="mt-2 text-xs text-muted-foreground">Feiertage und gespeicherte Urlaubszeiträume zählen nicht als Arbeitstage.</p>
+          <p className="mt-2 text-xs text-muted-foreground">Ohne Feiertage und Urlaubstage.</p>
         </div>
         <section className="panel overflow-hidden">
           <div className="p-5 pb-0">
             <SectionHeading
               title="Monatsbudgets"
-              subtitle={`Plan bleibt fest · Ist aus vorhandenen Buchungen bis ${dateLabel(state.settings.asOf)}`}
+              subtitle={`Fester Plan · Ist bis ${dateLabel(state.settings.asOf)}`}
             />
           </div>
           <div className="overflow-x-auto">

@@ -42,12 +42,12 @@ function AnnualSixthForm({ year, saved, onClose }: {
     <DialogContent>
       <DialogHeader>
         <DialogTitle>Jahressechstel {year}: Bruttowerte</DialogTitle>
-        <DialogDescription>Werte aus der Lohnabrechnung für ein Dienstverhältnis, nicht aus den Netto-Kontoeingängen. Alle kumulierten Werte bis einschließlich des gewählten Monats.</DialogDescription>
+        <DialogDescription>Bruttowerte aus der Lohnabrechnung, keine Netto-Kontoeingänge. Ein Dienstverhältnis, kumuliert bis einschließlich des gewählten Monats.</DialogDescription>
       </DialogHeader>
       <DialogForm onSubmit={(event) => {
         event.preventDefault();
         if (!parsed.success) {
-          toast.error("Bitte die Bruttowerte und Berechnungsgrundlage vollständig prüfen.");
+          toast.error("Bruttowerte und Berechnungsgrundlage prüfen.");
           return;
         }
         if (storageError) { toast.error(storageError); return; }
@@ -85,15 +85,15 @@ function AnnualSixthForm({ year, saved, onClose }: {
                 value={value.reportedSixth} onChange={(event) => change("reportedSixth", event.target.value)} />
             </label>
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">Brutto vor Abzug der Sozialversicherung. Nur sechstelrelevante laufende Bezüge laut Lohnverrechnung, ohne Sonderzahlungen oder steuerfreie Reisekosten; steuerpflichtiges Brutto allein kann ebenfalls abweichen. Bei den Sonderzahlungen nur Bezüge nach § 67 Abs. 1/2 EStG (z. B. Urlaubs-/Weihnachtsgeld), auch bereits tarifversteuerte Überhänge, keine Abfertigungen oder anders geregelten Zahlungen. Bei keiner bisherigen oder geplanten Sonderzahlung jeweils 0 eintragen.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Brutto vor SV. Laufende Bezüge nur laut Sechstelbasis, ohne Sonderzahlungen oder steuerfreie Reisekosten; steuerpflichtiges Brutto kann abweichen. Sonderzahlungen nur nach § 67 Abs. 1/2 EStG, einschließlich tarifversteuerter Überhänge, ohne Abfertigungen oder anders geregelte Zahlungen. Ohne bisherige/geplante Sonderzahlung: jeweils 0.</p>
           <label className="flex items-start gap-3 text-sm">
             <input type="checkbox" className="mt-1 size-4 accent-primary" checked={value.monthlyPayroll}
               onChange={(event) => setValue({ ...value, monthlyPayroll: event.target.checked })} />
             <span>Monatliche Standardabrechnung bestätigt, keine ungeklärten Sonderfälle.</span>
           </label>
-          <p className="text-xs leading-relaxed text-muted-foreground">Es zählen immer die Kalendermonate seit Jänner, auch bei späterem Eintritt. Den bestätigten Abrechnungsmonat passend zum kumulierten Brutto wählen, nicht automatisch den heutigen Monat. Bei untermonatigem Austritt, tagesweiser Abrechnung, ungeklärten Vorbezügen oder sonstigen Sonderfällen den Abrechnungswert übernehmen; dieser hat Vorrang. BUAG/Jahreszwölftel wird hier nicht berechnet.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Kalendermonate seit Jänner zählen auch bei späterem Eintritt. Abrechnungsmonat und kumuliertes Brutto müssen zusammenpassen. Bei untermonatigem Austritt, tagesweiser Abrechnung, ungeklärten Vorbezügen oder anderen Sonderfällen den Abrechnungswert übernehmen; dieser hat Vorrang. BUAG/Jahreszwölftel wird nicht berechnet.</p>
           {!parsed.success && <p role="status" className="text-xs text-muted-foreground">{parsed.error.issues.find((issue) => issue.code === "custom")?.message ??
-            "Zum Speichern sind gültige Bruttobeträge mit höchstens zwei Nachkommastellen und eine geplante Zahlung (ggf. 0) erforderlich."}</p>}
+            "Bruttobeträge mit höchstens zwei Nachkommastellen eingeben; geplante Zahlung ggf. 0."}</p>}
           {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
         </DialogBody>
         <DialogFooter>
@@ -116,7 +116,7 @@ export function AnnualSixthCard() {
     <div className="flex flex-wrap items-start justify-between gap-x-4">
     <SectionHeading title="Jahressechstel · Österreich" subtitle={entry
       ? `Abrechnungsstand ${monthLabel(`${year}-${String(entry.month).padStart(2, "0")}`)}${entry.employer ? ` · ${entry.employer}` : ""}`
-      : "Sonderzahlungen anhand deiner Brutto-Lohnabrechnung einordnen"} />
+      : "Sonderzahlungen auf Bruttobasis"} />
       <div className="mb-5 flex flex-wrap items-center gap-2">
         <select className="select-input" aria-label="Jahressechstel Jahr" value={year} onChange={(event) => setYear(event.target.value === "2027" ? 2027 : 2026)}>
           <option value={2026}>2026</option><option value={2027}>2027</option>
@@ -124,7 +124,7 @@ export function AnnualSixthCard() {
         <Button variant="outline" size="sm" onClick={() => setEditing(true)}><Calculator className="size-4" />{entry ? "Bruttowerte bearbeiten" : "Bruttowerte erfassen"}</Button>
       </div>
     </div>
-    {future && <p className="mb-3 text-xs text-muted-foreground">Vorausschau: Dieser Abrechnungsmonat liegt nach dem Dashboard-Stichtag.</p>}
+    {future && <p className="mb-3 text-xs text-muted-foreground">Vorausschau: Abrechnungsmonat nach Dashboard-Stichtag.</p>}
     {entry && result ? <>
       <div className="grid gap-4 sm:grid-cols-3">
         <div><p className="text-xs text-muted-foreground">Jahressechstel · {result.source === "reported" ? "laut Abrechnung" : "Hochrechnung"}</p><p className="mt-1 text-xl font-semibold tabular-nums">{currency(result.sixth)}</p></div>
@@ -132,17 +132,17 @@ export function AnnualSixthCard() {
         <div><p className="text-xs text-muted-foreground">{result.overhang > 0 ? "Rechnerischer Überhang" : "Rechnerischer Rest"}</p><p className={cn("mt-1 text-xl font-semibold tabular-nums", result.overhang > 0 && "text-destructive")}>{currency(result.overhang || result.remaining)}</p></div>
       </div>
       <p className="mt-4 text-sm">{result.overhang > 0
-        ? "Die erfassten Sonderzahlungen überschreiten das aktuelle Jahressechstel. Überhänge unterliegen grundsätzlich dem Tarif; bereits erfolgte Versteuerungen oder Aufrollungen sind in diesem Vergleich nicht nachgerechnet."
+        ? "Jahressechstel überschritten. Überhänge unterliegen grundsätzlich dem Tarif; frühere Versteuerungen und Aufrollungen sind nicht nachgerechnet."
         : result.remaining === 0 ? "Das aktuelle Jahressechstel ist ausgeschöpft."
-          : "Die erfassten Sonderzahlungen liegen innerhalb des aktuellen Jahressechstels. Das ist keine generelle Steuerfreiheit."}</p>
+          : "Sonderzahlungen innerhalb des aktuellen Jahressechstels – nicht generell steuerfrei."}</p>
       {entry.plannedSpecialGross > 0 && <p className={cn("mt-2 text-sm", result.plannedOverhang > 0 && "text-destructive")}>
         Mit zusätzlich {currency(entry.plannedSpecialGross)}: {result.plannedOverhang > 0
           ? `${currency(result.plannedOverhang)} rechnerischer Überhang bei unverändertem Jahressechstel.`
           : `${currency(result.plannedRemaining)} rechnerisch noch frei bei unverändertem Jahressechstel.`}
       </p>}
-      <p className="mt-2 text-xs text-muted-foreground">Rechnerischer Vergleich, kein zugesicherter Sechstelrest für die nächste Auszahlung. Nach früheren Überhängen oder Korrekturen ist der tatsächliche Rest aus der Lohnverrechnung maßgeblich.</p>
-      {result.controlSixth !== undefined && <p className="mt-2 text-sm">Rechnerisches Kontrollsechstel (laufendes Jahresbrutto / 6): {currency(result.controlSixth)}. Ob bei der letzten laufenden Jahreszahlung eine Aufrollung erforderlich ist, hängt von der bisherigen Besteuerung und gesetzlichen Ausnahmen ab.</p>}
-    </> : <p className="text-sm text-muted-foreground">Noch keine belastbare Beurteilung: Die Kontoeingänge sind Nettozahlungen. Ohne laufendes Brutto und sechstelrelevante Sonderzahlungen aus der Lohnabrechnung lässt sich dein Jahressechstel nicht verlässlich bestimmen.</p>}
+      <p className="mt-2 text-xs text-muted-foreground">Kein zugesicherter Sechstelrest. Nach früheren Überhängen oder Korrekturen zählt der Rest laut Lohnverrechnung.</p>
+      {result.controlSixth !== undefined && <p className="mt-2 text-sm">Rechnerisches Kontrollsechstel (laufendes Jahresbrutto / 6): {currency(result.controlSixth)}. Eine Aufrollung bei der letzten laufenden Jahreszahlung hängt von bisheriger Besteuerung und gesetzlichen Ausnahmen ab.</p>}
+    </> : <p className="text-sm text-muted-foreground">Bruttowerte fehlen: Kontoeingänge sind Nettozahlungen. Nötig sind laufendes Brutto und sechstelrelevante Sonderzahlungen aus der Lohnabrechnung.</p>}
     <details className="mt-4 border-t pt-3 text-xs text-muted-foreground">
       <summary className="cursor-pointer">Rechenweg und österreichische Steuerhinweise</summary>
       <div className="mt-3 space-y-2 leading-relaxed">

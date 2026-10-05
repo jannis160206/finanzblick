@@ -203,7 +203,7 @@ export function AppShell({
           <section data-security-screen className="min-h-[55vh] flex-col items-center justify-center rounded-2xl border bg-card px-6 py-12 text-center" aria-label="Sichtschutz">
             <span className="mb-6 flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary"><LockKeyhole className="size-7" /></span>
             <h1 className="text-2xl font-semibold tracking-tight">Sicherheitsmodus aktiv</h1>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">Deine Finanzdaten sind ausgeblendet – auch in Diagrammen und Pop-ups. Zum Anzeigen den Schutz oben neben dem Farbschalter deaktivieren.</p>
+            <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">Zum Anzeigen oben das Schutzschild deaktivieren.</p>
             <p className="mt-6 text-xs text-muted-foreground">Sichtschutz für deinen Bildschirm, keine Passwortsperre.</p>
           </section>
           <div data-financial-content hidden={security.locked} inert={security.locked}>
@@ -256,7 +256,7 @@ export function AppShell({
         }}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3"><FinanzblickMark />Finanzblick</DialogTitle>
-            <DialogDescription>Deine Finanzen, an einem Ort.</DialogDescription>
+            <DialogDescription>Seite wählen</DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col">
             {links}

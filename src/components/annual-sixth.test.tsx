@@ -48,7 +48,7 @@ it("does not invent a gross-tax assessment from existing net salary transactions
     description: "Nettogehalt", category: "Gehalt", amount: 27000, includeInPlan: false,
   }];
   render(<Fixture initial={initial} />);
-  expect(screen.getByText(/Noch keine belastbare Beurteilung/).textContent).toContain("Nettozahlungen");
+  expect(screen.getByText(/Bruttowerte fehlen:/).textContent).toContain("Nettozahlungen");
   expect(screen.queryByText(moneyText(6000))).toBeNull();
   expect(latest.annualSixth).toBeUndefined();
 });
@@ -104,11 +104,11 @@ it("keeps annual entries separate and labels future periods as a forecast", () =
   }];
   render(<Fixture initial={initial} />);
   fireEvent.change(screen.getByLabelText("Jahressechstel Jahr"), { target: { value: "2027" } });
-  expect(screen.getByText(/Noch keine belastbare Beurteilung/)).toBeTruthy();
+  expect(screen.getByText(/Bruttowerte fehlen:/)).toBeTruthy();
   const dialog = edit();
   fireEvent.click(dialog.getByRole("checkbox"));
   fireEvent.click(dialog.getByRole("button", { name: "Bruttowerte speichern" }));
   expect(latest.annualSixth).toHaveLength(2);
   expect(latest.annualSixth?.[0]).toEqual(initial.annualSixth[0]);
-  expect(screen.getByText(/Vorausschau: Dieser Abrechnungsmonat/)).toBeTruthy();
+  expect(screen.getByText(/Vorausschau: Abrechnungsmonat nach Dashboard-Stichtag/)).toBeTruthy();
 });

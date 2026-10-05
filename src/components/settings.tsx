@@ -30,7 +30,7 @@ function TradeRepublicSettings() {
     value.date <= state.settings.asOf && Number.isFinite(Number(value.rate)) && Number(value.rate) >= 0 && Number(value.rate) <= 100;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(initial);
   return <section id="tr-zinsen" className="panel p-4" aria-label="Trade Republic">
-    <SectionHeading title="Trade Republic" subtitle="Kontostand und jährlicher Zinssatz ab dem angegebenen Datum." />
+    <SectionHeading title="Trade Republic" subtitle="Kontostand und Jahreszins ab Datum." />
     <form className="space-y-3" onSubmit={(event) => {
       event.preventDefault(); if (!valid) return;
       update((current) => {
@@ -64,7 +64,7 @@ export function Settings() {
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
   useEffect(() => () => { setPreview(null); setTestTheme(null); }, [setPreview, setTestTheme]);
   return <>
-    <PageHeading eyebrow="KONFIGURATION" title="Einstellungen" description="Erscheinungsbild, Sparziele und Trade Republic." />
+    <PageHeading eyebrow="KONFIGURATION" title="Einstellungen" />
     <div className="space-y-4">
       <section id="jahreszeit" className="panel p-4" aria-labelledby="appearance-heading">
         <h2 id="appearance-heading" className="mb-4 text-sm font-semibold">Erscheinungsbild</h2>

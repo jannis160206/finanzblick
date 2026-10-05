@@ -76,9 +76,7 @@ function SoundSetting({
         id="interaction-sounds-hint"
         className="mt-2 text-xs leading-relaxed text-muted-foreground"
       >
-        Kurze, leise Klicks beim Drücken und Umschalten. Keine Klänge beim
-        Tippen oder Darüberfahren. Gilt sofort und nur in diesem Browser –
-        unabhängig vom Speichern oben.
+        Sofort wirksam · nur in diesem Browser.
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label
@@ -120,20 +118,19 @@ function SoundSetting({
         className="mt-1 text-xs text-muted-foreground"
       >
         {!storageAvailable
-          ? "Diese Auswahl gilt nur bis zum Neuladen; der Browser erlaubt gerade kein lokales Speichern."
+          ? "Nicht gespeichert – gilt nur bis zum Neuladen."
           : availability === "unavailable"
             ? "Dieser Browser unterstützt keine Interaktionsklänge."
             : availability === "blocked"
               ? enabled
-                ? "Der Browser meldet ein Audioproblem. Die Bedienung bleibt unverändert."
-                : "Alle Interaktionsklänge sind stumm. Der Browser meldet ein Audioproblem."
+                ? "Audioproblem im Browser. Bedienung bleibt möglich."
+                : "Stumm · Audioproblem im Browser."
               : enabled && volume > 0
-                ? "Kurze Klänge · ohne Audiodateien oder Netzwerkzugriff."
-                : "Alle Interaktionsklänge sind stumm."}
+                ? "Klänge aktiv."
+                : "Stumm."}
       </p>
       <p className="mt-1 text-xs text-muted-foreground">
-        Nichts zu hören? Prüfe die Tab-Stummschaltung und die Browser-Lautstärke
-        im Systemmixer.
+        Kein Ton? Tab-Stummschaltung und Lautstärkemixer prüfen.
       </p>
     </div>
   );

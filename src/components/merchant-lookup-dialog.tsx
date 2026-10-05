@@ -18,7 +18,7 @@ export function MerchantLookupDialog({ results, onConfirm, onClose, returnFocus,
     <DialogContent variant="confirmation" onCloseAutoFocus={(event) => { event.preventDefault(); returnFocus(); }}>
       <DialogHeader>
         <DialogTitle>Name nachschlagen</DialogTitle>
-        <DialogDescription>Wähle den passenden Händler. Nur Anzeigename und Händlerschlüssel ändern sich, nicht der Banktext.</DialogDescription>
+        <DialogDescription>Händler auswählen · Banktext bleibt erhalten.</DialogDescription>
       </DialogHeader>
       <DialogBody className="space-y-3 text-sm">
         {results === null ? <p role="status">Name wird gesucht …</p> : !results.length ? <p>Kein passender Name gefunden.</p> :

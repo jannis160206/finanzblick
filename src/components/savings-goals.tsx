@@ -38,7 +38,7 @@ export function SavingsGoals() {
   }
   return (
     <section ref={sectionRef} id="sparziele" className="panel p-4" aria-label="Sparziele">
-      <SectionHeading title="Sparziele" subtitle="Sparkonto zuerst, dann Ziele nach Termin und zuletzt Urlaub.">
+      <SectionHeading title="Sparziele" subtitle="Sparkonto → Ziele nach Termin → Urlaub">
         <Button ref={addButton} type="button" variant="outline" size="icon" aria-label="Sparziel hinzufügen" disabled={goals.length >= 50}
           onClick={() => edit({ id: crypto.randomUUID(), name: "", pocket: "", target: 0, date: state.settings.asOf }, "add")}>
           <Plus className="size-4" />
@@ -73,7 +73,7 @@ export function SavingsGoals() {
           </article>;
         })}
       </div>
-      {!goals.length && <p className="text-xs text-muted-foreground">Kein offenes Sparziel. Überschuss geht nach dem Sparkonto-Sockel an Urlaub.</p>}
+      {!goals.length && <p className="text-xs text-muted-foreground">Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub.</p>}
       <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}>
         <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
           <DialogHeader><DialogTitle>Sparziel {goals.some((goal) => goal.id === editing?.id) ? "bearbeiten" : "hinzufügen"}</DialogTitle><DialogDescription>Was möchtest du bis wann ansparen?</DialogDescription></DialogHeader>
@@ -121,7 +121,6 @@ export function SavingsGoals() {
               </div>
               {error && <p id="savings-goal-error" role="alert" className="text-sm text-destructive">{error}</p>}
               {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
-              <p className="text-xs text-muted-foreground">Änderungen werden erst beim Speichern übernommen. Abbrechen oder Schließen verwirft den Entwurf.</p>
             </DialogBody>
             <DialogFooter><Button type="button" variant="outline" onClick={() => setEditing(null)}>Abbrechen</Button><Button type="submit" disabled={!!storageError}>Speichern</Button></DialogFooter>
           </DialogForm>}
@@ -129,9 +128,9 @@ export function SavingsGoals() {
       </Dialog>
       <Dialog open={!!removing} onOpenChange={(open) => { if (!open) setRemoving(null); }}>
         <DialogContent variant="confirmation" onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
-          <DialogHeader><DialogTitle>Sparziel entfernen?</DialogTitle><DialogDescription>Das Ziel wird aus deiner Planung entfernt.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Sparziel entfernen?</DialogTitle><DialogDescription>Buchungen und Kontostände bleiben erhalten.</DialogDescription></DialogHeader>
           <DialogBody className="space-y-3">
-            <p className="text-sm">{removing?.name}: Nur das Ziel und seine künftigen Raten entfallen. Buchungen und Kontostände bleiben erhalten.</p>
+            <p className="text-sm">{removing?.name}: Ziel und künftige Raten entfernen.</p>
             {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
           </DialogBody>
           <DialogFooter><Button variant="outline" onClick={() => setRemoving(null)}>Abbrechen</Button><Button variant="destructive" disabled={!!storageError} onClick={() => {

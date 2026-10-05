@@ -190,8 +190,7 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                 </div>
               )}
               <p className="text-sm text-muted-foreground">
-                Der Import ersetzt alle lokalen Umsätze, Monatswerte und
-                Einstellungen. Bestehende Daten vorher als Excel sichern.
+                Ersetzt alle lokalen Daten und Einstellungen. Vorher eine Sicherung erstellen.
               </p>
               <Button
                 variant="outline"
@@ -202,9 +201,6 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                 Aktuelle Daten sichern
               </Button>
               {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
-              <p className="text-xs text-muted-foreground">
-                Abbrechen oder Schließen verwirft die Vorschau. Ohne Bestätigung werden keine Daten ersetzt.
-              </p>
               </DialogBody>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setPreview(null)}>

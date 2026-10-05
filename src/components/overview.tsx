@@ -104,7 +104,7 @@ export function Overview() {
         <PageHeading
           eyebrow="DEIN FINANZCOCKPIT"
           title="Übersicht"
-          description={`Berechnet für ${dateLabel(state.settings.asOf)} · Alle Beträge in Euro`}
+          description={`Stand ${dateLabel(state.settings.asOf)}`}
         >
           <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
             <SeasonalIcon
@@ -172,7 +172,7 @@ export function Overview() {
         <section className="panel p-5 sm:p-6">
           <SectionHeading
             title="Deine Pockets"
-            subtitle="Ist-Stände, nicht Prognose"
+            subtitle="Ist-Stände"
           >
             <Link
               href="/pockets"
@@ -331,7 +331,6 @@ export function Overview() {
         <div className="px-5 pt-5 sm:px-6">
           <SectionHeading
             title="Die nächsten 90 Tage"
-            subtitle="Einnahmen − Fixkosten − Alltagsbudget − Motorradrate"
           >
             <span className="status-pill border text-muted-foreground">
               Prognose
@@ -391,7 +390,7 @@ export function Overview() {
         <section className="panel min-w-0 p-5 sm:p-6">
           <SectionHeading
             title="Vermögensentwicklung"
-            subtitle="Pocket-Prognose inklusive Nettozinsen · 12 Monate"
+            subtitle="Prognose · 12 Monate · inkl. Nettozinsen"
           />
           <div
             className="h-64"
@@ -500,14 +499,14 @@ export function Overview() {
           ) : (
             <EmptyState
               title="Noch keine Ausgaben"
-              description="Erfasste Umsätze erscheinen hier automatisch."
+              description="Umsätze importieren."
             />
           )}
         </section>
         <section className="panel min-w-0 p-5 sm:p-6 xl:col-span-2">
           <SectionHeading
             title="Einnahmen & Ausgaben"
-            subtitle="Monatliche Planung · nächste sechs Monate"
+            subtitle="Plan · nächste sechs Monate"
           >
             <div className="flex gap-4 text-[11px] text-muted-foreground">
               <span>

@@ -247,7 +247,7 @@ test("mute is immediate and survives appearance discard, navigation and reload i
   await expect(
     page
       .getByRole("status")
-      .filter({ hasText: "Alle Interaktionsklänge sind stumm." }),
+      .filter({ hasText: "Stumm." }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Verwerfen", exact: true }).click();
   await page.getByRole("button", { name: "Farbschema wechseln" }).click();

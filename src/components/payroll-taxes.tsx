@@ -40,7 +40,7 @@ function PayrollWorkspace() {
 
   return <>
     <PageHeading eyebrow="Österreich · Lohnabrechnung" title="Gehalt & Steuern"
-      description="Dein Jahressechstel, die Jahresprognose und die nächste Sonderzahlung.">
+      description="Jahressechstel und Sonderzahlungen.">
       <label className="sr-only" htmlFor="payroll-year">Steuerjahr</label>
       <select id="payroll-year" className="select-input" value={year} onChange={(event) => setYear(event.target.value === "2027" ? 2027 : 2026)}>
         <option value="2026">2026</option><option value="2027">2027</option>
@@ -54,8 +54,8 @@ function PayrollWorkspace() {
     </PageHeading>
 
     {(missing || uncertain) && <p role="status" className="mb-4 rounded-lg border border-amber-500/30 p-3 text-sm">
-      {missing && <>Fehlende Abrechnung: {missing}. {rough ? "Die Schätzung ist deshalb vorläufig. " : "Für vollständige Nachweise die fehlenden PDFs hochladen. "}</>}
-      {uncertain && <>Prämie erkannt, Sechstelzuordnung nicht belegt. Die Schätzung zeigt beide Möglichkeiten.</>}
+      {missing && <>Fehlende Abrechnung: {missing}. {rough ? "Schätzung vorläufig. " : "PDFs für vollständige Nachweise ergänzen. "}</>}
+      {uncertain && <>Prämie erkannt, Sechstelzuordnung offen. Schätzung umfasst beide Varianten.</>}
     </p>}
     <div className="mb-6 grid gap-4 lg:grid-cols-3">
       <section className="panel p-5 sm:p-6" aria-label="Jahressechstel Abrechnungsstand">
@@ -64,7 +64,7 @@ function PayrollWorkspace() {
         <p className="text-2xl font-semibold tabular-nums">{money(actual?.sixth)}</p>
         <p className="mt-2 text-xs text-muted-foreground">{actual
           ? actual.source === "reported" ? "Laut Lohnabrechnung" : "Aus den laufenden Bezügen berechnet"
-          : latest ? "Noch nicht vollständig belegt" : "PDF hochladen – Berechnung startet automatisch"}</p>
+          : latest ? "Noch nicht vollständig belegt" : "PDF hochladen"}</p>
       </section>
       <section className="panel p-5 sm:p-6 lg:col-span-2" aria-label="Jahressechstel Prognose">
         <SectionHeading title="Jahressechstel · Schätzung" subtitle={uncertain ? "Vorläufige Spanne · je nach Prämienzuordnung" : rough ? "Vorläufig · fehlende Monate geschätzt" : "Bei gleichbleibenden laufenden Bezügen"} />
@@ -73,15 +73,15 @@ function PayrollWorkspace() {
           <div><p className="text-xs text-muted-foreground">Jahresende · Dezember {year}</p><p className="mt-1 text-2xl font-semibold tabular-nums">{yearEndSixth === undefined ? estimate(yearEndEstimate) : money(yearEndSixth)}</p></div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">{rough
-          ? "Lücken werden mit dem Durchschnitt der vorhandenen Monatsbezüge geschätzt, nicht als echte Abrechnungen gespeichert."
-          : "Neue Abrechnungen aktualisieren die Prognose automatisch."}</p>
+          ? "Lücken nur geschätzt, nicht als Abrechnungen gespeichert."
+          : "Prognose aktualisiert sich mit neuen Abrechnungen."}</p>
       </section>
     </div>
 
     {latest && <section className="panel mb-6 p-5 sm:p-6" aria-label="Steuer nächste Sonderzahlung">
       <SectionHeading title="Nächste Sonderzahlung" subtitle={nextPayment
-        ? `${monthLabel(period(year, nextPayment.month))} · Schätzung, kein feststehender Auszahlungsbetrag`
-        : "Keine weitere Sonderzahlung im aktuellen Modell"} />
+        ? `${monthLabel(period(year, nextPayment.month))} · Unverbindliche Schätzung`
+        : "Keine weitere Sonderzahlung im Modell"} />
       {nextPayment ? <>
         <div className="grid gap-5 sm:grid-cols-3">
           <div><p className="text-xs text-muted-foreground">Sonderzahlung brutto</p><p className="mt-1 text-xl font-semibold tabular-nums">{currency(nextPayment.specialGross)}</p></div>
@@ -89,30 +89,30 @@ function PayrollWorkspace() {
           <div><p className="text-xs text-muted-foreground">Mehr-/Mindersteuer durch Sechstelüberhang</p><p className="mt-1 text-xl font-semibold tabular-nums">{money(next?.tax?.signedOverflowDelta)}</p></div>
         </div>
         {!next?.tax && <p className="mt-3 text-xs text-muted-foreground">{missing
-          ? "Die Steuerprognose bleibt bis zur Klärung der fehlenden Belege offen."
-          : "Die Steuerberechnung benötigt weitere Nachweise; Gründe stehen unter Berechnungsdetails."}</p>}
-      </> : !analysis.hasSpecialPaymentModel && latest.month < 12 && <p className="text-sm text-muted-foreground">Ein belegtes Grundgehalt für das Sonderzahlungsmodell fehlt.</p>}
+          ? "Steuerprognose offen: fehlende Belege klären."
+          : "Weitere Nachweise nötig; siehe Berechnungsdetails."}</p>}
+      </> : !analysis.hasSpecialPaymentModel && latest.month < 12 && <p className="text-sm text-muted-foreground">Grundgehalt für das Sonderzahlungsmodell nicht belegt.</p>}
     </section>}
 
     {latest && <section className="panel mb-6 p-5 sm:p-6" aria-label="Zusätzlicher Prämien-Spielraum">
-      <SectionHeading title="Wie viel zusätzliche Prämie ist noch drin?"
-        subtitle={`Bei Auszahlung im ${monthLabel(period(year, bonus.month))} · vorsichtige Brutto-Schätzung`} />
+      <SectionHeading title="Zusätzlicher Prämien-Spielraum"
+        subtitle={`Auszahlung im ${monthLabel(period(year, bonus.month))} · vorsichtige Brutto-Schätzung`} />
       <p className="text-2xl font-semibold tabular-nums">{bonusRange
         ? bonusRange.minimum === bonusRange.maximum ? currency(bonusRange.minimum)
           : `${currency(bonusRange.minimum)} – ${currency(bonusRange.maximum)}`
         : "Noch offen"}</p>
       <p className="mt-2 text-sm text-muted-foreground">{bonusRange
-        ? bonusRange.maximum === 0 ? "Im Modell bleibt kein zusätzlicher Spielraum ohne Sechstelüberhang."
-          : "Zusätzliches Brutto ohne modellierten Sechstelüberhang – geplante Sonderzahlungen sind schon reserviert."
+        ? bonusRange.maximum === 0 ? "Modell: kein weiterer Spielraum ohne Sechstelüberhang."
+          : "Zusätzliches Brutto ohne modellierten Sechstelüberhang."
         : bonus.headroomIssues[0]}</p>
       {bonusRange && <p className="mt-2 text-xs text-muted-foreground">
-        Noch eingeplante Sonderzahlungen: {currency(bonus.reservedSpecialGross)}.
-        {bonusRange.minimum !== bonusRange.maximum && " Die Spanne berücksichtigt die offene Prämienzuordnung; orientiere dich vorsichtig am unteren Wert."}
+        Geplante Sonderzahlungen bereits reserviert: {currency(bonus.reservedSpecialGross)}.
+        {bonusRange.minimum !== bonusRange.maximum && " Offene Prämienzuordnung: vorsichtig am unteren Wert orientieren."}
       </p>}
-      <p className="mt-3 text-xs text-muted-foreground">Bei begünstigungsfähigen Sonderzahlungen gilt der laufende Tarif nur für den Überhang, nicht für die ganze Prämie. Innerhalb des Sechstels gelten begünstigte Sätze, oft 6 % nach SV – nicht pauschal steuerfrei.</p>
+      <p className="mt-3 text-xs text-muted-foreground">Bei begünstigungsfähigen Sonderzahlungen gilt der Tarif nur für den Überhang, nicht für die ganze Prämie. Innerhalb des Sechstels: begünstigte Sätze, oft 6 % nach SV, nicht pauschal steuerfrei.</p>
       <div className="mt-5 border-t pt-4" role="group" aria-label="Steuerbeispiel Zusatzprämie">
         <p className="text-sm font-medium">Wenn 1.000 € brutto vollständig tarifpflichtig sind</p>
-        <p className="mt-1 text-xs text-muted-foreground">Isoliertes Rechenbeispiel im selben Auszahlungsmonat, keine verbindliche Abrechnung.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Isoliertes Beispiel für diesen Monat, keine verbindliche Abrechnung.</p>
         {bonusExample ? <>
           <p className="mt-3 text-sm">Laufender Tarif: durchschnittlich <strong>{bonusExample.effectiveTariffRate.toLocaleString("de-AT", { maximumFractionDigits: 2 })} %</strong> auf den Betrag nach SV.</p>
           <dl className="mt-3 grid gap-4 sm:grid-cols-4">

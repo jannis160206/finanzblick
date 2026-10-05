@@ -62,7 +62,7 @@ function RowEditor({
             {row ? "Position bearbeiten" : "Position hinzufügen"}
           </DialogTitle>
           <DialogDescription>
-            Die Position steht in beiden Jahren zur Verfügung.
+            Gilt für beide Jahre.
           </DialogDescription>
         </DialogHeader>
         <DialogForm
@@ -138,7 +138,7 @@ function RowEditor({
               )}
             />
             <p id="row-plan-help" className="mt-2 text-xs text-muted-foreground">
-              Optional: Ordnet die Position einer Kategorie im Budgetplan zu.
+              Optional: Kategorie für den Budgetplan.
             </p>
           </div>
           {(form.formState.errors.root || storageError) && (
@@ -146,9 +146,6 @@ function RowEditor({
               {storageError ?? form.formState.errors.root?.message}
             </p>
           )}
-          <p className="text-xs text-muted-foreground">
-            Änderungen werden erst mit „Position speichern“ übernommen. Abbrechen oder Schließen verwirft den Entwurf.
-          </p>
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" type="button" onClick={close}>
@@ -444,7 +441,7 @@ export function Months() {
           </DialogHeader>
           <DialogBody className="space-y-3">
             <p className="text-sm">
-              „{deleting?.label}“ und alle zugehörigen Werte für 2026 und 2027 werden entfernt.
+              „{deleting?.label}“ mit allen Werten für 2026 und 2027 entfernen.
             </p>
             {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
           </DialogBody>

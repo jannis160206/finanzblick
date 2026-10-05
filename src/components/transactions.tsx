@@ -137,7 +137,7 @@ function TransactionForm({
         [{ ...transaction, ...assignment }],
       ),
     );
-    toast.success(assignment.reviewed ? "Zuordnung gespeichert und Buchung als geprüft markiert" : "Zuordnung zur Prüfung offengelassen");
+    toast.success(assignment.reviewed ? "Zuordnung gespeichert" : "Prüfung bleibt offen");
     onClose();
   }
   const error = (name: keyof Transaction) =>
@@ -157,7 +157,7 @@ function TransactionForm({
         <DialogHeader>
           <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            Ändere Kategorie und Fixkosten-Markierung. Die ursprüngliche Bankbuchung bleibt unverändert.
+            Kategorie und Fixkosten ändern · Banktext bleibt erhalten.
           </DialogDescription>
         </DialogHeader>
         <DialogForm onSubmit={form.handleSubmit(save)}>
@@ -193,7 +193,7 @@ function TransactionForm({
             onChange={(checked) => form.setValue("fixedCost", checked, { shouldDirty: true, shouldValidate: true })}
             eligible={canMarkFixed}
           />
-          <p className="text-xs leading-relaxed text-muted-foreground">Deine manuelle Kategorie hat für diese Buchung Vorrang vor automatischen Regeln. Speichern schließt die Prüfung ab; „Prüfen“ lässt sie offen. Händlerregeln können für spätere Buchungen gelernt werden, die manuelle Festlegung und der Prüfstatus nicht. Nicht gespeicherte Änderungen werden beim Schließen verworfen.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">„Prüfen“ lässt die Zuordnung offen.</p>
           </DialogBody>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
@@ -498,7 +498,7 @@ const TransactionLedger = memo(function TransactionLedger({
       <PageHeading
         eyebrow="BUCHUNGEN"
         title="Umsätze"
-        description={`${ledger.length.toLocaleString("de-AT")} Buchungen · Alle Konten an einem Ort`}
+        description={`${ledger.length.toLocaleString("de-AT")} Buchungen`}
       />
       <StatementImport reviewRequest={reviewRequest} />
       <section className="panel overflow-hidden">
@@ -705,8 +705,8 @@ const TransactionLedger = memo(function TransactionLedger({
             title="Keine Umsätze gefunden"
             description={
               state.transactions.length
-                ? "Filter ändern oder weitere Kontoauszüge importieren."
-                : "Kontoauszüge oben ablegen oder Dateien auswählen."
+                ? "Filter anpassen oder Kontoauszüge importieren."
+                : "Kontoauszüge oben ablegen."
             }
           />
         )}
@@ -762,7 +762,7 @@ const TransactionLedger = memo(function TransactionLedger({
           }
           update((state) => confirmMerchantAlias(state, lookup.booking, result));
           closeLookup();
-          toast.success("Händlername übernommen. Der Banktext bleibt unverändert.");
+          toast.success("Händlername übernommen");
         }} />}
       <Dialog
         open={!!deleting}

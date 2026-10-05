@@ -57,10 +57,10 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     const currentFinance = live.current;
     if (currentFinance.storageError) throw new Error(currentFinance.storageError);
     const merged = preparePayslipMerge(currentFinance.state.payslips ?? [], entries);
-    if (merged.conflicts.length && !allowReplace) throw new Error("Eine abweichende gespeicherte Abrechnung benötigt eine Bestätigung zum Ersetzen.");
+    if (merged.conflicts.length && !allowReplace) throw new Error("Ersetzen abweichender Abrechnungen bestätigen.");
     currentFinance.update((current) => {
       const next = preparePayslipMerge(current.payslips ?? [], entries);
-      if (next.conflicts.length && !allowReplace) throw new Error("Die gespeicherten Abrechnungen wurden inzwischen geändert. Bitte die PDFs erneut hochladen.");
+      if (next.conflicts.length && !allowReplace) throw new Error("Abrechnungen inzwischen geändert. PDFs erneut hochladen.");
       return { ...current, payslips: next.entries,
         payrollForecasts: current.payrollForecasts?.map((forecast) => next.changed.some((entry) =>
           entry.year === forecast.year && payrollEmployerKey(entry.employer) === payrollEmployerKey(forecast.employer))
@@ -69,7 +69,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     });
     currentFinance.onImported(entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0]);
     const message = merged.changed.length
-      ? `${merged.changed.length} Abrechnung(en) automatisch übernommen. Jahressechstel und Prognose wurden aktualisiert.`
+      ? `${merged.changed.length} Abrechnung(en) automatisch übernommen.`
       : "Abrechnungen bereits vorhanden – nicht doppelt übernommen.";
     setNotice(message);
     toast.success(message);
@@ -93,27 +93,27 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     try {
       const combined: PayslipImport = { drafts: [], issues: [] };
       for (const [fileIndex, file] of files.entries()) {
-        if (file.size > 20 * 1024 * 1024) throw new Error("Eine Lohnabrechnung darf höchstens 20 MB groß sein.");
+        if (file.size > 20 * 1024 * 1024) throw new Error("Max. 20 MB je PDF.");
         const parsed = await parsePayslipPdf(await file.arrayBuffer(), password || undefined);
         if (current !== request.current) return;
         combined.drafts.push(...parsed.drafts);
         combined.issues.push(...[...new Set(parsed.issues)].map((issue) => `Datei ${fileIndex + 1}: ${issue}`));
-        if (combined.drafts.length > 240) throw new Error("Ein Import darf höchstens 240 Lohnabrechnungen enthalten.");
+        if (combined.drafts.length > 240) throw new Error("Max. 240 Lohnabrechnungen je Import.");
       }
-      if (!combined.drafts.length) throw new Error("Keine auswertbare Lohnabrechnung erkannt. Bitte die vollständige Original-PDF mit lesbarem Text hochladen.");
+      if (!combined.drafts.length) throw new Error("Keine Lohnabrechnung erkannt. Vollständige Original-PDF mit lesbarem Text nötig.");
       setReport(combined);
       const entries = combined.drafts.flatMap((draft) => {
         const parsed = payslipSchema.safeParse(draft);
         return parsed.success ? [parsed.data] : [];
       });
       if (!entries.length) {
-        setError("Keine Abrechnung übernommen. Den Grund findest du unter Importhinweise.");
+        setError("Keine Abrechnung übernommen; siehe Importhinweise.");
         return;
       }
       const merged = preparePayslipMerge(live.current.state.payslips ?? [], entries);
       if (merged.conflicts.length) {
         setReplacement(entries);
-        setNotice("Auswertung abgeschlossen. Für abweichende gespeicherte Abrechnungen bitte das Ersetzen bestätigen.");
+        setNotice("Abweichende Abrechnungen: Ersetzen bestätigen.");
       } else storeEntries(entries, false);
     } catch (cause) {
       if (current !== request.current) return;
@@ -132,28 +132,28 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     (!employer || payrollEmployerKey(entry.employer) === payrollEmployerKey(employer))).sort((a, b) => b.month - a.month);
   return <>
     <section className="panel mb-6 p-5 sm:p-6" aria-label="Lohnabrechnungen importieren">
-      <SectionHeading title="Lohnabrechnungen" subtitle="PDF hochladen oder hineinziehen. Neuere Abrechnungen aktualisieren die Berechnung automatisch." />
+      <SectionHeading title="Lohnabrechnungen" subtitle="PDF · max. 24 Dateien · 20 MB je Datei" />
       <div className="grid gap-4 sm:grid-cols-[1fr_16rem]">
         <div role="group" aria-label="PDF-Ablage für Lohnabrechnungen" className={cn("rounded-xl border border-dashed p-5 text-center", dragging && "border-primary bg-primary/5")}
           onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={(event) => { event.preventDefault(); setDragging(false); void readFiles(Array.from(event.dataTransfer.files)); }}>
           <FileUp className="mx-auto mb-3 size-6 text-muted-foreground" />
-          <p className="mb-3 text-sm">Eine oder mehrere Lohnabrechnungen als PDF</p>
+          <p className="mb-3 text-sm">PDFs hier ablegen oder auswählen</p>
           <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple className="sr-only"
             aria-label="Lohnabrechnungen als PDF auswählen" disabled={busy || !!storageError}
             onChange={(event) => { if (event.target.files?.length) void readFiles(Array.from(event.target.files)); }} />
           <Button variant="outline" disabled={busy || !!storageError} onClick={() => fileInput.current?.click()}>
             {busy ? <><LoaderCircle className="size-4 animate-spin" />Analysiert lokal …</> : "PDF auswählen"}
           </Button>
-          {busy && <p role="status" className="mt-2 text-xs text-muted-foreground">Lohnabrechnungen werden lokal gelesen.</p>}
+          {busy && <p role="status" className="mt-2 text-xs text-muted-foreground">PDFs werden lokal gelesen.</p>}
         </div>
         <div className="space-y-3">
           <label className="block space-y-2 text-sm">PDF-Passwort
             <Input type="password" autoComplete="off" value={password} disabled={busy} maxLength={200}
               onChange={(event) => setPassword(event.target.value)} />
           </label>
-          <p className="text-xs leading-relaxed text-muted-foreground">Nur lokal für diesen Seitenbesuch. PDF und Passwort werden nicht gespeichert oder versendet.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">PDF und Passwort: nur lokal für diesen Seitenbesuch, nicht gespeichert oder versendet.</p>
           {filesToRetry.length > 0 && <Button variant="outline" disabled={busy || !password || !!storageError} onClick={() => { void readFiles(filesToRetry); }}>Mit Passwort erneut lesen</Button>}
         </div>
       </div>
@@ -167,7 +167,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           <summary className="cursor-pointer">Importhinweise</summary>
           <div className="mt-2 space-y-2 text-xs text-muted-foreground">
             {report.issues.map((issue, index) => <p key={index}>{issue}</p>)}
-            {incomplete.length > 0 && <p>Für diese Monate ist eine vollständige, unterstützte Text-PDF erforderlich. Unklare Beträge bleiben unbekannt; andere vollständig erkannte Monate werden unabhängig davon übernommen.</p>}
+            {incomplete.length > 0 && <p>Vollständige, unterstützte Text-PDF nötig. Unklare Beträge bleiben unbekannt; vollständig erkannte Monate werden separat übernommen.</p>}
           </div>
         </details>}
         <details className="text-sm">
@@ -185,7 +185,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </div>
         </details>
       </div>}
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Für den vollständigen Jahresstand die Abrechnungen seit Jänner hochladen. Kontoumsätze bleiben unverändert.</p>
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Kontoumsätze bleiben unverändert.</p>
       {records.length > 0 && <div className="mt-5 overflow-x-auto">
         <table className="w-full text-left text-sm" aria-label="Gespeicherte Lohnabrechnungen">
           <thead><tr className="border-b text-xs text-muted-foreground"><th className="p-2">Abrechnung</th><th className="p-2 text-right">Laufendes Brutto</th><th className="p-2 text-right">Sonderzahlung</th><th><span className="sr-only">Aktionen</span></th></tr></thead>
@@ -204,12 +204,12 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       </div>}
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {
-      if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Dieser Upload hat keine gespeicherten Abrechnungen geändert."); setError(""); }
+      if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }
     }}>
       <DialogContent variant="confirmation">
         <DialogHeader>
           <DialogTitle>Gespeicherte Abrechnungen ersetzen?</DialogTitle>
-          <DialogDescription>Der Upload enthält abweichende Werte für bereits gespeicherte Monate. Nur nach Bestätigung ersetzt die neue PDF diese Werte; es werden keine Beträge von Hand eingegeben.</DialogDescription>
+          <DialogDescription>Abweichende Werte für gespeicherte Monate. Überschreiben nur nach Bestätigung.</DialogDescription>
         </DialogHeader>
         <DialogBody>
           {replacement?.map((entry) => <p key={payslipKey(entry)} className="mb-2 text-sm">
@@ -219,7 +219,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           {(error || storageError) && <p role="alert" className="text-sm text-destructive">{storageError || error}</p>}
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" onClick={() => { setReplacement(null); setNotice("Ersetzen abgebrochen. Dieser Upload hat keine gespeicherten Abrechnungen geändert."); setError(""); }}>Abbrechen</Button>
+          <Button variant="outline" onClick={() => { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }}>Abbrechen</Button>
           <Button disabled={!!storageError} onClick={() => {
             if (!replacement) return;
             try {
@@ -235,7 +235,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     </Dialog>
     <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null); }}>
       <DialogContent variant="confirmation">
-        <DialogHeader><DialogTitle>Lohnabrechnung entfernen?</DialogTitle><DialogDescription>Nur die lokalen Rechenwerte werden entfernt. Die Original-PDF und deine Kontoumsätze bleiben unverändert.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Lohnabrechnung entfernen?</DialogTitle><DialogDescription>Nur lokale Rechenwerte entfernen; Original-PDF und Kontoumsätze bleiben unverändert.</DialogDescription></DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => setDeleting(null)}>Abbrechen</Button>
           <Button variant="destructive" disabled={!!storageError} onClick={() => {

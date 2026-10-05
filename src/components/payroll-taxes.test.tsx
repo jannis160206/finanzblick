@@ -79,8 +79,8 @@ it("shows additional gross bonus room and an isolated tariff example prominently
   render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(moneyText(2000))).toBeTruthy();
-  expect(bonus.getByText(/Bei Auszahlung im November 2026/)).toBeTruthy();
-  expect(bonus.getByText(/Noch eingeplante Sonderzahlungen:/).textContent).toContain(currency(3000));
+  expect(bonus.getByText(/Auszahlung im November 2026/)).toBeTruthy();
+  expect(bonus.getByText(/Geplante Sonderzahlungen bereits reserviert:/).textContent).toContain(currency(3000));
   const example = within(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }));
   expect(example.getByText("40 %")).toBeTruthy();
   for (const value of [170.7, 331.72, 502.42, 497.58]) expect(example.getByText(moneyText(value))).toBeTruthy();
@@ -95,7 +95,7 @@ it("shows a conservative bonus range when February's sixth classification is unr
   render(<Fixture initial={{ ...seed(), payslips }} />);
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(`${moneyText(1000)} – ${moneyText(2166.67)}`)).toBeTruthy();
-  expect(bonus.getByText(/orientiere dich vorsichtig am unteren Wert/)).toBeTruthy();
+  expect(bonus.getByText(/vorsichtig am unteren Wert orientieren/)).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(2);
 });
 
@@ -359,7 +359,7 @@ it("automatically saves a recognized February bonus and displays its sixth range
   await waitFor(() => expect(latest.payslips).toHaveLength(8));
   expect(latest.payslips?.find((entry) => entry.month === 2)?.unresolvedSixthBonus).toBe(1000);
   expect(screen.queryByText(/Fehlende Abrechnung:/)).toBeNull();
-  expect(screen.getByText(/Prämie erkannt, Sechstelzuordnung nicht belegt/)).toBeTruthy();
+  expect(screen.getByText(/Prämie erkannt, Sechstelzuordnung offen/)).toBeTruthy();
   const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
   expect(forecast.getByText(`${moneyText(6011.11)} – ${moneyText(6233.33)}`)).toBeTruthy();
   expect(forecast.getByText(`${moneyText(6008.33)} – ${moneyText(6175)}`)).toBeTruthy();

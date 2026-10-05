@@ -120,7 +120,7 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
           </label>
         </div>
         {invalidAmount && <p id="shared-amount-error" role="alert" className="text-sm text-destructive">Bitte einen gültigen Gesamtbetrag eingeben, z. B. 100,00.</p>}
-        <p className="text-xs text-muted-foreground">Auswahl und Bezahlmarkierungen werden erst beim Speichern übernommen. Abbrechen oder Schließen verwirft Änderungen.</p>
+        <p className="text-xs text-muted-foreground">Auswahl erst mit „Speichern“ übernehmen.</p>
         <div className="rounded-md border">
           {filtered.slice(0, limit).map((row) => <label key={row.id} className="flex cursor-pointer items-center gap-3 border-b p-3 text-sm last:border-b-0">
             <input type="checkbox" className="accent-primary" aria-label={`Teilen: ${row.description} ${row.date}`}
@@ -137,7 +137,7 @@ export function SharedCosts({ bookings, items }: { bookings: AccountedTransactio
         </Tabs.Content>
         <Tabs.Content value="open" className="space-y-3">
           <h3 className="text-sm font-medium">Offen · Raphael Piber</h3>
-          <p className="text-xs text-muted-foreground">Bezahlmarkierungen werden erst beim Speichern übernommen. Abbrechen oder Schließen verwirft Änderungen.</p>
+          <p className="text-xs text-muted-foreground">Bezahlmarkierungen erst mit „Speichern“ übernehmen.</p>
           <ShareRows items={openItems} disabled={!!storageError} onPaid={(id) => setPaid((ids) => [...ids, id])} />
           {!openItems.length && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Teilungen.</p>}
         </Tabs.Content>

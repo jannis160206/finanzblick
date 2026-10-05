@@ -161,7 +161,7 @@ export function CategorySelect(props: CategorySelectProps) {
               </div>
             ))}
           </div>
-          {!options.length && <p role="status" className="px-3 py-6 text-sm text-muted-foreground">Keine passende Kategorie. Versuche einen anderen Suchbegriff.</p>}
+          {!options.length && <p role="status" className="px-3 py-6 text-sm text-muted-foreground">Keine passende Kategorie.</p>}
         </PopoverContent>
       </Popover>
     </div>

@@ -102,7 +102,7 @@ const BookingReview = memo(function BookingReview({
     >
       <p className="text-xs text-muted-foreground break-words">
         {item.message}
-        {repairOcr && " Ausgaben negativ, Gutschriften positiv eingeben."}
+        {repairOcr && " Ausgaben −, Gutschriften +."}
       </p>
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
         <label className="space-y-1 text-xs">
@@ -139,8 +139,8 @@ const BookingReview = memo(function BookingReview({
           </div>
           {editingName && <p className="text-muted-foreground">
             {nameMissing ? "Bitte einen Händlernamen eingeben." : canRememberName
-              ? "Name, Kategorie und Fixkosten-Auswahl werden für künftige Ausgänge dieses Händlers gemerkt."
-              : "Ohne eindeutigen Händlertext gilt der Name nur für diese Buchung."}
+              ? "Merkt Name, Kategorie und Fixkosten für Ausgänge dieses Händlers."
+              : "Unklarer Händlertext: Name gilt nur für diese Buchung."}
           </p>}
         </div>
         <label className="space-y-1 text-xs">
@@ -357,7 +357,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
       importMetadata.current = prepared.metadata;
       if (prepared.issues.length) toast.error(prepared.issues.length === 1
         ? prepared.issues[0]
-        : `${prepared.issues.length} Importhinweise – Details unter „Importhinweise“, unklare Buchungen im Prüfdialog.`);
+        : `${prepared.issues.length} Importhinweise – Details unter „Importhinweise“.`);
       setUI({ review: prepared.review, open: prepared.review.length > 0 });
       commit(prepared.automatic, prepared.duplicates);
     } catch (error) {
@@ -402,8 +402,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           <div>
             <p className="text-sm font-medium">Kontoauszüge hier ablegen</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Raiffeisen, Revolut oder Amex · CSV/XLSX/PDF oder Amex-Screenshot · sichere Buchungen
-              automatisch · max. 20 MB je Datei
+              CSV/XLSX/PDF/PNG/JPEG/WebP · sichere Buchungen automatisch · max. 20 MB je Datei
             </p>
           </div>
         </div>
@@ -468,8 +467,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
           <DialogHeader>
             <DialogTitle>Kontoauszüge prüfen</DialogTitle>
             <DialogDescription>
-              Sichere Buchungen sind automatisch gespeichert. Nur diese{" "}
-              {ui.review.length} Einträge brauchen eine Entscheidung.
+              {ui.review.length} offene Zuordnungen
             </DialogDescription>
           {ui.pending && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />Zuordnung wird übernommen …
@@ -504,8 +502,7 @@ export function StatementImport({ reviewRequest = 0 }: { reviewRequest?: number 
                     übernehmen?
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    Ab {monthLabel(item.change.month)}. Die Auszugsbuchung
-                    bleibt erhalten.
+                    Gilt ab {monthLabel(item.change.month)}.
                   </p>
                   <div className="flex justify-end gap-2">
                     <Button

@@ -34,7 +34,7 @@ export function PageHeading({
 }: {
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   children?: ReactNode;
 }) {
   return (
@@ -44,7 +44,7 @@ export function PageHeading({
         <h1 className="text-3xl font-semibold tracking-tight sm:text-[34px]">
           {title}
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">{description}</p>
+        {description && <p className="mt-2 text-sm text-muted-foreground">{description}</p>}
       </div>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>

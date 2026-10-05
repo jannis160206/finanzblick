@@ -115,7 +115,7 @@ export function Pockets() {
       <PageHeading
         eyebrow="SPAREN & RESERVEN"
         title="Deine Pockets"
-        description={`Ist-Stände zum ${dateLabel(state.settings.asOf)} · Gesamt ${currency(d.totalAssets)}`}
+        description={`Ist · ${dateLabel(state.settings.asOf)} · Gesamt ${currency(d.totalAssets)}`}
       />
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {pocketNames.map((pocket) => {
@@ -181,7 +181,7 @@ export function Pockets() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   {snapshot
                     ? `Revolut · Auszug ${dateLabel(snapshot.date)}`
-                    : "Noch kein Schlussstand importiert"}
+                    : "Noch kein Kontostand"}
                 </p>
               </section>
             );
