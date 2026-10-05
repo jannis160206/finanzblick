@@ -91,6 +91,32 @@ function renderFinance(initialState: AppState, children?: ReactNode) {
 }
 
 describe("FinanceProvider lazy dashboard and assignment integration", () => {
+  it("migrates the stored motorcycle goal once and preserves its plan through reload and removal", async () => {
+    vi.setSystemTime(new Date("2026-10-05T12:00:00Z"));
+    const initial = fixture(0);
+    initial.savingsGoals = [{ id: "saved-motorcycle", name: "Motorrad", pocket: "Motorrad", target: 8500, date: "2027-04-01" }];
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
+    const view = renderFinance(initial);
+    expect(view.read().state.savingsGoals).toMatchObject([{
+      id: "saved-motorcycle", target: 5400, date: "2027-04-01",
+      openingBalance: { amount: 2445, date: "2026-10-05" },
+      funding: { monthly: 0, extras: { "2026-12": 800, "2027-01": 2576 } },
+    }]);
+    expect(view.read().state.savingsGoals).toHaveLength(1);
+    expect(view.read().state.settings.balances.Motorrad).toBe(0);
+    expect(view.read().dashboard.countdown.remaining).toBe(2955);
+    expect(view.read().state.plannedOneOffs?.some((item) => /motorrad|helm|jacke|kleidung|zulassung|service/i.test(item.name))).toBe(false);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    view.unmount();
+    const reloaded = renderFinance(initial);
+    expect(reloaded.read().state.savingsGoals).toHaveLength(1);
+    expect(reloaded.read().dashboard.actualGoals["saved-motorcycle"]).toBe(2445);
+    act(() => reloaded.read().update((state) => ({ ...state, savingsGoals: [] })));
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    reloaded.unmount();
+    expect(renderFinance(initial).read().state.savingsGoals).toEqual([]);
+  });
+
   it("persists the one-off seed once and never restores deliberately deleted plans", async () => {
     const view = renderFinance(fixture(0));
     expect(view.read().state.plannedOneOffs).toHaveLength(5);

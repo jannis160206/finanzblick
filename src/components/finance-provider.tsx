@@ -11,7 +11,7 @@ import {
 } from "react";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "sonner";
-import { calculateDashboard, type Dashboard } from "@/lib/calc";
+import { actualPockets, calculateDashboard, synchronizeGoals, type Dashboard } from "@/lib/calc";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import {
   commitStatementImport,
@@ -26,6 +26,7 @@ import { restoreLegacySourceCategories } from "@/lib/legacy-source";
 import { approveReviewedBooking } from "@/lib/import/approve-review";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
+import { initializeMotorcycleGoal } from "@/lib/goals";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -107,16 +108,18 @@ function reducer(store: Store, action: Action | AppendAction): Store {
         };
       }
     }
-    case "hydrate":
+    case "hydrate": {
+      const data = refreshPlanning(
+        queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
+      );
       return {
-        data: refreshPlanning(
-          queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
-        ),
+        data: synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad)),
         ready: true,
         error: action.error ?? null,
         saved: false,
         blocked: action.blocked ?? false,
       };
+    }
     case "update":
       return {
         ...store,

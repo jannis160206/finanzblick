@@ -18,7 +18,7 @@ import {
   statementFingerprint,
 } from "@/lib/import/identity";
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
-import { allocateGoals, goalBalance, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
+import { allocateGoals, goalBalance, goalExtraIncome, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
 import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
@@ -736,11 +736,12 @@ export function calculateMonthTotals(
   actuals = indexMonthlyActuals(bookings, state.settings.asOf),
   occurrences: PlannedOccurrence[] = matchPlannedOneOffs(state.plannedOneOffs, bookings),
 ) {
-  const income = sum(
+  const goalExtras = sum(savingsGoals(state).map((goal) => goalExtraIncome(goal, month)));
+  const income = round(goalExtras + sum(
     state.financeRows
       .filter((row) => row.kind === "income")
       .map((row) => row.values[month] ?? 0),
-  );
+  ));
   const salaryPlan = sum(state.financeRows.filter((row) => {
     const category = payrollCategory({ description: row.label, amount: row.values[month] ?? 0 });
     return row.kind === "income" && fixedRowCategory(row) === "Gehalt" &&
@@ -762,6 +763,7 @@ export function calculateMonthTotals(
   const plannedOneOffs = sum(occurrences.filter((item) => monthKey(item.date) === month).map((item) => item.ownAmount));
   return {
     income,
+    goalExtras,
     salaryPlan,
     salaryReceived,
     received,
@@ -826,6 +828,7 @@ export function calculateDashboard(state: AppState) {
   const historicalOpening = state.months["2026-01"]?.openingBalances;
   let previous = { ...(historicalOpening ?? state.settings.balances) };
   const goals = savingsGoals(state);
+  const motorcycle = goals.find((goal) => pocketKey(goal.pocket) === "motorrad");
   const actualGoals = Object.fromEntries(goals.map((goal) => [goal.id, goalBalance(state, goal, actual)]));
   let projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, pocketKey(goal.pocket) === "motorrad" ? previous.Motorrad : 0]));
   const timeline = [...monthsForYear(2026), ...monthsForYear(2027)].map((month) => {
@@ -834,6 +837,14 @@ export function calculateDashboard(state: AppState) {
     const historical = month < baselineMonth;
     const available = !historical || !!historicalOpening;
     const start = { ...(month === currentMonth ? actual : month === baselineMonth ? state.settings.balances : previous) };
+    if (motorcycle?.openingBalance) {
+      if (month === currentMonth && state.settings.asOf >= motorcycle.openingBalance.date)
+        start.Motorrad = actualGoals[motorcycle.id];
+      else if (month === motorcycle.openingBalance.date.slice(0, 7)) {
+        start.Motorrad = motorcycle.openingBalance.amount;
+        projectedGoals[motorcycle.id] = motorcycle.openingBalance.amount;
+      }
+    }
     const from = month === baselineMonth ? state.settings.baselineDate : `${addMonths(month, -1)}-${daysInMonth(addMonths(month, -1))}`;
     const monthEnd = `${month}-${daysInMonth(month)}`;
     const snapshotDate = monthEnd < state.settings.asOf ? monthEnd : state.settings.asOf;
@@ -845,7 +856,7 @@ export function calculateDashboard(state: AppState) {
     const interest = available ? monthlyInterest(month === currentMonth && latestTRBalance(state, snapshotDate) ? latestTRBalance(state, snapshotDate)!.balance : start.Notgroschen, month, state.settings) : 0;
     if (month === currentMonth) projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, Math.max(0, actualGoals[goal.id] - incomingPocketTransfers(state, goal.pocket, month, [goal.name]))]));
     // Dated purchases reduce available surplus, never the existing goal instructions.
-    const allocation = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs, goals, projectedGoals, month);
+    const allocation = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs - totals.goalExtras, goals, projectedGoals, month);
     const split = { ...emptyPockets(), Sparkonto: allocation.savings, Urlaub: allocation.vacation };
     for (const goal of goals) {
       if (pocketKey(goal.pocket) === "motorrad") split.Motorrad += allocation.goals[goal.id];
@@ -860,6 +871,8 @@ export function calculateDashboard(state: AppState) {
       if (month < currentMonth && latestPocketSnapshot(state, pocket, monthEnd)) end[pocket] = actualPockets(state, monthEnd)[pocket];
       if (pocket === "Notgroschen" && month <= currentMonth && latestTRBalance(state, snapshotDate)) end[pocket] = latestTRBalance(state, snapshotDate)!.balance;
     }
+    if (motorcycle?.openingBalance && month < currentMonth && monthEnd >= motorcycle.openingBalance.date)
+      end.Motorrad = goalBalance(state, motorcycle, actualPockets(state, monthEnd), monthEnd);
     if (available) previous = end;
     return { month, ...totals, start, rates, goalRates: allocation.goals, goalEnd: { ...projectedGoals }, out: input.pocketOut, movement, end, interest, bikeTransfer: rates.Motorrad, available,
       remaining: round(totals.surplus - sum(Object.values(allocation.goals))), roundUp: roundUpTotal(state.transactions, month),
@@ -870,8 +883,14 @@ export function calculateDashboard(state: AppState) {
   const current = timeline.find((row) => row.month === currentMonth) ?? { ...totalsForMonth(currentMonth), month: currentMonth, bikeTransfer: 0, remaining: 0 };
   const allocationMonth = currentMonth;
   const nextTransfer = timeline.find((row) => row.month === allocationMonth)?.bikeTransfer ?? 0;
-  const motorcycle = goals.find((goal) => pocketKey(goal.pocket) === "motorrad");
-  const countdown = bikeCountdown(actual.Motorrad, nextTransfer, motorcycle ? { ...state.settings, bikeTarget: motorcycle.target, bikePurchaseDate: motorcycle.date } : state.settings);
+  const countdown = bikeCountdown(motorcycle ? actualGoals[motorcycle.id] : actual.Motorrad, nextTransfer, motorcycle ? { ...state.settings, bikeTarget: motorcycle.target, bikePurchaseDate: motorcycle.date } : state.settings);
+  if (motorcycle?.funding) {
+    const futureExtras = sum(Object.keys(motorcycle.funding.extras).filter((month) => month >= currentMonth)
+      .map((month) => Math.max(0, goalExtraIncome(motorcycle, month) -
+        (month === currentMonth ? incomingPocketTransfers(state, motorcycle.pocket, month, [motorcycle.name]) : 0))));
+    countdown.required = state.settings.asOf > motorcycle.date ? 0 : round(Math.max(0, countdown.remaining - futureExtras) / countdown.months);
+    countdown.onTrack = countdown.funded || (!countdown.overdue && motorcycle.funding.monthly >= countdown.required);
+  }
   const ninetyDays = [0, 1, 2].map((offset) => {
     const month = addMonths(currentMonth, offset);
     const existing = timeline.find((row) => row.month === month);
@@ -897,7 +916,8 @@ export function calculateDashboard(state: AppState) {
       { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: currentRow?.rates.Urlaub ?? 0 },
     ].filter((item) => item.amount > 0).map((item) => ({ ...item, done: transferMatches(item.amount, incomingPocketTransfers(state, item.pocket, currentMonth, [item.name])) })),
     currentMonth, current, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
-    totalAssets: sum([...Object.values(actual), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => actualGoals[goal.id])]),
+    totalAssets: sum([...Object.values(actual), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => actualGoals[goal.id]),
+      motorcycle?.openingBalance ? actualGoals[motorcycle.id] - actual.Motorrad : 0]),
     countdown, nextTransfer, allocationMonth, ninetyDays,
     currentRoundUp: roundUpTotal(state.transactions.filter((t) => t.date <= state.settings.asOf), currentMonth),
     spending: [...categorySpending].map(([name, value]) => ({ name, value: round(value) })).sort((a, b) => b.value - a.value),

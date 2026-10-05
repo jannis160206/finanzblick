@@ -476,6 +476,7 @@ export async function parseWorkbook(
                 importStatus: true,
                 fixedAmountDecisions: true,
                 savingsGoals: true,
+                bikeOnlyGoalApplied: true,
                 seasonalTheme: true,
                 holidayRanges: true,
                 plannedOneOffs: true,
@@ -796,7 +797,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.reviewQueue ||
     state.importStatus ||
     state.settings.interestRates ||
-    state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth ||
+    state.fixedAmountDecisions || state.savingsGoals || state.bikeOnlyGoalApplied || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth ||
     state.payslips?.length || state.payrollForecasts?.length
   ) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
@@ -809,7 +810,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       state.reviewQueue ||
       state.importStatus ||
       state.settings.interestRates ||
-      state.fixedAmountDecisions || state.savingsGoals || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth
+      state.fixedAmountDecisions || state.savingsGoals || state.bikeOnlyGoalApplied || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth
     )
       automation.addRow([
         "ux",
@@ -821,6 +822,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
           interestRates: state.settings.interestRates,
           fixedAmountDecisions: state.fixedAmountDecisions,
           savingsGoals: state.savingsGoals,
+          bikeOnlyGoalApplied: state.bikeOnlyGoalApplied,
           seasonalTheme: state.seasonalTheme,
           holidayRanges: state.holidayRanges,
           plannedOneOffs: state.plannedOneOffs,

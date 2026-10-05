@@ -35,7 +35,7 @@ import {
   pocketColors,
   pocketIcons,
 } from "@/components/finance-ui";
-import { currency, dateLabel, monthLabel, shortCurrency } from "@/lib/format";
+import { currency, dateLabel, monthLabel, number, shortCurrency } from "@/lib/format";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
@@ -61,6 +61,9 @@ export function Overview() {
   const { state, dashboard: d } = useFinance();
   const monthSplit = d.monthlyFunding;
   const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
+  const bikeSaved = motorcycle ? d.actualGoals[motorcycle.id] : 0;
+  const bikeExtraLabel = (month: string) => month.slice(5) === "12" ? "Dec" :
+    monthLabel(month, true).replace(/\s+\d{4}$/, "").replace(/\.$/, "");
   const kpis = [
     {
       label: "Ersparnisse gesamt",
@@ -123,6 +126,10 @@ export function Overview() {
         </PageHeading>
       </div>
       <PlannedOneOffLines />
+      {motorcycle?.funding && d.currentMonth <= motorcycle.date.slice(0, 7) && <p className="mb-5 text-xs text-muted-foreground" aria-label="Motorrad-Finanzierung">
+        {`Motorrad ${number(bikeSaved, 0)} €${Object.entries(motorcycle.funding.extras).sort(([a], [b]) => a.localeCompare(b))
+          .map(([month, amount]) => ` · ${bikeExtraLabel(month)} +${number(amount, 0)}`).join("")} · monatlich ${number(motorcycle.funding.monthly, 0)} €`}
+      </p>}
       {monthSplit.length > 0 && (
         <section
           className="panel mb-5 px-4 py-3 text-sm"
@@ -255,10 +262,10 @@ export function Overview() {
               </p>
             </div>
             <span className="text-right text-xs text-muted-foreground">
-              {dateLabel(state.settings.bikePurchaseDate)}
+              {dateLabel(motorcycle.date)}
               <br />
               <span className="mt-1 inline-block">
-                Ziel {currency(state.settings.bikeTarget)}
+                Ziel {currency(motorcycle.target)}
               </span>
             </span>
           </div>
@@ -276,7 +283,7 @@ export function Overview() {
             />
           </div>
           <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-            <span>{currency(d.actual.Motorrad)} angespart</span>
+            <span>{currency(bikeSaved)} angespart</span>
             <span>Ziel {currency(motorcycle.target)}</span>
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4 border-t pt-5">

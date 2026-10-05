@@ -15,7 +15,7 @@ export function createSeed(): AppState {
       emergencyTarget: 6000,
       vacationTarget: 5500,
       savingsTarget: 10000,
-      bikeTarget: 8500,
+      bikeTarget: 5400,
       bikePurchaseDate: "2027-04-01",
       allocationStart: "2026-10-01",
       bikeShare: 0.9,

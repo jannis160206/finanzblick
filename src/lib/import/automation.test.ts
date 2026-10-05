@@ -216,7 +216,7 @@ describe("Revolut closing balances", () => {
     expect(september.rates.Motorrad).toBe(0);
     expect(september.end.Motorrad).toBe(900); // Already executed.
     expect(september.end.Sparkonto).toBe(1912.59); // Only 130 of planned 180 remain.
-    expect(d.countdown.remaining).toBe(7600);
+    expect(d.countdown.remaining).toBe(4500);
     expect(d.ninetyDays[1].bikeTransfer).toBe(820);
   });
   it("preserves a pre-start funded balance and sends surplus to vacation after the floor", () => {

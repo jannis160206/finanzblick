@@ -131,12 +131,12 @@ describe("savings and interest", () => {
       Urlaub: 0,
     }));
   it("caps the goal and sends overflow to Urlaub after the floor", () => {
-    expect(splitSurplus(1000, 8400, { ...settings, asOf: "2026-10-01" })).toMatchObject({
+    expect(splitSurplus(1000, settings.bikeTarget - 100, { ...settings, asOf: "2026-10-01" })).toMatchObject({
       Motorrad: 100,
       Sparkonto: 180,
       Urlaub: 720,
     });
-    expect(splitSurplus(1000, 8500, settings)).toMatchObject({
+    expect(splitSurplus(1000, settings.bikeTarget, settings)).toMatchObject({
       Motorrad: 0,
       Sparkonto: 180,
       Urlaub: 820,
@@ -162,7 +162,7 @@ describe("savings and interest", () => {
   it("bounds the countdown divisor at one", () => {
     expect(bikeCountdown(0, 1500, settings)).toMatchObject({
       months: 6,
-      required: 1416.67,
+      required: 900,
       onTrack: true,
     });
     expect(

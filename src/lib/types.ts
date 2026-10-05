@@ -258,6 +258,15 @@ export const savingsGoalSchema = z.object({
   target: moneySchema.positive("Betrag muss größer als null sein"),
   date: dateSchema,
   completedAt: dateSchema.optional(),
+  openingBalance: z.object({
+    date: dateSchema,
+    amount: moneySchema.nonnegative(),
+    includedTransactionIds: z.array(z.string()).max(100_000).optional(),
+  }).optional(),
+  funding: z.object({
+    monthly: moneySchema.nonnegative(),
+    extras: z.record(z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/), moneySchema.nonnegative()),
+  }).optional(),
 });
 export type SavingsGoal = z.infer<typeof savingsGoalSchema>;
 export const seasonalPreferenceSchema = z.object({
@@ -320,6 +329,7 @@ export const appStateSchema = z.object({
     (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,
     "Sparziele müssen eindeutige IDs haben",
   ).optional(),
+  bikeOnlyGoalApplied: z.boolean().optional(),
   planningRepairs: z
     .array(z.literal("september-2026-sonstiges-focus-override"))
     .max(1)
