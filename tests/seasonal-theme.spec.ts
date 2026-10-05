@@ -277,10 +277,12 @@ test("another tab's accent survives saving unrelated financial fields", async ({
     accentColor: "#60a5fa",
   };
   await page.evaluate(
-    ({ key, state }) =>
+    ({ key, state }) => {
+      localStorage.setItem(key, JSON.stringify(state));
       window.dispatchEvent(
         new StorageEvent("storage", { key, newValue: JSON.stringify(state) }),
-      ),
+      );
+    },
     { key, state: { ...before, seasonalTheme: preference } },
   );
   await expect

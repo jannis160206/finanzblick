@@ -19,6 +19,7 @@ import { dateLabel } from "@/lib/format";
 import { type ImportResult } from "@/lib/excel";
 import { MAX_IMPORT_BYTES } from "@/lib/import/limits";
 import { openReviewCount, queueLedgerReview } from "@/lib/import/review";
+import { FinanceStorageError } from "@/lib/finance-storage";
 
 export function ExcelActions({ compact = false }: { compact?: boolean }) {
   const { state, replace } = useFinance();
@@ -211,11 +212,16 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                   className="h-auto min-h-10 min-w-0 whitespace-normal sm:flex-1"
                   disabled={!!busy}
                   onClick={() => {
-                    replace(preview.state);
-                    toast.success(
-                      `${preview.state.transactions.length} Umsätze importiert`,
-                    );
-                    setPreview(null);
+                    try {
+                      replace(preview.state);
+                      toast.success(
+                        `${preview.state.transactions.length} Umsätze importiert`,
+                      );
+                      setPreview(null);
+                    } catch (error) {
+                      if (!(error instanceof FinanceStorageError)) throw error;
+                      setActionError(error.message);
+                    }
                   }}
                 >
                   Sicherung wiederherstellen und aktuelle Daten ersetzen

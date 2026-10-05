@@ -215,7 +215,7 @@ export function AppShell({
               <CircleAlert className="size-4 shrink-0 text-destructive" />
               <p className="min-w-0 flex-1">{storageError}</p>
               <Button size="sm" variant="outline" onClick={retrySave}>
-                Speichern erneut aktivieren
+                Erneut versuchen
               </Button>
             </div>
           )}

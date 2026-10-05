@@ -7,6 +7,7 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
   type ReactNode,
 } from "react";
 import { ThemeProvider } from "next-themes";
@@ -28,13 +29,13 @@ import { useSecurityMode } from "@/components/security-mode-provider";
 import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
 import { initializeMotorcycleGoal } from "@/lib/goals";
 import { FixedPlanCapacityError } from "@/lib/fixed-plan";
+import { FINANCE_STORAGE_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
   return locked ? null : <Toaster richColors position="bottom-right" closeButton />;
 }
 
-const STORAGE_KEY = "finanzdashboard.v1";
 type Store = {
   data: AppState;
   ready: boolean;
@@ -119,7 +120,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
           queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
         );
         return {
-          data: synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad)),
+          data: appStateSchema.parse(synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad))),
           ready: true,
           error: action.error ?? null,
           saved: false,
@@ -127,7 +128,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
         };
       } catch (error) {
         if (!(error instanceof FixedPlanCapacityError)) throw error;
-        return { data: action.data, ready: true, saved: true, blocked: action.blocked ?? false,
+        return { data: action.data, ready: true, saved: false, blocked: action.blocked ?? false,
           error: action.error ?? null, planCapacityBlocked: true, actionError: { message: error.message } };
       }
     }
@@ -153,7 +154,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
     case "error":
       return { ...store, saved: false, error: action.message };
     case "retry":
-      return { ...store, blocked: false, data: { ...store.data }, error: null };
+      return { ...store, saved: false, data: { ...store.data }, error: null };
   }
 }
 type FinanceContextValue = {
@@ -197,44 +198,53 @@ export function FinanceProvider({
     saved: false,
     blocked: false,
   });
+  const storage = useRef(new FinanceStorage()).current;
+  const hydrated = useRef(false);
+  const latest = useRef(store);
+  useEffect(() => { latest.current = store; }, [store]);
+  const load = useCallback((fallback: AppState) => {
+    try {
+      const result = storage.load(fallback);
+      dispatch({ type: "hydrate", data: result.data, reference: initialState });
+      if (result.recovered) toast.success("Lokale Sicherung geladen.");
+    } catch (error) {
+      dispatch({
+        type: "hydrate",
+        data: fallback,
+        blocked: true,
+        error: financeStorageMessage(error),
+      });
+    }
+  }, [initialState, storage]);
   useEffect(() => {
     if (store.actionError) toast.error(store.actionError.message);
   }, [store.actionError]);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      dispatch({
-        type: "hydrate",
-        data: raw ? appStateSchema.parse(JSON.parse(raw)) : initialState,
-        reference: initialState,
-      });
-    } catch {
-      dispatch({
-        type: "hydrate",
-        data: initialState,
-        blocked: true,
-        error:
-          "Lokale Daten konnten nicht geladen werden. Sie werden nicht überschrieben. Bitte eine Excel-Sicherung importieren oder das Speichern ausdrücklich erneut aktivieren.",
-      });
+    // Server props and Fast Refresh must not rehydrate over the working ledger.
+    if (!hydrated.current) {
+      hydrated.current = true;
+      load(initialState);
     }
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== STORAGE_KEY || !event.newValue) return;
+      if (event.key !== FINANCE_STORAGE_KEY && event.key !== null) return;
       try {
-        dispatch({
-          type: "hydrate",
-          data: appStateSchema.parse(JSON.parse(event.newValue)),
-          reference: initialState,
-        });
-      } catch {
+        if (event.storageArea && event.storageArea !== localStorage) return;
+        if (!storage.changedElsewhere()) return;
+        if (!latest.current.saved) {
+          dispatch({ type: "error", message: "Ein anderer Tab hat Daten geändert. Ungesicherte Änderungen bleiben hier erhalten. Bitte als Excel sichern und neu laden." });
+          return;
+        }
+        load(latest.current.data);
+      } catch (error) {
         dispatch({
           type: "error",
-          message: "Die Änderung aus einem anderen Tab ist ungültig.",
+          message: financeStorageMessage(error),
         });
       }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [initialState]);
+  }, [initialState, load, storage]);
   useEffect(() => {
     let day = localToday();
     const refresh = () => {
@@ -254,32 +264,14 @@ export function FinanceProvider({
     };
   }, []);
   useEffect(() => {
-    if (!store.ready || store.blocked) return;
-    const timer = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(store.data));
-        dispatch({ type: "saved" });
-      } catch {
-        dispatch({
-          type: "error",
-          message:
-            "Speichern fehlgeschlagen. Browserspeicher voll oder gesperrt. Bitte jetzt eine Excel-Sicherung herunterladen.",
-        });
-      }
-    }, 150);
-    const flush = () => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(store.data));
-      } catch {
-        /* Reported by the scheduled save. */
-      }
-    };
-    window.addEventListener("pagehide", flush);
-    return () => {
-      clearTimeout(timer);
-      window.removeEventListener("pagehide", flush);
-    };
-  }, [store.data, store.ready, store.blocked]);
+    if (!store.ready || store.blocked || store.saved) return;
+    try {
+      storage.save(store.data);
+      dispatch({ type: "saved" });
+    } catch (error) {
+      dispatch({ type: "error", message: financeStorageMessage(error) });
+    }
+  }, [store.data, store.ready, store.blocked, store.saved, storage]);
   const getDashboard = useMemo(() => createDashboardGetter(store.data), [store.data]);
   const update = useCallback<FinanceContextValue["update"]>(
     (updater) => dispatch({ type: "update", updater }),
@@ -300,13 +292,22 @@ export function FinanceProvider({
     saved: store.saved,
     storageError: store.error,
     update,
-    replace: (data) =>
+    replace: (data) => {
+      const parsed = appStateSchema.parse(data);
+      try {
+        storage.prepareReplacement();
+      } catch (error) {
+        const message = financeStorageMessage(error);
+        dispatch({ type: "error", message });
+        throw new FinanceStorageError(message);
+      }
       dispatch({
         type: "hydrate",
-        data: appStateSchema.parse(data),
+        data: parsed,
         reference: initialState,
-      }),
-    retrySave: () => dispatch({ type: "retry" }),
+      });
+    },
+    retrySave: () => store.blocked ? load(store.data) : dispatch({ type: "retry" }),
     appendStatements,
     statementImport: store.statementImport,
   };

@@ -14,7 +14,13 @@ npm install
 npm run dev
 ```
 
-http://localhost:3000
+http://127.0.0.1:3000
+
+## Speicherung
+
+Bestätigte Änderungen werden sofort im Browser gespeichert: alle importierten Buchungen, Kategorien, Händlernamen und -regeln, Fixkostenentscheidungen, offene Prüfungen und übrigen Finanzdaten. Codeänderungen und Neuladen setzen diesen Stand nicht zurück. Eine zusätzliche lokale Kopie hilft bei einem fehlenden oder beschädigten Haupteintrag; unlesbare Originaldaten bleiben erhalten. Veraltete Tabs dürfen neuere gespeicherte Daten nicht überschreiben. Speicherfehler werden angezeigt, ohne den vorhandenen Stand durch Startdaten zu ersetzen.
+
+Immer denselben Browser und dieselbe Adresse verwenden: **localhost** und **127.0.0.1** haben getrennte Browserspeicher. Bereits auf localhost gespeicherte Daten bleiben dort; sie lassen sich unter **Einstellungen → Sicherung** übertragen. Das Löschen der Website-Daten entfernt auch die lokale Kopie. Deshalb wichtige Stände zusätzlich als Excel sichern.
 
 ## Kontoauszüge
 

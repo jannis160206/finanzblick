@@ -283,6 +283,7 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     const replaced = view.read();
     const external = fixture(4);
     external.settings.balances.Sparkonto = 456;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(external));
     act(() => window.dispatchEvent(new StorageEvent("storage", {
       key: STORAGE_KEY, newValue: JSON.stringify(external),
     })));

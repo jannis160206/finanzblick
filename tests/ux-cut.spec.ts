@@ -186,6 +186,7 @@ test("TR settings deduplicate and sort rates without overwriting newer balances 
   };
   await page.evaluate(
     ({ key, state }) => {
+      localStorage.setItem(key, JSON.stringify(state));
       window.dispatchEvent(
         new StorageEvent("storage", {
           key,
