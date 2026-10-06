@@ -1,4 +1,5 @@
 import { readLocalAmexBalanceRecovery } from "@/lib/import/amex-local-recovery";
+import { authorizeApi, isAccountMode } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,10 @@ function matchesRequestOrigin(request: Request, origin: string) {
 }
 
 export async function GET(request: Request) {
+  const denied = await authorizeApi(request);
+  if (denied) return denied;
   const headers = { "Cache-Control": "no-store" };
+  if (isAccountMode()) return Response.json({ recoveries: [] }, { headers });
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
   if (

@@ -8,6 +8,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { ThemeProvider } from "next-themes";
@@ -31,6 +32,10 @@ import { initializeMotorcycleGoal } from "@/lib/goals";
 import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 import { FINANCE_STORAGE_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 import { amexBalanceRecoveryResponseSchema, needsAmexBalanceRecovery, recoverAmexBalance, type AmexBalanceRecovery } from "@/lib/import/amex-balance-recovery";
+import type { AccountUser } from "@/lib/account-schema";
+import { AccountFinanceStorage, AccountSessionError } from "@/lib/account-finance-storage";
+import { AccountWorkspaceContext } from "@/components/account-context";
+import { createEmptyAccountState } from "@/lib/account-state";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -63,7 +68,7 @@ type Action =
     }
   | { type: "update"; updater: (state: AppState) => AppState }
   | { type: "recoverAmexBalance"; recoveries: AmexBalanceRecovery[] }
-  | { type: "saved" }
+  | { type: "saved"; data?: AppState }
   | { type: "error"; message: string }
   | { type: "retry" };
 type AppendAction = {
@@ -157,6 +162,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
       }
     }
     case "saved":
+      if (action.data && action.data !== store.data) return store;
       return { ...store, saved: true, error: null };
     case "error":
       return { ...store, saved: false, error: action.message };
@@ -194,9 +200,11 @@ function createDashboardGetter(state: AppState) {
 export function FinanceProvider({
   initialState,
   children,
+  account,
 }: {
   initialState: AppState;
   children: ReactNode;
+  account?: AccountUser;
 }) {
   const [store, dispatch] = useReducer(reducer, {
     data: initialState,
@@ -205,7 +213,21 @@ export function FinanceProvider({
     saved: false,
     blocked: false,
   });
-  const storage = useRef(new FinanceStorage()).current;
+  const [storage] = useState(() => new FinanceStorage());
+  const handleCloudError = useCallback((error: unknown) => {
+    if (error instanceof AccountSessionError) {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Clear the previous account's in-memory ledger.
+      window.location.assign("/login");
+      return;
+    }
+    dispatch({ type: "error", message: financeStorageMessage(error) });
+  }, []);
+  const [accountInitial] = useState(initialState);
+  const [cloud] = useState(() => account ? new AccountFinanceStorage(
+    account.id,
+    (data) => dispatch({ type: "saved", data }),
+    handleCloudError,
+  ) : null);
   const hydrated = useRef(false);
   const amexRecoveryNeeded = useMemo(() => needsAmexBalanceRecovery(store.data), [store.data]);
   const latest = useRef(store);
@@ -228,6 +250,7 @@ export function FinanceProvider({
     if (store.actionError) toast.error(store.actionError.message);
   }, [store.actionError]);
   useEffect(() => {
+    if (cloud) return;
     // Server props and Fast Refresh must not rehydrate over the working ledger.
     if (!hydrated.current) {
       hydrated.current = true;
@@ -252,7 +275,54 @@ export function FinanceProvider({
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
-  }, [initialState, load, storage]);
+  }, [initialState, load, storage, cloud]);
+  useEffect(() => {
+    if (!cloud) return;
+    cloud.activate();
+    let active = true;
+    let polling = false;
+    async function hydrateAccount() {
+      try {
+        const data = await cloud!.load();
+        if (!active) return;
+        dispatch({ type: "hydrate", data: data ?? accountInitial, error: cloud!.error?.message });
+      } catch (error) {
+        if (!active) return;
+        dispatch({ type: "hydrate", data: cloud!.cachedState ?? accountInitial, blocked: true });
+        handleCloudError(error);
+      }
+    }
+    async function poll() {
+      if (polling || !latest.current.saved || latest.current.error || !navigator.onLine) return;
+      polling = true;
+      try {
+        const data = await cloud!.poll();
+        if (active && data && latest.current.saved)
+          dispatch({ type: "hydrate", data });
+      } catch (error) {
+        if (active) handleCloudError(error);
+      } finally {
+        polling = false;
+      }
+    }
+    void hydrateAccount();
+    const timer = window.setInterval(() => { void poll(); }, 15_000);
+    const refresh = () => { void poll(); };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      if (!latest.current.saved) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", beforeUnload);
+    return () => {
+      active = false;
+      cloud.dispose();
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("beforeunload", beforeUnload);
+    };
+  }, [cloud, handleCloudError, accountInitial]);
   useEffect(() => {
     let day = localToday();
     const refresh = () => {
@@ -274,14 +344,18 @@ export function FinanceProvider({
   useEffect(() => {
     if (!store.ready || store.blocked || store.saved) return;
     try {
+      if (cloud) {
+        cloud.save(store.data);
+        return;
+      }
       storage.save(store.data);
       dispatch({ type: "saved" });
     } catch (error) {
       dispatch({ type: "error", message: financeStorageMessage(error) });
     }
-  }, [store.data, store.ready, store.blocked, store.saved, storage]);
+  }, [store.data, store.ready, store.blocked, store.saved, storage, cloud]);
   useEffect(() => {
-    if (!store.ready || store.blocked || store.error || !amexRecoveryNeeded) return;
+    if (account || !store.ready || store.blocked || store.error || !amexRecoveryNeeded) return;
     const controller = new AbortController();
     async function recover() {
       try {
@@ -304,7 +378,7 @@ export function FinanceProvider({
     }
     void recover();
     return () => controller.abort();
-  }, [store.ready, store.blocked, store.error, amexRecoveryNeeded]);
+  }, [store.ready, store.blocked, store.error, amexRecoveryNeeded, account]);
   const getDashboard = useMemo(() => createDashboardGetter(store.data), [store.data]);
   const update = useCallback<FinanceContextValue["update"]>(
     (updater) => dispatch({ type: "update", updater }),
@@ -328,7 +402,7 @@ export function FinanceProvider({
     replace: (data) => {
       const parsed = appStateSchema.parse(data);
       try {
-        storage.prepareReplacement();
+        if (!cloud) storage.prepareReplacement();
       } catch (error) {
         const message = financeStorageMessage(error);
         dispatch({ type: "error", message });
@@ -340,10 +414,29 @@ export function FinanceProvider({
         reference: initialState,
       });
     },
-    retrySave: () => store.blocked ? load(store.data) : dispatch({ type: "retry" }),
+    retrySave: () => {
+      if (cloud) {
+        void cloud.retry(latest.current.data).then((data) => {
+          dispatch({ type: "hydrate", data: data ?? createEmptyAccountState(), error: cloud.error?.message });
+        }, handleCloudError);
+      } else if (store.blocked) load(store.data);
+      else dispatch({ type: "retry" });
+    },
     appendStatements,
     statementImport: store.statementImport,
   };
+  const workspace = account && cloud ? {
+    user: account,
+    loadServer: async () => {
+      try {
+        const data = await cloud.useServer();
+        dispatch({ type: "hydrate", data: data ?? createEmptyAccountState() });
+      } catch (error) {
+        handleCloudError(error);
+        throw error;
+      }
+    },
+  } : null;
   return (
     <ThemeProvider
       attribute="class"
@@ -352,8 +445,10 @@ export function FinanceProvider({
       disableTransitionOnChange
     >
       <FinanceContext.Provider value={value}>
+        <AccountWorkspaceContext.Provider value={workspace}>
         {children}
         <FinanceNotifications />
+        </AccountWorkspaceContext.Provider>
       </FinanceContext.Provider>
     </ThemeProvider>
   );

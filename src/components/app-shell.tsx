@@ -36,6 +36,8 @@ import { useFinance } from "@/components/finance-provider";
 import { ReviewCount } from "@/components/review-count";
 import { cn } from "@/lib/utils";
 import { useSecurityMode } from "@/components/security-mode-provider";
+import { useAccountWorkspace } from "@/components/account-context";
+import { AccountLogout, AccountSyncTools } from "@/components/account-tools";
 
 const navigation = [
   { href: "/", label: "Übersicht", icon: LayoutDashboard },
@@ -59,6 +61,7 @@ export function AppShell({
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const security = useSecurityMode();
+  const workspace = useAccountWorkspace();
   const current = navigation.find((item) => item.href === pathname);
   const links = (
     <nav aria-label="Hauptnavigation" className="flex h-full flex-col gap-1.5">
@@ -118,7 +121,7 @@ export function AppShell({
             Privater Workspace
           </div>
           <p className="mt-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
-            Daten bleiben in diesem Browser.
+            {workspace ? "Deine Daten auf allen deinen Geräten." : "Daten bleiben in diesem Browser."}
           </p>
         </div>
       </aside>
@@ -161,12 +164,13 @@ export function AppShell({
                   {storageError
                     ? "Nicht gespeichert"
                     : saved
-                      ? "Lokal gespeichert"
+                      ? workspace ? "Synchronisiert" : "Lokal gespeichert"
                       : "Speichert …"}
                 </span>
               </>
             )}
             <div className="mx-1 h-5 border-l" />
+            <AccountLogout />
             <Button
               variant="ghost"
               size="icon"
@@ -207,6 +211,7 @@ export function AppShell({
             <p className="mt-6 text-xs text-muted-foreground">Sichtschutz für deinen Bildschirm, keine Passwortsperre.</p>
           </section>
           <div data-financial-content hidden={security.locked} inert={security.locked}>
+          <AccountSyncTools />
           {storageError && (
             <div
               role="alert"

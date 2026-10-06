@@ -1,9 +1,12 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { authorizeApi } from "@/lib/server/auth";
 
 export const runtime = "nodejs";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ asset: string }> }) {
+  const denied = await authorizeApi(_request);
+  if (denied) return denied;
   const { asset } = await params;
   let resource: string[];
   let contentType: string;
@@ -20,7 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ ass
   const data = await readFile(path.join(process.cwd(), "node_modules", ...resource));
   return new Response(new Uint8Array(data), { headers: {
     "Content-Type": contentType,
-    "Cache-Control": "public, max-age=0, must-revalidate",
+    "Cache-Control": "private, max-age=0, must-revalidate",
     "X-Content-Type-Options": "nosniff",
     "Cross-Origin-Resource-Policy": "same-origin",
   } });

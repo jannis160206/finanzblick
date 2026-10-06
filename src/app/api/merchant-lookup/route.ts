@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { authorizeApi, isAccountMode } from "@/lib/server/auth";
 import {
   merchantLookupQuerySchema,
   merchantLookupResultsSchema,
@@ -131,10 +132,12 @@ function matchesRequestOrigin(request: Request, origin: string): boolean {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeApi(request);
+  if (denied) return denied;
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");
   if (
-    (origin !== null && !matchesRequestOrigin(request, origin)) ||
+    (!isAccountMode() && origin !== null && !matchesRequestOrigin(request, origin)) ||
     (site !== null && site !== "same-origin" && site !== "none")
   ) {
     return respond({ status: 403, error: "Diese Händlersuche ist nicht erlaubt." });

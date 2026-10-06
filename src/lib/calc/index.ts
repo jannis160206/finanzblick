@@ -700,7 +700,7 @@ export function bikeCountdown(
     onTrack: plannedTransfer >= required,
     funded: remaining === 0,
     overdue: settings.asOf > settings.bikePurchaseDate && remaining > 0,
-    progress: Math.min(100, Math.max(0, (balance / settings.bikeTarget) * 100)),
+    progress: settings.bikeTarget > 0 ? Math.min(100, Math.max(0, (balance / settings.bikeTarget) * 100)) : 0,
   };
 }
 export function financeRowValue(

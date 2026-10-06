@@ -1,7 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 const production = process.env.PLAYWRIGHT_PRODUCTION === "1";
-const baseURL = production ? "http://127.0.0.1:3100" : "http://localhost:3000";
+const accounts = process.env.PLAYWRIGHT_ACCOUNTS === "1";
+const baseURL = production || accounts ? "http://127.0.0.1:3100" : "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./tests",
@@ -18,9 +19,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: production ? "npm run start -- --port 3100" : "npm run dev",
+    command: production ? "npm run start -- --port 3100" : accounts ? "npm run dev -- --port 3100" : "npm run dev",
     url: baseURL,
-    reuseExistingServer: !production,
+    reuseExistingServer: !production && !accounts,
     timeout: 180_000,
   },
 });

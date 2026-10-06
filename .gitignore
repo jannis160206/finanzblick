@@ -44,7 +44,11 @@ next-env.d.ts
 *.xlsx
 /import-example/
 /.idea/
+/.local-data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
 /test-results/
 /playwright-report/
 *.log
-

@@ -145,7 +145,7 @@ export function Pockets() {
                 <Link
                   href="/einstellungen#sparziele"
                 >
-                  Ziel {currency(targets[pocket])}
+                  {targets[pocket] > 0 ? `Ziel ${currency(targets[pocket])}` : "Kein Ziel festgelegt"}
                 </Link>
               </p>
               <p className="mt-3 text-[11px] text-muted-foreground">

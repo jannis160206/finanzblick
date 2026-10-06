@@ -18,9 +18,96 @@ http://127.0.0.1:3000
 
 ## Speicherung
 
+Im **Kontomodus auf dem Server** werden die vollständigen Finanzdaten pro Benutzer in einer SQLite-Datenbank gespeichert: Buchungen, Zuordnungen, Prüfungen, Planung, Sparziele, Lohnabrechnungen, Urlaub und Erscheinungsbild. Nach Anmeldung erscheint derselbe Stand auf Rechner und Handy. Bestätigte Änderungen werden sofort zusätzlich geräte- und kontogetrennt zwischengespeichert; **Synchronisiert** erscheint erst nach der Serverbestätigung. Andere Geräte laden Änderungen beim Fokuswechsel und alle 15 Sekunden. Gleichzeitige Änderungen überschreiben sich nicht: ein veralteter Stand bleibt lokal erhalten und zeigt einen Konflikt, der bewusst über Sicherung und **Serverstand laden** aufgelöst wird. Sichtschutz, Interaktionsklänge und Hell-/Dunkelwahl bleiben Geräteeinstellungen. Originale CSV/PDF/Bilder werden weiterhin im Browser ausgewertet; gespeichert werden die daraus übernommenen Daten.
+
+Neue Benutzer starten ohne persönliche Kontostände, Ziele, Einmalbeträge oder Startarbeitsmappe des Administrators. Für die Übernahme bestehender Daten zuerst auf der bisherigen Adresse unter **Einstellungen → Sicherung** Excel exportieren, anschließend als `admin` anmelden und wiederherstellen. Nur der Administrator erhält bei vorhandenen Alt-Daten auf derselben Adresse zusätzlich **Bisherige Browserdaten übernehmen**; die Übertragung benötigt eine Bestätigung und löscht das Original nicht. Daten verschiedener Adressen oder Benutzer werden nie automatisch vermischt.
+
+Bei **`npm run dev` ohne Kontokonfiguration** bleibt der bisherige lokale Modus unverändert:
+
 Bestätigte Änderungen werden sofort im Browser gespeichert: alle importierten Buchungen, Kategorien, Händlernamen und -regeln, Fixkostenentscheidungen, offene Prüfungen und übrigen Finanzdaten. Codeänderungen und Neuladen setzen diesen Stand nicht zurück. Eine zusätzliche lokale Kopie hilft bei einem fehlenden oder beschädigten Haupteintrag; unlesbare Originaldaten bleiben erhalten. Veraltete Tabs dürfen neuere gespeicherte Daten nicht überschreiben. Speicherfehler werden angezeigt, ohne den vorhandenen Stand durch Startdaten zu ersetzen.
 
 Immer denselben Browser und dieselbe Adresse verwenden: **localhost** und **127.0.0.1** haben getrennte Browserspeicher. Bereits auf localhost gespeicherte Daten bleiben dort; sie lassen sich unter **Einstellungen → Sicherung** übertragen. Das Löschen der Website-Daten entfernt auch die lokale Kopie. Deshalb wichtige Stände zusätzlich als Excel sichern.
+
+## Anmeldung und SQLite
+
+Node.js **22.13 oder neuer** genügt; SQLite ist enthalten, es muss keine zusätzliche Datenbank installiert werden. Produktion verlangt einen absoluten Datenbankpfad außerhalb des Repositorys, eine exakte öffentliche Origin und ein eigenes Administratorpasswort. Passwörter werden mit scrypt gehasht; Sitzungen nutzen zufällige, serverseitig gehashte Tokens und HttpOnly-Cookies. Der reservierte Benutzername lautet **`admin`**. Eine Änderung des konfigurierten Administratorpassworts widerruft dessen bisherige Sitzungen, nicht dessen Finanzdaten.
+
+Zum Schutz des kleinen Servers gelten standardmäßig höchstens 100 Konten einschließlich Administrator, 256 MiB gesamte gespeicherte Finanzdaten und 20 MiB pro Finanzstand. Die ersten beiden Grenzen können mit `FINANZBLICK_MAX_ACCOUNTS` und `FINANZBLICK_MAX_STORAGE_MB` angepasst werden. Anmeldung, Registrierung und Schreibzugriffe haben zusätzliche serverseitige Ratenbegrenzungen; Überlastung wird angezeigt, statt Daten still zu verlieren.
+
+### Lokal Konten testen
+
+Für den bisherigen Browsermodus genügt unverändert `npm run dev`. Für lokale Konto-Tests eine private, bereits ignorierte **`.env.local`** anlegen:
+
+```dotenv
+FINANZBLICK_AUTH=true
+FINANZBLICK_ORIGIN=http://127.0.0.1:3000
+FINANZBLICK_ADMIN_PASSWORD="HIER_EIGENES_PASSWORT_MINDESTENS_12_ZEICHEN"
+FINANZBLICK_REGISTRATION_ENABLED=true
+```
+
+Anschließend den Entwicklungsserver neu starten und ausschließlich **http://127.0.0.1:3000** verwenden. Die lokale Testdatenbank liegt in `.local-data/finanzblick.sqlite` und wird nicht in Git aufgenommen. Das lokale Testkonto und die Serverkonten sind voneinander getrennt. Für den reinen Browsermodus `FINANZBLICK_AUTH` entfernen und den Entwicklungsserver erneut starten.
+
+### Hetzner aktivieren
+
+**Vor Änderungen** die bisherigen Browserdaten als Excel sichern. Die bestehende Caddy-Passwortsperre bleibt zunächst aktiv. Als root:
+
+```sh
+install -d -o finanzblick -g finanzblick -m 700 /var/lib/finanzblick
+install -m 600 /dev/null /etc/finanzblick.env
+nano /etc/finanzblick.env
+```
+
+In der privaten Datei, nicht im Repository:
+
+```dotenv
+FINANZBLICK_AUTH=true
+FINANZBLICK_ORIGIN=https://167.233.251.240
+FINANZBLICK_DATABASE_PATH=/var/lib/finanzblick/finanzblick.sqlite
+FINANZBLICK_ADMIN_PASSWORD="HIER_EIGENES_PASSWORT_MINDESTENS_12_ZEICHEN"
+FINANZBLICK_REGISTRATION_ENABLED=true
+FINANZBLICK_TRUST_PROXY=true
+```
+
+Das Passwort selbst wählen und nicht in Chat, Git oder Screenshots veröffentlichen. Es muss 12–128 Zeichen lang sein. `FINANZBLICK_REGISTRATION_ENABLED=false` schließt die Registrierung; bestehende Benutzer können sich weiter anmelden. Produktion kann nicht durch `FINANZBLICK_AUTH=false` ungeschützt gestartet werden. `FINANZBLICK_TRUST_PROXY=true` ausschließlich hinter dem vertrauenswürdigen Caddy-Proxy mit überschriebenen Forwarding-Headern verwenden; der App-Port muss auf Loopback beschränkt bleiben.
+
+`systemctl edit finanzblick` öffnen und diese Ergänzung speichern:
+
+```ini
+[Service]
+EnvironmentFile=/etc/finanzblick.env
+```
+
+Die aktualisierte Version als App-Benutzer holen und bauen:
+
+```sh
+sudo -u finanzblick -H sh -c 'cd /home/finanzblick/finanzblick && git pull --ff-only && npm ci && NODE_OPTIONS=--max-old-space-size=1536 npm run build'
+systemctl daemon-reload
+systemctl restart finanzblick
+systemctl status finanzblick --no-pager
+```
+
+Falls GitHub erneut eine Anmeldung verlangt, wie beim ersten Deployment GitHub CLI per Geräteanmeldung verwenden; keine Tokens in Befehle oder Dateien schreiben.
+
+**Erst nach erfolgreichem Start und erreichbarer `/login`-Seite** in `/etc/caddy/Caddyfile` ausschließlich den bisherigen `basic_auth { ... }`-Block entfernen. `tls`, `issuer acme`, `profile shortlived` und `reverse_proxy 127.0.0.1:3000` bleiben bestehen:
+
+```sh
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
+```
+
+Danach muss ein anonymer Besuch zur Loginseite führen und `/api/finance` ohne Sitzung HTTP 401 liefern. Als `admin` anmelden, die Excel-Sicherung wiederherstellen und **Synchronisiert** abwarten. Anschließend am Handy mit demselben Konto anmelden. Die SQLite-Datei bleibt bei Neustarts und künftigen Codeupdates erhalten; Port 3000 bleibt ausschließlich auf Loopback erreichbar.
+
+### Datenbank sichern
+
+Finanzdaten sind nicht durch Git gesichert. Zusätzlich zu den Excel-Sicherungen regelmäßig die Datenbank privat sichern. Für eine einfache konsistente Dateisicherung den App-Dienst kurz anhalten und den vollständigen Datenbankordner einschließlich eventuell vorhandener WAL-Dateien kopieren:
+
+```sh
+systemctl stop finanzblick
+cp -a /var/lib/finanzblick "/root/finanzblick-backup-$(date +%Y%m%d-%H%M%S)"
+systemctl start finanzblick
+```
+
+Die Sicherung enthält Finanzdaten, Passwort-Hashes und Sitzungseinträge und gehört nicht in Git oder öffentliche Speicher. Eine laufende SQLite-Datei nicht isoliert ohne ihr WAL kopieren. Für die Wiederherstellung ebenfalls den Dienst anhalten, den gesamten gesicherten Ordner zurückkopieren und Eigentümer `finanzblick:finanzblick` sowie Modus 700 für das Verzeichnis wiederherstellen.
 
 ## Kontoauszüge
 
@@ -152,4 +239,17 @@ Die Saison folgt dem lokalen Kalender: Fasching, Ostern, Sommer, Halloween, Weih
 
 `npm test`, `npm run typecheck`, `npm run lint` und `npm run test:e2e` prüfen Parser, Berechnung, Excel-Roundtrips und Browserabläufe. Anonymisierte Layout-Fixtures liegen unter `src/lib/import/fixtures`. Zusätzliche Tests lesen die privaten Originale aus `import-example`, falls dieser Ordner vorhanden ist.
 
-Für die Browserabnahme des Produktionsstands zuerst `npm run build` ausführen und anschließend `PLAYWRIGHT_PRODUCTION=1` für `npm run test:e2e` setzen (PowerShell: `$env:PLAYWRIGHT_PRODUCTION = "1"`). Playwright startet und beendet dafür einen eigenen Produktionsserver auf Port 3100, ohne einen laufenden Entwicklungsserver wiederzuverwenden. Danach die Variable wieder entfernen (PowerShell: `Remove-Item Env:PLAYWRIGHT_PRODUCTION`).
+Die bisherigen Browserabläufe laufen mit `npm run test:e2e` im lokalen Entwicklungsmodus ohne aktivierte Konten. `npm run build` prüft den Produktionsbuild. Produktion verlangt jetzt immer eine vollständige Kontokonfiguration und Anmeldung; die alten anonymen lokalen Browser-Fixtures sind dort nicht verwendbar.
+
+Für die gezielte Kontoabnahme den lokalen Entwicklungsserver vorher anhalten und in einer eigenen PowerShell starten:
+
+```powershell
+$env:PLAYWRIGHT_ACCOUNTS = "1"
+$env:FINANZBLICK_AUTH = "true"
+$env:FINANZBLICK_ORIGIN = "http://127.0.0.1:3100"
+$env:FINANZBLICK_DATABASE_PATH = Join-Path $PWD (".local-data\acceptance-" + [guid]::NewGuid() + ".sqlite")
+$env:FINANZBLICK_ADMIN_PASSWORD = [guid]::NewGuid().ToString()
+npm run test:e2e -- accounts.spec.ts
+```
+
+Der Test startet und beendet seinen eigenen Entwicklungsserver auf Port 3100 und prüft Administratorlogin, Registrierung, Handylogin, isolierte Finanzstände, Revisionskonflikte und Abmeldung. Niemals die Produktivdatenbank für Tests verwenden. Die erzeugte Testdatenbank danach entfernen und die eigene PowerShell schließen, bevor der normale lokale Server wieder gestartet wird. Ein Produktions-Browsertest benötigt darüber hinaus eine echte HTTPS-Test-Origin mit vorgeschaltetem Proxy; Secure-Cookies und HTTPS-Prüfung werden nicht für Tests abgeschaltet.

@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/app-shell";
-import FinancePage from "@/app/[view]/page";
+import FinancePage from "@/app/(dashboard)/[view]/page";
 import { PayrollTaxes } from "@/components/payroll-taxes";
 import { Overview } from "@/components/overview";
 import { useFinance } from "@/components/finance-provider";
