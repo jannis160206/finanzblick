@@ -78,7 +78,7 @@ export function amexFunding(
   const alignSnapshot = () => {
     if (!snapshot || aligned) return;
     aligned = true;
-    const balance = cents(snapshot.balance);
+    const balance = cents(snapshot.balance) + cents(snapshot.pendingBalance ?? 0);
     const known = open.reduce((total, charge) => total + charge.remaining, 0);
     credit.clear();
     ownCredit = 0;

@@ -24,7 +24,10 @@ export function parseAmexText(
     issues: [],
   };
   const text = pages.join("\n");
-  const closing = text.match(/\b(\d{2})\.(\d{2})\.(\d{2}(?:\d{2})?)\b/);
+  const billingLine = /Rechnungsdatum[^\d\n]*(?:\r?\n\s*)?([^\n]+)/i.exec(text)?.[1];
+  const datePattern = /\b(\d{2})\.(\d{2})\.(\d{2}(?:\d{2})?)\b/g;
+  const billingDates = billingLine ? [...billingLine.matchAll(datePattern)] : [];
+  const closing = billingDates.at(-1) ?? text.match(/\b(\d{2})\.(\d{2})\.(\d{2}(?:\d{2})?)\b/);
   const year = closing
     ? closing[3].length === 2
       ? 2000 + Number(closing[3])
@@ -123,6 +126,8 @@ export function parseAmexText(
           id: crypto.randomUUID(),
           date: dateFor(booking[1]),
           bank: "Amex",
+          amexSource: "pdf",
+          amexStatus: "posted",
           pocket,
           description: tail ? tail[1] : booking[3],
           amount: amount === null ? null : tail?.[3] ? amount : -amount,
@@ -157,6 +162,8 @@ export function parseAmexText(
           id: crypto.randomUUID(),
           date: dateFor(line.slice(0, 5)),
           bank: "Amex",
+          amexSource: "pdf",
+          amexStatus: "posted",
           pocket,
           description: line,
           amount: null,

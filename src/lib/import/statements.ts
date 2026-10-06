@@ -32,6 +32,15 @@ export type StatementResult = {
   pocketSnapshots?: PocketSnapshot[];
   accountSnapshots?: AppState["accountSnapshots"];
   amexBalanceSnapshots?: AppState["amexBalanceSnapshots"];
+  amexScreenshot?: {
+    layout: "grouped" | "list";
+    capturedAt: string;
+    periodStart?: string;
+    balance?: number;
+    balanceIncludesPending: boolean;
+    card?: string;
+    bookingOrder?: string[];
+  };
 };
 export type StatementPreview = {
   rows: Transaction[];

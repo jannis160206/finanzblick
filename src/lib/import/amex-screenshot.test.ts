@@ -17,6 +17,134 @@ const header = [
 const booking = (merchant: string, y: number, date = "4 Okt 2026", amount = "€ 12,34") =>
   [line(merchant, y), line(date, y + 30), line(amount, y + 15, 500)];
 const parse = (rows: ScreenshotLine[], file = "screen.png") => parseAmexScreenshotLines([...header, ...rows], file);
+const groupedHeader = [line("American Express® Platinum Card", 40), line("••••61002", 70)];
+const groupedParse = (rows: ScreenshotLine[], file = "Screenshot 2026-10-06.png") =>
+  parseAmexScreenshotLines([...groupedHeader, ...rows], file);
+
+describe("grouped Amex screenshot facts", () => {
+  it("inherits date headers in scroll order, wraps merchants, attaches pending markers and ignores navigation", () => {
+    const result = groupedParse([
+      line("5 Okt", 120), line("SPAR", 180), line("€ 6,56", 180, 500), line("Vorgemerkt", 210, 500),
+      line("Entertainment Gutschrift", 270), line("-€ 15,00", 270, 500),
+      line("4 Okt", 340), line("Merchant", 400), line("City", 430), line("€ 13,20", 415, 500),
+      line("Startseite", 700), line("Konto", 700, 500), line("Cropped", 650), line("€ 99,99", 650, 500),
+    ]);
+    expect(result.issues).toEqual([]);
+    expect(result.rows.map((row) => [row.date, row.description, row.amount, row.amexStatus])).toEqual([
+      ["2026-10-05", "SPAR", -6.56, "pending"], ["2026-10-05", "Entertainment Gutschrift", 15, "posted"],
+      ["2026-10-04", "Merchant City", -13.2, "posted"],
+    ]);
+    expect(result.rows.every((row) => row.amexSource === "screenshot" && row.amexCapturedAt === "2026-10-06" &&
+      row.rawDetails?.[0] === "Amex-Screenshot")).toBe(true);
+  });
+  it("uses only Gesamtsaldo, not due payments or reward points, and leaves the billing cutoff to the batch", () => {
+    const result = groupedParse([
+      line("Gesamtsaldo", 110), line("€ 1.489,69", 140), line("Fällige Zahlung", 180), line("€ 0,00", 180, 500),
+      line("Membership Rewards", 220), line("32.982", 220, 500),
+      line("5 Okt", 300), line("Merchant", 380), line("€ 10,00", 380, 500),
+    ]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.amexBalanceSnapshots).toBeUndefined();
+    expect(result.amexScreenshot).toMatchObject({
+      layout: "grouped", capturedAt: "2026-10-06", balance: 1489.69, balanceIncludesPending: false, card: "61002",
+    });
+  });
+  it("records safe rows and review drafts interleaved in scroll order, excluding repayments and header errors", () => {
+    const result = groupedParse([
+      line("Gesamtsaldo", 110), line("€ 148969", 140), line("Fällige Zahlung", 180),
+      line("5 Okt", 260), line("SPAR", 320), line("€ 6,56", 320, 500),
+      line("Missing amount", 410),
+      line("Other merchant", 500), line("€ 10,00", 500, 500),
+      line("ZAHLUNG/ÜBERWEISUNG ERH...", 590), line("-€ 500,00", 590, 500),
+      line("4 Okt", 680), line("Last merchant", 740), line("€ 4,00", 740, 500),
+    ]);
+    const drafts = result.issues.flatMap((issue) => issue.draft ? [issue.draft] : []);
+    expect(result.issues[0].draft).toBeUndefined();
+    expect(drafts).toHaveLength(1);
+    expect(result.rows).toHaveLength(3);
+    expect(result.amexScreenshot?.bookingOrder).toEqual([
+      result.rows[0].id, drafts[0].id, result.rows[1].id, result.rows[2].id,
+    ]);
+    expect(result.skipped).toBe(2);
+  });
+  it("places cropped orphan-amount drafts before later safe rows in the source order", () => {
+    const result = groupedParse([
+      line("€ 12,34", 120, 500), line("5 Okt", 210), line("SPAR", 270), line("€ 6,56", 270, 500),
+    ]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.issues[0].draft).toMatchObject({ date: "", description: "", amount: -12.34 });
+    expect(result.amexScreenshot?.bookingOrder).toEqual([result.issues[0].draft?.id, result.rows[0].id]);
+  });
+  it.each([
+    { text: "€ 148969", confidence: 95 }, { text: "€ 1.489,69", confidence: 30 },
+    { text: "€ 1.489,69", confidence: 95, uncertain: true },
+  ])("reports uncertain grouped balances without substituting the payment due ($text)", (amount) => {
+    const result = groupedParse([
+      line("Gesamtsaldo", 110), { ...line(amount.text, 140), ...amount }, line("Fällige Zahlung", 180),
+      line("€ 0,00", 180, 500), line("5 Okt", 300), line("Merchant", 380), line("€ 10,00", 380, 500),
+    ]);
+    expect(result.amexScreenshot?.balance).toBeUndefined();
+    expect(result.issues[0].message).toContain("Amex-Saldo");
+    expect(result.rows).toHaveLength(1);
+  });
+  it("bounds inferred years by capture date and descends across December/January", () => {
+    const result = groupedParse([
+      line("2 Jan", 120), line("A shop", 180), line("€ 1,00", 180, 500),
+      line("31 Dez", 270), line("B shop", 330), line("€ 2,00", 330, 500),
+      line("30 Dez", 420), line("C shop", 480), line("€ 3,00", 480, 500),
+    ], "Screenshot 2027-01-03.png");
+    expect(result.rows.map((row) => row.date)).toEqual(["2027-01-02", "2026-12-31", "2026-12-30"]);
+    expect(screenshotDate("31 Dez", "2027-01-03")).toBe("2026-12-31");
+    expect(screenshotDate("29 Feb", "2026-03-01")).toBeNull();
+  });
+  it("does not interpret a wrapped numeric city as a date or propagate an invalid date", () => {
+    const result = groupedParse([
+      line("25 Sep", 120), line("Merchant", 180), line("29 MALAGA", 210), line("€ 6,10", 195, 500),
+      line("32 Sep", 290), line("Other merchant", 350), line("€ 4,00", 350, 500),
+    ]);
+    expect(result.rows[0]).toMatchObject({ date: "2026-09-25", description: "Merchant 29 MALAGA", amount: -6.1 });
+    expect(result.issues[0].draft).toMatchObject({ date: "", description: "Other merchant", amount: -4 });
+  });
+  it("keeps rows above the first visible date and rows without amounts in ordinary review", () => {
+    const result = groupedParse([
+      line("Cropped merchant", 120), line("€ 8,00", 120, 500),
+      line("5 Okt", 210), line("Missing amount", 270),
+    ]);
+    expect(result.rows).toEqual([]);
+    expect(result.issues.map((issue) => [issue.draft?.description, issue.draft?.date, issue.draft?.amount])).toEqual([
+      ["Cropped merchant", "", -8], ["Missing amount", "2026-10-05", null],
+    ]);
+  });
+  it("recognizes explicit additional holders and ignores cropped incoming card repayments", () => {
+    const result = groupedParse([
+      line("20 Sep", 120), line("McDonalds", 180), line("RAPHAEL PIBER", 210), line("€ 3,30", 195, 500),
+      line("17 Sep", 290), line("ZAHLUNG/", 350), line("ÜBERWEISUNG ERH...", 380), line("-€ 500,00", 365, 500),
+    ]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]).toMatchObject({ pocket: "AMEX Raphael", description: "McDonalds" });
+    expect(result.skipped).toBe(1);
+    expect(result.issues).toEqual([]);
+  });
+  it("requires branded header plus masked card evidence, not dates and amounts alone", () => {
+    for (const header of [[], [groupedHeader[0]], [groupedHeader[1]], [{ ...groupedHeader[0], confidence: 30 }, groupedHeader[1]]])
+      expect(parseAmexScreenshotLines([...header, line("5 Okt", 120), line("SPAR", 180), line("€ 6,56", 180, 500)]).source).toBeNull();
+  });
+  it("recognizes combined branded/masked headers and compact grouped dates", () => {
+    const result = parseAmexScreenshotLines([
+      line("American Express® Platinum Card ••••61002", 40), line("5Okt", 120), line("SPAR", 180), line("€ 6,56", 180, 500),
+    ], "2026-10-06.png");
+    expect(result.source).toBe("Amex");
+    expect(result.rows[0]).toMatchObject({ date: "2026-10-05", amount: -6.56 });
+    expect(result.amexScreenshot?.card).toBe("61002");
+  });
+  it("deduplicates grouped overlap and subsequent PDF rows without changing merchant identity", () => {
+    const rows = [line("3 Okt", 120), line("AIRBNB * ABC123", 180), line("LONDON", 210), line("€ 126,00", 195, 500)];
+    const result = groupedParse(rows);
+    expect(prepareStatementPreview([result, result], []).rows).toHaveLength(1);
+    const pdf = parseAmexText(["06.10.2026\nUmsatz vom Buchung am Betrag in EUR\nNeue Belastungen für HERRN JANNIS BRUEHL\n03.10 03.10 AIRBNB * ABC123 LONDON 126,00"]);
+    expect(deduplicateStatements(pdf.rows, result.rows).rows).toEqual([]);
+  });
+});
 
 describe("Amex app screenshot facts", () => {
   it("stores the current total separately from bookings and repairs a duplicate-only import", () => {

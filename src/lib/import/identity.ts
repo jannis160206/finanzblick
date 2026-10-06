@@ -11,10 +11,13 @@ export function isAmexScreenshot(row: Pick<Transaction, "bank" | "rawDetails">):
   return bankName(row.bank) === "amex" && !!row.rawDetails?.includes("Amex-Screenshot");
 }
 
-export function amexBookingKey(row: Identity): string | null {
+export function amexCardholder(row: Pick<Transaction, "bank"> & Partial<Pick<Transaction, "pocket">>): "jannis" | "raphael" | null {
   if (bankName(row.bank) !== "amex") return null;
   const pocket = clean(row.pocket ?? "");
-  const holder = ["", "amex", "amex jannis"].includes(pocket) ? "jannis" : pocket === "amex raphael" ? "raphael" : null;
+  return ["", "amex", "amex jannis"].includes(pocket) ? "jannis" : pocket === "amex raphael" ? "raphael" : null;
+}
+export function amexBookingKey(row: Identity): string | null {
+  const holder = amexCardholder(row);
   if (!holder) return null;
   // Retain order codes. Only common glyph confusions within a code are equivalent;
   // unrelated equal-price orders and named secondary cardholders stay distinct.

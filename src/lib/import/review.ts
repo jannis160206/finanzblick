@@ -43,6 +43,8 @@ import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTra
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
+import { reconcileAmexImports, screenshotPendingBalance, type AmexReconciliation } from "./amex-reconciliation";
+import { groupedScreenshotIssueKey, resolveGroupedScreenshotIssues } from "./amex-screenshot-reconciliation";
 import {
   appendStatementRows,
   deduplicateStatements,
@@ -60,6 +62,9 @@ export type ImportMetadata = {
   reparsedFiles?: string[];
   merchantRepairs?: Transaction[];
   screenshotRepairs?: Transaction[];
+  amexReconciliation?: AmexReconciliation;
+  resolvedAmexScreenshotIssues?: string[];
+  amexPendingRows?: { date: string; rows: Transaction[] };
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
 
@@ -427,6 +432,31 @@ export function prepareStatementImport(
   state: AppState,
 ) {
   const candidates = results.flatMap((result) => numberStatementRows(result.rows.map(recoverMerchant)));
+  const grouped = results.filter((result) => result.amexScreenshot?.layout === "grouped");
+  const groupedIssues = resolveGroupedScreenshotIssues(results);
+  const capture = grouped.map((result) => result.amexScreenshot!).filter((item) => item.balance !== undefined)
+    .sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))[0];
+  const previousSnapshot = capture ? [...(state.amexBalanceSnapshots ?? [])].filter((item) => item.date <= capture.capturedAt)
+    .sort((a, b) => b.date.localeCompare(a.date))[0] : undefined;
+  const currentRows = capture ? deduplicateStatements(grouped.filter((result) =>
+    result.amexScreenshot?.capturedAt === capture.capturedAt).flatMap((result) => result.rows), []).rows : [];
+  const earliest = currentRows.map((row) => row.date).filter(Boolean).sort()[0];
+  const periodStart = capture?.periodStart ??
+    (previousSnapshot && (!earliest || previousSnapshot.date >= earliest) ? previousSnapshot.periodStart : earliest);
+  const groupedSnapshot = capture && periodStart ? [{
+    periodStart, date: capture.capturedAt, balance: capture.balance!,
+    ...(capture.balanceIncludesPending ? {} : { pendingBalance: round(currentRows
+      .filter((row) => row.amexStatus === "pending")
+      .reduce((sum, row) => sum - row.amount, 0)) }),
+  }] : [];
+  const amexReconciliation: AmexReconciliation = { rows: candidates,
+    ...(groupedSnapshot.length && currentRows.length >= 2 && (!previousSnapshot || capture!.capturedAt >= previousSnapshot.date)
+      ? { validationDate: capture!.capturedAt } : {}) };
+  const reconciled = reconcileAmexImports(state, amexReconciliation);
+  state = reconciled.state;
+  if (groupedSnapshot.length && !capture!.balanceIncludesPending) {
+    groupedSnapshot[0].pendingBalance = screenshotPendingBalance(state, currentRows, reconciled.matchedIds, capture!.capturedAt);
+  }
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, [...actualBookings(state), ...candidates]) };
   state = repairPayrollBookings(repairMerchantBookings(state, candidates));
@@ -444,14 +474,14 @@ export function prepareStatementImport(
         ),
       ],
     },
-    candidates,
+    reconciled.rows,
   );
   const automatic: Transaction[] = [];
-  const review: ReviewItem[] = split.changes.map((change) => ({
+  const review: ReviewItem[] = [...reconciled.review, ...split.changes.map((change): ReviewItem => ({
     kind: "fixed",
     id: change.id,
     change,
-  }));
+  }))];
   const rules = indexReviewRules(state);
   for (const row of split.rows) {
     const message = bookingReviewReason(state, row, rules);
@@ -475,6 +505,7 @@ export function prepareStatementImport(
   const confirmedDate = confirmedScreenshotDateMatcher(actualBookings(state));
   const issues: string[] = [];
   for (const result of results) for (const issue of result.issues) {
+    if (issue.draft && groupedIssues.ids.has(issue.draft.id)) continue;
     if (issue.draft && isAmexScreenshot(issue.draft) && confirmedDate(issue.draft)) continue;
     const sourceIssue = `${issue.file}${issue.line ? `, Zeile ${issue.line}` : ""}: ${issue.message}`;
     issues.push(sourceIssue);
@@ -498,19 +529,22 @@ export function prepareStatementImport(
   return {
     automatic,
     review,
-    duplicates: split.duplicates,
+    duplicates: split.duplicates + reconciled.duplicates,
     issues,
     metadata: {
       merchantRepairs: candidates.filter((row) => !!row.rawDescription),
       // Reconciliation still needs evidence when every new row was a duplicate.
       screenshotRepairs: candidates.filter(isAmexScreenshot),
+      amexReconciliation,
+      resolvedAmexScreenshotIssues: groupedIssues.keys,
+      ...(capture && !capture.balanceIncludesPending ? { amexPendingRows: { date: capture.capturedAt, rows: currentRows } } : {}),
       reviewQueue: [...new Map([...review, ...updatedReviews.values()].map((item) => [item.id, item])).values()],
       issues,
       reparsedFiles: [...new Set(results.filter((result) => result.source !== null).map((result) => result.file))],
       accountSnapshots: results.flatMap(
         (result) => result.accountSnapshots ?? [],
       ),
-      amexBalanceSnapshots: results.flatMap((result) => result.amexBalanceSnapshots ?? []),
+      amexBalanceSnapshots: [...results.flatMap((result) => result.amexBalanceSnapshots ?? []), ...groupedSnapshot],
       pocketSnapshots: results.flatMap(
         (result) => result.pocketSnapshots ?? [],
       ),
@@ -597,13 +631,39 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  const previousQueue = state.reviewQueue ?? [];
+  if (metadata.resolvedAmexScreenshotIssues?.length && state.reviewQueue) {
+    const resolved = new Set(metadata.resolvedAmexScreenshotIssues);
+    state = { ...state, reviewQueue: state.reviewQueue.filter((item) => item.kind !== "booking" ||
+      item.draft.reviewed || item.draft.manualCategory || item.draft.categoryOverride ||
+      item.draft.fixedCost !== undefined || item.draft.merchantAlias ||
+      !resolved.has(groupedScreenshotIssueKey(item.draft))) };
+  }
+  if (metadata.amexReconciliation) {
+    const evidence = metadata.amexReconciliation;
+    const reconciled = reconcileAmexImports(state, evidence);
+    state = reconciled.state;
+    if (metadata.amexPendingRows) {
+      const pending = metadata.amexPendingRows;
+      const pendingBalance = screenshotPendingBalance(state, pending.rows, reconciled.matchedIds, pending.date);
+      metadata = { ...metadata, amexBalanceSnapshots: metadata.amexBalanceSnapshots?.map((snapshot) =>
+        snapshot.date === pending.date && snapshot.pendingBalance !== undefined ? { ...snapshot, pendingBalance } : snapshot) };
+    }
+    const evidenceIds = new Set(evidence.rows.map((row) => row.id));
+    const allowedIds = new Set(reconciled.rows.map((row) => row.id));
+    rows = rows.flatMap((row) => {
+      const matchedId = reconciled.matchedIds.get(row.id);
+      if (matchedId && row.reviewed && (row.manualCategory || row.categoryOverride))
+        return [{ ...row, id: matchedId }];
+      return !evidenceIds.has(row.id) || allowedIds.has(row.id) ? [row] : [];
+    });
+  }
   rows = [...rows.map(applyNamedTransfer), ...decisions.flatMap(({ change }) =>
     change.bookings.filter(isNamedTransfer).map(applyNamedTransfer))];
   decisions = decisions.flatMap(({ change, accept }) => {
     const bookings = change.bookings.filter((row) => !isNamedTransfer(row));
     return bookings.length ? [{ change: { ...change, bookings }, accept }] : [];
   });
-  const previousQueue = state.reviewQueue ?? [];
   const screenshotRepairs = [...actualBookings(state), ...(metadata.screenshotRepairs ?? [])];
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, screenshotRepairs) };

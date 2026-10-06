@@ -395,6 +395,8 @@ export function StatementImport({ reviewRequest = 0 }: {
       // Corrected bank facts need full reconciliation, not category-only approval.
       importMetadata.current = { ...importMetadata.current, reviewQueue: [{ ...original, draft: row }] };
     }
+    if (row.amexSource || isAmexScreenshot(row))
+      importMetadata.current = { ...importMetadata.current, amexReconciliation: { rows: [row] } };
     commit([row], 0, id);
   }, [commit]);
   const skip = useCallback(() => {

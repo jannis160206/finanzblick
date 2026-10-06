@@ -101,6 +101,11 @@ const transactionFieldsSchema = z.object({
   description: z.string().trim().min(1, "Beschreibung erforderlich").max(1000),
   rawDescription: z.string().max(1000).optional(),
   rawDetails: z.array(z.string().max(1000)).max(20).optional(),
+  amexSource: z.enum(["screenshot", "pdf"]).optional(),
+  amexStatus: z.enum(["pending", "posted"]).optional(),
+  amexCapturedAt: dateSchema.optional(),
+  amexPeriodStart: dateSchema.optional(),
+  amexScreenshotKeys: z.array(z.string().min(1).max(2000)).max(20).optional(),
   merchantAlias: z.string().trim().min(1).max(200).optional(),
   category: categorySchema.catch("Prüfen"),
   amount: moneySchema.refine(
@@ -156,6 +161,7 @@ export const amexBalanceSnapshotSchema = z.object({
   periodStart: dateSchema,
   date: dateSchema,
   balance: moneySchema,
+  pendingBalance: moneySchema.optional(),
 }).refine((snapshot) => snapshot.periodStart <= snapshot.date, "Amex-Zeitraum beginnt nach dem Saldo-Datum");
 export const trBalanceSchema = z.object({
   date: dateSchema,
@@ -373,6 +379,7 @@ export const appStateSchema = z.object({
     .optional(),
   accountSnapshots: z.array(accountSnapshotSchema).max(100_000).optional(),
   amexBalanceSnapshots: z.array(amexBalanceSnapshotSchema).max(10_000).optional(),
+  amexScreenshotValidation: z.object({ version: z.literal(1), date: dateSchema }).optional(),
   trBalances: z.array(trBalanceSchema).max(10_000).optional(),
   reviewQueue: z.array(reviewItemSchema).max(100_000).optional(),
   importStatus: z

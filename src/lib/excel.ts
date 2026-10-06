@@ -268,6 +268,11 @@ export async function parseWorkbook(
         ...(native && text(get("Geteilt manuell bezahlt")) ? { sharedPaidManually: /^(ja|true|1)$/i.test(text(get("Geteilt manuell bezahlt"))) } : {}),
         ...(text(get("Originalbeschreibung")) ? { rawDescription: text(get("Originalbeschreibung")) } : {}),
         ...(text(get("Händlerdetails")) ? { rawDetails: text(get("Händlerdetails")).split("\n") } : {}),
+        ...(native && text(get("Amex-Quelle")) ? { amexSource: text(get("Amex-Quelle")) } : {}),
+        ...(native && text(get("Amex-Status")) ? { amexStatus: text(get("Amex-Status")) } : {}),
+        ...(native && text(get("Amex-Aufnahme")) ? { amexCapturedAt: isoDate(get("Amex-Aufnahme"), workbook.properties.date1904) } : {}),
+        ...(native && text(get("Amex-Zeitraum")) ? { amexPeriodStart: isoDate(get("Amex-Zeitraum"), workbook.properties.date1904) } : {}),
+        ...(native && text(get("Amex-Bildidentitäten")) ? { amexScreenshotKeys: text(get("Amex-Bildidentitäten")).split("\n") } : {}),
         ...(native && numeric(get("Vorkommen")) !== null
           ? { occurrence: numeric(get("Vorkommen")) }
           : {}),
@@ -485,6 +490,7 @@ export async function parseWorkbook(
               .pick({
                 accountSnapshots: true,
                 amexBalanceSnapshots: true,
+                amexScreenshotValidation: true,
                 trBalances: true,
                 reviewQueue: true,
                 importStatus: true,
@@ -664,6 +670,11 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Geprüft",
     "Händleralias",
     "Kategorie ausdrücklich gewählt",
+    "Amex-Quelle",
+    "Amex-Status",
+    "Amex-Aufnahme",
+    "Amex-Zeitraum",
+    "Amex-Bildidentitäten",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -697,6 +708,11 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.reviewed === undefined ? "" : row.reviewed ? "Ja" : "Nein",
       row.merchantAlias ?? "",
       row.manualCategory === undefined ? "" : row.manualCategory ? "Ja" : "Nein",
+      row.amexSource ?? "",
+      row.amexStatus ?? "",
+      row.amexCapturedAt ?? "",
+      row.amexPeriodStart ?? "",
+      row.amexScreenshotKeys?.join("\n") ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {
@@ -812,6 +828,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     state.planningRepairs?.length ||
     state.accountSnapshots ||
     state.amexBalanceSnapshots ||
+    state.amexScreenshotValidation ||
     state.trBalances ||
     state.reviewQueue ||
     state.importStatus ||
@@ -826,6 +843,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     if (
       state.accountSnapshots ||
       state.amexBalanceSnapshots ||
+      state.amexScreenshotValidation ||
       state.trBalances ||
       state.reviewQueue ||
       state.importStatus ||
@@ -837,6 +855,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
         JSON.stringify({
           accountSnapshots: state.accountSnapshots,
           amexBalanceSnapshots: state.amexBalanceSnapshots,
+          amexScreenshotValidation: state.amexScreenshotValidation,
           trBalances: state.trBalances,
           reviewQueue: state.reviewQueue,
           importStatus: state.importStatus,

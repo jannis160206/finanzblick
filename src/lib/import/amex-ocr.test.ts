@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import { GET } from "@/app/api/ocr/[asset]/route";
 import nextConfig from "../../../next.config";
 import { parseStatementFile } from "./statements";
-import { localOcrLanguages, localOcrOptions } from "./amex-ocr";
+import { localOcrLanguages, localOcrOptions, recognizeAmexScreenshot } from "./amex-ocr";
+import { parseAmexScreenshotLines, type ScreenshotLine } from "./amex-screenshot";
+import type { Worker } from "tesseract.js";
 
 const mocks = vi.hoisted(() => ({
   createWorker: vi.fn(), recognize: vi.fn(), terminate: vi.fn(), setParameters: vi.fn(), reinitialize: vi.fn(),
@@ -22,6 +24,73 @@ const bitmap = () => {
 const worker = () => {
   mocks.createWorker.mockResolvedValue({ recognize: mocks.recognize, terminate: mocks.terminate, setParameters: mocks.setParameters, reinitialize: mocks.reinitialize });
 };
+const ocrLine = (text: string, y: number, x = 40, confidence = 95): ScreenshotLine =>
+  ({ text, confidence, bbox: { x0: x, x1: x + (x > 400 ? 130 : 280), y0: y, y1: y + 20 } });
+const groupedHeader = [ocrLine("American Express® Platinum Card", 40), ocrLine("••••61002", 70)];
+const isolatedWorker = (recognize: ReturnType<typeof vi.fn>) => ({
+  recognize, setParameters: vi.fn(), reinitialize: vi.fn(),
+}) as unknown as Worker;
+
+describe("grouped screenshot OCR retries", () => {
+  it("independently confirms the large balance font without substituting due payments", async () => {
+    const lines = [...groupedHeader, ocrLine("Gesamtsaldo", 120), ocrLine("€ 1.439,69", 150, 40, 77),
+      ocrLine("Fällige Zahlung", 200), ocrLine("5 Okt", 270), ocrLine("SPAR", 330), ocrLine("€ 6,56", 330, 500)];
+    const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines }] }] } })
+      .mockResolvedValueOnce({ data: { text: "€ 1.489,69", confidence: 85 } })
+      .mockResolvedValueOnce({ data: { text: "€ 1.489,69", confidence: 91 } })
+      .mockResolvedValueOnce({ data: { text: "€ 6,56", confidence: 95 } });
+    const worker = isolatedWorker(recognize);
+    const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(worker, "local-image"), "2026-10-06.png");
+    expect(result.amexScreenshot?.balance).toBe(1489.69);
+    expect(result.rows[0].amount).toBe(-6.56);
+    expect(worker.reinitialize).toHaveBeenCalledWith("eng");
+    expect(worker.reinitialize).toHaveBeenLastCalledWith("deu");
+  });
+  it("rejects disagreements between independent grouped balance confirmations", async () => {
+    const lines = [...groupedHeader, ocrLine("Gesamtsaldo", 120), ocrLine("€ 1.489,69", 150),
+      ocrLine("Fällige Zahlung", 200)];
+    const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines }] }] } })
+      .mockResolvedValueOnce({ data: { text: "€ 1.489,69", confidence: 95 } })
+      .mockResolvedValueOnce({ data: { text: "€ 1.439,69", confidence: 95 } });
+    const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(isolatedWorker(recognize), "local-image"));
+    expect(result.amexScreenshot?.balance).toBeUndefined();
+    expect(result.issues[0].message).toContain("Amex-Saldo");
+  });
+  it("accepts an independently confirmed yearless date even when decorative text lowers confidence", async () => {
+    const lines = [...groupedHeader, ocrLine("1Okt", 120, 40, 27), ocrLine("SPAR", 180), ocrLine("€ 6,56", 180, 500)];
+    const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines }] }] } })
+      .mockResolvedValueOnce({ data: { text: "1 Okt", confidence: 52 } })
+      .mockResolvedValueOnce({ data: { text: "€ 6,56", confidence: 95 } });
+    const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(isolatedWorker(recognize), "local-image"), "2026-10-06.png");
+    expect(result.rows[0]).toMatchObject({ date: "2026-10-01", amount: -6.56 });
+    expect(result.issues).toEqual([]);
+  });
+  it("retries a yearless date whose day was initially read as a letter", async () => {
+    const lines = [...groupedHeader, ocrLine("S Okt", 120, 40, 20), ocrLine("SPAR", 180), ocrLine("€ 6,56", 180, 500)];
+    const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines }] }] } })
+      .mockResolvedValueOnce({ data: { text: "5 Okt", confidence: 92 } })
+      .mockResolvedValueOnce({ data: { text: "€ 6,56", confidence: 95 } });
+    const result = parseAmexScreenshotLines(await recognizeAmexScreenshot(isolatedWorker(recognize), "local-image"), "2026-10-06.png");
+    expect(result.rows[0]).toMatchObject({ date: "2026-10-05", amount: -6.56 });
+    expect(result.issues).toEqual([]);
+  });
+  it("splits merged merchant/amount lines using word geometry and ignores navigation chevrons", async () => {
+    const merchant = ocrLine("SPAR", 180);
+    const amount = ocrLine("€ 6,56", 180, 500);
+    const combined = { ...ocrLine("SPAR € 6,56", 180), words: [merchant, { ...amount, text: "€" },
+      { ...amount, text: "6,56", bbox: { ...amount.bbox, x0: 530 } }] };
+    const lines = [...groupedHeader, ocrLine("5 Okt", 120), combined, ocrLine("\\", 180, 640),
+      ocrLine("Startseite", 700), ocrLine("Konto", 700, 500)];
+    const recognize = vi.fn().mockResolvedValueOnce({ data: { blocks: [{ paragraphs: [{ lines }] }] } })
+      .mockResolvedValueOnce({ data: { text: "€ 6,56", confidence: 95 } });
+    const recognized = await recognizeAmexScreenshot(isolatedWorker(recognize), "local-image");
+    expect(recognized.find((line) => line.text === "SPAR")?.bbox).toEqual(merchant.bbox);
+    const result = parseAmexScreenshotLines(recognized, "2026-10-06.png");
+    expect(result.rows[0]).toMatchObject({ description: "SPAR", amount: -6.56 });
+    expect(result.issues).toEqual([]);
+    expect(recognize).toHaveBeenCalledTimes(2);
+  });
+});
 describe("browser screenshot entry point", () => {
   it("recognizes a local Blob using only same-origin resources and releases the worker", async () => {
     const close = bitmap(); worker();

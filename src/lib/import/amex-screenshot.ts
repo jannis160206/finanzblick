@@ -11,6 +11,7 @@ export type ScreenshotLine = {
   confidence: number;
   bbox: { x0: number; y0: number; x1: number; y1: number };
   uncertain?: boolean;
+  confirmed?: boolean;
 };
 const clean = (text: string) => text.replace(/\s+/g, " ").trim();
 const months: Record<string, string> = {
@@ -21,11 +22,21 @@ const months: Record<string, string> = {
 };
 
 const datePattern = /^(\d{1,2})\.?\s+([a-zä]+)\.?\s+(\d{4})(?:\s+[•·–-]\s*(.+))?$/i;
-export function screenshotDate(text: string): string | null {
+const groupedDatePattern = /^(\d{1,2})\.?\s*([a-zä]+)\.?$/i;
+export const screenshotGroupedDateLike = (text: string) => {
+  const match = clean(text).match(groupedDatePattern) ?? clean(text).match(/^([0-9IlOS?]{1,2})\.?\s+([a-zä]+)\.?$/i);
+  return !!match && !!months[match[2].toLowerCase()];
+};
+export function screenshotDate(text: string, upperBound?: string): string | null {
   const match = clean(text).match(datePattern);
-  return match && months[match[2].toLowerCase()]
-    ? parseStatementDate(`${match[1]}.${months[match[2].toLowerCase()]}.${match[3]}`)
-    : null;
+  if (match && months[match[2].toLowerCase()])
+    return parseStatementDate(`${match[1]}.${months[match[2].toLowerCase()]}.${match[3]}`);
+  const grouped = upperBound && clean(text).match(groupedDatePattern);
+  if (!grouped || !months[grouped[2].toLowerCase()]) return null;
+  const month = months[grouped[2].toLowerCase()];
+  let year = Number(upperBound!.slice(0, 4));
+  if (`${year}-${month}-${grouped[1].padStart(2, "0")}` > upperBound!) year--;
+  return parseStatementDate(`${grouped[1]}.${month}.${year}`);
 }
 export function screenshotPocket(text: string): string {
   const holder = clean(text).match(datePattern)?.[4];
@@ -61,7 +72,16 @@ export function screenshotReviewMessage(draft: StatementDraft): string {
 export function screenshotContentTop(lines: ScreenshotLine[]): number | null {
   const period = lines.find((line) => /\d{1,2}\.\d{1,2}\.\d{4}\s*[-–]\s*Aktuell/i.test(line.text));
   const card = lines.find((line) => /Karte[nm]*ummer\s*[-:•* ]+\d+/i.test(line.text));
-  if (!period || !card) return null;
+  if (!period || !card) {
+    const brand = lines.find((line) => !line.uncertain && line.confidence >= 65 &&
+      /American\s+Express.*(?:Platinum\s+Card|Karte)/i.test(line.text));
+    // Decorative mask dots can have zero OCR confidence; the brand must still be clear.
+    const masked = brand && lines.find((line) => !line.uncertain &&
+      (/^[•·.*+]{2,}\s*\d{4,5}\s*$/.test(clean(line.text)) ||
+        line === brand && /[•·.*+]{2,}\s*\d{4,5}\s*$/.test(clean(line.text))) &&
+      line.bbox.y0 >= brand.bbox.y0 && line.bbox.y0 - brand.bbox.y1 < (brand.bbox.y1 - brand.bbox.y0) * 3);
+    return brand && masked ? Math.max(brand.bbox.y1, masked.bbox.y1) : null;
+  }
   const sorting = lines.find((line) => /Sortieren nach:/i.test(line.text));
   const count = lines.find((line) => /^\s*\d+\s+Transaktionen\s*$/i.test(line.text));
   return Math.max(period.bbox.y1, card.bbox.y1, sorting?.bbox.y1 ?? 0, count?.bbox.y1 ?? 0);
@@ -76,6 +96,7 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
     return result;
   }
   const period = lines.find((line) => /\d{1,2}\.\d{1,2}\.\d{4}\s*[-–]\s*Aktuell/i.test(line.text));
+  if (!period) return parseGroupedScreenshot(lines, file, top);
   const periodStart = period && !period.uncertain && period.confidence >= 65
     ? parseStatementDate(period.text.match(/\d{1,2}\.\d{1,2}\.\d{4}/)![0]) : null;
   const captureDate = parseStatementDate(file.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? localToday());
@@ -86,6 +107,11 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
     const snapshot = amexBalanceSnapshotSchema.safeParse({ periodStart, date: captureDate, balance: -totals[0] });
     if (snapshot.success) result.amexBalanceSnapshots = [snapshot.data];
   }
+  if (captureDate) result.amexScreenshot = {
+    layout: "list", capturedAt: captureDate, balanceIncludesPending: false,
+    ...(periodStart ? { periodStart } : {}),
+    ...(result.amexBalanceSnapshots?.[0] ? { balance: result.amexBalanceSnapshots[0].balance } : {}),
+  };
   if (headerAmounts.length && !result.amexBalanceSnapshots)
     result.issues.push({ file, message: "Amex-Saldo nicht eindeutig lesbar – bitte einen scharfen Screenshot mit Zeitraum und Gesamtbetrag verwenden." });
   const content = lines.map((line) => ({ ...line, text: clean(line.text) }))
@@ -125,11 +151,17 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
       result.skipped++;
       continue;
     }
+    const next = groups[groups.indexOf(group) + 1]?.[0].bbox.y0 ?? Infinity;
+    const pendingMarkers = lines.filter((line) => !line.uncertain && line.confidence >= 65 &&
+      /^(?:Vorgemerkt|Ausstehend)$/i.test(clean(line.text)) &&
+      line.bbox.y0 >= first - height && line.bbox.y0 < Math.min(next, last + height * 3));
     const draft: StatementDraft = {
       id: crypto.randomUUID(), bank: "Amex", pocket, date: date ?? "", description: description.slice(0, 1000),
       amount, category: "Prüfen", includeInPlan: true,
+      amexSource: "screenshot", amexStatus: pendingMarkers.length ? "pending" : "posted", amexCapturedAt: captureDate ?? undefined,
+      amexPeriodStart: periodStart ?? undefined,
       rawDetails: ["Amex-Screenshot", ...(uncertainMerchant ? ["OCR-Händler unklar"] : []),
-        ...[...group, ...amounts].map((line) => line.text.slice(0, 1000))].slice(0, 20),
+        ...[...group, ...amounts, ...pendingMarkers].map((line) => line.text.slice(0, 1000))].slice(0, 20),
     };
     const parsed = transactionSchema.safeParse(recoverMerchant(draft));
     if (parsed.success && !uncertainMerchant && pocket !== "AMEX ungeklärt") {
@@ -148,6 +180,113 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
         amount: line.uncertain ? null : screenshotAmount(line.text), category: "Prüfen", includeInPlan: true,
         rawDetails: ["Amex-Screenshot", line.text.slice(0, 1000)] } });
   }
+  result.rows = numberStatementRows(classifyStatementRows(result.rows));
+  if (!result.rows.length && !result.issues.length)
+    result.issues.push({ file, message: "Amex-Screenshot: Keine lesbaren Buchungen gefunden. Bitte einen vollständigen, scharfen Screenshot verwenden." });
+  return result;
+}
+
+function parseGroupedScreenshot(lines: ScreenshotLine[], file: string, top: number): StatementResult {
+  const result: StatementResult = { source: "Amex", file, rows: [], skipped: 0, issues: [] };
+  const capturedAt = parseStatementDate(file.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? localToday())!;
+  const sorted = lines.map((line) => ({ ...line, text: clean(line.text) }))
+    .filter((line) => line.text).sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
+  const card = sorted.find((line) => line.bbox.y1 <= top && /[•·.*+]{2,}\s*\d{4,5}\b/.test(line.text))
+    ?.text.match(/[•·.*+]{2,}\s*(\d{4,5})\b/)?.[1];
+  result.amexScreenshot = { layout: "grouped", capturedAt, balanceIncludesPending: false, ...(card ? { card } : {}) };
+  const total = sorted.find((line) => /Gesamtsaldo/i.test(line.text) && line.bbox.y0 > top);
+  const firstDate = sorted.find((line) => line.bbox.y0 > top && screenshotGroupedDateLike(line.text));
+  if (total) {
+    const end = sorted.find((line) => line.bbox.y0 >= total.bbox.y1 &&
+      /Fällige\s+Zahlung|Membership\s+Rewards/i.test(line.text))?.bbox.y0 ?? firstDate?.bbox.y0 ?? Infinity;
+    const totals = sorted.filter((line) => line.bbox.y0 >= total.bbox.y0 && line.bbox.y0 < end && line.text.includes("€"));
+    const value = totals.length === 1 && !totals[0].uncertain && totals[0].confidence >= 65
+      ? screenshotAmount(totals[0].text.replace(/^Gesamtsaldo\s*/i, "")) : null;
+    if (value !== null) result.amexScreenshot.balance = -value;
+    else result.issues.push({ file, message: "Amex-Saldo nicht eindeutig lesbar – bitte einen scharfen Screenshot mit Gesamtbetrag verwenden." });
+  }
+  const navigation = sorted.find((line) => /^(?:Startseite|Konto)$/i.test(line.text) && line.bbox.y0 > top);
+  const bottom = navigation ? navigation.bbox.y0 - (navigation.bbox.y1 - navigation.bbox.y0) * 4.5 : Infinity;
+  const summary = total || sorted.some((line) => line.bbox.y0 > top &&
+    /Fällige\s+Zahlung|Membership\s+Rewards|Abrechnungen und Aktivitäten/i.test(line.text));
+  const summaryEnd = summary ? firstDate?.bbox.y0 ?? bottom : top;
+  const content = sorted.filter((line) => line.bbox.y0 > top && line.bbox.y0 >= summaryEnd && line.bbox.y1 < bottom &&
+    !/^(?:Startseite|Konto|Abrechnungen und Aktivitäten|Gesamtsaldo|Fällige Zahlung|Membership Rewards|Zahlung nicht erforderlich.*)$/i.test(line.text));
+  const right = Math.max(...sorted.map((line) => line.bbox.x1));
+  const amounts = content.filter((line) => (line.bbox.x0 > right * 0.7 || /^[−–+-]?\s*€/.test(line.text)) &&
+    !chrome(line.text) && !/^[\\/<>‹›»«]+$/.test(line.text));
+  const left = content.filter((line) => !amounts.includes(line) && !chrome(line.text) && !/^[\\/<>‹›»«]+$/.test(line.text));
+  const heights = left.map((line) => line.bbox.y1 - line.bbox.y0).sort((a, b) => a - b);
+  const height = heights[Math.floor(heights.length / 2)] ?? 24;
+  const groups: { lines: ScreenshotLine[]; date: string | null }[] = [];
+  let date: string | null = null;
+  let upperBound = capturedAt;
+  for (const line of left) {
+    if (screenshotGroupedDateLike(line.text)) {
+      date = !line.uncertain && (line.confidence >= 65 || line.confirmed) ? screenshotDate(line.text, upperBound) : null;
+      if (date) upperBound = date;
+      groups.push({ lines: [], date });
+      continue;
+    }
+    const previous = groups.at(-1)?.lines.at(-1);
+    if (!groups.length || previous && line.bbox.y0 - previous.bbox.y1 > height * 1.5)
+      groups.push({ lines: [], date });
+    groups.at(-1)!.lines.push(line);
+  }
+  const used = new Set<ScreenshotLine>();
+  const bookingOrder: { id: string; y: number }[] = [];
+  for (const [index, group] of groups.entries()) {
+    if (!group.lines.length) continue;
+    const first = group.lines[0].bbox.y0;
+    const last = group.lines.at(-1)!.bbox.y1;
+    const matches = amounts.filter((line) => !used.has(line) &&
+      (line.bbox.y0 + line.bbox.y1) / 2 >= first - height &&
+      (line.bbox.y0 + line.bbox.y1) / 2 <= last + height);
+    matches.forEach((line) => used.add(line));
+    const holder = group.lines.find((line) => /^(?:RAPHAEL PIBER|JANNIS BR(?:Ü|UE)HL)$/i.test(line.text));
+    const pocket = holder ? screenshotPocket(`1 Jan 2000 • ${holder.text}`) : "Amex";
+    const merchants = group.lines.filter((line) => line !== holder);
+    const description = clean(merchants.map((line) => line.text).join(" "));
+    const name = merchants.find((line) => /\p{L}/u.test(line.text) && !/^(?=.*\d)[a-z\d]{6,}$/i.test(line.text));
+    const uncertainMerchant = merchants.some((line) => line.uncertain) || !name || name.confidence < 35;
+    const amount = matches.length === 1 && !matches[0].uncertain ? screenshotAmount(matches[0].text) : null;
+    if (amount !== null && amount > 0 && /zahlung\s*\/.*überweisung\s+erh/i.test(description)) {
+      result.skipped++;
+      continue;
+    }
+    const next = groups.slice(index + 1).find((candidate) => candidate.lines.length)?.lines[0].bbox.y0 ?? bottom;
+    const pendingMarkers = content.filter((line) => !line.uncertain && line.confidence >= 65 &&
+      /^(?:Vorgemerkt|Ausstehend)$/i.test(line.text) &&
+      line.bbox.y0 >= first - height && line.bbox.y0 < Math.min(next, last + height * 3));
+    const draft: StatementDraft = {
+      id: crypto.randomUUID(), bank: "Amex", pocket, date: group.date ?? "", description: description.slice(0, 1000),
+      amount, category: "Prüfen", includeInPlan: true,
+      amexSource: "screenshot", amexStatus: pendingMarkers.length ? "pending" : "posted", amexCapturedAt: capturedAt,
+      rawDetails: ["Amex-Screenshot", ...(uncertainMerchant ? ["OCR-Händler unklar"] : []),
+        ...[...group.lines, ...matches, ...pendingMarkers].map((line) => line.text.slice(0, 1000))].slice(0, 20),
+    };
+    const parsed = transactionSchema.safeParse(recoverMerchant(draft));
+    if (parsed.success && !uncertainMerchant && (!holder || !holder.uncertain && holder.confidence >= 65)) {
+      result.rows.push(parsed.data);
+      bookingOrder.push({ id: parsed.data.id, y: first });
+    } else {
+      result.skipped++;
+      result.issues.push({ file, line: index + 1, draft, message: screenshotReviewMessage(draft) });
+      bookingOrder.push({ id: draft.id, y: first });
+    }
+    if (result.rows.length + result.issues.length > MAX_STATEMENT_ROWS) throw new Error("Zu viele Buchungen im Screenshot.");
+  }
+  for (const line of amounts.filter((line) => !used.has(line))) {
+    result.skipped++;
+    const id = crypto.randomUUID();
+    result.issues.push({ file, message: "Amex-Screenshot: Abgeschnittene Buchung – Händler und Datum fehlen.",
+      draft: { id, bank: "Amex", pocket: "Amex", date: "", description: "",
+        amount: line.uncertain ? null : screenshotAmount(line.text), category: "Prüfen", includeInPlan: true,
+        amexSource: "screenshot", amexCapturedAt: capturedAt,
+        rawDetails: ["Amex-Screenshot", line.text.slice(0, 1000)] } });
+    bookingOrder.push({ id, y: line.bbox.y0 });
+  }
+  result.amexScreenshot.bookingOrder = bookingOrder.sort((a, b) => a.y - b.y).map((item) => item.id);
   result.rows = numberStatementRows(classifyStatementRows(result.rows));
   if (!result.rows.length && !result.issues.length)
     result.issues.push({ file, message: "Amex-Screenshot: Keine lesbaren Buchungen gefunden. Bitte einen vollständigen, scharfen Screenshot verwenden." });
