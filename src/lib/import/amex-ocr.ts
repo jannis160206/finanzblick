@@ -31,8 +31,8 @@ export async function recognizeAmexScreenshot(worker: Worker, image: ImageLike):
   if (top === null) return lines;
   const right = Math.max(...lines.map((line) => line.bbox.x1));
   const grouped = !lines.some((line) => /\d{1,2}\.\d{1,2}\.\d{4}\s*[-–]\s*Aktuell/i.test(line.text));
-  const totalLabel = grouped && lines.find((line) => /Gesamtsaldo/i.test(line.text));
-  const dueLabel = totalLabel && lines.find((line) => /Fällige Zahlung/i.test(line.text));
+  const totalLabel = grouped ? lines.find((line) => /Gesamtsaldo/i.test(line.text)) : undefined;
+  const dueLabel = totalLabel ? lines.find((line) => /Fällige Zahlung/i.test(line.text)) : undefined;
   const totalBottom = totalLabel ? dueLabel?.bbox.y0 ??
     lines.find((line) => screenshotGroupedDateLike(line.text) && line.bbox.y0 > totalLabel.bbox.y1)?.bbox.y0 ??
     totalLabel.bbox.y1 + (totalLabel.bbox.y1 - totalLabel.bbox.y0) * 4 : 0;

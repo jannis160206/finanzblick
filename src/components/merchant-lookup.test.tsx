@@ -25,7 +25,7 @@ const hits = [
   { id: "1", name: "Blumenatelier", displayName: "Blumenatelier, Hauptplatz, Villach, 9500, Österreich" },
   { id: "2", name: "Spielwarenladen", displayName: "Spielwarenladen, Bahnhofstraße, Villach, 9500, Österreich" },
 ];
-const originalLookup = () => screen.getAllByRole("button", { name: `Name nachschlagen: ${booking.description}`, exact: true })[0];
+const originalLookup = () => screen.getAllByRole("button", { name: `Name nachschlagen: ${booking.description}` })[0];
 let latest: AppState;
 beforeEach(() => { vi.clearAllMocks(); vi.mocked(lookupMerchant).mockResolvedValue(hits); });
 afterEach(cleanup);
@@ -54,7 +54,7 @@ it("shows a muted lookup icon only for uncertain debits, never known merchants o
   render(<Fixture />);
   expect(screen.getAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(2);
   for (const name of ["BILLA", "SPAR", "Shell", "Martin Auer", "BIPA"])
-    expect(screen.queryByRole("button", { name: `Name nachschlagen: ${name}`, exact: true })).toBeNull();
+    expect(screen.queryByRole("button", { name: `Name nachschlagen: ${name}` })).toBeNull();
   const button = screen.getAllByTitle("Name nachschlagen")[0];
   expect(button.className).toContain("size-7");
   expect(button.className).toContain("text-muted-foreground");

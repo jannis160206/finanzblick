@@ -28,14 +28,14 @@ it("shows saved dates only inside the holiday popup without changing their stora
   render(<Harness />);
   expect(screen.queryByLabelText("Aktive Urlaubszeiträume")).toBeNull();
   expect(screen.queryByText("24.9.2026–1.10.2026")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Urlaub", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Urlaub" }));
   let dialog = within(screen.getByRole("dialog"));
   for (const text of ["24.9.2026–1.10.2026", "18.4.2026–29.4.2026", "3.7.2026–11.7.2026"])
     expect(dialog.getByText(text)).toBeTruthy();
   fireEvent.click(dialog.getByRole("button", { name: "Fertig" }));
   expect(screen.queryByLabelText("Aktive Urlaubszeiträume")).toBeNull();
   expect(current.holidayRanges).toEqual(initial.holidayRanges);
-  fireEvent.click(screen.getByRole("button", { name: "Urlaub", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Urlaub" }));
   dialog = within(screen.getByRole("dialog"));
   fireEvent.click(dialog.getByRole("button", { name: "Urlaub löschen: 2026-07-03 bis 2026-07-11" }));
   expect(current.holidayRanges).toHaveLength(2);

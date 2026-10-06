@@ -40,7 +40,7 @@ function mount(booking = original, receiptBacked = false) {
   const view = render(<FinanceProvider initialState={state}><Harness /></FinanceProvider>);
   fireEvent.change(screen.getByLabelText("Monat filtern"), { target: { value: "" } });
   const open = () => {
-    fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${booking.description}`, exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${booking.description}` }));
     return within(screen.getByRole("dialog", { name: "Zuordnung ändern" }));
   };
   const savedBooking = () => receiptBacked
@@ -49,7 +49,7 @@ function mount(booking = original, receiptBacked = false) {
   return { ...view, read: () => current, open, savedBooking };
 }
 
-function editName(dialog: ReturnType<typeof within>, name: string) {
+function editName(dialog: Pick<typeof screen, "getByRole">, name: string) {
   fireEvent.click(dialog.getByRole("button", { name: "Händlername bearbeiten" }));
   const input = dialog.getByRole<HTMLInputElement>("textbox", { name: "Händlername" });
   expect(document.activeElement).toBe(input);

@@ -98,8 +98,8 @@ it.skipIf(!directory || !existsSync(directory))("recognizes all eight private gr
       periodStart: "2026-09-11", date: "2026-10-06", balance: 1489.69, pendingBalance: 6.56,
     }]);
     const saved = queueLedgerReview(commitStatementImport(seed, prepared.automatic, [], prepared.metadata).state);
-    const bookingReviews = saved.reviewQueue?.filter((item) => item.kind === "booking" &&
-      /^Amex-Screenshot:/.test(item.message)) ?? [];
+    const allBookingReviews = saved.reviewQueue?.filter((item) => item.kind === "booking") ?? [];
+    const bookingReviews = allBookingReviews.filter((item) => /^Amex-Screenshot:/.test(item.message));
     if (process.env.AMEX_GROUPED_OCR_DEBUG) console.log("grouped prepared", JSON.stringify({
       automatic: prepared.automatic.length, bookingReviews: bookingReviews.length,
       totalReviews: saved.reviewQueue?.length,
@@ -113,8 +113,7 @@ it.skipIf(!directory || !existsSync(directory))("recognizes all eight private gr
     expect(bookingReviews[0].draft.description).toMatch(/^Spar\b/i);
     expect(bookingReviews[0].draft.rawDetails?.some((text) => /€\s*9,68\b/.test(text))).toBe(true);
     expect(saved.reviewQueue).toHaveLength(5);
-    const categoryReviews = saved.reviewQueue?.filter((item) => item.kind === "booking" &&
-      !/^Amex-Screenshot:/.test(item.message)) ?? [];
+    const categoryReviews = allBookingReviews.filter((item) => !/^Amex-Screenshot:/.test(item.message));
     expect(categoryReviews).toHaveLength(4);
     expect(categoryReviews.every((item) => item.draft.date && item.draft.amount !== null)).toBe(true);
     expect(preview.rows.length + bookingReviews.length).toBe(46);

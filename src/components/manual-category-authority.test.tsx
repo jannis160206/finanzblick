@@ -69,7 +69,7 @@ it.each(["BIPA", "Interne Überweisung"])("accepts %s in the actual approval UI 
   const twin = { ...source, id: "twin", date: "2026-09-13", bankReference: "twin-reference", manualCategory: undefined, categoryOverride: undefined };
   const seed = { ...createSeed(), transactions: [source, twin], financeRows: [], fixedReceipts: [], reviewQueue: [] };
   const view = mount(seed);
-  fireEvent.click(screen.getByRole("button", { name: "Zuordnung prüfen", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Zuordnung prüfen" }));
   const section = within(screen.getByRole("region", { name: `Buchung prüfen: ${description}` }));
   fireEvent.change(section.getByLabelText("Kategorie"), { target: { value: "Gesundheit" } });
   fireEvent.click(section.getByRole("button", { name: "Zuordnung übernehmen" }));

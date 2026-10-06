@@ -28,6 +28,7 @@ function mount(initial = fixture()) {
     vi.mocked(useFinance).mockReturnValue({
       state, dashboard: calculateDashboard(state), update: setState, replace: setState,
       openReviewCount: 0, ready: true, saved: true, storageError: null, retrySave: vi.fn(), appendStatements: vi.fn(),
+      statementImport: undefined,
     });
     return <><PlannedOneOffs /><PlannedOneOffLines /></>;
   }

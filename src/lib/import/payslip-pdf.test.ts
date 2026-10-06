@@ -95,7 +95,7 @@ describe("local encrypted payslip PDF lifecycle", () => {
     const password = "synthetic-test-password";
     const result = await parsePayslipPdf(pdfBuffer(), password);
     expect(pdfjs.getDocument).toHaveBeenCalledWith(expect.objectContaining({
-      password, isEvalSupported: false, stopAtErrors: true, verbosity: 0,
+      password, useSystemFonts: true, stopAtErrors: true, verbosity: 0,
     }));
     expect(JSON.stringify(result)).not.toContain(password);
     expect(JSON.stringify(result)).not.toContain("Gehaltsabrechnung");

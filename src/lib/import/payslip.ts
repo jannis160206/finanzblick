@@ -417,7 +417,6 @@ export async function parsePayslipPdf(buffer: ArrayBuffer, password?: string): P
       data: new Uint8Array(buffer.slice(0)),
       password,
       useSystemFonts: true,
-      isEvalSupported: false,
       stopAtErrors: true,
       verbosity: 0,
     });

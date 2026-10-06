@@ -83,7 +83,7 @@ function expectFixedPlan(state: AppState, label: string) {
 }
 
 function openAssignment() {
-  fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${booking.description}`, exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${booking.description}` }));
   return within(screen.getByRole("dialog", { name: "Zuordnung ändern" }));
 }
 
@@ -239,7 +239,7 @@ it("shows the generated row in Months and deletes its fixed linkage without dele
   fireEvent.click(table.getByRole("button", { name: `${row.label} löschen` }));
   const dialog = within(screen.getByRole("dialog", { name: "Position löschen?" }));
   expect(view.read().state).toBe(before);
-  fireEvent.click(dialog.getByRole("button", { name: "Position löschen", exact: true }));
+  fireEvent.click(dialog.getByRole("button", { name: "Position löschen" }));
   await waitFor(() => expect(screen.queryByRole("dialog", { name: "Position löschen?" })).toBeNull());
   expect(fixedRows(view.read().state)).toEqual([]);
   expect(table.queryByText(row.label)).toBeNull();

@@ -22,7 +22,7 @@ export function resolveGroupedScreenshotIssues(results: StatementResult[]) {
     const metadata = result.amexScreenshot!;
     if (!metadata.card) continue;
     const others = grouped.filter((other) => other !== result && other.amexScreenshot?.card === metadata.card &&
-      other.amexScreenshot.capturedAt === metadata.capturedAt);
+      other.amexScreenshot?.capturedAt === metadata.capturedAt);
     const drafts = result.issues.flatMap((issue) => issue.draft ? [issue.draft] : []);
     for (const draft of drafts) {
       if (!untouched(draft) || draft.amount !== null || !draft.date || !amexOrderKey(draft)) continue;
