@@ -40,6 +40,7 @@ import { vacationSavingPaused } from "@/lib/goals";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
+import { FixedCostSchedule } from "@/components/fixed-cost-schedule";
 
 const chartTooltip = {
   background: "var(--popover)",
@@ -169,6 +170,7 @@ export function Overview() {
           </section>
         ))}
       </div>
+      <FixedCostSchedule />
       <div className="mb-6 grid gap-5 xl:grid-cols-[1.45fr_1fr]">
         <section className="panel p-5 sm:p-6">
           <SectionHeading
