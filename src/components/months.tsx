@@ -30,6 +30,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CategorySelect } from "@/components/category-select";
 import { removeFixedPlanRow } from "@/lib/fixed-plan";
+import { FixedCostSchedule } from "@/components/fixed-cost-schedule";
 
 function RowEditor({
   row,
@@ -269,6 +270,7 @@ export function Months() {
           </div>
         ))}
       </div>
+      <FixedCostSchedule />
       <section className="panel overflow-hidden">
         <div className="max-h-[75vh] overflow-auto">
           <table ref={tableRef} className="month-grid data-table w-full">

@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FinanceProvider, useFinance } from "@/components/finance-provider";
 import { FixedCostSchedule } from "./fixed-cost-schedule";
+import { Months } from "./months";
 import { createSeed } from "@/lib/seed";
 import { currency } from "@/lib/format";
 import type { AppState, Transaction } from "@/lib/types";
@@ -39,29 +40,46 @@ function fixture(): AppState {
     plannedOneOffs: [], plannedOneOffsSeeded: true, fixedReceipts: [], savingsGoals: [], holidayRanges: [],
   };
 }
-function mount(initialState = fixture()) {
+function mount(initialState = fixture(), expand = true, page: "schedule" | "months" = "schedule") {
   let latest: ReturnType<typeof useFinance>;
   function Harness() {
     const finance = useFinance();
     useEffect(() => { latest = finance; }, [finance]);
-    return <FixedCostSchedule />;
+    return page === "months" ? <Months /> : <FixedCostSchedule />;
   }
   const view = render(<FinanceProvider initialState={initialState}><Harness /></FinanceProvider>);
+  if (expand) fireEvent.click(screen.getByLabelText("Fixkosten-Abbuchungen anzeigen"));
   return { ...view, read: () => latest };
 }
 
-it("shows outstanding dates, amounts and unknown timing separately from the collapsed booked list", () => {
+it("keeps debit details collapsed by default in Monate and opens them without changing finance data", () => {
+  const view = mount(fixture(), false, "months");
+  const summary = screen.getByLabelText("Fixkosten-Abbuchungen anzeigen");
+  const disclosure = summary.closest("details")!;
+  expect(disclosure.open).toBe(false);
+  expect(summary.textContent).toContain("Fixkosten · Oktober 2026");
+  expect(summary.textContent).toContain(`${currency(25)} offen`);
+  const before = structuredClone(view.read().state);
+  fireEvent.click(summary);
+  expect(disclosure.open).toBe(true);
+  expect(screen.getByRole("list", { name: "Offene Fixkosten" }).textContent).toContain("Handyvertrag A1");
+  fireEvent.click(summary);
+  expect(disclosure.open).toBe(false);
+  expect(view.read().state).toEqual(before);
+});
+
+it("shows outstanding dates, amounts and unknown timing separately from the nested booked list", () => {
   mount();
   const section = screen.getByRole("region", { name: "Fixkosten diesen Monat" });
   const open = within(section).getByRole("list", { name: "Offene Fixkosten" });
-  expect(within(section).getByRole("heading", { name: "Fixkosten · Oktober 2026" })).toBeTruthy();
-  expect(within(section).getByText("Stand 6.10.2026")).toBeTruthy();
+  expect(within(section).getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain("Fixkosten · Oktober 2026");
+  expect(within(section).getByText(/Stand 6.10.2026/)).toBeTruthy();
   expect(open.textContent).toContain("Handyvertrag A1");
   expect(open.textContent).toContain("ca. 15.10.2026");
   expect(open.textContent).toContain("Raiffeisen · Girokonto");
   expect(open.textContent).toContain("Termin unbekannt");
   expect(open.textContent).not.toContain("Haftpflicht");
-  expect(within(section).getByText("Noch offen").textContent).toContain(currency(25));
+  expect(within(section).getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain(currency(25));
   const summary = within(section).getByText(/^Bereits abgebucht \(1\)/);
   expect(summary.textContent).toContain(currency(65));
   const details = summary.closest("details")!;
@@ -69,7 +87,6 @@ it("shows outstanding dates, amounts and unknown timing separately from the coll
   fireEvent.click(summary);
   expect(details.open).toBe(true);
   expect(within(details).getByRole("list", { name: "Abgebuchte Fixkosten" }).textContent).toContain("2.10.2026");
-  expect(within(section).getByRole("link", { name: "Monatsplan" }).getAttribute("href")).toBe("/monate");
 });
 
 it("updates immediately after importing or deleting a booking, survives reload and never changes the budget", () => {
@@ -79,7 +96,7 @@ it("updates immediately after importing or deleting a booking, survives reload a
   act(() => view.read().appendStatements([{ ...phone, id: "phone-oct", date: "2026-10-05" }], 0, "schedule-import"));
   const open = screen.getByRole("list", { name: "Offene Fixkosten" });
   expect(open.textContent).not.toContain("Handyvertrag A1");
-  expect(screen.getByText("Noch offen").textContent).toContain(currency(5));
+  expect(screen.getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain(currency(5));
   expect(view.read().state.financeRows).toEqual(before.financeRows);
   expect(view.read().dashboard.current.surplus).toBe(surplus);
   expect(view.read().saved).toBe(true);
@@ -93,7 +110,7 @@ it("updates immediately after importing or deleting a booking, survives reload a
     fixedReceipts: state.fixedReceipts?.filter((receipt) => receipt.booking?.id !== "phone-oct"),
   })));
   expect(screen.getByRole("list", { name: "Offene Fixkosten" }).textContent).toContain("Handyvertrag A1");
-  expect(screen.getByText("Noch offen").textContent).toContain(currency(25));
+  expect(screen.getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain(currency(25));
 });
 
 it("rolls the schedule to the new as-of month and distinguishes expected today from unconfirmed old dates", () => {
@@ -104,9 +121,9 @@ it("rolls the schedule to the new as-of month and distinguishes expected today f
   act(() => view.read().update((state) => ({ ...state, settings: { ...state.settings, asOf: "2026-10-07" } })));
   expect(screen.getByText("Noch nicht bestätigt")).toBeTruthy();
   act(() => view.read().update((state) => ({ ...state, settings: { ...state.settings, asOf: "2026-11-01" } })));
-  expect(screen.getByRole("heading", { name: "Fixkosten · November 2026" })).toBeTruthy();
+  expect(screen.getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain("Fixkosten · November 2026");
   expect(screen.getByRole("list", { name: "Offene Fixkosten" }).textContent).toContain("Haftpflicht");
-  expect(screen.getByText("Noch offen").textContent).toContain(currency(85));
+  expect(screen.getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain(currency(85));
 });
 
 it("shows only the still missing part of a category-wide fixed budget, with the remaining contract's expected date", () => {
@@ -123,7 +140,7 @@ it("shows only the still missing part of a category-wide fixed budget, with the 
   expect(open.textContent).toContain("ca. 15.10.2026");
   expect(open.textContent).toContain(`${currency(65)} bereits abgebucht`);
   expect(open.textContent).toContain(currency(50));
-  expect(screen.getByText("Noch offen").textContent).toContain(currency(50));
+  expect(screen.getByLabelText("Fixkosten-Abbuchungen anzeigen").textContent).toContain(currency(50));
 });
 
 it("shows all-booked and empty states without inventing new fixed rows or payment controls", () => {
