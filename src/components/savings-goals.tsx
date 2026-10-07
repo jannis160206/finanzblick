@@ -1,10 +1,10 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarDays, Check, MoreHorizontal, Pencil, Plus, Target, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
-import { SectionHeading } from "@/components/finance-ui";
+import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -38,25 +38,27 @@ export function SavingsGoals() {
     (trigger ?? fallback)?.focus();
   }
   return (
-    <section ref={sectionRef} id="sparziele" className="panel p-4" aria-label="Sparziele">
-      <SectionHeading title="Sparziele" subtitle={pauseVacation ? "Rest ins Sparkonto · Urlaub ab März 2027" : "Sparkonto → Ziele nach Termin → Urlaub"}>
-        <Button ref={addButton} type="button" variant="outline" size="icon" aria-label="Sparziel hinzufügen" disabled={goals.length >= 50}
+    <SettingsSection sectionRef={sectionRef} id="sparziele" title="Sparziele" icon={Target}
+      description={pauseVacation ? "Rest ins Sparkonto · Urlaub ab März 2027" : "Sparkonto → Ziele nach Termin → Urlaub"}
+      action={<Button ref={addButton} type="button" variant="outline" size="sm" className="min-h-11" aria-label="Sparziel hinzufügen" disabled={goals.length >= 50}
           onClick={() => edit({ id: crypto.randomUUID(), name: "", pocket: "", target: 0, date: state.settings.asOf }, "add")}>
-          <Plus className="size-4" />
-        </Button>
-      </SectionHeading>
+          <Plus aria-hidden="true" className="size-4" />Neues Ziel
+        </Button>}>
       <div className="grid gap-3 sm:grid-cols-2">
         {goals.map((goal) => {
           const balance = Math.max(0, dashboard.actualGoals[goal.id] ?? 0);
           const progress = Math.min(100, balance / goal.target * 100);
-          return <article className="rounded-lg border p-3" key={goal.id} aria-label={`Sparziel ${goal.name}`}>
+          return <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4 sm:p-5" key={goal.id} aria-label={`Sparziel ${goal.name}`}>
             <div className="flex items-center justify-between gap-2">
-              <h3 className="truncate text-sm font-medium">{goal.name}</h3>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Target aria-hidden="true" className="size-4" /></span>
+                <h3 className="min-w-0 break-words text-sm font-semibold">{goal.name}</h3>
+              </div>
               <div className="flex shrink-0 items-center gap-1">
-                <Button type="button" variant="ghost" size="sm" data-goal-id={goal.id} data-goal-action="edit" aria-label={`${goal.name} bearbeiten`} onClick={() => edit(goal)}>Bearbeiten</Button>
+                <Button type="button" variant="ghost" size="icon" className="size-11 text-muted-foreground" data-goal-id={goal.id} data-goal-action="edit" aria-label={`${goal.name} bearbeiten`} onClick={() => edit(goal)}><Pencil aria-hidden="true" className="size-4" /></Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="ghost" size="icon" data-goal-id={goal.id} data-goal-action="menu" aria-label={`${goal.name} Menü`}><MoreHorizontal className="size-4" /></Button>
+                    <Button type="button" variant="ghost" size="icon" className="size-11 text-muted-foreground" data-goal-id={goal.id} data-goal-action="menu" aria-label={`${goal.name} Menü`}><MoreHorizontal aria-hidden="true" className="size-4" /></Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent onCloseAutoFocus={(event) => { if (editing || removing) event.preventDefault(); }}>
                     <DropdownMenuItem onSelect={() => edit(goal, "menu")}><Pencil />Bearbeiten</DropdownMenuItem>
@@ -66,17 +68,26 @@ export function SavingsGoals() {
                 </DropdownMenu>
               </div>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">{currency(balance)} von {currency(goal.target)} · bis {dateLabel(goal.date)}</p>
-            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+            <p className="mt-5 text-xs text-muted-foreground"><span className="text-xl font-semibold tracking-tight text-foreground tabular-nums">{currency(balance)}</span> von {currency(goal.target)}</p>
+            <div className="mb-2 mt-4 flex items-center justify-between text-[11px] text-muted-foreground"><span>Angespart</span><span className="font-medium tabular-nums text-primary">{Math.round(progress)} %</span></div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
               <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
             </div>
-            {goal.completedAt && <p className="mt-2 text-xs text-muted-foreground">Ziel erreicht · keine weitere Rate</p>}
+            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1.5"><CalendarDays aria-hidden="true" className="size-3.5 shrink-0" />Bis {dateLabel(goal.date)}</span>
+              <span className="inline-flex min-w-0 items-center gap-1.5"><Wallet aria-hidden="true" className="size-3.5 shrink-0" /><span className="break-all">{goal.pocket}</span></span>
+            </div>
+            {goal.completedAt && <p className="mt-3 flex items-center gap-1.5 text-xs text-primary"><Check aria-hidden="true" className="size-3.5" />Ziel erreicht · keine weitere Rate</p>}
           </article>;
         })}
       </div>
-      {!goals.length && <p className="text-xs text-muted-foreground">{pauseVacation
+      {!goals.length && <div className="flex flex-col items-center rounded-2xl border border-dashed bg-muted/10 px-4 py-8 text-center">
+        <span className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-primary/5 text-primary"><Target aria-hidden="true" className="size-6" /></span>
+        <h3 className="text-sm font-medium">Platz für dein nächstes Ziel</h3>
+        <p className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">{pauseVacation
         ? "Keine Sparziele. Überschuss ins Sparkonto."
-        : "Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub."}</p>}
+        : "Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub."}</p>
+      </div>}
       <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}>
         <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
           <DialogHeader><DialogTitle>Sparziel {goals.some((goal) => goal.id === editing?.id) ? "bearbeiten" : "hinzufügen"}</DialogTitle><DialogDescription>Was möchtest du bis wann ansparen?</DialogDescription></DialogHeader>
@@ -142,6 +153,6 @@ export function SavingsGoals() {
           }}>Entfernen</Button></DialogFooter>
         </DialogContent>
       </Dialog>
-    </section>
+    </SettingsSection>
   );
 }

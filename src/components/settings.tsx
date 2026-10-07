@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Save } from "lucide-react";
+import { CalendarDays, ChevronDown, DatabaseBackup, Landmark, Palette, Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useFinance } from "@/components/finance-provider";
-import { PageHeading, SectionHeading } from "@/components/finance-ui";
+import { PageHeading } from "@/components/finance-ui";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 import { AppearanceControls } from "@/components/appearance-controls";
 import { InteractionSoundsSetting } from "@/components/interaction-sounds";
@@ -14,9 +14,11 @@ import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
 import { AccountProfileSettings } from "@/components/account-profile";
 import { useAccountWorkspace } from "@/components/account-context";
+import { SettingsSection } from "@/components/settings-section";
 import { latestTRBalance } from "@/lib/calc";
+import { currency, dateLabel, percent } from "@/lib/format";
 import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
-import { defaultSeasonalPreference, seasonalThemes, seasonalLabels, type SeasonalPreference, type SeasonalTheme } from "@/lib/seasonal-theme";
+import { defaultSeasonalPreference, seasonalThemes, seasonalLabels, type SeasonalPreference } from "@/lib/seasonal-theme";
 
 function TradeRepublicSettings() {
   const { state, update } = useFinance();
@@ -31,9 +33,13 @@ function TradeRepublicSettings() {
   const valid = value.balance !== "" && value.rate !== "" && trBalanceSchema.safeParse({ balance: Number(value.balance), date: value.date }).success &&
     value.date <= state.settings.asOf && Number.isFinite(Number(value.rate)) && Number(value.rate) >= 0 && Number(value.rate) <= 100;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(initial);
-  return <section id="tr-zinsen" className="panel p-4" aria-label="Trade Republic">
-    <SectionHeading title="Trade Republic" subtitle="Kontostand und Jahreszins ab Datum." />
-    <form className="space-y-3" onSubmit={(event) => {
+  return <SettingsSection id="tr-zinsen" title="Trade Republic" description="Dein Notgroschen und der dazugehörige Jahreszins." icon={Landmark}>
+    <dl className="mb-6 grid gap-4 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:grid-cols-3 sm:p-5">
+      <div><dt className="text-xs text-muted-foreground">Gespeicherter Kontostand</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{currency(savedBalance)}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">Zinssatz p.a.</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{percent(savedRate)}</dd></div>
+      <div><dt className="text-xs text-muted-foreground">Stand vom</dt><dd className="mt-2 text-lg font-medium tabular-nums">{dateLabel(savedDate)}</dd></div>
+    </dl>
+    <form className="space-y-4" onSubmit={(event) => {
       event.preventDefault(); if (!valid) return;
       update((current) => {
         const history = current.settings.interestRates ?? [
@@ -48,13 +54,16 @@ function TradeRepublicSettings() {
       setDraft(null); toast.success("Trade Republic gespeichert");
     }}>
       <div className="grid gap-3 sm:grid-cols-3">
-        <label className="text-xs">Kontostand (€)<Input aria-label="TR Kontostand" className="editable mt-1" type="number" min="0" max="1000000000" step="0.01" value={value.balance} onChange={(event) => setDraft({ ...value, balance: event.target.value })} required /></label>
-        <label className="text-xs">Datum<Input aria-label="TR Standdatum" className="editable mt-1" type="date" max={state.settings.asOf} value={value.date} onChange={(event) => setDraft({ ...value, date: event.target.value })} required /></label>
-        <label className="text-xs">Zinssatz p.a.<Input aria-label="Zinssatz p.a." className="editable mt-1" type="number" min="0" max="100" step="0.01" value={value.rate} onChange={(event) => setDraft({ ...value, rate: event.target.value })} required /></label>
+        <label className="text-xs font-medium">Kontostand (€)<Input aria-label="TR Kontostand" className="mt-2 h-11 bg-background/50" type="number" min="0" max="1000000000" step="0.01" value={value.balance} onChange={(event) => setDraft({ ...value, balance: event.target.value })} required /></label>
+        <label className="min-w-0 text-xs font-medium">Datum<Input aria-label="TR Standdatum" className="mt-2 h-11 min-w-0 bg-background/50" type="date" max={state.settings.asOf} value={value.date} onChange={(event) => setDraft({ ...value, date: event.target.value })} required /></label>
+        <label className="text-xs font-medium">Zinssatz p.a.<Input aria-label="Zinssatz p.a." className="mt-2 h-11 bg-background/50" type="number" min="0" max="100" step="0.01" value={value.rate} onChange={(event) => setDraft({ ...value, rate: event.target.value })} required /></label>
       </div>
-      {dirty && <div className="flex justify-end gap-2"><Button variant="outline" type="button" size="sm" onClick={() => setDraft(null)}>Abbrechen</Button><Button type="submit" size="sm" disabled={!valid}>Trade Republic speichern</Button></div>}
+      {dirty && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 p-3">
+        <p className="text-xs text-muted-foreground">Noch nicht gespeichert.</p>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" type="button" size="sm" onClick={() => setDraft(null)}>Abbrechen</Button><Button type="submit" size="sm" disabled={!valid}><Save aria-hidden="true" className="size-4" />Trade Republic speichern</Button></div>
+      </div>}
     </form>
-  </section>;
+  </SettingsSection>;
 }
 
 export function Settings() {
@@ -70,37 +79,53 @@ export function Settings() {
     <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
     <div className="space-y-4">
       <AccountProfileSettings />
-      <section id="jahreszeit" className="panel scroll-mt-24 p-4" aria-labelledby="appearance-heading">
-        <h2 id="appearance-heading" className="mb-4 text-sm font-semibold">Erscheinungsbild</h2>
+      <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Deine Farben, dein Komfort. So fühlt sich Finanzblick nach dir an." icon={Palette}>
         <form onSubmit={(event) => {
           event.preventDefault(); const parsed = seasonalPreferenceSchema.safeParse(value); if (!parsed.success) return;
           update((current) => ({ ...current, seasonalTheme: parsed.data }));
           setDraft(null); setPreview(null); toast.success("Einstellungen gespeichert");
         }}>
           <AppearanceControls value={value} inputRef={null} onBlur={() => {}} onChange={(next) => { setDraft(next); setPreview(next); }} />
-          {dirty && <div className="mt-4 flex justify-end gap-2">
+          {dirty && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 p-3">
+            <p className="text-xs text-muted-foreground">Vorschau aktiv · noch nicht gespeichert.</p>
+            <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => { setDraft(null); setPreview(null); }}>Verwerfen</Button>
-            <Button type="submit" size="sm"><Save className="size-4" />Einstellungen speichern</Button>
+            <Button type="submit" size="sm"><Save aria-hidden="true" className="size-4" />Einstellungen speichern</Button>
+            </div>
           </div>}
         </form>
+        <div className="mt-6 grid items-start gap-4 border-t border-border/70 pt-6 xl:grid-cols-2">
         <InteractionSoundsSetting />
-        <details className="mt-4 border-t pt-3 text-xs" onToggle={(event) => { if (!event.currentTarget.open) setTestTheme(null); }}>
-          <summary className="cursor-pointer text-muted-foreground">Saisonvorschau</summary>
-          <label className="mt-3 flex flex-wrap items-center gap-3">Vorschau
-            <select aria-label="Saisonvorschau" className="rounded border bg-card p-2" value={testTheme ?? ""} onChange={(event) => setTestTheme((event.target.value || null) as SeasonalTheme | null)}>
+        <details className="group rounded-2xl border border-border/70 bg-muted/15 p-4 text-xs" onToggle={(event) => { if (!event.currentTarget.open) setTestTheme(null); }}>
+          <summary className="flex min-h-10 cursor-pointer list-none items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background/70"><CalendarDays aria-hidden="true" className="size-4 text-muted-foreground" /></span>
+            <span className="flex-1"><span className="block text-sm font-medium">Saisonvorschau</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">Ein Blick auf die nächsten Jahreszeiten.</span></span>
+            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <label className="mt-4 block border-t border-border/60 pt-4">Vorschau
+            <select aria-label="Saisonvorschau" className="select-input mt-2 w-full bg-background/50" value={testTheme ?? ""} onChange={(event) => {
+              const theme = seasonalThemes.find((theme) => theme === event.target.value);
+              setTestTheme(theme ?? null);
+            }}>
               <option value="">Aktueller Kalender</option>
               {seasonalThemes.map((theme) => <option key={theme} value={theme}>{seasonalLabels[theme]}</option>)}
             </select>
           </label>
           <p className="mt-2 text-muted-foreground">Nur ansehen – wird nicht gespeichert.</p>
         </details>
-      </section>
+        </div>
+      </SettingsSection>
       <SavingsGoals />
       <TradeRepublicSettings />
-      <section id="sicherung" className="panel scroll-mt-24 flex flex-wrap items-center justify-between gap-3 p-4" aria-label="Sicherung">
-        <h2 className="text-sm font-semibold">Sicherung</h2>
-        <ExcelActions compact />
-      </section>
+      <SettingsSection id="sicherung" title="Sicherung" description="Eine Kopie deiner Daten. Jederzeit in deiner Hand." icon={DatabaseBackup}>
+        <div className="flex flex-wrap items-center justify-between gap-5 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:p-5">
+          <div className="flex max-w-md items-start gap-3">
+            <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
+            <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p></div>
+          </div>
+          <ExcelActions compact />
+        </div>
+      </SettingsSection>
     </div>
   </>;
 }
