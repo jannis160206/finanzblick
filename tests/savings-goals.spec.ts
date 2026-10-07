@@ -77,14 +77,14 @@ for (const incoming of ["174,60", "185,40"]) {
     await page.goto("/");
     await stored(page);
     await expect(page.getByLabel("Sparkonto überwiesen", { exact: true })).toHaveCount(0);
-    const csv = `Revolut\nSparen (EUR)\nDatum;Beschreibung;Geld ein-/ausgezahlt\n14.09.2026;Um EUR Sparen einzustecken;${incoming}\nMotorrad (EUR)\nDatum;Beschreibung;Geld ein-/ausgezahlt\n14.09.2026;Um EUR Motorrad einzustecken;820,00`;
+    const csv = `Revolut\nPersönliches Konto (EUR)\nDatum;Beschreibung;Geld ein-/ausgezahlt\n14.09.2026;Um EUR Sparen von EUR einzustecken;-${incoming}\nSparen (EUR)\nDatum;Beschreibung;Geld ein-/ausgezahlt\n14.09.2026;Um EUR Sparen einzustecken;${incoming}\nMotorrad (EUR)\nDatum;Beschreibung;Geld ein-/ausgezahlt\n14.09.2026;Um EUR Motorrad einzustecken;820,00`;
     await importTransfers(page, csv);
-    expect((await stored(page)).transactions).toHaveLength(2);
+    expect((await stored(page)).transactions).toHaveLength(3);
     await page.goto("/");
     await expect(page.getByLabel("Sparkonto überwiesen", { exact: true })).toBeVisible();
     await expect(page.getByLabel("Motorrad überwiesen", { exact: true })).toBeVisible();
     await importTransfers(page, csv);
-    expect((await stored(page)).transactions).toHaveLength(2);
+    expect((await stored(page)).transactions).toHaveLength(3);
     await page.goto("/");
     await page.clock.setFixedTime(new Date("2026-10-14T12:00:00Z"));
     await page.reload();

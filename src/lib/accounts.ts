@@ -7,6 +7,14 @@ const raiffeisenBanks = new Set(["raiffeisen", "raiffeisen giro", "raiffeisen ha
 const raiffeisenAccounts = new Set([
   "", "hauptkonto", "giro", "girokonto", "raiffeisen giro", "raiffeisen hauptkonto",
 ]);
+const revolutMainAccounts = new Set([
+  "", "hauptkonto", "hauptkonto (eur)", "revolut hauptkonto", "eur",
+  "persönliches konto", "persönliches konto (eur)", "personal account", "personal account (eur)",
+]);
+
+export function isRevolutMainAccount(account: Account): boolean {
+  return clean(account.bank) === "revolut" && revolutMainAccounts.has(clean(account.pocket ?? ""));
+}
 
 export function isRaiffeisenBank(bank: string): boolean {
   return raiffeisenBanks.has(clean(bank));

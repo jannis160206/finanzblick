@@ -17,7 +17,8 @@ function stateFor(surplus = 1000) {
   return state;
 }
 const transfer = (pocket: string, amount: number, date = "2026-09-14"): Transaction => ({
-  id: `${pocket}-${amount}-${date}`, pocket, amount, date, bank: "Revolut", description: "Transfer intern einzustecken",
+  id: `${pocket}-${amount}-${date}`, pocket, amount, date, bank: "Revolut",
+  description: ["Sparen", "Sparkonto"].includes(pocket) ? "Überweisung vom Revolut Hauptkonto" : "Transfer intern einzustecken",
   category: "Transfer intern", includeInPlan: false,
 });
 
@@ -36,7 +37,7 @@ describe("automatic savings floor and goals", () => {
     state.savingsGoals = [];
     state.transactions = [transfer("Sparen", 1300.56, "2026-10-14")];
     const dashboard = calculateDashboard(state);
-    expect(dashboard.monthlyFunding).toEqual([{ id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 1300.56, done: true }]);
+    expect(dashboard.monthlyFunding).toEqual([{ id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 1300.56, transferred: 1300.56, done: true }]);
     expect(dashboard.current).toMatchObject({ end: { Sparkonto: 1300.56 } });
   });
   it.each([-100, 0, 0.01, 175, 180, 200, 1000, 10000])("always protects Sparkonto for surplus %s", (surplus) => {
@@ -55,8 +56,8 @@ describe("automatic savings floor and goals", () => {
     expect(savingsGoals(state)[0]).toMatchObject({ name: "Motorrad", target: state.settings.bikeTarget });
     state.savingsGoals = [];
     expect(calculateDashboard(state).monthlyFunding).toEqual([
-      { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 180, done: false },
-      { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: 820, done: false },
+      { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 180, transferred: 0, done: false },
+      { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: 820, transferred: 0, done: false },
     ]);
   });
   it("ignores old percentage, bike and pocket allocation overrides when protecting the floor", () => {

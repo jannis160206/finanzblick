@@ -29,7 +29,7 @@ import { hasManualCategory } from "@/lib/manual-category";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 import { amexFunding } from "@/lib/amex-balance";
-import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
+import { applyNamedTransfer, isNamedTransfer, revolutSavingsTransferAmount } from "@/lib/transfers";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -840,6 +840,7 @@ export function calculateDashboard(state: AppState) {
   const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs, amex);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);
+  const savingsTransferred = revolutSavingsTransferAmount(state.transactions, currentMonth, state.settings.asOf);
   const baselineMonth = monthKey(state.settings.baselineDate);
   const historicalOpening = state.months["2026-01"]?.openingBalances;
   let previous = { ...(historicalOpening ?? state.settings.balances) };
@@ -882,7 +883,7 @@ export function calculateDashboard(state: AppState) {
     const rates = emptyPockets();
     for (const pocket of pocketNames) {
       rates[pocket] = round(historical ? input.pocketIn[pocket] : split[pocket]);
-      const settled = month === currentMonth ? incomingPocketTransfers(state, pocket, month) : 0;
+      const settled = month === currentMonth ? pocket === "Sparkonto" ? savingsTransferred : incomingPocketTransfers(state, pocket, month) : 0;
       end[pocket] = available ? round(start[pocket] + rates[pocket] - Math.min(rates[pocket], settled) + (month === currentMonth ? 0 : movement[pocket]) - input.pocketOut[pocket] + (pocket === "Notgroschen" ? interest : 0)) : start[pocket];
       if (month < currentMonth && latestPocketSnapshot(state, pocket, monthEnd)) end[pocket] = actualPockets(state, monthEnd)[pocket];
       if (pocket === "Notgroschen" && month <= currentMonth && latestTRBalance(state, snapshotDate)) end[pocket] = latestTRBalance(state, snapshotDate)!.balance;
@@ -930,7 +931,10 @@ export function calculateDashboard(state: AppState) {
       { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: currentRow?.rates.Sparkonto ?? 0 },
       ...[...goals].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)).map((goal) => ({ ...goal, amount: currentRow?.goalRates[goal.id] ?? 0 })),
       { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: currentRow?.rates.Urlaub ?? 0 },
-    ].filter((item) => item.amount > 0).map((item) => ({ ...item, done: transferMatches(item.amount, incomingPocketTransfers(state, item.pocket, currentMonth, [item.name])) })),
+    ].filter((item) => item.amount > 0 || (item.id === "savings" && savingsTransferred > 0)).map((item) => {
+      const transferred = item.id === "savings" ? savingsTransferred : incomingPocketTransfers(state, item.pocket, currentMonth, [item.name]);
+      return { ...item, transferred, done: item.id === "savings" ? transferred > 0 : transferMatches(item.amount, transferred) };
+    }),
     currentMonth, current, amex, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
     totalAssets: sum([...Object.values(actual), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => actualGoals[goal.id]),
       motorcycle?.openingBalance ? actualGoals[motorcycle.id] - actual.Motorrad : 0]),

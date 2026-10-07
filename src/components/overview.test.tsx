@@ -9,6 +9,7 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { initializeMotorcycleGoal } from "@/lib/goals";
 import { currency, monthLabel } from "@/lib/format";
 import { plannedOneOffSchema } from "@/lib/types";
+import { monthlyVariableBudget } from "@/lib/variable-budgets";
 
 const privacy = vi.hoisted(() => ({ locked: false }));
 vi.mock("./finance-provider", () => ({ useFinance: vi.fn() }));
@@ -142,4 +143,28 @@ it("supports an empty account and non-motorcycle goals without inventing funding
   mount(state);
   expect(screen.getByRole("article", { name: "Sparziel Kamera" })).toBeTruthy();
   expect(screen.getByRole("progressbar", { name: "Kamera Fortschritt" }).getAttribute("aria-valuenow")).toBe("0");
+});
+
+it.each([false, true])("shows the savings recommendation or the actual explicitly transferred amount (executed: %s)", (executed) => {
+  const state = createEmptyAccountState();
+  state.settings.asOf = "2026-10-07";
+  state.financeRows = [{ id: "salary", kind: "income", label: "Gehalt", values: {
+    "2026-10": monthlyVariableBudget("2026-10").total + 301.4,
+  } }];
+  const base = { date: "2026-10-01", bank: "Revolut", category: "Transfer intern", includeInPlan: false } as const;
+  state.transactions = [
+    { ...base, id: "vacation", pocket: "Urlaub", amount: -300, description: "Auszahlung bei Pocket" },
+    { ...base, id: "saving", pocket: "Sparen", amount: 300, description: "Um EUR Sparen von EUR einzustecken" },
+    { ...base, id: "round-up", pocket: "Sparen", amount: 0.4, description: "Um EUR Sparen von EUR einzustecken" },
+  ];
+  if (executed) state.transactions.push({
+    ...base, id: "main", pocket: "Persönliches Konto", amount: -300, description: "Um EUR Sparen von EUR einzustecken",
+  });
+  const { container, dashboard } = mount(state);
+  const savings = container.querySelector<HTMLElement>('[data-funding-pot="Sparkonto"]')!;
+  expect(within(savings).getByText(executed ? "Überwiesen" : "Sparempfehlung")).toBeTruthy();
+  expect(within(savings).getByText(moneyText(executed ? 300 : 301.4))).toBeTruthy();
+  expect(dashboard.timeline.find((row) => row.month === dashboard.currentMonth)?.rates.Sparkonto).toBe(301.4);
+  if (executed) expect(within(savings).getByLabelText("Sparkonto überwiesen")).toBeTruthy();
+  else expect(within(savings).queryByLabelText("Sparkonto überwiesen")).toBeNull();
 });

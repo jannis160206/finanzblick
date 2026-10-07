@@ -151,11 +151,15 @@ export function Overview() {
         >
           <span className="inline-flex items-center gap-2 text-xs font-medium"><PiggyBank aria-hidden="true" className="size-4 text-primary" />Monatsverteilung</span>
           <div className="flex flex-wrap gap-2">
-          {monthSplit.map((item) => <span key={item.id} className="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs" data-funding-pot={item.pocket}>
-            <span className="text-muted-foreground">{item.name}</span>{" "}
+          {monthSplit.map((item) => {
+            const confirmedSavings = item.id === "savings" && item.done;
+            return <span key={item.id} className={cn("inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs",
+            confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket}>
+            <span className="text-muted-foreground"><span className="block">{item.name}</span>{item.id === "savings" && <span className="mt-0.5 block text-[10px]">{item.done ? "Überwiesen" : "Sparempfehlung"}</span>}</span>{" "}
             {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
-            <span className="font-semibold tabular-nums">{currency(item.amount)}</span>
-          </span>)}
+            <span className={cn("font-semibold tabular-nums", confirmedSavings && "text-primary")}>{currency(confirmedSavings ? item.transferred : item.amount)}</span>
+          </span>;
+          })}
           </div>
         </section>
       )}
