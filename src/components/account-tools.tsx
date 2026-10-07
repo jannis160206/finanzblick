@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Download, LoaderCircle, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAccountWorkspace } from "@/components/account-context";
 import { useFinance } from "@/components/finance-provider";
 import { accountStorageKey } from "@/lib/account-finance-storage";
-import { FINANCE_STORAGE_KEY, FINANCE_BACKUP_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
+import { FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
+import { LegacyAccountNotice, subscribeLegacyNotice, type LegacyNoticeStatus } from "@/lib/legacy-account-notice";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { appStateSchema } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -57,27 +58,21 @@ export function AccountLogout({ compact = false }: { compact?: boolean }) {
   </div>;
 }
 
-function subscribeLegacy(listener: () => void) {
-  window.addEventListener("storage", listener);
-  return () => window.removeEventListener("storage", listener);
-}
-function legacySnapshot() {
-  try {
-    return localStorage.getItem(FINANCE_STORAGE_KEY) !== null || localStorage.getItem(FINANCE_BACKUP_KEY) !== null ? "available" : "missing";
-  } catch (error) {
-    if (!(error instanceof DOMException)) throw error;
-    return "unavailable";
-  }
-}
+const missingLegacySnapshot = (): LegacyNoticeStatus => "missing";
 
-export function AccountSyncTools() {
+export function AccountSyncTools({ manual = false, visible = true }: { manual?: boolean; visible?: boolean } = {}) {
   const workspace = useAccountWorkspace();
-  const { state, storageError, replace } = useFinance();
-  const [imported, setImported] = useState(false);
-  const legacyStatus = useSyncExternalStore(subscribeLegacy,
-    workspace?.user.role === "admin" ? legacySnapshot : () => "missing",
-    () => "missing");
-  const legacy = legacyStatus === "available" && !imported;
+  const { state, storageError: syncError, replace } = useFinance();
+  const storageError = manual ? null : syncError;
+  const adminId = workspace?.user.role === "admin" ? workspace.user.id : null;
+  const notice = useMemo(() => new LegacyAccountNotice(adminId, manual), [adminId, manual]);
+  const [importedFor, setImportedFor] = useState<string | null>(null);
+  const imported = adminId !== null && importedFor === adminId;
+  const legacyStatus = useSyncExternalStore(subscribeLegacyNotice, notice.getSnapshot, missingLegacySnapshot);
+  const legacy = (legacyStatus === "available" || legacyStatus === "unsaved") && !imported;
+  useEffect(() => {
+    if (visible && !storageError && legacyStatus === "available") notice.markShown();
+  }, [visible, storageError, legacyStatus, notice]);
   const [confirm, setConfirm] = useState<"legacy" | "server" | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,9 +91,13 @@ export function AccountSyncTools() {
     setError("");
     try {
       if (confirm === "legacy") {
-        const old = new FinanceStorage().load(createEmptyAccountState());
+        if (!adminId) throw new FinanceStorageError("Browserdaten dürfen nur ausdrücklich in ein Admin-Konto übernommen werden.");
+        const fallback = createEmptyAccountState();
+        const old = new FinanceStorage().load(fallback);
+        if (old.data === fallback) throw new FinanceStorageError("Bisherige Browserdaten sind nicht mehr vorhanden. Dein Kontostand bleibt unverändert.");
         replace(old.data);
-        setImported(true);
+        notice.markHandled();
+        setImportedFor(adminId);
       } else await workspace!.loadServer();
       setConfirm(null);
     } catch (error) {
@@ -108,16 +107,26 @@ export function AccountSyncTools() {
       setBusy(false);
     }
   }
-  if (!legacy && !storageError && !error && legacyStatus !== "unavailable") return null;
-  return <section aria-label="Kontodaten übertragen" className="mb-5 rounded-xl border bg-card p-4 text-sm">
+  function dismiss() {
+    try {
+      notice.markHandled();
+      setError("");
+    } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
+      setError(financeStorageMessage(error));
+    }
+  }
+  if (!legacy && !storageError && !error && legacyStatus !== "unavailable" && legacyStatus !== "unsaved") return null;
+  const content = <section aria-label="Kontodaten übertragen" className="mb-5 rounded-xl border bg-card p-4 text-sm">
     {storageError ? <p>Dieser Gerätestand bleibt erhalten. Vor dem Laden neuerer Serverdaten bitte eine Sicherung herunterladen.</p>
-      : <p>In diesem Browser liegen noch Daten von vor der Konto-Anmeldung. Nur nach deiner Bestätigung werden sie in dein Admin-Konto übertragen. Daten von localhost zuerst dort als Excel exportieren.</p>}
+      : legacy && <p>In diesem Browser liegen noch Daten von vor der Konto-Anmeldung. Nur nach deiner Bestätigung werden sie in dein Admin-Konto übertragen. Daten von localhost zuerst dort als Excel exportieren.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
       <Button variant="outline" size="sm" onClick={download}><Download className="size-4" />Gerätestand sichern</Button>
       {storageError && <Button variant="outline" size="sm" onClick={() => setConfirm("server")}>Serverstand laden</Button>}
       {legacy && <Button size="sm" onClick={() => setConfirm("legacy")}>Bisherige Browserdaten übernehmen</Button>}
+      {legacy && !manual && <Button variant="ghost" size="sm" disabled={busy} onClick={dismiss}>Hinweis ausblenden</Button>}
     </div>
-    {confirm && <div className="mt-4 border-t pt-3">
+    {confirm && (confirm === "server" || legacy) && <div className="mt-4 border-t pt-3">
       <p>{confirm === "legacy" ? "Den Kontostand durch die bisherigen Browserdaten ersetzen? Die Originaldaten im Browser bleiben erhalten."
         : "Den Gerätestand durch die Serverdaten ersetzen? Ungesicherte Änderungen werden zusätzlich lokal als Konfliktsicherung aufbewahrt."}</p>
       <div className="mt-3 flex gap-2">
@@ -127,5 +136,10 @@ export function AccountSyncTools() {
     </div>}
     {error && <p role="alert" className="mt-3 text-destructive">{error}</p>}
     {legacyStatus === "unavailable" && <p role="alert" className="mt-3 text-destructive">Bisherige Browserdaten sind nicht erreichbar. Bitte die Browserspeicher-Einstellungen prüfen.</p>}
+    {legacyStatus === "unsaved" && <p role="alert" className="mt-3 text-destructive">Dieser Hinweis konnte nicht dauerhaft gespeichert werden. Bitte die Browserspeicher-Einstellungen prüfen.</p>}
   </section>;
+  return manual ? <details className="mt-4">
+    <summary className="cursor-pointer text-xs font-medium">Bisherige Browserdaten</summary>
+    <div className="mt-3">{content}</div>
+  </details> : content;
 }

@@ -213,7 +213,7 @@ export function AppShell({
             <p className="mt-6 text-xs text-muted-foreground">Sichtschutz für deinen Bildschirm, keine Passwortsperre.</p>
           </section>
           <div data-financial-content hidden={security.locked} inert={security.locked}>
-          <AccountSyncTools />
+          <AccountSyncTools visible={!security.locked && ready} />
           {storageError && (
             <div
               role="alert"

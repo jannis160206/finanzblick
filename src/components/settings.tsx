@@ -13,6 +13,7 @@ import { InteractionSoundsSetting } from "@/components/interaction-sounds";
 import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
 import { AccountProfileSettings } from "@/components/account-profile";
+import { AccountSyncTools } from "@/components/account-tools";
 import { useAccountWorkspace } from "@/components/account-context";
 import { SettingsSection } from "@/components/settings-section";
 import { latestTRBalance } from "@/lib/calc";
@@ -125,6 +126,7 @@ export function Settings() {
           </div>
           <ExcelActions compact />
         </div>
+        <AccountSyncTools manual />
       </SettingsSection>
     </div>
   </>;

@@ -7,6 +7,7 @@ import { AccountFinanceStorage, accountStorageKey } from "@/lib/account-finance-
 import { createEmptyAccountState } from "@/lib/account-state";
 import { FINANCE_BACKUP_KEY, FINANCE_STORAGE_KEY } from "@/lib/finance-storage";
 import { appStateSchema, type AppState } from "@/lib/types";
+import { legacyNoticeKey } from "@/lib/legacy-account-notice";
 
 const { useFinanceMock } = vi.hoisted(() => ({ useFinanceMock: vi.fn() }));
 vi.mock("./finance-provider", () => ({ useFinance: useFinanceMock }));
@@ -113,6 +114,111 @@ describe("AccountSyncTools", () => {
     expect(localStorage.getItem(FINANCE_STORAGE_KEY)).toBe(original);
     expect(localStorage.getItem(FINANCE_BACKUP_KEY)).toBe(original);
     expect(screen.queryByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeNull();
+    cleanup();
+    mount();
+    expect(screen.queryByRole("region", { name: "Kontodaten übertragen" })).toBeNull();
+    expect(finance.replace).toHaveBeenCalledOnce();
+  });
+
+  it("shows the initial notice only once across remounts without importing or deleting legacy data", () => {
+    const original = seedLegacy();
+    const view = mount();
+    expect(screen.getByText(/Nur nach deiner Bestätigung/)).toBeTruthy();
+    expect(localStorage.getItem(legacyNoticeKey("own-account"))).toBe("seen");
+    act(() => window.dispatchEvent(new Event("storage")));
+    expect(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeTruthy();
+    view.unmount();
+    mount();
+    expect(screen.queryByRole("region", { name: "Kontodaten übertragen" })).toBeNull();
+    expect(finance.replace).not.toHaveBeenCalled();
+    expect(localStorage.getItem(FINANCE_STORAGE_KEY)).toBe(original);
+    expect(localStorage.getItem(FINANCE_BACKUP_KEY)).toBe(original);
+  });
+
+  it("does not mark an unseen notice behind privacy or loading as shown", () => {
+    seedLegacy();
+    const view = mount(<AccountSyncTools visible={false} />);
+    expect(localStorage.getItem(legacyNoticeKey("own-account"))).toBeNull();
+    view.unmount();
+    mount();
+    expect(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeTruthy();
+    expect(localStorage.getItem(legacyNoticeKey("own-account"))).toBe("seen");
+  });
+
+  it("does not count conflict recovery text as the legacy notice being shown", () => {
+    seedLegacy();
+    finance.storageError = "Synchronisierungskonflikt";
+    const view = mount();
+    expect(localStorage.getItem(legacyNoticeKey("own-account"))).toBeNull();
+    view.unmount();
+    finance.storageError = null;
+    mount();
+    expect(screen.getByText(/In diesem Browser liegen/)).toBeTruthy();
+    expect(localStorage.getItem(legacyNoticeKey("own-account"))).toBe("seen");
+  });
+
+  it("allows hiding the current notice without touching either ledger or suppressing sync conflict controls", () => {
+    const original = seedLegacy();
+    finance.storageError = "Synchronisierungskonflikt";
+    fireEvent.click(mount().getByRole("button", { name: "Hinweis ausblenden" }));
+    expect(screen.queryByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Serverstand laden" })).toBeTruthy();
+    expect(screen.queryByText(/In diesem Browser liegen/)).toBeNull();
+    cleanup();
+    mount();
+    expect(screen.getByRole("button", { name: "Serverstand laden" })).toBeTruthy();
+    expect(finance.replace).not.toHaveBeenCalled();
+    expect(loadServer).not.toHaveBeenCalled();
+    expect(localStorage.getItem(FINANCE_STORAGE_KEY)).toBe(original);
+    expect(localStorage.getItem(FINANCE_BACKUP_KEY)).toBe(original);
+  });
+
+  it("keeps later manual migration available after the once-only notice", async () => {
+    const legacy = fixture("Bisherige Browserbuchung");
+    const original = seedLegacy(legacy);
+    const view = mount();
+    view.unmount();
+    mount(<AccountSyncTools manual />);
+    fireEvent.click(screen.getByText("Bisherige Browserdaten", { exact: true }));
+    fireEvent.click(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" }));
+    expect(finance.replace).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Übernahme bestätigen" }));
+    await waitFor(() => expect(finance.replace).toHaveBeenCalledExactlyOnceWith(appStateSchema.parse(legacy)));
+    expect(localStorage.getItem(FINANCE_STORAGE_KEY)).toBe(original);
+    expect(localStorage.getItem(FINANCE_BACKUP_KEY)).toBe(original);
+  });
+
+  it("scopes the notice to the administrator identity rather than hiding it for another account", () => {
+    seedLegacy();
+    const view = mount();
+    view.unmount();
+    mount(<AccountSyncTools />, { ...workspace(), user: { ...workspace().user, id: "other-admin" } });
+    expect(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeTruthy();
+    expect(localStorage.getItem(legacyNoticeKey("other-admin"))).toBe("seen");
+    expect(finance.replace).not.toHaveBeenCalled();
+  });
+
+  it("reports failed notice persistence without silently hiding the migration controls", () => {
+    const original = seedLegacy();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage full", "QuotaExceededError");
+    });
+    mount();
+    expect(screen.getByRole("alert").textContent).toContain("Hinweis konnte nicht dauerhaft gespeichert werden");
+    expect(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeTruthy();
+    expect(finance.replace).not.toHaveBeenCalled();
+    expect(localStorage.getItem(FINANCE_STORAGE_KEY)).toBe(original);
+  });
+
+  it("does not replace the account with an empty fallback if legacy data disappears during confirmation", async () => {
+    seedLegacy();
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" }));
+    localStorage.removeItem(FINANCE_STORAGE_KEY);
+    localStorage.removeItem(FINANCE_BACKUP_KEY);
+    fireEvent.click(screen.getByRole("button", { name: "Übernahme bestätigen" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("nicht mehr vorhanden");
+    expect(finance.replace).not.toHaveBeenCalled();
   });
 
   it("cancels legacy confirmation without changing either ledger", () => {
@@ -321,6 +427,7 @@ describe("AccountLogout", () => {
     localStorage.setItem(otherKey, "another account's cached state");
     localStorage.setItem(`${otherKey}.conflict-backup`, "another account's conflict backup");
     const legacy = seedLegacy();
+    localStorage.setItem(legacyNoticeKey("own-account"), "seen");
     fetchMock.mockResolvedValue(Response.json({ ok: true }));
     const remove = vi.spyOn(Storage.prototype, "removeItem");
     mount(<AccountLogout />, workspace("user"));
@@ -339,6 +446,7 @@ describe("AccountLogout", () => {
     expect(localStorage.getItem(`${otherKey}.conflict-backup`)).toBe("another account's conflict backup");
     expect(localStorage.getItem(FINANCE_STORAGE_KEY)).toBe(legacy);
     expect(localStorage.getItem(FINANCE_BACKUP_KEY)).toBe(legacy);
+    expect(localStorage.getItem(legacyNoticeKey("own-account"))).toBe("seen");
     expect(remove.mock.invocationCallOrder[1]).toBeLessThan(assign.mock.invocationCallOrder[0]);
   });
 
