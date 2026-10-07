@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useState } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
 import { useFinance } from "@/components/finance-provider";
@@ -39,11 +39,14 @@ const open = () => fireEvent.click(screen.getByRole("button", { name: "Geplante 
 const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 
 describe("planned one-offs UI", () => {
-  it("shows quiet seed halves and no unnecessary second line", () => {
+  it("groups seed halves in one quiet month without an empty upcoming group", () => {
     mount(initializePlannedOneOffs(fixture()));
     const lines = screen.getByLabelText("Geplante Ausgaben");
-    expect(lines.textContent).toBe("Monitor-Rate 55 € · Schrank 200 € · Teppich 90 € · Vorhänge 200 € · Führerschein 780 €");
-    expect(lines.querySelectorAll("p")).toHaveLength(1);
+    expect(within(lines).getAllByRole("list")).toHaveLength(1);
+    expect(within(lines).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "Monitor-Rate 55 €", "Schrank 200 €", "Teppich 90 €", "Vorhänge 200 €", "Führerschein 780 €",
+    ]);
+    expect(within(lines).getByRole("list", { name: "Geplant Oktober 2026" })).toBeTruthy();
   });
   it("shows next-month items only inside 30 days and hides matched bookings", () => {
     const state = fixture();
@@ -54,10 +57,44 @@ describe("planned one-offs UI", () => {
     ];
     state.transactions = [{ id: "paid", description: "Shop", date: "2026-10-04", amount: -20, bank: "Amex", pocket: "Amex", category: "Shopping", includeInPlan: false }];
     mount(state);
-    expect(screen.getByLabelText("Geplante Ausgaben").textContent).toBe("Nov · Führerschein 780 €");
+    expect(within(screen.getByRole("list", { name: "Geplant November 2026" })).getByRole("listitem").textContent).toBe("Führerschein 780 €");
     expect(screen.getByLabelText("Geplante Ausgaben").textContent).not.toMatch(/Später|Bezahlt/);
     open();
     expect(screen.getByRole("button", { name: "Bearbeiten: Bezahlt" }).parentElement?.textContent).toContain("Gebucht");
+  });
+  it("separates current and upcoming rows with aligned amounts, preserving shares and state", () => {
+    const state = fixture();
+    state.settings.asOf = "2026-10-07";
+    state.plannedOneOffs = [
+      plannedOneOffSchema.parse({ id: "licence", name: "Führerschein", date: "2026-10-20", amount: 780, pocket: "Sparkonto" }),
+      plannedOneOffSchema.parse({ id: "office", name: "Büro Austattung", date: "2026-11-01", amount: 191.48 }),
+      plannedOneOffSchema.parse({ id: "cabinet", name: "Schrank", date: "2026-11-02", amount: 410.56, sharedWithRaphael: true }),
+    ];
+    const before = JSON.stringify(state);
+    const read = mount(state);
+    expect(within(screen.getByRole("list", { name: "Geplant Oktober 2026" })).getByRole("listitem").textContent).toBe("Führerschein 780 €");
+    expect(within(screen.getByRole("list", { name: "Geplant November 2026" })).getAllByRole("listitem").map((row) => row.textContent)).toEqual([
+      "Büro Austattung 191,48 €", "Schrank 205,28 €",
+    ]);
+    expect(screen.queryByText(/410,56/)).toBeNull();
+    expect(JSON.stringify(read())).toBe(before);
+  });
+  it("does not show an empty planning panel", () => {
+    mount();
+    expect(screen.queryByRole("region", { name: "Geplante Ausgaben" })).toBeNull();
+  });
+  it("keeps separate month groups when the 30-day horizon spans two future months", () => {
+    const state = fixture();
+    state.settings.asOf = "2027-01-31";
+    state.plannedOneOffs = [
+      plannedOneOffSchema.parse({ id: "february", name: "Februar", date: "2027-02-04", amount: 40 }),
+      plannedOneOffSchema.parse({ id: "march", name: "März", date: "2027-03-02", amount: 60 }),
+      plannedOneOffSchema.parse({ id: "later", name: "Außerhalb", date: "2027-03-03", amount: 80 }),
+    ];
+    mount(state);
+    expect(screen.getByRole("list", { name: "Geplant Februar 2027" })).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Geplant März 2027" })).toBeTruthy();
+    expect(screen.queryByText("Außerhalb")).toBeNull();
   });
   it("previews while typing using the half, saves only on confirmation, then supports editing and deleting", () => {
     const read = mount();

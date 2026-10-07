@@ -69,6 +69,46 @@ async function capture(page: Page, name: string) {
 }
 
 for (const width of [1440, 390]) {
+  test(`planning cards separate savings labels and monthly one-offs at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const state = fixture();
+    state.plannedOneOffs = [
+      plannedOneOffSchema.parse({ id: "licence", name: "Führerschein", date: "2026-10-20", amount: 780, pocket: "Sparkonto" }),
+      plannedOneOffSchema.parse({ id: "office", name: "Büro Austattung", date: "2026-11-01", amount: 191.48 }),
+      plannedOneOffSchema.parse({ id: "cabinet", name: "Schrank", date: "2026-11-02", amount: 410.56, sharedWithRaphael: true }),
+    ];
+    const before = await open(page, state);
+    const dashboard = calculateDashboard(before.state);
+    const savings = page.locator('[data-funding-pot="Sparkonto"]');
+    await expect(savings.getByText("Sparkonto", { exact: true })).toBeVisible();
+    await expect(savings.getByText("Sparempfehlung", { exact: true })).toBeVisible();
+    await expect(savings).toContainText(currency(dashboard.monthlyFunding.find((row) => row.id === "savings")!.amount));
+    await expect(savings.getByLabel("Sparkonto überwiesen")).toHaveCount(0);
+    const label = await savings.getByText("Sparkonto", { exact: true }).boundingBox();
+    const caption = await savings.getByText("Sparempfehlung", { exact: true }).boundingBox();
+    expect(caption!.x).toBeGreaterThan(label!.x + 20);
+    const planned = page.getByRole("region", { name: "Geplante Ausgaben", exact: true });
+    await expect(planned.getByRole("list", { name: "Geplant Oktober 2026" }).getByRole("listitem")).toHaveText("Führerschein 780 €");
+    await expect(planned.getByRole("list", { name: "Geplant November 2026" }).getByRole("listitem")).toHaveText([
+      "Büro Austattung 191,48 €", "Schrank 205,28 €",
+    ]);
+    await expect(planned).not.toContainText("410,56");
+    for (const size of width === 390 ? [390, 320] : [1440, 1024]) {
+      await page.setViewportSize({ width: size, height: 1000 });
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+    }
+    await page.setViewportSize({ width, height: 1000 });
+    await capture(page, `overview-planning-${width}-dark.png`);
+    await page.getByRole("button", { name: "Farbschema wechseln" }).click();
+    await expect(page.locator("html")).toHaveClass(/light/);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+    await capture(page, `overview-planning-${width}-light.png`);
+    await page.getByRole("button", { name: "Geplante Ausgaben", exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.getByRole("dialog").getByRole("button", { name: "Abbrechen", exact: true }).click();
+    expect((await snapshot(page)).state).toEqual(before.state);
+  });
+
   test(`modern overview preserves financial values and actions at ${width}px`, async ({ page }) => {
     const errors: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -81,7 +121,7 @@ for (const width of [1440, 390]) {
     ] as const) {
       await expect(page.getByRole("region", { name: label, exact: true })).toContainText(currency(value));
     }
-    await expect(page.getByLabel("Geplante Ausgaben", { exact: true })).toHaveText("Schrank 200 €");
+    await expect(page.getByRole("list", { name: "Geplant Oktober 2026" }).getByRole("listitem")).toHaveText("Schrank 200 €");
     await expect(page.getByRole("progressbar", { name: "Motorradziel" })).toHaveAttribute("aria-valuenow", String(dashboard.countdown.progress));
     const forecast = page.getByRole("region", { name: "Monatsprognose" });
     await expect(forecast.getByRole("article")).toHaveCount(3);
@@ -102,7 +142,7 @@ for (const width of [1440, 390]) {
     await page.getByRole("dialog").getByRole("button", { name: "Abbrechen", exact: true }).click();
     for (const size of width === 390 ? [390, 320] : [1440, 1024]) {
       await page.setViewportSize({ width: size, height: 1000 });
-      expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
     }
     await page.setViewportSize({ width, height: 1000 });
     await capture(page, `overview-${width}-dark.png`);

@@ -65,7 +65,7 @@ it("prioritizes the surplus, keeps model values and plan/actual distinctions, an
   expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.salaryReceived)}`)).toBeTruthy();
   expect(screen.queryByText(/DEIN FINANZCOCKPIT|Ist · alle vier Pockets|Ohne Umbuchungen|NOCH BIS ZUM KAUF/)).toBeNull();
   expect(screen.getByRole("link", { name: "Kontoauszüge importieren" }).getAttribute("href")).toBe("/umsaetze");
-  expect(screen.getByLabelText("Geplante Ausgaben").textContent).toBe("Schrank 200 €");
+  expect(within(screen.getByRole("list", { name: "Geplant Oktober 2026" })).getByRole("listitem").textContent).toBe("Schrank 200 €");
   expect(JSON.stringify(state)).toBe(before);
   expect(update).not.toHaveBeenCalled();
 });
@@ -164,6 +164,8 @@ it.each([false, true])("shows the savings recommendation or the actual explicitl
   const savings = container.querySelector<HTMLElement>('[data-funding-pot="Sparkonto"]')!;
   expect(within(savings).getByText(executed ? "Überwiesen" : "Sparempfehlung")).toBeTruthy();
   expect(within(savings).getByText(moneyText(executed ? 300 : 301.4))).toBeTruthy();
+  expect(within(savings).getByText("Sparkonto").className).not.toContain("text-muted-foreground");
+  expect(within(savings).getByText(executed ? "Überwiesen" : "Sparempfehlung").className).toContain("col-start-2");
   expect(dashboard.timeline.find((row) => row.month === dashboard.currentMonth)?.rates.Sparkonto).toBe(301.4);
   if (executed) expect(within(savings).getByLabelText("Sparkonto überwiesen")).toBeTruthy();
   else expect(within(savings).queryByLabelText("Sparkonto überwiesen")).toBeNull();

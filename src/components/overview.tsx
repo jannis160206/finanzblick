@@ -143,26 +143,31 @@ export function Overview() {
           </section>
         ))}
       </div>
-      <PlannedOneOffLines />
+      <div className="mb-5 grid gap-4 empty:hidden lg:grid-cols-2 [&>section:only-child]:col-span-full">
       {monthSplit.length > 0 && (
         <section
-          className="panel mb-5 flex flex-wrap items-center justify-between gap-3 bg-muted/15 px-4 py-3 sm:px-5"
+          className="panel min-w-0 p-4 sm:p-5"
           aria-label="Pocket-Verteilung diesen Monat"
         >
-          <span className="inline-flex items-center gap-2 text-xs font-medium"><PiggyBank aria-hidden="true" className="size-4 text-primary" />Monatsverteilung</span>
-          <div className="flex flex-wrap gap-2">
+          <h2 className="mb-4 flex items-center gap-2 text-sm font-medium"><PiggyBank aria-hidden="true" className="size-4 text-muted-foreground" />Monatsverteilung</h2>
+          <div className="space-y-2">
           {monthSplit.map((item) => {
             const confirmedSavings = item.id === "savings" && item.done;
-            return <span key={item.id} className={cn("inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs",
-            confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket}>
-            <span className="text-muted-foreground"><span className="block">{item.name}</span>{item.id === "savings" && <span className="mt-0.5 block text-[10px]">{item.done ? "Überwiesen" : "Sparempfehlung"}</span>}</span>{" "}
-            {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
-            <span className={cn("font-semibold tabular-nums", confirmedSavings && "text-primary")}>{currency(confirmedSavings ? item.transferred : item.amount)}</span>
-          </span>;
+            return <div key={item.id} className={cn("grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border p-3",
+              confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket}>
+              <span className="min-w-0 break-words text-sm font-medium">{item.name}</span>
+              <span className={cn("inline-flex items-center gap-2 whitespace-nowrap text-xl font-semibold tracking-tight tabular-nums", confirmedSavings && "text-primary")}>
+                {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
+                <span>{currency(confirmedSavings ? item.transferred : item.amount)}</span>
+              </span>
+              {item.id === "savings" && <span className="col-start-2 mt-1 justify-self-end text-[11px] text-muted-foreground">{item.done ? "Überwiesen" : "Sparempfehlung"}</span>}
+            </div>;
           })}
           </div>
         </section>
       )}
+      <PlannedOneOffLines />
+      </div>
       <div className="mb-5 grid items-start gap-5 xl:grid-cols-[1.2fr_1fr]">
         <section className="panel min-w-0 p-5 sm:p-6" aria-label="Deine Pockets">
           <SectionHeading

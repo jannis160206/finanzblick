@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +14,7 @@ import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { dateSchema, plannedOneOffSchema, type PlannedOneOff } from "@/lib/types";
 
 const amountLabel = (value: number) => `${new Intl.NumberFormat("de-AT", { maximumFractionDigits: 2 }).format(value)} €`;
-const nextMonthLabel = (date: string) => new Intl.DateTimeFormat("de-AT", { month: "short", timeZone: "UTC" })
+const shortMonthLabel = (date: string) => new Intl.DateTimeFormat("de-AT", { month: "short", timeZone: "UTC" })
   .format(new Date(`${date}T12:00:00Z`)).replace(/\.$/, "");
 
 export function PlannedOneOffLines() {
@@ -26,12 +26,30 @@ export function PlannedOneOffLines() {
   const upcoming = open.filter((item) => !item.date.startsWith(dashboard.currentMonth) &&
     item.date > state.settings.asOf && item.date <= horizon.toISOString().slice(0, 10));
   if (!current.length && !upcoming.length) return null;
-  return <div className="mb-5 space-y-1 text-xs text-muted-foreground" aria-label="Geplante Ausgaben">
-    {current.length > 0 && <p>{current.map((item) => `${item.name} ${amountLabel(item.ownAmount)}`).join(" · ")}</p>}
-    {upcoming.length > 0 && <p>{upcoming.map((item, index) =>
-      `${!index || upcoming[index - 1].date.slice(0, 7) !== item.date.slice(0, 7) ? `${nextMonthLabel(item.date)} · ` : ""}${item.name} ${amountLabel(item.ownAmount)}`,
-    ).join(" · ")}</p>}
-  </div>;
+  const groups = new Map<string, typeof current>();
+  if (current.length) groups.set(dashboard.currentMonth, current);
+  for (const item of upcoming) {
+    const month = item.date.slice(0, 7);
+    const group = groups.get(month);
+    if (group) group.push(item);
+    else groups.set(month, [item]);
+  }
+  return <section className="panel min-w-0 p-4 sm:p-5" aria-label="Geplante Ausgaben">
+    <h2 className="mb-4 flex items-center gap-2 text-sm font-medium"><CalendarDays aria-hidden="true" className="size-4 text-muted-foreground" />Geplant</h2>
+    <div className="space-y-4">
+      {[...groups].map(([month, items]) => <div key={month} className="flex items-start gap-3">
+        <time dateTime={month} title={monthLabel(month)} className="inline-flex min-w-10 shrink-0 justify-center rounded-lg bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+          {shortMonthLabel(`${month}-01`)}
+        </time>
+        <ul className="min-w-0 flex-1 space-y-2" aria-label={`Geplant ${monthLabel(month)}`}>
+          {items.map((item) => <li key={item.id} className="flex items-baseline justify-between gap-3 text-sm">
+            <span className="min-w-0 break-words text-foreground/80">{item.name}</span>{" "}
+            <span className="shrink-0 whitespace-nowrap font-medium tabular-nums">{amountLabel(item.ownAmount)}</span>
+          </li>)}
+        </ul>
+      </div>)}
+    </div>
+  </section>;
 }
 
 export function PlannedOneOffs({ className }: { className?: string } = {}) {
