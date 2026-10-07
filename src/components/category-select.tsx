@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNativeSelectBoundary } from "@/components/ui/use-native-select-boundary";
+import { normalizeSearch } from "@/lib/transaction-tools";
 
 type CategorySelectProps = Pick<ComponentProps<"select">,
   "id" | "name" | "disabled" | "onBlur" | "aria-describedby" | "aria-invalid"
@@ -28,9 +29,6 @@ type CategorySelectProps = Pick<ComponentProps<"select">,
   onValueChange: (value: Category) => void;
 });
 
-const normalize = (text: string) =>
-  text.toLocaleLowerCase("de").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
 export function CategorySelect(props: CategorySelectProps) {
   useNativeSelectBoundary();
   const { label, className, excludeReview, disabled, value, id, name, onBlur } = props;
@@ -44,10 +42,10 @@ export function CategorySelect(props: CategorySelectProps) {
     ...group,
     categories: group.categories.filter((category) =>
       (!excludeReview || category !== "Prüfen") &&
-      normalize(`${group.label} ${category}`).includes(normalize(query)),
+      normalizeSearch(`${group.label} ${category}`).includes(normalizeSearch(query)),
     ),
   })).filter((group) => group.categories.length);
-  const showAll = props.allowAll && normalize(props.allLabel ?? "Alle Kategorien").includes(normalize(query));
+  const showAll = props.allowAll && normalizeSearch(props.allLabel ?? "Alle Kategorien").includes(normalizeSearch(query));
   const options: (Category | "")[] = [
     ...(showAll ? [""] as const : []),
     ...groups.flatMap((group) => group.categories),

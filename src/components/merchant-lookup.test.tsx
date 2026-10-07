@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -40,7 +40,7 @@ function Fixture({ bookings }: { bookings?: Transaction[] }) {
       ],
     });
   });
-  latest = state;
+  useEffect(() => { latest = state; }, [state]);
   vi.mocked(useFinance).mockReturnValue({
     state, get dashboard(): never { throw new Error("Lookup must not calculate the dashboard"); },
     update: (updater) => setState((current) => appStateSchema.parse(queueLedgerReview(updater(current)))),
@@ -55,8 +55,8 @@ it("shows a muted lookup icon only for uncertain debits, never known merchants o
   expect(screen.getAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(2);
   for (const name of ["BILLA", "SPAR", "Shell", "Martin Auer", "BIPA"])
     expect(screen.queryByRole("button", { name: `Name nachschlagen: ${name}` })).toBeNull();
-  const button = screen.getAllByTitle("Name nachschlagen")[0];
-  expect(button.className).toContain("size-7");
+  const button = screen.getAllByRole("button", { name: /^Name nachschlagen:/ })[0];
+  expect(button.className).toContain("size-9");
   expect(button.className).toContain("text-muted-foreground");
   expect(button.textContent).toBe("");
   expect(lookupMerchant).not.toHaveBeenCalled();

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Users, X } from "lucide-react";
 import { Tabs } from "radix-ui";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useFinance } from "@/components/finance-provider";
@@ -11,6 +12,7 @@ import { classify } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { parseStatementAmount } from "@/lib/import/statements";
 import { isSharedHoliday, personalAmount, selectSharedBookings, type AccountedTransaction, type HolidayReceivable } from "@/lib/shared-holiday";
+import { matchesTransactionSearch } from "@/lib/transaction-tools";
 
 function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; onPaid: (id: string) => void; disabled: boolean }) {
   return <ul className="divide-y">
@@ -33,20 +35,22 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
   if (booking.amount >= 0 || classify(booking).isTransfer) return null;
   const shared = isSharedHoliday(booking);
   return <Dialog open={open} onOpenChange={setOpen}>
+    <Tooltip label={shared ? "Bereits mit Raphael geteilt" : "Mit Raphael teilen"}>
     <DialogTrigger asChild>
-      <Button size="icon" variant="ghost" className="size-7" disabled={shared || !!storageError}
+      <Button size="icon" variant="ghost" className="size-9" disabled={shared || !!storageError}
         aria-label={`${shared ? "Bereits geteilt" : "Teilen"}: ${booking.description}`}
         title={shared ? "Bereits geteilt" : "Mit Raphael teilen"}>
         <Users className="size-3.5" />
       </Button>
     </DialogTrigger>
+    </Tooltip>
     <DialogContent variant="confirmation">
       <DialogHeader>
         <DialogTitle>Diese Buchung als geteilt markieren?</DialogTitle>
         <DialogDescription>Es zählt nur noch die Hälfte.</DialogDescription>
       </DialogHeader>
       <DialogBody className="min-w-0 space-y-2 text-sm">
-        <p className="truncate font-medium" title={booking.description}>{booking.description}</p>
+        <p className="truncate font-medium" title={booking.description}>{booking.merchantAlias ?? booking.description}</p>
         <p className="text-muted-foreground">{dateLabel(booking.date)} · Gesamt {currency(Math.abs(booking.amount))}</p>
         <p>Meine Hälfte: {currency(Math.abs(personalAmount({ ...booking, sharedWithRaphael: true })))}</p>
         {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
@@ -79,9 +83,8 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
     ? bookings.filter((row) => row.amount < 0 && !isSharedHoliday(row) && !classify(row).isTransfer)
     : [], [bookings, open]);
   const filtered = useMemo(() => {
-    const text = query.toLocaleLowerCase("de");
     const total = Math.abs(parseStatementAmount(amount) ?? NaN);
-    return candidates.filter((row) => (!text || row.description.toLocaleLowerCase("de").includes(text)) &&
+    return candidates.filter((row) => matchesTransactionSearch(row, query) &&
       (!month || row.date.startsWith(month)) && (!amount || Math.abs(row.amount) === total))
       .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
   }, [candidates, query, month, amount]);
@@ -89,12 +92,14 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
   const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setLimit(50); };
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>
+    <Tooltip label="Geteilte Buchungen und offene Beträge">
     <DialogTrigger asChild>
-    <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
+    <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative size-11" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
       <Users className="size-3.5" />{!iconOnly && "Geteilt"}
       {count > 0 && <span aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</span>}
     </Button>
     </DialogTrigger>
+    </Tooltip>
       <DialogContent variant="work" showCloseButton={false}>
         <Tabs.Root value={tab} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <DialogHeader>
@@ -125,7 +130,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
           {filtered.slice(0, limit).map((row) => <label key={row.id} className="flex cursor-pointer items-center gap-3 border-b p-3 text-sm last:border-b-0">
             <input type="checkbox" className="accent-primary" aria-label={`Teilen: ${row.description} ${row.date}`}
               checked={selected.includes(row.id)} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, row.id] : ids.filter((id) => id !== row.id))} />
-            <span className="min-w-0 flex-1"><span className="block truncate font-medium">{row.description}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
+            <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={row.description}>{row.merchantAlias ?? row.description}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
             <span className="shrink-0 text-right">
               <span className="block text-[10px] text-muted-foreground">Gesamt {currency(Math.abs(row.amount))}</span>
               {selected.includes(row.id) && <span className="block font-mono text-primary">Meine Hälfte (50 %)<br />{currency(Math.abs(personalAmount({ ...row, sharedWithRaphael: true })))}</span>}

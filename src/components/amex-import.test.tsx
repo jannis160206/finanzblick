@@ -32,7 +32,7 @@ it("accepts screenshots through the existing statement input without a second up
   ]);
   vi.mocked(parseStatementFile).mockResolvedValueOnce(parsed);
   render(<StatementImport />);
-  expect(screen.getByText("CSV/XLSX/PDF/PNG/JPEG/WebP · sichere Buchungen automatisch · max. 20 MB je Datei")).toBeTruthy();
+  expect(screen.getByText("CSV, Excel, PDF oder Amex-Screenshot · max. 20 MB")).toBeTruthy();
   const input = screen.getByLabelText<HTMLInputElement>("Kontoauszüge auswählen");
   expect(input.accept).toContain(".jpeg");
   expect(input.accept).toContain(".pdf");

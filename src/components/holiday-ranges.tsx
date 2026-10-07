@@ -4,6 +4,7 @@ import { useState } from "react";
 import { CalendarDays, X } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { Button } from "@/components/ui/button";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -32,9 +33,12 @@ export function HolidayRanges({ iconOnly = false }: { iconOnly?: boolean }) {
   </div>;
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <Button size={iconOnly ? "icon" : "sm"} variant="outline" disabled={!!storageError} aria-label="Urlaub" title="Urlaub"><CalendarDays className="size-3.5" />{!iconOnly && "Urlaub"}</Button>
-      </DialogTrigger>
+      <Tooltip label="Urlaubszeiträume verwalten">
+        <DialogTrigger asChild>
+          <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "size-11" : undefined}
+            disabled={!!storageError} aria-label="Urlaub" title="Urlaub"><CalendarDays className="size-3.5" />{!iconOnly && "Urlaub"}</Button>
+        </DialogTrigger>
+      </Tooltip>
       <DialogContent>
         <DialogHeader><DialogTitle>Urlaubs-Zeiträume</DialogTitle><DialogDescription>Max. 25 Tage je Zeitraum · Wiederkehrende Heimkosten bleiben im Alltag.</DialogDescription></DialogHeader>
         <DialogForm noValidate onSubmit={(event) => {

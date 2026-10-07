@@ -457,7 +457,7 @@ export function StatementImport({ reviewRequest = 0 }: {
   const fileButton = <Button
     size="sm"
     variant="outline"
-    className="ml-auto shrink-0"
+    className="ml-auto h-11 w-full shrink-0 sm:w-auto"
     aria-label="Dateien auswählen"
     disabled={!ready || !!storageError || ui.busy || !!ui.pending}
     onClick={() => fileInput.current?.click()}
@@ -470,7 +470,7 @@ export function StatementImport({ reviewRequest = 0 }: {
       <section
         aria-label="Kontoauszüge importieren"
         className={cn(
-          "panel mb-4 flex flex-wrap items-center justify-between gap-3 border-dashed px-4 py-3",
+          "mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-border/70 bg-card px-4 py-4 shadow-sm transition-colors motion-reduce:transition-none sm:px-5",
           ui.dragging && "border-primary bg-primary/5",
         )}
         onDragEnter={(event) => {
@@ -494,11 +494,11 @@ export function StatementImport({ reviewRequest = 0 }: {
         }}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <FileUp className="size-5 shrink-0 text-muted-foreground" />
-          <div>
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/5"><FileUp className="size-5 text-muted-foreground" /></span>
+          <div className="min-w-0">
             <p className="text-sm font-medium">Kontoauszüge hier ablegen</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              CSV/XLSX/PDF/PNG/JPEG/WebP · sichere Buchungen automatisch · max. 20 MB je Datei
+              CSV, Excel, PDF oder Amex-Screenshot · max. 20 MB
             </p>
           </div>
         </div>
@@ -519,11 +519,11 @@ export function StatementImport({ reviewRequest = 0 }: {
       </section>
       {state.importStatus && (
         <div
-          className="mb-4 text-xs text-muted-foreground"
+          className="mb-4 rounded-xl bg-muted/40 px-4 py-3 text-xs text-muted-foreground"
           aria-label="Importstatus"
         >
-          Übernommen {state.importStatus.imported} · offen {openReviewCount} ·
-          nicht lesbar {state.importStatus.issues.length}
+          Übernommen {state.importStatus.imported} · Prüfung offen {openReviewCount} ·
+          Hinweise {state.importStatus.issues.length}
           {!!state.importStatus.issues.length && (
             <details className="mt-2">
               <summary>Importhinweise</summary>

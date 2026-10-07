@@ -22,12 +22,13 @@ function mount(storageError: string | null = null) {
   return { update, state };
 }
 
-it("keeps statement upload directly in the drop zone and toolbar actions icon-only", () => {
+it("keeps one upload in the drop zone and separates search, filters, status and tools", () => {
   const { update } = mount();
   const toolbar = screen.getByRole("group", { name: "Umsatz-Werkzeugleiste" });
-  const buttons = within(toolbar).getAllByRole("button");
   expect(within(toolbar).queryByRole("button", { name: "Dateien auswählen" })).toBeNull();
-  for (const button of buttons) {
+  expect(within(toolbar).getByRole("button", { name: "Zuordnung prüfen" }).textContent).toBe("Prüfen");
+  for (const label of ["Geteilt", "Urlaub", "Weitere Filter", "Ansicht exportieren"]) {
+    const button = within(toolbar).getByRole("button", { name: label });
     expect(button.getAttribute("data-size")).toBe("icon");
     expect(button.querySelector("svg")).toBeTruthy();
   }
