@@ -137,7 +137,9 @@ it("supports an empty account and non-motorcycle goals without inventing funding
   expect(screen.getByText("Noch keine Ausgaben")).toBeTruthy();
   expect(screen.getByText("Noch kein Sparziel")).toBeTruthy();
   expect(screen.queryByLabelText("Motorrad-Finanzierung")).toBeNull();
-  expect(screen.queryByRole("region", { name: "Pocket-Verteilung diesen Monat" })).toBeNull();
+  const distribution = screen.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
+  expect(within(distribution).getByText(moneyText(0))).toBeTruthy();
+  expect(within(distribution).queryByLabelText("Sparkonto überwiesen")).toBeNull();
   expect(screen.getByRole("link", { name: "Monatsplan ergänzen" })).toBeTruthy();
   unmount();
   state.savingsGoals = [{ id: "camera", name: "Kamera", pocket: "Kamera", target: 1200, date: "2027-04-01" }];
@@ -170,4 +172,26 @@ it.each([false, true])("shows the savings recommendation or the actual explicitl
   expect(dashboard.timeline.find((row) => row.month === dashboard.currentMonth)?.rates.Sparkonto).toBe(301.4);
   if (executed) expect(within(savings).getByLabelText("Sparkonto überwiesen")).toBeTruthy();
   else expect(within(savings).queryByLabelText("Sparkonto überwiesen")).toBeNull();
+});
+
+it.each([0, -478.6])("keeps the savings card visible at zero for surplus %s without changing the funding model", (surplus) => {
+  const state = createEmptyAccountState();
+  state.settings.asOf = "2026-10-07";
+  state.financeRows = [{ id: "salary", kind: "income", label: "Gehalt", values: {
+    "2026-10": monthlyVariableBudget("2026-10").total + 780 + surplus,
+  } }];
+  state.plannedOneOffs = [plannedOneOffSchema.parse({
+    id: "licence", name: "Führerschein", date: "2026-10-20", amount: 780, pocket: "Sparkonto",
+  })];
+  const before = JSON.stringify(state);
+  const { dashboard, update } = mount(state);
+  const distribution = screen.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
+  expect(within(distribution).getByText("Sparempfehlung")).toBeTruthy();
+  expect(within(distribution).getByText(moneyText(0))).toBeTruthy();
+  expect(within(distribution).queryByLabelText("Sparkonto überwiesen")).toBeNull();
+  expect(dashboard.monthlyFunding).toEqual([]);
+  expect(dashboard.current.surplus).toBe(surplus);
+  expect(screen.getByRole("region", { name: "Geplante Ausgaben" })).toBeTruthy();
+  expect(JSON.stringify(state)).toBe(before);
+  expect(update).not.toHaveBeenCalled();
 });

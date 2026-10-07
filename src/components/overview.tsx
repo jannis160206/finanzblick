@@ -66,7 +66,10 @@ export function Overview() {
   const { state, dashboard: d } = useFinance();
   const { locked } = useSecurityMode();
   const [showCashflow, setShowCashflow] = useState(false);
-  const monthSplit = d.monthlyFunding;
+  const monthSplit = d.monthlyFunding.some((item) => item.id === "savings") ? d.monthlyFunding : [
+    { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 0, transferred: 0, done: false },
+    ...d.monthlyFunding,
+  ];
   const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
   const bikeSaved = motorcycle ? d.actualGoals[motorcycle.id] : 0;
   const bikeExtraLabel = (month: string) => month.slice(5) === "12" ? "Dec" :
@@ -144,7 +147,6 @@ export function Overview() {
         ))}
       </div>
       <div className="mb-5 grid gap-4 empty:hidden lg:grid-cols-2 [&>section:only-child]:col-span-full">
-      {monthSplit.length > 0 && (
         <section
           className="panel min-w-0 p-4 sm:p-5"
           aria-label="Pocket-Verteilung diesen Monat"
@@ -165,7 +167,6 @@ export function Overview() {
           })}
           </div>
         </section>
-      )}
       <PlannedOneOffLines />
       </div>
       <div className="mb-5 grid items-start gap-5 xl:grid-cols-[1.2fr_1fr]">

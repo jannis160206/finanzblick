@@ -173,7 +173,9 @@ test("empty mobile account stays readable without fake goals or funding", async 
   await expect(page.getByRole("img", { name: "Prognose des gesamten Pocket-Vermögens" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Monatsplan ergänzen" })).toBeVisible();
   await expect(page.getByLabel("Motorrad-Finanzierung")).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Pocket-Verteilung diesen Monat" })).toHaveCount(0);
+  const distribution = page.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
+  await expect(distribution).toContainText(currency(0));
+  await expect(distribution.getByLabel("Sparkonto überwiesen")).toHaveCount(0);
   await expect(page.getByText(/DEIN FINANZCOCKPIT|Ist · alle vier Pockets|Ohne Umbuchungen|NOCH BIS ZUM KAUF/)).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
   await capture(page, "overview-empty-320.png");
@@ -194,7 +196,7 @@ test("negative surplus keeps its amount and warning on a compact screen", async 
   expect((await snapshot(page)).state).toEqual(before.state);
 });
 
-test("a planned purchase cannot create a savings recommendation when the real surplus is negative", async ({ page }) => {
+test("the savings box stays beside planned expenses at zero when the real surplus is negative", async ({ page }) => {
   const state = fixture();
   state.financeRows = [{ id: "salary", label: "Gehalt", kind: "income", values: {
     "2026-10": monthlyVariableBudget("2026-10").total + 301.4,
@@ -206,7 +208,17 @@ test("a planned purchase cannot create a savings recommendation when the real su
   })];
   const before = await open(page, state);
   await expect(page.getByRole("region", { name: "Überschuss · Plan" })).toContainText(currency(-478.6));
-  await expect(page.locator('[data-funding-pot="Sparkonto"]')).toHaveCount(0);
+  const savings = page.locator('[data-funding-pot="Sparkonto"]');
+  await expect(savings).toBeVisible();
+  await expect(savings).toContainText(currency(0));
+  await expect(savings.getByText("Sparempfehlung", { exact: true })).toBeVisible();
+  await expect(savings.getByLabel("Sparkonto überwiesen")).toHaveCount(0);
+  const distribution = page.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
+  const planned = page.getByRole("region", { name: "Geplante Ausgaben" });
+  const left = await distribution.boundingBox();
+  const right = await planned.boundingBox();
+  expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x);
+  expect(left!.y).toBe(right!.y);
   await expect(page.getByRole("list", { name: "Geplant Oktober 2026" }).getByRole("listitem")).toHaveText("Führerschein 780 €");
   expect((await snapshot(page)).state).toEqual(before.state);
 });

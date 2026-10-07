@@ -403,7 +403,7 @@ test("reload advances the plan and pocket split without visiting plan", async ({
   await expect(split).toContainText(/Sparkonto.*180,00/);
 });
 
-test("zero allocations and matching Apple Care never open extra UI", async ({
+test("zero savings stay visible and matching Apple Care never opens a review", async ({
   page,
 }) => {
   const state = createSeed();
@@ -414,6 +414,9 @@ test("zero allocations and matching Apple Care never open extra UI", async ({
     values: { "2026-09": 14.99 },
   });
   await seed(page, state);
+  const privacy = page.getByRole("button", { name: /^Sicherheitsmodus (aktivieren|deaktivieren)$/ });
+  await expect(privacy).toBeEnabled();
+  if (await privacy.getAttribute("aria-pressed") === "true") await privacy.click();
   await page
     .getByLabel("Kontoauszüge auswählen")
     .setInputFiles(
@@ -428,13 +431,13 @@ test("zero allocations and matching Apple Care never open extra UI", async ({
   expect((await ledger(page)).transactions).toHaveLength(0);
   await page.goto("/");
   await expect(
-    page.getByRole("region", { name: "Pocket-Verteilung diesen Monat" }),
-  ).toHaveCount(0);
+    page.getByRole("region", { name: "Pocket-Verteilung diesen Monat", includeHidden: true }),
+  ).toContainText(/Sparkonto.*0,00/);
   await page.reload();
   await ledger(page);
   await expect(
-    page.getByRole("region", { name: "Pocket-Verteilung diesen Monat" }),
-  ).toHaveCount(0);
+    page.getByRole("region", { name: "Pocket-Verteilung diesen Monat", includeHidden: true }),
+  ).toContainText(/Sparkonto.*0,00/);
 });
 
 test("all Revolut statement pockets are locked including personal accounts", async ({
