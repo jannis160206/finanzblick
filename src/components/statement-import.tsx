@@ -42,6 +42,7 @@ import { accountLabel } from "@/lib/accounts";
 import { isAmexScreenshot } from "@/lib/import/identity";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 import { screenshotReviewMessage } from "@/lib/import/amex-screenshot";
+import { StatementImportStatus } from "@/components/statement-import-status";
 
 type Pending = {
   requestId: string;
@@ -518,21 +519,8 @@ export function StatementImport({ reviewRequest = 0 }: {
         {fileButton}
       </section>
       {state.importStatus && (
-        <div
-          className="mb-4 rounded-xl bg-muted/40 px-4 py-3 text-xs text-muted-foreground"
-          aria-label="Importstatus"
-        >
-          Übernommen {state.importStatus.imported} · Prüfung offen {openReviewCount} ·
-          Hinweise {state.importStatus.issues.length}
-          {!!state.importStatus.issues.length && (
-            <details className="mt-2">
-              <summary>Importhinweise</summary>
-              {state.importStatus.issues.map((issue) => (
-                <p key={issue}>{issue}</p>
-              ))}
-            </details>
-          )}
-        </div>
+        <StatementImportStatus imported={state.importStatus.imported} reviewCount={openReviewCount}
+          issues={state.importStatus.issues} />
       )}
       <Dialog
         open={ui.open && ui.review.length > 0}

@@ -116,6 +116,88 @@ async function open(page: Page, state: AppState) {
 }
 
 for (const width of [1440, 390]) {
+  test(`compact import feedback keeps every hint readable at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const state = fixture();
+    state.importStatus = {
+      imported: 351,
+      issues: [
+        "WhatsApp Image 2026-10-06 at 09.43.24 (5).jpeg, Zeile 5: Amex-Screenshot: Betrag prüfen.",
+      ],
+    };
+    state.reviewQueue = Array.from({ length: 370 }, (_, index) => ({
+      kind: "booking" as const,
+      id: `pending-${index}`,
+      message: "Betrag offen.",
+      draft: {
+        id: `pending-${index}`,
+        date: "2026-10-06",
+        description: `Unklar ${index}`,
+        amount: null,
+        bank: "Amex",
+        pocket: "Amex",
+        category: "Prüfen" as const,
+        includeInPlan: true,
+      },
+    }));
+    const before = await open(page, state);
+    const status = page.getByRole("region", {
+      name: "Importstatus",
+      exact: true,
+    });
+    await expect(status.getByText("351", { exact: true })).toBeVisible();
+    await expect(status.getByText("370", { exact: true })).toBeVisible();
+    const hints = status.getByRole("button", {
+      name: "Importhinweise",
+      exact: true,
+    });
+    await expect(hints).toContainText("1 Hinweis");
+    await expect(hints).toHaveAttribute("aria-expanded", "false");
+    await expect(status.getByRole("list")).toHaveCount(0);
+    await hints.focus();
+    await page.keyboard.press("Enter");
+    await expect(hints).toHaveAttribute("aria-expanded", "true");
+    const list = status.getByRole("list", {
+      name: "Importhinweise",
+      exact: true,
+    });
+    await expect(
+      list.getByText("Betrag prüfen.", { exact: true }),
+    ).toBeVisible();
+    await expect(list.getByText("Zeile 5", { exact: true })).toBeVisible();
+    await expect(
+      list.getByText("WhatsApp Image 2026-10-06 at 09.43.24 (5).jpeg", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    for (const size of width < 768 ? [390, 320] : [1440, 1024]) {
+      await page.setViewportSize({ width: size, height: 1000 });
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth > innerWidth,
+          ),
+        )
+        .toBe(false);
+    }
+    await status.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: testInfo.outputPath(`import-feedback-${width}-dark.png`),
+    });
+    await page
+      .getByRole("button", { name: "Farbschema wechseln", exact: true })
+      .click();
+    await expect(page.locator("html")).toHaveClass(/light/);
+    await page.screenshot({
+      path: testInfo.outputPath(`import-feedback-${width}-light.png`),
+    });
+    await hints.click();
+    await expect(status.getByRole("list")).toHaveCount(0);
+    expect((await snapshot(page)).state).toEqual(before.state);
+  });
+
   test(`search, filters, signed full-view export and responsive actions at ${width}px`, async ({
     page,
   }, testInfo) => {
