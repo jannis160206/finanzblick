@@ -4,6 +4,7 @@ import { AccountConfigError } from "./errors";
 export interface AccountConfig {
   databasePath: string;
   adminPassword: string;
+  adminPasswordMinimum: 4 | 12;
   origin: string | null;
   secureCookies: boolean;
   trustProxy: boolean;
@@ -61,16 +62,6 @@ export function readAccountConfig(): AccountConfig {
       "The account database must not be inside public.",
     );
   }
-  const adminPassword = process.env.FINANZBLICK_ADMIN_PASSWORD;
-  if (
-    !adminPassword ||
-    adminPassword.length < 12 ||
-    adminPassword.length > 128
-  ) {
-    throw new AccountConfigError(
-      "FINANZBLICK_ADMIN_PASSWORD must contain 12–128 characters.",
-    );
-  }
   let origin: string | null = null;
   if (process.env.FINANZBLICK_ORIGIN) {
     try {
@@ -92,6 +83,17 @@ export function readAccountConfig(): AccountConfig {
   }
   if (production && !origin) {
     throw new AccountConfigError("Production requires FINANZBLICK_ORIGIN.");
+  }
+  const localDevelopment =
+    ["development", "test"].includes(process.env.NODE_ENV ?? "") &&
+    origin !== null &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(new URL(origin).hostname);
+  const adminPasswordMinimum = localDevelopment ? 4 : 12;
+  const adminPassword = process.env.FINANZBLICK_ADMIN_PASSWORD;
+  if (!adminPassword || adminPassword.length < adminPasswordMinimum || adminPassword.length > 128) {
+    throw new AccountConfigError(
+      `FINANZBLICK_ADMIN_PASSWORD must contain ${adminPasswordMinimum}–128 characters.`,
+    );
   }
   const proxy = process.env.FINANZBLICK_TRUST_PROXY;
   if (proxy !== undefined && proxy !== "true" && proxy !== "false") {
@@ -122,6 +124,7 @@ export function readAccountConfig(): AccountConfig {
   return {
     databasePath,
     adminPassword,
+    adminPasswordMinimum,
     origin,
     secureCookies: production,
     trustProxy: proxy === "true",

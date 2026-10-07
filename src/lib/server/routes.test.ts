@@ -93,6 +93,68 @@ afterEach(() => {
 });
 
 describe("account and finance routes", () => {
+  it("allows a short administrator password only in explicitly loopback-configured development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("FINANZBLICK_ORIGIN", "http://localhost:3000");
+    vi.stubEnv("FINANZBLICK_ADMIN_PASSWORD", "1234");
+    const response = await login(request("/api/auth/login", "POST", { username: "admin", password: "1234" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ user: { username: "admin", role: "admin" } });
+    const cookie = response.headers.get("set-cookie")!.split(";")[0];
+    expect(response.headers.get("set-cookie")).not.toContain("; Secure");
+    expect((await session(request("/api/auth/session", "GET", undefined, cookie))).status).toBe(200);
+    expect((await login(request("/api/auth/login", "POST", { username: "admin", password: "wrong" }))).status).toBe(401);
+    expect((await register(request("/api/auth/register", "POST", { username: "alice", password: "1234" }))).status).toBe(400);
+    expect((await logout(request("/api/auth/logout", "POST", {}, cookie))).status).toBe(200);
+    expect((await session(request("/api/auth/session", "GET", undefined, cookie))).status).toBe(401);
+  });
+
+  it.each(["http://127.0.0.1:3000", "http://localhost:3000", "http://[::1]:3000"])(
+    "permits a four-character administrator password for local test origin %s",
+    (origin) => {
+      vi.stubEnv("FINANZBLICK_ORIGIN", origin);
+      vi.stubEnv("FINANZBLICK_ADMIN_PASSWORD", "1234");
+      expect(readAccountConfig().adminPasswordMinimum).toBe(4);
+      vi.stubEnv("FINANZBLICK_ADMIN_PASSWORD", "123");
+      expect(() => readAccountConfig()).toThrow(/4–128/);
+    },
+  );
+
+  it.each([
+    ["production", "https://finance.example"],
+    ["production", "https://127.0.0.1:3000"],
+    ["development", "http://192.168.1.10:3000"],
+    ["development", "https://finance.example"],
+    ["test", ""],
+  ])("rejects short administrator passwords outside local development (%s, %s)", (nodeEnv, origin) => {
+    vi.stubEnv("NODE_ENV", nodeEnv);
+    vi.stubEnv("FINANZBLICK_ORIGIN", origin);
+    vi.stubEnv("FINANZBLICK_ADMIN_PASSWORD", "1234");
+    expect(() => readAccountConfig()).toThrow(/12–128/);
+  });
+
+  it("retains an administrator's existing finances when switching to a short local password", async () => {
+    const first = await login(request("/api/auth/login", "POST", { username: "admin", password }));
+    const firstUser = (await first.json()).user;
+    const firstCookie = first.headers.get("set-cookie")!.split(";")[0];
+    accountIds.set(firstCookie, firstUser.id);
+    const state = blankTestState();
+    expect((await putFinance(request("/api/finance", "PUT", { state, revision: 0 }, firstCookie))).status).toBe(200);
+    vi.stubEnv("FINANZBLICK_ORIGIN", "http://localhost:3000");
+    vi.stubEnv("FINANZBLICK_ADMIN_PASSWORD", "1234");
+    const changed = await login(request("/api/auth/login", "POST", { username: "admin", password: "1234" }));
+    const user = (await changed.json()).user;
+    const cookie = changed.headers.get("set-cookie")!.split(";")[0];
+    accountIds.set(cookie, user.id);
+    expect(user).toEqual(firstUser);
+    expect((await session(request("/api/auth/session", "GET", undefined, firstCookie))).status).toBe(401);
+    expect(await (await getFinance(request("/api/finance", "GET", undefined, cookie))).json()).toEqual({ state, revision: 1 });
+    closeAccountDatabases();
+    const restored = await login(request("/api/auth/login", "POST", { username: "admin", password: "1234" }));
+    expect(restored.status).toBe(200);
+    expect((await restored.json()).user).toEqual(user);
+  });
+
   it("registers blank isolated accounts, persists revisions, and rejects stale/malicious writes", async () => {
     const alice = await registerUser();
     const bob = await registerUser("bob");

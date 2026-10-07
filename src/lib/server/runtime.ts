@@ -27,12 +27,12 @@ export async function getAccountRuntime(): Promise<{
     entry = {
       database,
       passwordFingerprint: fingerprint,
-      ready: database.synchronizeAdmin(config.adminPassword),
+      ready: database.synchronizeAdmin(config.adminPassword, Date.now(), config.adminPasswordMinimum),
     };
     cache().set(config.databasePath, entry);
   } else if (entry.passwordFingerprint !== fingerprint) {
     entry.ready = entry.ready.then(() =>
-      entry!.database.synchronizeAdmin(config.adminPassword),
+      entry!.database.synchronizeAdmin(config.adminPassword, Date.now(), config.adminPasswordMinimum),
     );
     entry.passwordFingerprint = fingerprint;
   }

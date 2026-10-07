@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   accountCredentialsSchema,
+  accountLoginCredentialsSchema,
   accountUserSchema,
   financeSnapshotSchema,
   financeUpdateSchema,
@@ -170,10 +171,10 @@ export class AccountDatabase {
     );
   }
 
-  async synchronizeAdmin(password: string, now = Date.now()): Promise<void> {
-    if (password.length < 12 || password.length > 128) {
+  async synchronizeAdmin(password: string, now = Date.now(), minimumLength: 4 | 12 = 12): Promise<void> {
+    if (password.length < minimumLength || password.length > 128) {
       throw new AccountConfigError(
-        "Administrator password must contain 12–128 characters.",
+        `Administrator password must contain ${minimumLength}–128 characters.`,
       );
     }
     const existing = this.findUser("admin");
@@ -245,7 +246,7 @@ export class AccountDatabase {
     oldToken?: string | null,
     now = Date.now(),
   ): Promise<AccountSession> {
-    const credentials = accountCredentialsSchema.parse({ username, password });
+    const credentials = accountLoginCredentialsSchema.parse({ username, password });
     const user = this.findUser(credentials.username);
     const valid = await verifyPassword(
       credentials.password,

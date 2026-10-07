@@ -67,13 +67,31 @@ describe("AccountForm", () => {
   it.each([
     ["", "", "Benutzername"],
     ["invalid name", password, "Benutzername"],
-    ["my.account", "too short", "Passwort"],
+    ["my.account", "", "Passwort"],
   ])("rejects invalid credentials (%s) without a request", (username, secret, invalidField) => {
     render(<AccountForm mode="login" />);
     fillCredentials(username, secret);
     submit();
     expect(screen.getByRole("alert").textContent).toContain("Bitte überprüfe deine Eingaben.");
     expect(screen.getByLabelText(invalidField).getAttribute("aria-invalid")).toBe("true");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("submits an existing local administrator's short password without applying registration rules", async () => {
+    fetchMock.mockResolvedValue(reply({ user: { id: "local-admin", username: "admin", role: "admin" } }));
+    render(<AccountForm mode="login" />);
+    fillCredentials("admin", "1234");
+    submit();
+    await waitFor(() => expect(assign).toHaveBeenCalledExactlyOnceWith("/"));
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ username: "admin", password: "1234" });
+  });
+
+  it("still requires a long password for registration", () => {
+    render(<AccountForm mode="register" />);
+    fillCredentials("alice", "1234");
+    fireEvent.change(screen.getByLabelText("Passwort bestätigen"), { target: { value: "1234" } });
+    submit(true);
+    expect(screen.getByText("Dein Passwort muss 12–128 Zeichen lang sein.")).toBeTruthy();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

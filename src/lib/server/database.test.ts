@@ -32,6 +32,14 @@ afterEach(() => {
 });
 
 describe("AccountDatabase", () => {
+  it("requires strong administrator provisioning unless the runtime explicitly allows local development", async () => {
+    const database = open();
+    await expect(database.synchronizeAdmin("1234")).rejects.toThrow(/12–128/);
+    await database.synchronizeAdmin("1234", Date.now(), 4);
+    expect((await database.login("admin", "1234")).user.role).toBe("admin");
+    await expect(database.register("alice", "1234")).rejects.toThrow();
+  });
+
   it("rejects hard-linked database files before opening them", () => {
     const original = join(directory, "original.sqlite");
     const linked = join(directory, "accounts.sqlite");

@@ -13,7 +13,7 @@ import {
   MonitorSmartphone,
   UserRound,
 } from "lucide-react";
-import { accountCredentialsSchema, accountUserSchema } from "@/lib/account-schema";
+import { accountCredentialsSchema, accountLoginCredentialsSchema, accountUserSchema } from "@/lib/account-schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -67,7 +67,8 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
     event.preventDefault();
     if (submitting.current || registrationClosed) return;
 
-    const credentials = accountCredentialsSchema.safeParse({
+    const credentialsSchema = registering ? accountCredentialsSchema : accountLoginCredentialsSchema;
+    const credentials = credentialsSchema.safeParse({
       username: username.trim(),
       password,
     });
@@ -75,8 +76,8 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
     if (!accountCredentialsSchema.shape.username.safeParse(username.trim()).success) {
       nextErrors.username = "Bitte nutze 3–32 Zeichen: Buchstaben, Zahlen, Punkt, Bindestrich oder Unterstrich.";
     }
-    if (!accountCredentialsSchema.shape.password.safeParse(password).success) {
-      nextErrors.password = "Dein Passwort muss 12–128 Zeichen lang sein.";
+    if (!credentialsSchema.shape.password.safeParse(password).success) {
+      nextErrors.password = registering ? "Dein Passwort muss 12–128 Zeichen lang sein." : "Bitte gib dein Passwort ein (höchstens 128 Zeichen).";
     }
     if (registering && password !== confirmation) {
       nextErrors.confirmation = "Die Passwörter stimmen nicht überein.";
@@ -247,7 +248,7 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
                         type={showPassword ? "text" : "password"}
                         autoComplete={registering ? "new-password" : "current-password"}
                         required
-                        minLength={12}
+                        minLength={registering ? 12 : 1}
                         maxLength={128}
                         value={password}
                         onChange={(event) => updateField("password", event.target.value)}

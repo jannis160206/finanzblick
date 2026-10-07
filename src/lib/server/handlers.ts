@@ -1,5 +1,6 @@
 import {
   accountCredentialsSchema,
+  accountLoginCredentialsSchema,
   financeUpdateSchema,
 } from "@/lib/account-schema";
 import { isAccountMode } from "./config";
@@ -39,7 +40,8 @@ export async function credentialsHandler(
       action === "register" ? 5 : 30,
       window,
     );
-    const credentials = accountCredentialsSchema.parse(
+    const schema = action === "register" ? accountCredentialsSchema : accountLoginCredentialsSchema;
+    const credentials = schema.parse(
       await readJsonBody(request, 2048),
     );
     database.consumeRateLimit(

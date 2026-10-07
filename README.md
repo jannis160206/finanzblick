@@ -47,6 +47,8 @@ FINANZBLICK_REGISTRATION_ENABLED=true
 
 Anschließend den Entwicklungsserver neu starten und ausschließlich **http://127.0.0.1:3000** verwenden. Die lokale Testdatenbank liegt in `.local-data/finanzblick.sqlite` und wird nicht in Git aufgenommen. Das lokale Testkonto und die Serverkonten sind voneinander getrennt. Für den reinen Browsermodus `FINANZBLICK_AUTH` entfernen und den Entwicklungsserver erneut starten.
 
+Nur im Entwicklungs-/Testmodus mit ausdrücklich konfigurierter Loopback-Origin (`localhost`, `127.0.0.1` oder `::1`) darf das lokale Administratorpasswort bereits vier Zeichen lang sein. Produktion und nicht lokale Origins verlangen weiterhin mindestens 12 Zeichen; Registrierungen ebenfalls. Der Benutzername bleibt `admin`. Ein Passwortwechsel behält dessen bestehende Daten und widerruft alte Sitzungen. Das Passwort ausschließlich in der ignorierten `.env.local` setzen, niemals in Git. Die Anmeldung ist lokal unter `/login` erreichbar; anonyme Dashboard-Aufrufe werden dorthin umgeleitet.
+
 ### Hetzner aktivieren
 
 **Vor Änderungen** die bisherigen Browserdaten als Excel sichern. Die bestehende Caddy-Passwortsperre bleibt zunächst aktiv. Als root:

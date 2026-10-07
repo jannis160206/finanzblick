@@ -26,6 +26,10 @@ export const accountCredentialsSchema = z
   })
   .strict();
 
+export const accountLoginCredentialsSchema = accountCredentialsSchema.extend({
+  password: z.string().min(1).max(128),
+});
+
 export const financeUpdateSchema = z
   .object({
     state: appStateSchema,
