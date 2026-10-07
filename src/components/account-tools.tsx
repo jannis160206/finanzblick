@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
-import { Download, LogOut } from "lucide-react";
+import { Download, LoaderCircle, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAccountWorkspace } from "@/components/account-context";
 import { useFinance } from "@/components/finance-provider";
@@ -9,8 +9,9 @@ import { accountStorageKey } from "@/lib/account-finance-storage";
 import { FINANCE_STORAGE_KEY, FINANCE_BACKUP_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { appStateSchema } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
-export function AccountLogout() {
+export function AccountLogout({ compact = false }: { compact?: boolean }) {
   const workspace = useAccountWorkspace();
   const { saved } = useFinance();
   const [busy, setBusy] = useState(false);
@@ -44,13 +45,15 @@ export function AccountLogout() {
       setBusy(false);
     }
   }
-  return <div className="flex items-center gap-2">
-    <span className="hidden text-xs text-muted-foreground sm:block">{workspace.user.username}</span>
-    <Button variant="ghost" size="icon" disabled={busy || !saved} onClick={() => void logout()}
+  return <div className={compact ? "contents" : "space-y-2"}>
+    <Button variant="ghost" size={compact ? "icon" : "sm"} disabled={busy || !saved} onClick={() => void logout()}
+      className={cn("text-muted-foreground hover:bg-destructive/10 hover:text-destructive", compact ? "size-11" : "w-full justify-start")}
+      aria-busy={busy}
       aria-label="Abmelden" title={!saved ? "Bitte zuerst Änderungen synchronisieren." : "Abmelden"}>
-      <LogOut className="size-4" />
+      {busy ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" /> : <LogOut aria-hidden="true" className="size-4" />}
+      {!compact && (busy ? "Meldet ab …" : "Abmelden")}
     </Button>
-    {error && <span role="alert" className="max-w-48 text-xs text-destructive">{error}</span>}
+    {error && <p role="alert" className={cn("text-xs leading-relaxed text-destructive", compact && "col-span-2 px-2 pb-1")}>{error}</p>}
   </div>;
 }
 

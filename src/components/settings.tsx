@@ -12,6 +12,8 @@ import { AppearanceControls } from "@/components/appearance-controls";
 import { InteractionSoundsSetting } from "@/components/interaction-sounds";
 import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
+import { AccountProfileSettings } from "@/components/account-profile";
+import { useAccountWorkspace } from "@/components/account-context";
 import { latestTRBalance } from "@/lib/calc";
 import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
 import { defaultSeasonalPreference, seasonalThemes, seasonalLabels, type SeasonalPreference, type SeasonalTheme } from "@/lib/seasonal-theme";
@@ -56,6 +58,7 @@ function TradeRepublicSettings() {
 }
 
 export function Settings() {
+  const workspace = useAccountWorkspace();
   const { state, update } = useFinance();
   const { setPreview, testTheme, setTestTheme } = useSeasonalTheme();
   const [draft, setDraft] = useState<SeasonalPreference | null>(null);
@@ -64,9 +67,10 @@ export function Settings() {
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
   useEffect(() => () => { setPreview(null); setTestTheme(null); }, [setPreview, setTestTheme]);
   return <>
-    <PageHeading eyebrow="KONFIGURATION" title="Einstellungen" />
+    <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
     <div className="space-y-4">
-      <section id="jahreszeit" className="panel p-4" aria-labelledby="appearance-heading">
+      <AccountProfileSettings />
+      <section id="jahreszeit" className="panel scroll-mt-24 p-4" aria-labelledby="appearance-heading">
         <h2 id="appearance-heading" className="mb-4 text-sm font-semibold">Erscheinungsbild</h2>
         <form onSubmit={(event) => {
           event.preventDefault(); const parsed = seasonalPreferenceSchema.safeParse(value); if (!parsed.success) return;
@@ -93,7 +97,7 @@ export function Settings() {
       </section>
       <SavingsGoals />
       <TradeRepublicSettings />
-      <section className="panel flex flex-wrap items-center justify-between gap-3 p-4" aria-label="Sicherung">
+      <section id="sicherung" className="panel scroll-mt-24 flex flex-wrap items-center justify-between gap-3 p-4" aria-label="Sicherung">
         <h2 className="text-sm font-semibold">Sicherung</h2>
         <ExcelActions compact />
       </section>

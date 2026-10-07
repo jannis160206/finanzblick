@@ -49,6 +49,7 @@ test("site registration, mobile login, user isolation, revision conflicts and lo
     await expect(phone.getByText("Synchronisiert", { exact: true })).toBeAttached();
     const phoneState = await (await mobile.request.get("/api/finance", { headers })).json();
     expect(phoneState.state.holidayRanges).toEqual(state.holidayRanges);
+    await phone.getByRole("button", { name: "Navigation öffnen" }).click();
     await phone.getByRole("button", { name: "Abmelden", exact: true }).click();
     await expect(phone).toHaveURL(/\/login$/);
     expect((await mobile.request.get("/api/finance", { headers })).status()).toBe(401);

@@ -37,7 +37,8 @@ import { ReviewCount } from "@/components/review-count";
 import { cn } from "@/lib/utils";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { useAccountWorkspace } from "@/components/account-context";
-import { AccountLogout, AccountSyncTools } from "@/components/account-tools";
+import { AccountSyncTools } from "@/components/account-tools";
+import { AccountSidebarProfile } from "@/components/account-profile";
 
 const navigation = [
   { href: "/", label: "Übersicht", icon: LayoutDashboard },
@@ -65,7 +66,7 @@ export function AppShell({
   const current = navigation.find((item) => item.href === pathname);
   const links = (
     <nav aria-label="Hauptnavigation" className="flex h-full flex-col gap-1.5">
-      {navigation.map((item) => (
+      {navigation.filter((item) => !workspace || item.href !== "/einstellungen").map((item) => (
         <div key={item.href} className={item.href === "/einstellungen" ? "mt-auto border-t pt-4" : undefined}>
         <Link
           href={item.href}
@@ -110,10 +111,12 @@ export function AppShell({
             <span className="font-normal text-muted-foreground">blick</span>
           </span>
         </Link>
-        <div className="min-h-0 flex-1 px-4 pt-4 pb-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-5">
           {links}
         </div>
-        <div className="mx-4 mb-5 rounded-xl bg-background/70 p-3">
+        {workspace ? <div className="shrink-0 px-4 pb-4">
+          <AccountSidebarProfile active={pathname === "/einstellungen"} onNavigate={() => setMenuOpen(false)} />
+        </div> : <div className="mx-4 mb-5 rounded-xl bg-background/70 p-3">
           <div className="flex items-center gap-2 text-xs font-medium">
             <span className="flex size-8 items-center justify-center rounded-lg bg-muted">
               <LockKeyhole className="size-4 text-muted-foreground" />
@@ -121,9 +124,9 @@ export function AppShell({
             Privater Workspace
           </div>
           <p className="mt-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
-            {workspace ? "Deine Daten auf allen deinen Geräten." : "Daten bleiben in diesem Browser."}
+            Daten bleiben in diesem Browser.
           </p>
-        </div>
+        </div>}
       </aside>
       <div className="lg:pl-[224px]">
         <header className="app-header sticky top-0 z-20 flex h-[76px] items-center justify-between gap-2 border-b bg-background/95 px-4 backdrop-blur-sm sm:px-7 xl:px-9">
@@ -170,7 +173,6 @@ export function AppShell({
               </>
             )}
             <div className="mx-1 h-5 border-l" />
-            <AccountLogout />
             <Button
               variant="ghost"
               size="icon"
@@ -263,8 +265,9 @@ export function AppShell({
             <DialogTitle className="flex items-center gap-3"><FinanzblickMark />Finanzblick</DialogTitle>
             <DialogDescription>Seite wählen</DialogDescription>
           </DialogHeader>
-          <DialogBody className="flex flex-col">
-            {links}
+          <DialogBody className="flex flex-col gap-6">
+            <div className="flex-1">{links}</div>
+            {workspace && <AccountSidebarProfile active={pathname === "/einstellungen"} onNavigate={() => setMenuOpen(false)} />}
           </DialogBody>
         </DialogContent>
       </Dialog>

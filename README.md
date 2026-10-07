@@ -193,6 +193,8 @@ Rechtsstand **18.09.2026**: Die Freigrenze nach § 67 Abs. 1 beträgt **2.615 �
 
 ## Erscheinungsbild
 
+Angemeldete Benutzer finden ihr Profil mit Avatar, Benutzername, Kontorolle, Einstellungen und Abmelden unten in der Seitenleiste – mobil im Navigationsmenü. **Profil & Einstellungen** bündelt die Kontoübersicht mit den bisherigen Einstellungen; Erscheinungsbild und Datensicherung sind direkt erreichbar. Abmelden bleibt bei noch nicht synchronisierten Änderungen gesperrt. Der reine Browsermodus behält seine bisherige Einstellungsnavigation.
+
 Unter **Einstellungen → Erscheinungsbild** stehen sechs Akzentfarben, ein Farbwähler und reduzierte Bewegung bereit. Die persönliche Farbe gilt für Logo, Navigation, Buttons, Diagrammakzent und Fokusmarkierungen – auch unter saisonalen Themes. Text und Buttons erhalten bei Bedarf kontrastgerechte Farben.
 
 Navigation, Aktionsmenüs und Dialoge verwenden ein gemeinsames Erscheinungsbild. Auf kleinen Bildschirmen öffnet die Navigation als linkes Seitenmenü. Dialoge unterscheiden Bestätigungen, Formulare und umfangreiche Prüflisten; Kopfzeile und Aktionen bleiben sichtbar, während der Inhalt scrollt. Kurze Filter öffnen direkt am Auslöser. Tastaturbedienung, Fokusmarkierungen und reduzierte Bewegung bleiben verfügbar. Entwürfe werden erst mit der jeweiligen Speicheraktion übernommen; Abbrechen, Schließen und Escape verwerfen ungespeicherte Änderungen. Bereits übernommene Importbuchungen und gespeicherte Urlaubszeiträume bleiben erhalten.
