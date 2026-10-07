@@ -63,6 +63,7 @@ it("prioritizes the surplus, keeps model values and plan/actual distinctions, an
   metrics.forEach((label, index) => expect(within(screen.getByRole("region", { name: label })).getByText(moneyText(values[index]))).toBeTruthy());
   expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(metrics[0]);
   expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.salaryReceived)}`)).toBeTruthy();
+  expect(dashboard.monthlyFunding.find((row) => row.id === "savings")?.amount).toBe(dashboard.current.surplus);
   expect(screen.queryByText(/DEIN FINANZCOCKPIT|Ist · alle vier Pockets|Ohne Umbuchungen|NOCH BIS ZUM KAUF/)).toBeNull();
   expect(screen.getByRole("link", { name: "Kontoauszüge importieren" }).getAttribute("href")).toBe("/umsaetze");
   expect(within(screen.getByRole("list", { name: "Geplant Oktober 2026" })).getByRole("listitem").textContent).toBe("Schrank 200 €");

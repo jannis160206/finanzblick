@@ -4,6 +4,7 @@ import { createEmptyAccountState } from "../src/lib/account-state";
 import { calculateDashboard, monthsForYear } from "../src/lib/calc";
 import { currency, monthLabel } from "../src/lib/format";
 import { initializeMotorcycleGoal } from "../src/lib/goals";
+import { monthlyVariableBudget } from "../src/lib/variable-budgets";
 import { appStateSchema, plannedOneOffSchema, type AppState } from "../src/lib/types";
 
 test.skip(process.env.PLAYWRIGHT_LOCAL_ADMIN !== "1", "Requires an isolated account-mode test database.");
@@ -83,6 +84,8 @@ for (const width of [1440, 390]) {
     await expect(savings.getByText("Sparkonto", { exact: true })).toBeVisible();
     await expect(savings.getByText("Sparempfehlung", { exact: true })).toBeVisible();
     await expect(savings).toContainText(currency(dashboard.monthlyFunding.find((row) => row.id === "savings")!.amount));
+    expect(dashboard.monthlyFunding.find((row) => row.id === "savings")!.amount).toBe(dashboard.current.surplus);
+    await expect(savings).toContainText(currency(dashboard.current.surplus));
     await expect(savings.getByLabel("Sparkonto überwiesen")).toHaveCount(0);
     const label = await savings.getByText("Sparkonto", { exact: true }).boundingBox();
     const caption = await savings.getByText("Sparempfehlung", { exact: true }).boundingBox();
@@ -188,5 +191,22 @@ test("negative surplus keeps its amount and warning on a compact screen", async 
   await expect(page.getByRole("region", { name: "Überschuss · Plan" })).toHaveClass(/border-destructive/);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
   await capture(page, "overview-negative-390.png");
+  expect((await snapshot(page)).state).toEqual(before.state);
+});
+
+test("a planned purchase cannot create a savings recommendation when the real surplus is negative", async ({ page }) => {
+  const state = fixture();
+  state.financeRows = [{ id: "salary", label: "Gehalt", kind: "income", values: {
+    "2026-10": monthlyVariableBudget("2026-10").total + 301.4,
+  } }];
+  state.transactions = [];
+  state.savingsGoals = [];
+  state.plannedOneOffs = [plannedOneOffSchema.parse({
+    id: "licence", name: "Führerschein", date: "2026-10-20", amount: 780, pocket: "Sparkonto",
+  })];
+  const before = await open(page, state);
+  await expect(page.getByRole("region", { name: "Überschuss · Plan" })).toContainText(currency(-478.6));
+  await expect(page.locator('[data-funding-pot="Sparkonto"]')).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Geplant Oktober 2026" }).getByRole("listitem")).toHaveText("Führerschein 780 €");
   expect((await snapshot(page)).state).toEqual(before.state);
 });

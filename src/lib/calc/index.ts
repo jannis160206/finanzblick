@@ -872,9 +872,12 @@ export function calculateDashboard(state: AppState) {
     }
     const interest = available ? monthlyInterest(month === currentMonth && latestTRBalance(state, snapshotDate) ? latestTRBalance(state, snapshotDate)!.balance : start.Notgroschen, month, state.settings) : 0;
     if (month === currentMonth) projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, Math.max(0, actualGoals[goal.id] - incomingPocketTransfers(state, goal.pocket, month, [goal.name]))]));
-    // Dated purchases reduce available surplus, never the existing goal instructions.
+    // Preserve goal instructions, but fund savings only from surplus after purchases.
     const allocation = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs - totals.goalExtras, goals, projectedGoals, month);
-    const split = { ...emptyPockets(), Sparkonto: allocation.savings, Urlaub: allocation.vacation };
+    const remaining = round(totals.surplus - sum(Object.values(allocation.goals)));
+    const savings = Math.min(allocation.savings, Math.max(0, remaining));
+    const split = { ...emptyPockets(), Sparkonto: savings,
+      Urlaub: round(Math.min(allocation.vacation, Math.max(0, remaining - savings))) };
     for (const goal of goals) {
       if (pocketKey(goal.pocket) === "motorrad") split.Motorrad += allocation.goals[goal.id];
       projectedGoals[goal.id] = round(Math.max(projectedGoals[goal.id] + allocation.goals[goal.id], month === currentMonth ? actualGoals[goal.id] : 0));
@@ -892,7 +895,7 @@ export function calculateDashboard(state: AppState) {
       end.Motorrad = goalBalance(state, motorcycle, actualPockets(state, monthEnd), monthEnd);
     if (available) previous = end;
     return { month, ...totals, start, rates, goalRates: allocation.goals, goalEnd: { ...projectedGoals }, out: input.pocketOut, movement, end, interest, bikeTransfer: rates.Motorrad, available,
-      remaining: round(totals.surplus - sum(Object.values(allocation.goals))), roundUp: roundUpTotal(state.transactions, month),
+      remaining, roundUp: roundUpTotal(state.transactions, month),
       total: sum([...Object.values(end), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => projectedGoals[goal.id])]),
       warning: !historical && (Object.values(end).some((value) => value < 0) || sum(Object.values(input.pocketIn)) > Math.max(0, totals.surplus)),
     };
