@@ -76,7 +76,7 @@ test("stale September overrides and extra variable lines cannot return after loa
   await page.reload();
   await expect(surplus).toContainText("1.305,10");
   await page.goto("/monate");
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   const cell = page.getByRole("textbox", {
     name: "Sonstiges September 2026",
     exact: true,
@@ -85,6 +85,6 @@ test("stale September overrides and extra variable lines cannot return after loa
   await expect(page.getByRole("textbox", { name: "Lebensmittel & Haushalt September 2026", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Lebensmittel & Haushalt September 2026", { exact: true })).toHaveText("250,00");
   await page.reload();
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   await expect(cell).toHaveCount(0);
 });

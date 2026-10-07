@@ -148,14 +148,14 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
 
   await test.step("fixed-cost category links persist without adding variable budget lines", async () => {
     await page.goto("/monate");
-    await page.getByRole("button", { name: "Ausnahmebearbeitung", exact: true }).click();
+    await page.getByRole("button", { name: "Plan bearbeiten", exact: true }).click();
     for (const label of ["Spotify", "PayPal Abo"]) {
       await page.getByRole("button", { name: `${label} bearbeiten`, exact: true }).click();
       await expect(page.getByLabel("Kategorie / Planverknüpfung", { exact: true })).toHaveValue("Abonnements");
       await page.getByRole("dialog").getByRole("button", { name: "Abbrechen", exact: true }).click();
     }
     for (const category of newCategories) {
-      await page.getByRole("button", { name: "Position", exact: true }).click();
+      await page.getByRole("button", { name: "Position hinzufügen", exact: true }).click();
       const dialog = page.getByRole("dialog");
       const link = dialog.getByLabel("Kategorie / Planverknüpfung", { exact: true });
       await groupedOptions(link);
@@ -170,7 +170,7 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
     }
     expect((await saved(page)).financeRows.filter((row) => row.kind === "variable")).toHaveLength(7);
     await page.reload();
-    await page.getByRole("button", { name: "Ausnahmebearbeitung", exact: true }).click();
+    await page.getByRole("button", { name: "Plan bearbeiten", exact: true }).click();
     for (const category of newCategories) {
       await page.getByRole("button", { name: `Budget ${category} bearbeiten`, exact: true }).click();
       await expect(page.getByLabel("Kategorie / Planverknüpfung", { exact: true })).toHaveValue(category);

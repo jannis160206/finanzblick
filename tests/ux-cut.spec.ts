@@ -101,7 +101,7 @@ test("months and budget details are read-only unless exceptions are explicitly o
   await expect(
     page.getByText("Gesamtbudget ersetzen", { exact: true }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   await expect(page.locator(".month-grid input").first()).toBeVisible();
   await expect(
     page.getByText("Gesamtbudget ersetzen", { exact: true }),

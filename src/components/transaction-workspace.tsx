@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { flexRender, type Row, type Table } from "@tanstack/react-table";
 import { Check, ChevronLeft, ChevronRight, CircleHelp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,21 +20,7 @@ import { cn } from "@/lib/utils";
 export type AssignmentStatus = "all" | "review" | "assigned";
 export type FilterChip = { id: string; label: string; remove: () => void };
 
-function subscribeToMobile(onChange: () => void) {
-  if (typeof window.matchMedia !== "function") return () => {};
-  const media = window.matchMedia("(max-width: 767px)");
-  media.addEventListener("change", onChange);
-  return () => media.removeEventListener("change", onChange);
-}
-export function useMobileLedger() {
-  return useSyncExternalStore(
-    subscribeToMobile,
-    () =>
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(max-width: 767px)").matches,
-    () => false,
-  );
-}
+export { useCompactLayout as useMobileLedger } from "@/components/ui/use-compact-layout";
 
 export function TransactionToolbar({
   search,

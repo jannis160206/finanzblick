@@ -201,7 +201,7 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
 
 test("month inputs update and survive reload", async ({ page }) => {
   await page.goto("/monate");
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   const input = page.getByRole("textbox", {
     name: "Nettogehalt September 2026",
     exact: true,
@@ -213,7 +213,7 @@ test("month inputs update and survive reload", async ({ page }) => {
     page.getByText("Lokal gespeichert", { exact: true }),
   ).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   await expect(input).toHaveValue("3.123,45");
 });
 

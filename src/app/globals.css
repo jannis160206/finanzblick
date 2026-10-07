@@ -339,17 +339,32 @@ body {
 }
 .month-grid th,
 .month-grid td {
-  padding: 6px 8px;
+  padding: 10px 12px;
 }
 .month-grid .sticky-label {
   position: sticky;
   left: 0;
   z-index: 2;
-  min-width: 260px;
+  min-width: 224px;
   background: var(--card);
   text-align: left;
   border-right: 1px solid var(--border);
-  padding-left: 14px;
+  padding-left: 16px;
+}
+.month-grid[data-view="month"] {
+  table-layout: fixed;
+}
+.month-grid[data-view="month"] .sticky-label {
+  min-width: 0;
+  width: 60%;
+  overflow-wrap: anywhere;
+}
+.month-grid[data-view="month"] th,
+.month-grid[data-view="month"] td {
+  padding: 12px;
+}
+.month-grid[data-view="month"] .sticky-label {
+  padding-left: 16px;
 }
 .month-grid thead th {
   position: sticky;
@@ -361,6 +376,9 @@ body {
 }
 .month-grid thead .sticky-label {
   z-index: 4;
+}
+.month-grid [data-current="true"] {
+  background: color-mix(in srgb, var(--primary) 4%, var(--card));
 }
 .month-grid .section-row th {
   background: var(--muted);
@@ -374,6 +392,13 @@ body {
   background: color-mix(in srgb, var(--primary) 6%, var(--card));
   padding-top: 11px;
   padding-bottom: 11px;
+}
+.month-grid .surplus-row th,
+.month-grid .surplus-row td {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+  padding-top: 15px;
+  padding-bottom: 15px;
 }
 * {
   scrollbar-width: thin;

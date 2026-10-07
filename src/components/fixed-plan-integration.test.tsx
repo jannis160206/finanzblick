@@ -235,7 +235,7 @@ it("shows the generated row in Months and deletes its fixed linkage without dele
   expect(table.getByText(row.label)).toBeTruthy();
   expect(table.getByLabelText(`${row.label} ${monthLabel("2026-10")}`).textContent).toBe("3,00");
   expect(table.queryByRole("button", { name: `${row.label} löschen` })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Ausnahmebearbeitung" }));
+  fireEvent.click(screen.getByRole("button", { name: "Plan bearbeiten" }));
   fireEvent.click(table.getByRole("button", { name: `${row.label} löschen` }));
   const dialog = within(screen.getByRole("dialog", { name: "Position löschen?" }));
   expect(view.read().state).toBe(before);
@@ -261,7 +261,7 @@ it("preserves a generated Months row's manual label and cell value across synchr
   const before = view.read().state;
   const untouched = structuredClone(untouchedPlan(before));
   const originalRow = expectFixedPlan(before, "Nordlicht Service");
-  fireEvent.click(screen.getByRole("button", { name: "Ausnahmebearbeitung" }));
+  fireEvent.click(screen.getByRole("button", { name: "Plan bearbeiten" }));
   fireEvent.click(screen.getByRole("button", { name: `${originalRow.label} bearbeiten` }));
   const dialog = within(screen.getByRole("dialog", { name: "Position bearbeiten" }));
   fireEvent.change(dialog.getByLabelText("Bezeichnung"), { target: { value: "Meine fixe Ausgabe" } });
@@ -297,7 +297,7 @@ it("detaches a generated Months row when RowEditor moves it to income and unmark
   const before = view.read().state;
   const untouched = structuredClone(untouchedPlan(before));
   const originalRow = expectFixedPlan(before, "Nordlicht Service");
-  fireEvent.click(screen.getByRole("button", { name: "Ausnahmebearbeitung" }));
+  fireEvent.click(screen.getByRole("button", { name: "Plan bearbeiten" }));
   fireEvent.click(screen.getByRole("button", { name: `${originalRow.label} bearbeiten` }));
   const dialog = within(screen.getByRole("dialog", { name: "Position bearbeiten" }));
   fireEvent.change(dialog.getByLabelText("Bereich"), { target: { value: "income" } });

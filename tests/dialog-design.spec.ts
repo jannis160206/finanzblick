@@ -204,8 +204,8 @@ test("goal and planning dialogs validate inputs, preserve drafts until save and 
   expect((await stored(page)).transactions[0]).toMatchObject(booking);
 
   await page.goto("/monate");
-  await page.getByRole("button", { name: "Ausnahmebearbeitung", exact: true }).click();
-  const addPosition = page.getByRole("button", { name: "Position", exact: true });
+  await page.getByRole("button", { name: "Plan bearbeiten", exact: true }).click();
+  const addPosition = page.getByRole("button", { name: "Position hinzufügen", exact: true });
   await addPosition.click();
   dialog = page.getByRole("dialog", { name: "Position hinzufügen", exact: true });
   await dialog.getByRole("button", { name: "Position speichern", exact: true }).click();

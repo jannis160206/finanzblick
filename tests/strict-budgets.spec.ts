@@ -38,7 +38,7 @@ test("strict budgets survive load and import, while saved vacation changes only 
   await page.goto("/monate");
   await expect(page.getByLabel("Mittagessen Oktober 2026", { exact: true })).toHaveText("85,00");
   await expect(page.getByLabel("Lebensmittel & Haushalt Oktober 2026", { exact: true })).toHaveText("250,00");
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   await expect(page.getByRole("textbox", { name: "Lebensmittel & Haushalt Oktober 2026", exact: true })).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Leasing Oktober 2026", exact: true })).toHaveValue("300,00");
   await page.reload();

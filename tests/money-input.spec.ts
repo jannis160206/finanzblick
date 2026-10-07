@@ -35,7 +35,7 @@ test.beforeEach(async ({ page }) => {
   );
   await page.goto("/monate");
   await stored(page);
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
 });
 
 test("focus and blur leave historical amounts untouched; editing and clearing still work", async ({
@@ -84,7 +84,7 @@ test("focus and blur leave historical amounts untouched; editing and clearing st
   await heading.click();
   await expect(input).toHaveValue("");
   await page.reload();
-  await page.getByRole("button", { name: "Ausnahmebearbeitung" }).click();
+  await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   await expect(input).toHaveValue("");
 });
 

@@ -193,8 +193,8 @@ for (const viewport of viewports) {
     await checkSelect(page, cdp, dialog.getByLabel("Kategorie", { exact: true }).first(), testInfo, "review-category");
     await dialog.getByRole("button", { name: "Prüfung schließen", exact: true }).click();
     await page.goto("/monate");
-    await page.getByRole("button", { name: "Ausnahmebearbeitung", exact: true }).click();
-    await page.getByRole("button", { name: "Position", exact: true }).click();
+    await page.getByRole("button", { name: "Plan bearbeiten", exact: true }).click();
+    await page.getByRole("button", { name: "Position hinzufügen", exact: true }).click();
     dialog = page.getByRole("dialog", { name: "Position hinzufügen", exact: true });
     for (const label of ["Bereich", "Kategorie / Planverknüpfung"]) {
       await checkSelect(page, cdp, dialog.getByLabel(label, { exact: true }), testInfo, label.replaceAll("/", "-"));
