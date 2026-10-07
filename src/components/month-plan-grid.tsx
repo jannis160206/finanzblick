@@ -1,10 +1,11 @@
 "use client";
 
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MoneyInput } from "@/components/finance-ui";
 import { useSecurityMode } from "@/components/security-mode-provider";
+import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import { financeRowValue, type Dashboard } from "@/lib/calc";
 import { currency, monthLabel, number } from "@/lib/format";
 import type { AppState, FinanceRow } from "@/lib/types";
@@ -17,6 +18,162 @@ const groups = [
   { kind: "fixed", label: "Fixkosten", total: "Fixkosten gesamt" },
   { kind: "variable", label: "Variable Ausgaben", total: "Variabel gesamt" },
 ] as const;
+
+type MonthPlanGridProps = {
+  months: string[];
+  timeline: MonthForecast[];
+  rows: FinanceRow[];
+  area: MonthPlanArea;
+  dashboard: Dashboard;
+  holidayRanges: AppState["holidayRanges"];
+  focused: boolean;
+  editing: boolean;
+  disabled: boolean;
+  onEdit: (row: FinanceRow) => void;
+  onDelete: (row: FinanceRow) => void;
+  onCommit: (row: FinanceRow, month: string, value: number | null) => void;
+};
+
+function MonthGroupRows({
+  group,
+  ...props
+}: MonthPlanGridProps & { group: (typeof groups)[number] }) {
+  const { months, dashboard, timeline, rows } = props;
+  const common = { months, currentMonth: dashboard.currentMonth };
+  return (
+    <>
+      {rows
+        .filter((row) => row.kind === group.kind)
+        .map((row) => (
+          <MonthPositionRow key={row.id} {...props} row={row} />
+        ))}
+      {group.kind === "variable" && (
+        <CalculatedMonthRow
+          {...common}
+          label="Amex offen"
+          values={timeline.map((row) => row.amexOpen)}
+          title={`Karte ${currency(dashboard.amex.outstanding)} · Eigenanteil ${currency(dashboard.amex.ownOutstanding)} · Rücklage ${currency(dashboard.amex.reserved)}`}
+        />
+      )}
+      <CalculatedMonthRow
+        {...common}
+        label={group.total}
+        strong
+        values={timeline.map((row) =>
+          group.kind === "income"
+            ? row.income
+            : group.kind === "fixed"
+              ? row.fixed
+              : row.variablePlan,
+        )}
+      />
+    </>
+  );
+}
+
+function MonthResultRows({ months, timeline, dashboard }: MonthPlanGridProps) {
+  const common = { months, currentMonth: dashboard.currentMonth };
+  return (
+    <>
+      {timeline.some((row) => row.plannedOneOffs > 0) && (
+        <CalculatedMonthRow
+          {...common}
+          label="Geplante Einmalausgaben"
+          values={timeline.map((row) => row.plannedOneOffs)}
+        />
+      )}
+      <CalculatedMonthRow
+        {...common}
+        label="Überschuss"
+        values={timeline.map((row) => row.surplus)}
+        strong
+        surplus
+      />
+    </>
+  );
+}
+
+function MonthPlanCard({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+      <table
+        className="month-grid data-table w-full"
+        data-view="month"
+        aria-label={label}
+      >
+        <caption className="border-b border-border/60 px-4 py-3 text-left text-sm font-semibold">
+          {label}
+        </caption>
+        <colgroup>
+          <col className="w-3/5" />
+          <col />
+        </colgroup>
+        <thead className="sr-only">
+          <tr>
+            <th scope="col">Position</th>
+            <th scope="col">Betrag · EUR</th>
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function MonthGroupCard({
+  group,
+  ...props
+}: MonthPlanGridProps & { group: (typeof groups)[number] }) {
+  return (
+    <MonthPlanCard label={group.label}>
+      <MonthGroupRows {...props} group={group} />
+    </MonthPlanCard>
+  );
+}
+
+function FocusedMonthPlan(props: MonthPlanGridProps) {
+  const selected = groups.filter(
+    (group) => props.area === "all" || props.area === group.kind,
+  );
+  return (
+    <div
+      role="group"
+      aria-label="Monatspositionen"
+      className="bg-muted/15 p-4 sm:p-5"
+    >
+      <div
+        className={cn(
+          "mx-auto grid items-start gap-4",
+          props.area === "all" ? "max-w-4xl lg:grid-cols-2" : "max-w-xl",
+        )}
+      >
+        <div className="min-w-0 space-y-4">
+          {selected
+            .filter(
+              (group) => props.area !== "all" || group.kind !== "variable",
+            )
+            .map((group) => (
+              <MonthGroupCard key={group.kind} {...props} group={group} />
+            ))}
+          <MonthPlanCard label="Monatsergebnis">
+            <MonthResultRows {...props} />
+          </MonthPlanCard>
+        </div>
+        {selected
+          .filter((group) => props.area === "all" && group.kind === "variable")
+          .map((group) => (
+            <MonthGroupCard key={group.kind} {...props} group={group} />
+          ))}
+      </div>
+    </div>
+  );
+}
 
 function CalculatedMonthRow({
   label,
@@ -175,33 +332,9 @@ function MonthPositionRow({
   );
 }
 
-export function MonthPlanGrid({
-  months,
-  timeline,
-  rows,
-  area,
-  dashboard,
-  holidayRanges,
-  focused,
-  editing,
-  disabled,
-  onEdit,
-  onDelete,
-  onCommit,
-}: {
-  months: string[];
-  timeline: MonthForecast[];
-  rows: FinanceRow[];
-  area: MonthPlanArea;
-  dashboard: Dashboard;
-  holidayRanges: AppState["holidayRanges"];
-  focused: boolean;
-  editing: boolean;
-  disabled: boolean;
-  onEdit: (row: FinanceRow) => void;
-  onDelete: (row: FinanceRow) => void;
-  onCommit: (row: FinanceRow, month: string, value: number | null) => void;
-}) {
+export function MonthPlanGrid(props: MonthPlanGridProps) {
+  const { months, area, dashboard, focused } = props;
+  const compact = useCompactLayout();
   const scrollRef = useRef<HTMLDivElement>(null);
   const currentColumn = useRef<HTMLTableCellElement>(null);
   const { locked } = useSecurityMode();
@@ -222,7 +355,7 @@ export function MonthPlanGrid({
       (label?.getBoundingClientRect().width ?? 0) -
       16;
   }, [focused, months, dashboard.currentMonth, locked]);
-  const common = { months, currentMonth: dashboard.currentMonth };
+  if (focused && !compact) return <FocusedMonthPlan {...props} />;
   return (
     <div
       ref={scrollRef}
@@ -279,59 +412,10 @@ export function MonthPlanGrid({
                     </span>
                   </th>
                 </tr>
-                {rows
-                  .filter((row) => row.kind === group.kind)
-                  .map((row) => (
-                    <MonthPositionRow
-                      key={row.id}
-                      row={row}
-                      months={months}
-                      dashboard={dashboard}
-                      holidayRanges={holidayRanges}
-                      focused={focused}
-                      editing={editing}
-                      disabled={disabled}
-                      onEdit={onEdit}
-                      onDelete={onDelete}
-                      onCommit={onCommit}
-                    />
-                  ))}
-                {group.kind === "variable" && (
-                  <CalculatedMonthRow
-                    {...common}
-                    label="Amex offen"
-                    values={timeline.map((row) => row.amexOpen)}
-                    title={`Karte ${currency(dashboard.amex.outstanding)} · Eigenanteil ${currency(dashboard.amex.ownOutstanding)} · Rücklage ${currency(dashboard.amex.reserved)}`}
-                  />
-                )}
-                <CalculatedMonthRow
-                  {...common}
-                  label={group.total}
-                  strong
-                  values={timeline.map((row) =>
-                    group.kind === "income"
-                      ? row.income
-                      : group.kind === "fixed"
-                        ? row.fixed
-                        : row.variablePlan,
-                  )}
-                />
+                <MonthGroupRows {...props} group={group} />
               </Fragment>
             ))}
-          {timeline.some((row) => row.plannedOneOffs > 0) && (
-            <CalculatedMonthRow
-              {...common}
-              label="Geplante Einmalausgaben"
-              values={timeline.map((row) => row.plannedOneOffs)}
-            />
-          )}
-          <CalculatedMonthRow
-            {...common}
-            label="Überschuss"
-            values={timeline.map((row) => row.surplus)}
-            strong
-            surplus
-          />
+          <MonthResultRows {...props} />
         </tbody>
       </table>
     </div>

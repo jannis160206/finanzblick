@@ -115,7 +115,48 @@ async function open(page: Page, state: AppState) {
   return snapshot(page);
 }
 
+async function blueColor(page: Page, shade: 400 | 600) {
+  return page.evaluate((value) => {
+    const sample = document.createElement("span");
+    sample.style.color = `var(--color-blue-${value})`;
+    document.body.append(sample);
+    const color = getComputedStyle(sample).color;
+    sample.remove();
+    return color;
+  }, shade);
+}
+
 for (const width of [1440, 390]) {
+  test(`fixed costs use a quiet blue recurring icon at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const state = fixture();
+    state.transactions[0].fixedCost = true;
+    const before = await open(page, state);
+    const booking =
+      width < 768
+        ? page.getByRole("listitem", { name: "Buchung: Möbel Müller" })
+        : page.getByRole("row").filter({ hasText: "Möbel Müller" });
+    const icon = booking.getByRole("img", { name: "Wiederkehrende Fixkosten" });
+    await expect(icon).toBeVisible();
+    await expect(booking.getByText("Fixkosten", { exact: true })).toHaveCount(
+      0,
+    );
+    await expect(icon.locator("svg.lucide-repeat")).toHaveCount(1);
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await expect(icon).toHaveCSS("color", await blueColor(page, 400));
+    await page.screenshot({
+      path: testInfo.outputPath(`recurring-icon-${width}-dark.png`),
+      fullPage: true,
+    });
+    await page.evaluate(() =>
+      document.documentElement.classList.remove("dark"),
+    );
+    await expect(icon).toHaveCSS("color", await blueColor(page, 600));
+    expect((await snapshot(page)).state).toEqual(before.state);
+  });
+
   test(`compact import feedback keeps every hint readable at ${width}px`, async ({
     page,
   }, testInfo) => {

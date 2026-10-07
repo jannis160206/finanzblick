@@ -188,10 +188,14 @@ it("navigates a focused month across years, respects both horizon bounds and jum
   const view = mount();
   const initial = view.read().state;
   monthView();
+  const focused = within(
+    screen.getByRole("group", { name: "Monatspositionen" }),
+  );
+  expect(focused.getAllByRole("table")).toHaveLength(4);
   expect(
-    within(screen.getByRole("table").querySelector("thead")!).getAllByRole(
-      "columnheader",
-    ),
+    within(
+      focused.getByRole("table", { name: "Einnahmen" }).querySelector("thead")!,
+    ).getAllByRole("columnheader"),
   ).toHaveLength(2);
   expect(screen.getByLabelText("Planungsmonat")).toHaveProperty(
     "value",
@@ -265,9 +269,15 @@ it("filters positions accent-insensitively while retaining complete summary and 
     target: { value: "gerateabo" },
   });
   expect(
-    within(screen.getByRole("table")).getByText("Geräteabo Firmenkonto"),
+    within(screen.getByRole("region", { name: "Monatsplan" })).getByText(
+      "Geräteabo Firmenkonto",
+    ),
   ).toBeTruthy();
-  expect(within(screen.getByRole("table")).queryByText("Miete")).toBeNull();
+  expect(
+    within(screen.getByRole("region", { name: "Monatsplan" })).queryByText(
+      "Miete",
+    ),
+  ).toBeNull();
   expect(cell("Überschuss").textContent).toBe(number(surplus));
   expect(cell("Geplante Einmalausgaben").textContent).toBe(number(980));
   summary("Überschuss", monthLabel("2026-10"), surplus);
@@ -278,7 +288,11 @@ it("filters positions accent-insensitively while retaining complete summary and 
   expect(screen.getByText("Keine Positionen gefunden")).toBeTruthy();
   summary("Überschuss", monthLabel("2026-10"), surplus);
   fireEvent.click(screen.getByRole("button", { name: "Filter zurücksetzen" }));
-  expect(within(screen.getByRole("table")).getByText("Miete")).toBeTruthy();
+  expect(
+    within(screen.getByRole("region", { name: "Monatsplan" })).getByText(
+      "Miete",
+    ),
+  ).toBeTruthy();
   expect(screen.getByLabelText("Planbereich filtern")).toHaveProperty(
     "value",
     "all",
@@ -286,6 +300,29 @@ it("filters positions accent-insensitively while retaining complete summary and 
   expect(
     screen.getByRole("textbox", { name: "Positionen suchen" }),
   ).toHaveProperty("value", "");
+  expect(view.read().state).toBe(initial);
+});
+
+it("keeps a selected area in a single compact card without changing complete totals", () => {
+  const view = mount();
+  const initial = view.read().state;
+  monthView();
+  fireEvent.change(screen.getByLabelText("Planbereich filtern"), {
+    target: { value: "variable" },
+  });
+  const focused = within(
+    screen.getByRole("group", { name: "Monatspositionen" }),
+  );
+  expect(focused.getAllByRole("table")).toHaveLength(2);
+  expect(
+    focused.getByRole("table", { name: "Variable Ausgaben" }),
+  ).toBeTruthy();
+  expect(focused.queryByRole("table", { name: "Fixkosten" })).toBeNull();
+  expect(cell("Überschuss").textContent).toBe(
+    number(view.read().dashboard.current.surplus),
+  );
+  expect(cell("Amex offen").textContent).toBe(number(90));
+  expect(cell("Geplante Einmalausgaben").textContent).toBe(number(980));
   expect(view.read().state).toBe(initial);
 });
 
@@ -470,15 +507,13 @@ it("deletes the latest linked fixed-cost bookings even if another booking arrive
     screen.getByRole("button", { name: `${linked.label} löschen` }),
   );
   act(() =>
-    view
-      .read()
-      .update((state) => ({
-        ...state,
-        transactions: [
-          ...state.transactions,
-          { ...booking, id: "second-contract", date: "2026-10-06" },
-        ],
-      })),
+    view.read().update((state) => ({
+      ...state,
+      transactions: [
+        ...state.transactions,
+        { ...booking, id: "second-contract", date: "2026-10-06" },
+      ],
+    })),
   );
   expect(
     view.read().state.financeRows.find((row) => row.id === linked.id)
@@ -507,12 +542,10 @@ it("disables deletion if the position disappears during confirmation", () => {
   fireEvent.click(screen.getByRole("button", { name: "Plan bearbeiten" }));
   fireEvent.click(screen.getByRole("button", { name: "Miete löschen" }));
   act(() =>
-    view
-      .read()
-      .update((state) => ({
-        ...state,
-        financeRows: state.financeRows.filter((row) => row.id !== "rent"),
-      })),
+    view.read().update((state) => ({
+      ...state,
+      financeRows: state.financeRows.filter((row) => row.id !== "rent"),
+    })),
   );
   const dialog = within(screen.getByRole("dialog"));
   expect(

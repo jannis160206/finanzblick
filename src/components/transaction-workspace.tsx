@@ -2,7 +2,14 @@
 
 import type { ReactNode } from "react";
 import { flexRender, type Row, type Table } from "@tanstack/react-table";
-import { Check, ChevronLeft, ChevronRight, CircleHelp, X } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  CircleHelp,
+  Repeat,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -170,8 +177,13 @@ export function TransactionCategoryCell({
           {category}
         </span>
         {fixed && (
-          <span className="rounded-md bg-primary/10 px-2 py-1 text-[11px] font-medium text-primary">
-            Fixkosten
+          <span
+            role="img"
+            aria-label="Wiederkehrende Fixkosten"
+            title="Fixkosten · wiederkehrend"
+            className="inline-flex shrink-0 text-blue-600 dark:text-blue-400"
+          >
+            <Repeat className="size-4" aria-hidden="true" />
           </span>
         )}
       </div>

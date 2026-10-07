@@ -141,7 +141,7 @@ async function noPageOverflow(page: Page) {
 }
 function row(page: Page, label: string) {
   return page
-    .getByRole("table", { name: "Monatsplanung" })
+    .getByRole("region", { name: "Monatsplan", exact: true })
     .getByRole("row", { name: new RegExp(`^${label} `) });
 }
 
@@ -195,7 +195,33 @@ test("desktop annual comparison, complete filtered totals and metadata edits rem
   await page
     .getByRole("button", { name: "Aktueller Monat", exact: true })
     .click();
-  await expect(grid.locator("thead").getByRole("columnheader")).toHaveCount(2);
+  const focused = page.getByRole("group", { name: "Monatspositionen" });
+  await expect(focused.getByRole("table")).toHaveCount(4);
+  for (const width of [1024, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const rent = row(page, "Miete");
+    const name = await rent.getByText("Miete", { exact: true }).boundingBox();
+    const amount = await rent
+      .getByLabel("Miete Oktober 2026", { exact: true })
+      .boundingBox();
+    const card = await focused
+      .getByRole("table", { name: "Fixkosten", exact: true })
+      .boundingBox();
+    expect(card!.width).toBeLessThanOrEqual(450);
+    expect(amount!.x - (name!.x + name!.width)).toBeLessThan(350);
+    await noPageOverflow(page);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await page.screenshot({
+    path: testInfo.outputPath("focused-month-desktop-dark.png"),
+    fullPage: true,
+  });
+  await page.evaluate(() => document.documentElement.classList.remove("dark"));
+  await page.screenshot({
+    path: testInfo.outputPath("focused-month-desktop-light.png"),
+    fullPage: true,
+  });
   const forecast = calculateDashboard(initial).current;
   const surplus = page.getByRole("article", {
     name: `Überschuss ${monthLabel("2026-10")}`,
@@ -204,8 +230,8 @@ test("desktop annual comparison, complete filtered totals and metadata edits rem
   await page
     .getByRole("textbox", { name: "Positionen suchen" })
     .fill("gerateabo");
-  await expect(grid.getByText(subscription, { exact: true })).toBeVisible();
-  await expect(grid.getByText("Miete", { exact: true })).toHaveCount(0);
+  await expect(focused.getByText(subscription, { exact: true })).toBeVisible();
+  await expect(focused.getByText("Miete", { exact: true })).toHaveCount(0);
   await expect(surplus).toContainText(currency(forecast.surplus));
   await page.getByLabel("Planbereich filtern").selectOption("income");
   await expect(page.getByText("Keine Positionen gefunden")).toBeVisible();

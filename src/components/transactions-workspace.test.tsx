@@ -105,6 +105,31 @@ function mount(initial = fixture(), storageError: string | null = null) {
   };
 }
 
+it.each([false, true])(
+  "uses only an accessible blue Repeat icon for fixed costs (mobile: %s)",
+  (mobile) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: mobile,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const initial = fixture();
+    initial.transactions[0].fixedCost = true;
+    const view = mount(initial);
+    const icon = screen.getByRole("img", {
+      name: "Wiederkehrende Fixkosten",
+    });
+    expect(icon.className).toContain("text-blue-600");
+    expect(icon.className).toContain("dark:text-blue-400");
+    expect(icon.querySelector("svg.lucide-repeat")).toBeTruthy();
+    expect(screen.queryByText("Fixkosten")).toBeNull();
+    expect(
+      screen.getAllByRole("img", { name: "Wiederkehrende Fixkosten" }),
+    ).toHaveLength(1);
+    expect(view.read()).toBe(initial);
+    expect(view.update).not.toHaveBeenCalled();
+  },
+);
 it("searches accent-insensitive words across alias and bank and removes only the selected filter", () => {
   const view = mount();
   fireEvent.change(screen.getByLabelText("Umsätze durchsuchen"), {
@@ -173,9 +198,15 @@ it("exposes advanced filters as removable chips without clearing unrelated value
   fireEvent.keyDown(document, { key: "Escape" });
   let chips = within(screen.getByRole("group", { name: "Aktive Filter" }));
   expect(chips.getAllByRole("button")).toHaveLength(5);
-  fireEvent.click(chips.getByRole("button", { name: "Filter entfernen: Im Plan" }));
-  fireEvent.click(chips.getByRole("button", { name: /^Filter entfernen: Ab / }));
-  fireEvent.click(chips.getByRole("button", { name: /^Filter entfernen: Bis / }));
+  fireEvent.click(
+    chips.getByRole("button", { name: "Filter entfernen: Im Plan" }),
+  );
+  fireEvent.click(
+    chips.getByRole("button", { name: /^Filter entfernen: Ab / }),
+  );
+  fireEvent.click(
+    chips.getByRole("button", { name: /^Filter entfernen: Bis / }),
+  );
   fireEvent.click(
     chips.getByRole("button", { name: "Filter entfernen: Transfers sichtbar" }),
   );
