@@ -155,9 +155,9 @@ test("settings contain only rare controls and save actions only appear after cha
     page.getByText("Einnahmen · Plan", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByRole("columnheader", { name: "Rest nach Motorradrate" }),
+    page.getByRole("region", { name: "Monatsprognose" }).getByText("Rest nach Zielraten", { exact: true }).first(),
   ).toBeVisible();
-  await expect(page.getByText(/Round-up/)).toHaveCount(1);
+  await expect(page.getByText(/Round-up/)).toHaveCount(0);
 });
 
 test("TR settings deduplicate and sort rates without overwriting newer balances and dates", async ({

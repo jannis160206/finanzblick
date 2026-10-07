@@ -34,7 +34,7 @@ export function PlannedOneOffLines() {
   </div>;
 }
 
-export function PlannedOneOffs() {
+export function PlannedOneOffs({ className }: { className?: string } = {}) {
   const finance = useFinance();
   const { state, update, storageError } = finance;
   const [open, setOpen] = useState(false);
@@ -83,7 +83,7 @@ export function PlannedOneOffs() {
     setShared(item.sharedWithRaphael === true); setError("");
   };
   return <Dialog open={open} onOpenChange={changeOpen}>
-    <DialogTrigger asChild><Button size="sm" variant="outline" disabled={!!storageError}>Geplante Ausgaben</Button></DialogTrigger>
+    <DialogTrigger asChild><Button size="sm" variant="outline" className={className} disabled={!!storageError}>Geplante Ausgaben</Button></DialogTrigger>
     <DialogContent>
       <DialogHeader><DialogTitle>Geplante Ausgaben</DialogTitle><DialogDescription>Einmalig oder in Raten.</DialogDescription></DialogHeader>
       <DialogForm noValidate onSubmit={(event) => {

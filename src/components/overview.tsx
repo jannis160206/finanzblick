@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import {
   ArrowDownLeft,
   ArrowRight,
@@ -9,6 +10,11 @@ import {
   CalendarDays,
   Check,
   CircleAlert,
+  ChevronDown,
+  PiggyBank,
+  ReceiptText,
+  Target,
+  Upload,
   Wallet,
 } from "lucide-react";
 import {
@@ -27,16 +33,14 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
+import { useSecurityMode } from "@/components/security-mode-provider";
 import { SeasonalIcon } from "@/components/seasonal-icons";
 import {
-  EmptyState,
-  PageHeading,
   SectionHeading,
   pocketColors,
   pocketIcons,
 } from "@/components/finance-ui";
 import { currency, dateLabel, monthLabel, number, shortCurrency } from "@/lib/format";
-import { vacationSavingPaused } from "@/lib/goals";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
@@ -60,6 +64,8 @@ const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function Overview() {
   const { state, dashboard: d } = useFinance();
+  const { locked } = useSecurityMode();
+  const [showCashflow, setShowCashflow] = useState(false);
   const monthSplit = d.monthlyFunding;
   const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
   const bikeSaved = motorcycle ? d.actualGoals[motorcycle.id] : 0;
@@ -67,11 +73,12 @@ export function Overview() {
     monthLabel(month, true).replace(/\s+\d{4}$/, "").replace(/\.$/, "");
   const kpis = [
     {
-      label: "Ersparnisse gesamt",
-      value: d.totalAssets,
-      note: "Ist · alle vier Pockets",
+      label: "Überschuss · Plan",
+      value: d.current.surplus,
       icon: Wallet,
-      color: "text-primary",
+      color: d.current.surplus >= 0 ? "text-primary" : "text-destructive",
+      prominent: true,
+      hint: "Nach Fixkosten, Alltagsbudget und geplanten Ausgaben.",
     },
     {
       label: "Einnahmen · Plan",
@@ -83,150 +90,117 @@ export function Overview() {
     {
       label: "Ausgaben · Ist",
       value: d.current.actualSpending,
-      note: "Ohne Umbuchungen",
       icon: ArrowUpRight,
       color: "text-chart-4",
+      hint: "Gebuchte Ausgaben ohne Umbuchungen.",
     },
     {
-      label: "Überschuss · Plan",
-      value: d.current.surplus,
-      note: d.current.plannedOneOffs ? "Nach Fixkosten, Variablen & geplanten Ausgaben" : "Nach Fixkosten & Variablen",
-      icon: Wallet,
-      color: d.current.surplus >= 0 ? "text-primary" : "text-destructive",
+      label: "Ersparnisse gesamt",
+      value: d.totalAssets,
+      icon: PiggyBank,
+      color: "text-primary",
     },
   ];
   const forecast = d.timeline
     .filter((row) => row.available && row.month >= d.currentMonth)
     .slice(0, 12)
     .map((row) => ({ ...row, label: monthLabel(row.month, true) }));
+  const hasAssetForecast = forecast.some((row) => row.total !== 0);
   return (
     <>
-      <div className="overview-heading">
-        <PageHeading
-          eyebrow="DEIN FINANZCOCKPIT"
-          title="Übersicht"
-          description={`Stand ${dateLabel(state.settings.asOf)}`}
-        >
-          <span className="inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
-            <SeasonalIcon
-              slot="overview"
-              className="seasonal-detail size-4"
-              fallback={
-                <CalendarDays className="size-4 text-muted-foreground" />
-              }
-            />
+      <div className="overview-heading mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <SeasonalIcon slot="overview" className="seasonal-detail size-4" fallback={<CalendarDays aria-hidden="true" className="size-4" />} />
             {monthLabel(d.currentMonth)}
-          </span>
-          <PlannedOneOffs />
-          <Button asChild size="sm">
-            <Link href="/umsaetze">
-              Kontoauszüge importieren
-              <ArrowRight className="size-4" />
-            </Link>
+            <span className="border-l border-border/70 pl-2 text-[11px]">Stand {dateLabel(state.settings.asOf)}</span>
+          </p>
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-[34px]">Übersicht</h1>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <PlannedOneOffs className="min-h-11 rounded-xl" />
+          <Button asChild size="sm" className="min-h-11 rounded-xl">
+            <Link href="/umsaetze" aria-label="Kontoauszüge importieren"><Upload aria-hidden="true" className="size-4" />Importieren</Link>
           </Button>
-        </PageHeading>
+        </div>
       </div>
-      <PlannedOneOffLines />
-      {motorcycle?.funding && d.currentMonth <= motorcycle.date.slice(0, 7) && <p className="mb-5 text-xs text-muted-foreground" aria-label="Motorrad-Finanzierung">
-        {`Motorrad ${number(bikeSaved, 0)} €${Object.entries(motorcycle.funding.extras).sort(([a], [b]) => a.localeCompare(b))
-          .map(([month, amount]) => ` · ${bikeExtraLabel(month)} +${number(amount, 0)}`).join("")} · monatlich ${number(motorcycle.funding.monthly, 0)} €`}
-      </p>}
-      {monthSplit.length > 0 && (
-        <section
-          className="panel mb-5 px-4 py-3 text-sm"
-          aria-label="Pocket-Verteilung diesen Monat"
-        >
-          <span className="font-medium">Diesen Monat:</span>{" "}
-          {monthSplit.map((item, index) => <span key={item.id} className="inline-flex items-center gap-1" data-funding-pot={item.pocket}>
-            {index > 0 && <span aria-hidden="true" className="mx-1">·</span>}
-            {item.name}{" "}
-            {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
-            {currency(item.amount)}
-          </span>)}
-        </section>
-      )}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {kpis.map((kpi) => (
-          <section key={kpi.label} className="panel p-5">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-medium text-muted-foreground">
-                {kpi.label}
-              </p>
-              {kpi.label === "Ausgaben · Ist" ? (
-                <SeasonalIcon
-                  slot="expense"
-                  className="seasonal-detail size-4"
-                  fallback={<kpi.icon className={cn("size-4", kpi.color)} />}
-                />
-              ) : (
-                <kpi.icon className={cn("size-4", kpi.color)} />
-              )}
+      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {kpis.map((kpi, index) => (
+          <section key={kpi.label} aria-label={kpi.label} aria-describedby={kpi.hint ? `overview-metric-${index}-hint` : undefined} className={cn("panel min-w-0 p-4 sm:p-5",
+            kpi.prominent ? cn("col-span-2 md:col-span-1", d.current.surplus >= 0 ? "border-primary/25 bg-primary/5" : "border-destructive/25 bg-destructive/5") :
+              kpi.label === "Ersparnisse gesamt" ? "col-span-2 md:col-span-1" : "")}>
+            <div className="flex items-start justify-between gap-2">
+              <p title={kpi.hint} className="pt-2 text-xs font-medium text-muted-foreground">{kpi.label}</p>
+              <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted/60", kpi.color)}>
+                {kpi.label === "Ausgaben · Ist" ? <SeasonalIcon slot="expense" className="seasonal-detail size-4" fallback={<kpi.icon aria-hidden="true" className="size-4" />} /> : <kpi.icon aria-hidden="true" className="size-4" />}
+              </span>
             </div>
-            <p className="mt-5 text-[28px] font-semibold tracking-tight tabular-nums">
+            <p className={cn("mt-4 break-words text-2xl font-semibold tracking-tight tabular-nums sm:text-[28px]", kpi.prominent && cn("text-3xl sm:text-[34px]", kpi.color))}>
               {currency(kpi.value)}
             </p>
-            <p className="mt-2 text-[11px] text-muted-foreground">{kpi.note}</p>
+            {kpi.note && <p className="mt-2 text-[11px] text-muted-foreground">{kpi.note}</p>}
+            {kpi.hint && <span id={`overview-metric-${index}-hint`} className="sr-only">{kpi.hint}</span>}
           </section>
         ))}
       </div>
-      <div className="mb-6 grid gap-5 xl:grid-cols-[1.45fr_1fr]">
-        <section className="panel p-5 sm:p-6">
+      <PlannedOneOffLines />
+      {monthSplit.length > 0 && (
+        <section
+          className="panel mb-5 flex flex-wrap items-center justify-between gap-3 bg-muted/15 px-4 py-3 sm:px-5"
+          aria-label="Pocket-Verteilung diesen Monat"
+        >
+          <span className="inline-flex items-center gap-2 text-xs font-medium"><PiggyBank aria-hidden="true" className="size-4 text-primary" />Monatsverteilung</span>
+          <div className="flex flex-wrap gap-2">
+          {monthSplit.map((item) => <span key={item.id} className="inline-flex items-center gap-2 rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs" data-funding-pot={item.pocket}>
+            <span className="text-muted-foreground">{item.name}</span>{" "}
+            {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
+            <span className="font-semibold tabular-nums">{currency(item.amount)}</span>
+          </span>)}
+          </div>
+        </section>
+      )}
+      <div className="mb-5 grid items-start gap-5 xl:grid-cols-[1.2fr_1fr]">
+        <section className="panel min-w-0 p-5 sm:p-6" aria-label="Deine Pockets">
           <SectionHeading
             title="Deine Pockets"
-            subtitle="Ist-Stände"
           >
             <Link
               href="/pockets"
-              className="text-xs text-primary hover:underline"
+              className="inline-flex min-h-8 items-center gap-1 text-xs text-muted-foreground hover:text-primary"
             >
-              Alle Pockets <ArrowUpRight className="inline size-3" />
+              Details <ArrowUpRight aria-hidden="true" className="size-3" />
             </Link>
           </SectionHeading>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-3">
             {pocketNames.map((pocket) => {
               const Icon = pocketIcons[pocket];
               return (
                 <Link
                   href="/pockets"
                   key={pocket}
-                  className="group rounded-xl border bg-background/40 p-4 transition-colors hover:border-muted-foreground/40"
+                  className="group min-w-0 rounded-2xl border border-border/70 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4"
                 >
                   <div className="mb-4 flex items-center justify-between">
-                    <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Icon
-                        className="size-4"
-                        style={{ color: pocketColors[pocket] }}
-                      />
-                      {pocket === "Notgroschen"
-                        ? "Notgroschen · Trade Republic"
-                        : pocket}
+                    <span className="flex size-9 items-center justify-center rounded-xl" style={{ color: pocketColors[pocket], background: `color-mix(in srgb, ${pocketColors[pocket]} 10%, transparent)` }}>
+                      <Icon aria-hidden="true" className="size-4" />
                     </span>
-                    <ArrowUpRight className="size-3 text-muted-foreground opacity-0 group-hover:opacity-100" />
+                    <ArrowUpRight aria-hidden="true" className="size-3 text-muted-foreground transition-colors group-hover:text-primary" />
                   </div>
-                  <p className="text-xl font-semibold tabular-nums">
+                  <p className="mb-1 break-words text-xs text-muted-foreground">{pocket}</p>
+                  <p className="break-words text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
                     {currency(d.actual[pocket])}
                   </p>
-                  {pocket === "Sparkonto" && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Round-up · {monthLabel(d.currentMonth, true)}: +{" "}
-                      {currency(d.currentRoundUp)}
-                    </p>
-                  )}
-                  <div className="mt-4 h-1 rounded-full bg-muted">
-                    <div
-                      className="h-full w-full rounded-full opacity-70"
-                      style={{ background: pocketColors[pocket] }}
-                    />
-                  </div>
+                  {pocket === "Notgroschen" && <p className="mt-2 text-[11px] text-muted-foreground">Trade Republic</p>}
+                  {pocket === "Sparkonto" && d.currentRoundUp > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Round-up +{currency(d.currentRoundUp)}</p>}
                 </Link>
               );
             })}
           </div>
         </section>
-        {motorcycle ? <section className="panel relative overflow-hidden p-5 sm:p-6">
+        {motorcycle ? <section className="panel min-w-0 overflow-hidden p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-semibold">
-              <Bike className="size-5 text-chart-4" />
+              <span className="flex size-9 items-center justify-center rounded-xl bg-chart-4/10"><Bike aria-hidden="true" className="size-4 text-chart-4" /></span>
               {motorcycle.name}
             </span>
             <span
@@ -252,23 +226,9 @@ export function Overview() {
                     : "Rate prüfen"}
             </span>
           </div>
-          <div className="my-7 flex items-end justify-between gap-3">
-            <div>
-              <p className="eyebrow mb-2">NOCH BIS ZUM KAUF</p>
-              <p className="text-5xl font-semibold tracking-tight">
-                {d.countdown.days}
-                <span className="ml-2 text-base font-normal text-muted-foreground">
-                  Tage
-                </span>
-              </p>
-            </div>
-            <span className="text-right text-xs text-muted-foreground">
-              {dateLabel(motorcycle.date)}
-              <br />
-              <span className="mt-1 inline-block">
-                Ziel {currency(motorcycle.target)}
-              </span>
-            </span>
+          <div className="my-5">
+            <p className="break-words text-xs text-muted-foreground"><span className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">{currency(bikeSaved)}</span> angespart</p>
+            <p className="mt-1 text-xs text-muted-foreground">Ziel {currency(motorcycle.target)}</p>
           </div>
           <div
             className="h-2 overflow-hidden rounded-full bg-muted"
@@ -283,9 +243,9 @@ export function Overview() {
               style={{ width: `${d.countdown.progress}%` }}
             />
           </div>
-          <div className="mt-2 flex justify-between text-xs text-muted-foreground">
-            <span>{currency(bikeSaved)} angespart</span>
-            <span>Ziel {currency(motorcycle.target)}</span>
+          <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5"><CalendarDays aria-hidden="true" className="size-3.5" />{dateLabel(motorcycle.date)}</span>
+            {!d.countdown.overdue && <span>{d.countdown.days} Tage</span>}
           </div>
           <div className="mt-6 grid grid-cols-2 gap-4 border-t pt-5">
             <div>
@@ -310,97 +270,72 @@ export function Overview() {
               </p>
             </div>
           </div>
+          {motorcycle.funding && d.currentMonth <= motorcycle.date.slice(0, 7) && <p className="mt-4 border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground" aria-label="Motorrad-Finanzierung">
+            {`Motorrad ${number(bikeSaved, 0)} €${Object.entries(motorcycle.funding.extras).sort(([a], [b]) => a.localeCompare(b))
+              .map(([month, amount]) => ` · ${bikeExtraLabel(month)} +${number(amount, 0)}`).join("")} · monatlich ${number(motorcycle.funding.monthly, 0)} €`}
+          </p>}
           <Link
             href="/einstellungen#sparziele"
-            className="mt-5 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+            className="mt-3 inline-flex min-h-9 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Sparziel anpassen <ArrowRight className="size-3" />
           </Link>
-        </section> : <section className="panel p-5 sm:p-6">
-          <SectionHeading title="Sparziele" />
+        </section> : <section className="panel min-w-0 p-5 sm:p-6" aria-label="Sparziele">
+          <SectionHeading title="Sparziele"><Target aria-hidden="true" className="size-4 text-primary" /></SectionHeading>
           <div className="space-y-3">
-            {d.goals.map((goal) => <div key={goal.id} className="flex justify-between gap-3 text-sm">
-              <span>{goal.name}<span className="block text-xs text-muted-foreground">Bis {dateLabel(goal.date)}</span></span>
-              <span>{currency(d.actualGoals[goal.id])} / {currency(goal.target)}</span>
-            </div>)}
-            {!d.goals.length && <p className="text-sm text-muted-foreground">{vacationSavingPaused(d.currentMonth)
-              ? "Überschuss ins Sparkonto · Urlaub ab März 2027."
-              : "Sparkonto zuerst, Rest an Urlaub."}</p>}
+            {d.goals.map((goal) => {
+              const progress = Math.max(0, Math.min(100, d.actualGoals[goal.id] / goal.target * 100));
+              return <article key={goal.id} aria-label={`Sparziel ${goal.name}`} className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4">
+                <h3 className="break-words text-sm font-medium">{goal.name}</h3>
+                <p className="mt-2 break-words text-xs text-muted-foreground"><span className="text-lg font-semibold text-foreground tabular-nums">{currency(d.actualGoals[goal.id])}</span> von {currency(goal.target)}</p>
+                <div role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
+                </div>
+                <p className="mt-3 text-[11px] text-muted-foreground">Bis {dateLabel(goal.date)}</p>
+              </article>;
+            })}
+            {!d.goals.length && <div className="flex flex-col items-center rounded-2xl border border-dashed bg-muted/10 px-4 py-6 text-center">
+              <Target aria-hidden="true" className="mb-3 size-7 text-primary/70" />
+              <p className="text-sm font-medium">Noch kein Sparziel</p>
+            </div>}
           </div>
           <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
         </section>}
       </div>
-      <section className="panel mb-6 overflow-hidden">
-        <div className="px-5 pt-5 sm:px-6">
-          <SectionHeading
-            title="Die nächsten 90 Tage"
-          >
-            <span className="status-pill border text-muted-foreground">
-              Prognose
-            </span>
-          </SectionHeading>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="data-table w-full">
-            <thead>
-              <tr>
-                <th>Monat</th>
-                <th className="text-right">Einnahmen</th>
-                <th className="text-right">Fixkosten</th>
-                <th className="text-right">Alltagsbudget</th>
-                <th className="text-right">Motorrad</th>
-                <th className="text-right">Rest nach Motorradrate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.ninetyDays.map((row, i) => (
-                <tr key={row.month}>
-                  <td className="font-medium">
-                    {monthLabel(row.month)}
-                    {i === 0 && (
-                      <span className="ml-2 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                        Aktuell
-                      </span>
-                    )}
-                  </td>
-                  <td className="text-right font-mono">
-                    {currency(row.income)}
-                  </td>
-                  <td className="text-right font-mono text-muted-foreground">
-                    {currency(row.fixed)}
-                  </td>
-                  <td className="text-right font-mono text-muted-foreground">
-                    {currency(row.variablePlan)}
-                  </td>
-                  <td className="text-right font-mono text-chart-4">
-                    {currency(row.bikeTransfer)}
-                  </td>
-                  <td
-                    className={cn(
-                      "text-right font-mono font-semibold",
-                      row.remaining >= 0 ? "text-primary" : "text-destructive",
-                    )}
-                  >
-                    {currency(row.remaining)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <section className="panel mb-5 p-5 sm:p-6" aria-label="Monatsprognose">
+        <SectionHeading title="Die nächsten 90 Tage"><span className="status-pill border text-muted-foreground">Prognose</span></SectionHeading>
+        <div className="grid gap-3 lg:grid-cols-3">
+          {d.ninetyDays.map((row, index) => <article key={row.month} aria-label={`Prognose ${monthLabel(row.month)}`} className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-medium">{monthLabel(row.month)}</h3>
+              {index === 0 && <span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] text-primary">Aktuell</span>}
+            </div>
+            <p className={cn("mt-4 break-words text-2xl font-semibold tracking-tight tabular-nums", row.remaining >= 0 ? "text-primary" : "text-destructive")}>{currency(row.remaining)}</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">Rest nach Zielraten</p>
+            <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-border/60 pt-4">
+              {[
+                { label: "Einnahmen", value: row.income }, { label: "Fixkosten", value: row.fixed },
+                { label: "Alltagsbudget", value: row.variablePlan }, { label: "Zielraten", value: row.surplus - row.remaining },
+              ].map(({ label, value }) => <div key={label} className="min-w-0">
+                <dt className="text-[11px] text-muted-foreground">{label}</dt>
+                <dd className="mt-1 break-words text-xs font-medium tabular-nums">{currency(value)}</dd>
+              </div>)}
+            </dl>
+          </article>)}
         </div>
       </section>
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <section className="panel min-w-0 p-5 sm:p-6">
           <SectionHeading
             title="Vermögensentwicklung"
-            subtitle="Prognose · 12 Monate · inkl. Nettozinsen"
+            subtitle={hasAssetForecast ? `Prognose · ${forecast.length} ${forecast.length === 1 ? "Monat" : "Monate"}` : undefined}
           />
-          <div
+          {hasAssetForecast ? <div
             className="h-64"
             role="img"
             aria-label="Prognose des gesamten Pocket-Vermögens"
           >
-            <ResponsiveContainer width="100%" height="100%">
+            {!locked && <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={forecast}
                 margin={{ left: -15, right: 8, top: 10 }}
@@ -438,14 +373,15 @@ export function Overview() {
                   isAnimationActive={false}
                 />
               </AreaChart>
-            </ResponsiveContainer>
-          </div>
+            </ResponsiveContainer>}
+          </div> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
+            <Link href="/monate" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
+          </div>}
         </section>
         <section className="panel min-w-0 p-5 sm:p-6">
           <SectionHeading
             title="Ausgaben nach Kategorie"
-            subtitle={`Ist · ${monthLabel(d.currentMonth)}`}
-          />
+          ><span className="status-pill border text-muted-foreground">Ist</span></SectionHeading>
           {d.spending.length ? (
             <div className="flex min-h-64 flex-col items-center gap-3 sm:flex-row">
               <div
@@ -453,7 +389,7 @@ export function Overview() {
                 role="img"
                 aria-label="Aktuelle Ausgaben nach Kategorie"
               >
-                <ResponsiveContainer width="100%" height="100%">
+                {!locked && <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={d.spending}
@@ -477,41 +413,43 @@ export function Overview() {
                       formatter={tooltipCurrency}
                     />
                   </PieChart>
-                </ResponsiveContainer>
+                </ResponsiveContainer>}
               </div>
               <div className="w-full space-y-3 sm:w-1/2">
                 {d.spending.map((row, i) => (
                   <div
                     key={row.name}
-                    className="flex items-center justify-between gap-3 text-[11px]"
+                    className="flex items-center justify-between gap-3 text-xs"
                   >
-                    <span className="flex items-center gap-2 text-muted-foreground">
+                    <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
                       <span
                         className="size-2 shrink-0 rounded-full"
                         style={{
                           background: chartColors[i % chartColors.length],
                         }}
                       />
-                      {row.name}
+                      <span className="break-words">{row.name}</span>
                     </span>
-                    <span className="font-mono">{currency(row.value)}</span>
+                    <span className="shrink-0 font-medium tabular-nums">{currency(row.value)}</span>
                   </div>
                 ))}
               </div>
             </div>
           ) : (
-            <EmptyState
-              title="Noch keine Ausgaben"
-              description="Umsätze importieren."
-            />
+            <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
+              <ReceiptText aria-hidden="true" className="mb-3 size-7 text-muted-foreground" />
+              <p className="text-sm font-medium">Noch keine Ausgaben</p>
+              <Link href="/umsaetze" className="mt-2 inline-flex min-h-11 items-center gap-1 text-xs text-primary">Umsätze importieren <ArrowRight aria-hidden="true" className="size-3" /></Link>
+            </div>
           )}
         </section>
-        <section className="panel min-w-0 p-5 sm:p-6 xl:col-span-2">
-          <SectionHeading
-            title="Einnahmen & Ausgaben"
-            subtitle="Plan · nächste sechs Monate"
-          >
-            <div className="flex gap-4 text-[11px] text-muted-foreground">
+        {forecast.length > 0 && <details className="panel group min-w-0 p-5 sm:p-6 xl:col-span-2" onToggle={(event) => setShowCashflow(event.currentTarget.open)}>
+          <summary className="flex min-h-11 cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+            <span><span className="block font-semibold tracking-tight">Einnahmen & Ausgaben</span><span className="mt-1 block text-xs text-muted-foreground">Plan · 6 Monate</span></span>
+            <ChevronDown aria-hidden="true" className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          {showCashflow && !locked && <div className="mt-5">
+            <div className="mb-4 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
               <span>
                 <i className="mr-1.5 inline-block size-2 rounded-sm bg-chart-1" />
                 Einnahmen
@@ -525,7 +463,6 @@ export function Overview() {
                 Alltagsbudget
               </span>
             </div>
-          </SectionHeading>
           <div
             className="h-56"
             role="img"
@@ -587,7 +524,8 @@ export function Overview() {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </section>
+          </div>}
+        </details>}
       </div>
     </>
   );
