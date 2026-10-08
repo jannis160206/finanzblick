@@ -107,20 +107,42 @@ export class AutomationStore {
     });
   }
 
-  enqueueBackfill(userId: string, now = Date.now()): AutomationJob {
+  enqueueBackfill(
+    userId: string,
+    now = Date.now(),
+    options: { rerun?: boolean } = {},
+  ): AutomationJob {
     return this.accounts.transaction((db) => {
       const existing = db
         .prepare(
           `SELECT ${columns} FROM automation_jobs WHERE user_id = ? AND kind = 'backfill'`,
         )
         .get(userId);
-      if (existing) return automationJobSchema.parse(existing);
-      const id = randomUUID();
-      db.prepare(
-        `INSERT INTO automation_jobs
+      const previous = existing ? automationJobSchema.parse(existing) : null;
+      if (
+        previous &&
+        (!options.rerun ||
+          (previous.status !== "COMPLETED" && previous.status !== "FAILED"))
+      )
+        return previous;
+      const id = previous?.id ?? randomUUID();
+      if (previous) {
+        db.prepare(
+          `UPDATE automation_jobs SET status = 'QUEUED', progress = 0,
+          attempts = 0, cursor = 0, total = 0, error = NULL, owner = NULL,
+          available_at = ?, updated_at = ?, created_at = ?
+          WHERE id = ? AND user_id = ? AND kind = 'backfill'`,
+        ).run(now, now, now, id, userId);
+        db.prepare(
+          "DELETE FROM automation_backfill_items WHERE job_id = ?",
+        ).run(id);
+      } else {
+        db.prepare(
+          `INSERT INTO automation_jobs
         (id, user_id, kind, name, status, available_at, updated_at, created_at)
         VALUES (?, ?, 'backfill', 'Historische Händlerzuordnung', 'QUEUED', ?, ?, ?)`,
-      ).run(id, userId, now, now, now);
+        ).run(id, userId, now, now, now);
+      }
       // SQLite snapshots IDs without materializing every account's finance state in JS.
       db.prepare(
         `INSERT INTO automation_backfill_items
@@ -147,12 +169,12 @@ export class AutomationStore {
     });
   }
 
-  enqueueAllBackfills(): number {
+  enqueueAllBackfills(options: { rerun?: boolean } = {}): number {
     const users = this.accounts.read((db) =>
       db.prepare("SELECT user_id FROM finance ORDER BY user_id").all(),
     );
     for (const row of users)
-      this.enqueueBackfill(z.string().parse(row.user_id));
+      this.enqueueBackfill(z.string().parse(row.user_id), Date.now(), options);
     return users.length;
   }
 

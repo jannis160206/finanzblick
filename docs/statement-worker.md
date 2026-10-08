@@ -122,6 +122,21 @@ Cursor. Jeder Batch committed Daten und Cursor zusammen; nach Neustart läuft
 der nächste Batch weiter. Neue Umsätze werden über ihre normalen Auszugsjobs
 verarbeitet. Gesperrte Entscheidungen bleiben unverändert.
 
+Für eine ausdrücklich gewünschte erneute Prüfung **aller aktuell vorhandenen**
+Buchungen, einschließlich später hinzugekommener Umsätze:
+
+```sh
+npm run backfill -- --rerun
+```
+
+`--rerun` setzt nur abgeschlossene oder endgültig fehlgeschlagene Backfill-Jobs
+atomar zurück und erstellt deren ID-Liste neu. Laufende oder wartende Jobs behalten
+ihren bisherigen Cursor und werden nicht unterbrochen. Ohne diesen Schalter bleibt
+der einmalige Backfill idempotent. Manuelle Händler-/Kategorieentscheidungen sind
+auch bei einer Wiederholung geschützt; es entstehen keine zusätzlichen Buchungen.
+Beim vServer-Aufruf den Schalter ebenfalls hinter `scripts/statement-backfill.ts`
+anhängen.
+
 Die bestehende App speichert Finanzstände als JSON-Snapshot, nicht als einzelne
 Umsatzzeilen. Deshalb wird für jeden Batch **nur ein Konto**, aber dessen
 vollständiger, auf 20 MiB begrenzter Snapshot gelesen/geschrieben. Der

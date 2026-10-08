@@ -270,6 +270,189 @@ it("resumes a 200-row backfill by stable IDs after reopening and never changes l
   expect(store.claim(owner)).toBeNull();
 });
 
+it.each(["COMPLETED", "FAILED"] as const)(
+  "explicitly reruns a %s backfill with a fresh snapshot and protected manual choices",
+  async (status) => {
+    const row = transactionSchema.parse({
+      id: "locked",
+      date: "2026-10-08",
+      bank: "Amex",
+      pocket: "Amex",
+      description: "BILLA",
+      amount: -42,
+      category: "Shopping",
+      merchantAlias: "Mein Laden",
+      manualCategory: true,
+      includeInPlan: true,
+    });
+    accounts.putFinance(
+      userId,
+      { ...blankTestState(), transactions: [row] },
+      0,
+    );
+    const job = store.enqueueBackfill(userId);
+    await worker.process(store.claim(owner)!);
+    accounts.transaction((db) => {
+      db.prepare(
+        "UPDATE automation_jobs SET status = ?, attempts = 5, error = 'Test failure' WHERE id = ?",
+      ).run(status, job.id);
+    });
+    const before = accounts.getFinance(userId);
+    const added = transactionSchema.parse({
+      ...row,
+      id: "added",
+      description: "PENNY FILIALE 4711",
+      category: "Prüfen",
+      merchantAlias: undefined,
+      manualCategory: false,
+      is_locked: false,
+    });
+    accounts.putFinance(
+      userId,
+      {
+        ...before.state!,
+        transactions: [...before.state!.transactions, added],
+        fixedReceipts: [
+          {
+            key: "duplicate",
+            date: added.date,
+            amount: added.amount,
+            category: added.category,
+            booking: added,
+          },
+          {
+            key: "receipt",
+            date: added.date,
+            amount: added.amount,
+            category: added.category,
+            booking: { ...added, id: "receipt-only", description: "Müller" },
+          },
+        ],
+      },
+      before.revision,
+    );
+    expect(store.enqueueBackfill(userId)).toMatchObject({
+      id: job.id,
+      status,
+      total: 1,
+    });
+    const now = Date.now() + 1;
+    expect(store.enqueueAllBackfills({ rerun: true })).toBe(1);
+    const reset = store.snapshot(userId).jobs[0];
+    expect(reset).toMatchObject({
+      id: job.id,
+      status: "QUEUED",
+      progress: 0,
+      attempts: 0,
+      cursor: 0,
+      total: 3,
+      error: null,
+    });
+    expect(store.enqueueBackfill(userId, now, { rerun: true })).toEqual(reset);
+    await worker.process(store.claim(owner)!);
+    const final = accounts.getFinance(userId).state!;
+    expect(final.transactions).toHaveLength(2);
+    expect(final.transactions[0]).toEqual(before.state!.transactions[0]);
+    expect(final.transactions[1]).toMatchObject({
+      merchantAlias: "PENNY",
+      category: "Lebensmittel",
+    });
+    expect(final.fixedReceipts?.[1].booking).toMatchObject({
+      merchantAlias: "Müller",
+      category: "Drogerie",
+    });
+    expect(store.snapshot(userId).jobs[0]).toMatchObject({
+      status: "COMPLETED",
+      cursor: 3,
+      total: 3,
+      progress: 100,
+    });
+  },
+);
+
+it("does not reset a running backfill or its frozen IDs when a repeat is requested", async () => {
+  const row = transactionSchema.parse({
+    id: "original",
+    date: "2026-10-08",
+    bank: "Amex",
+    pocket: "Amex",
+    description: "BILLA",
+    amount: -42,
+    category: "Prüfen",
+    includeInPlan: true,
+  });
+  accounts.putFinance(userId, { ...blankTestState(), transactions: [row] }, 0);
+  const job = store.enqueueBackfill(userId);
+  const claimed = store.claim(owner)!;
+  const snapshot = accounts.getFinance(userId);
+  accounts.putFinance(
+    userId,
+    { ...snapshot.state!, transactions: [row, { ...row, id: "later" }] },
+    snapshot.revision,
+  );
+  expect(
+    store.enqueueBackfill(userId, Date.now(), { rerun: true }),
+  ).toMatchObject({
+    id: job.id,
+    status: "PROCESSING",
+    total: 1,
+    cursor: 0,
+  });
+  await worker.process(claimed);
+  expect(
+    accounts.getFinance(userId).state!.transactions[1].merchantAlias,
+  ).toBeUndefined();
+});
+
+it("rolls back both the terminal job reset and frozen ID replacement on failure", () => {
+  const row = transactionSchema.parse({
+    id: "original",
+    date: "2026-10-08",
+    bank: "Amex",
+    pocket: "Amex",
+    description: "BILLA",
+    amount: -42,
+    category: "Prüfen",
+    includeInPlan: true,
+  });
+  accounts.putFinance(userId, { ...blankTestState(), transactions: [row] }, 0);
+  const job = store.enqueueBackfill(userId);
+  accounts.transaction((db) =>
+    db
+      .prepare("UPDATE automation_jobs SET attempts = ? WHERE id = ?")
+      .run(MAX_ATTEMPTS - 1, job.id),
+  );
+  store.fail(owner, store.claim(owner)!, "Test failure");
+  const terminal = store.snapshot(userId).jobs[0];
+  expect(terminal.status).toBe("FAILED");
+  const snapshot = accounts.getFinance(userId);
+  accounts.putFinance(
+    userId,
+    { ...snapshot.state!, transactions: [{ ...row, id: "replacement" }] },
+    snapshot.revision,
+  );
+  accounts.transaction((db) =>
+    db.exec(`
+    CREATE TRIGGER reject_backfill_reset BEFORE UPDATE OF total ON automation_jobs
+    WHEN OLD.status = 'QUEUED'
+    BEGIN SELECT RAISE(ABORT, 'Simulated reset failure'); END;
+  `),
+  );
+  expect(() =>
+    store.enqueueBackfill(userId, Date.now(), { rerun: true }),
+  ).toThrow("Simulated reset failure");
+  expect(store.snapshot(userId).jobs[0]).toEqual(terminal);
+  const ids = accounts.read((db) =>
+    db
+      .prepare(
+        "SELECT transaction_id FROM automation_backfill_items WHERE job_id = ?",
+      )
+      .all(job.id),
+  );
+  expect(ids).toEqual([{ transaction_id: "original" }]);
+  expect(store.enqueueBackfill(userId).id).toBe(job.id);
+});
+
 it("enforces bounded queued storage, active jobs and idempotent merchant upserts", () => {
   expect(store.loadMerchants()).toEqual(expect.arrayContaining(seedMerchants));
   store.upsertMerchants(seedMerchants);
