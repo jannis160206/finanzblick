@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
 import { BudgetCard, BudgetSummary } from "@/components/budget-cards";
-import { BudgetCalculation } from "@/components/budget-calculation";
 import { round, sum } from "@/lib/calc";
 import { dateLabel, monthLabel } from "@/lib/format";
 
@@ -89,7 +88,6 @@ export function Plan() {
             Sparempfehlung.
           </p>
         </section>
-        <BudgetCalculation lunch={plan.lunch} />
       </div>
     </>
   );

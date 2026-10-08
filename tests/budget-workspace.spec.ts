@@ -42,7 +42,7 @@ async function snapshot(page: Page) {
     headers,
   };
 }
-async function unlock(page: Page) {
+async function unlock(page: Page, heading = "Alltagsbudget") {
   const security = page.getByRole("button", {
     name: /^Sicherheitsmodus (aktivieren|deaktivieren)$/,
   });
@@ -50,7 +50,7 @@ async function unlock(page: Page) {
   if ((await security.getAttribute("aria-pressed")) === "true")
     await security.click();
   await expect(
-    page.getByRole("heading", { name: "Alltagsbudget", exact: true }),
+    page.getByRole("heading", { name: heading, exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("Synchronisiert", { exact: true }),
@@ -148,19 +148,9 @@ for (const width of [1440, 390, 320]) {
     await summary(page, state);
     await page.getByRole("button", { name: "Alle (7)" }).click();
     await expect(page.getByRole("article")).toHaveCount(7);
-    await page.getByText("Budgetberechnung", { exact: true }).focus();
-    await page.keyboard.press("Enter");
     await expect(
-      page.getByRole("button", { name: "Urlaub", exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByText(`Mittagessen gesamt: ${currency(111.5)}`, { exact: true }),
-    ).toBeVisible();
-    await noOverflow(page);
-    await page.screenshot({
-      path: testInfo.outputPath(`budget-${width}-calculation.png`),
-      fullPage: true,
-    });
+      page.getByText("Budgetberechnung", { exact: true }),
+    ).toHaveCount(0);
     expect((await snapshot(page)).state).toEqual(state);
     await page.reload();
     await unlock(page);
@@ -180,7 +170,8 @@ for (const width of [1440, 390]) {
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     const initial = await open(page);
-    await page.getByText("Budgetberechnung", { exact: true }).click();
+    await page.goto("/umsaetze");
+    await unlock(page, "Umsätze");
     const trigger = page.getByRole("button", { name: "Urlaub", exact: true });
     await trigger.click();
     const dialog = page.getByRole("dialog", { name: "Urlaubs-Zeiträume" });
@@ -202,6 +193,11 @@ for (const width of [1440, 390]) {
     await dialog.getByRole("button", { name: "Fertig" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();
+    await expect(
+      page.getByText("Synchronisiert", { exact: true }),
+    ).toBeAttached();
+    await page.goto("/plan");
+    await unlock(page);
     await expect(
       page.getByLabel("Mittagessen Plan", { exact: true }),
     ).toHaveText(currency(85));
@@ -236,7 +232,8 @@ for (const width of [1440, 390]) {
     await expect(
       page.getByLabel("Mittagessen Plan", { exact: true }),
     ).toHaveText(currency(85));
-    await page.getByText("Budgetberechnung", { exact: true }).click();
+    await page.goto("/umsaetze");
+    await unlock(page, "Umsätze");
     await trigger.click();
     await dialog
       .getByRole("button", {
@@ -244,6 +241,8 @@ for (const width of [1440, 390]) {
       })
       .click();
     await dialog.getByRole("button", { name: "Fertig" }).click();
+    await page.goto("/plan");
+    await unlock(page);
     await expect(
       page.getByLabel("Mittagessen Plan", { exact: true }),
     ).toHaveText(currency(111.5));

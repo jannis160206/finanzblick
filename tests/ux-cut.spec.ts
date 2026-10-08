@@ -117,8 +117,7 @@ test("months and budget details are read-only unless exceptions are explicitly o
   await expect(page.locator("table")).toHaveCount(0);
   await expect(page.getByRole("article")).toHaveCount(7);
   await expect(page.getByRole("button", { name: "Urlaub", exact: true })).not.toBeVisible();
-  await page.getByText("Budgetberechnung", { exact: true }).click();
-  await expect(page.getByRole("button", { name: "Urlaub", exact: true })).toBeVisible();
+  await expect(page.getByText("Budgetberechnung", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("link", { name: "Umsätze ansehen" }),
   ).toBeVisible();

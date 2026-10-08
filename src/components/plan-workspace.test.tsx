@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { useEffect, type ReactNode } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -53,14 +54,6 @@ function mount(initialState = budgetFixture()) {
 }
 function figure(label: string, expected: number) {
   expect(screen.getByLabelText(label).textContent).toBe(currency(expected));
-}
-function openCalculation() {
-  fireEvent.click(screen.getByText("Budgetberechnung", { exact: true }));
-}
-function holidays() {
-  openCalculation();
-  fireEvent.click(screen.getByRole("button", { name: "Urlaub" }));
-  return within(screen.getByRole("dialog", { name: "Urlaubs-Zeiträume" }));
 }
 
 it("shows the model's seven budgets once and the complete net summary through the as-of date", () => {
@@ -210,33 +203,26 @@ it("follows the current model month and calendar gifts rather than hardcoded Oct
   expect(view.read().dashboard.plan.currentMonth).toBe("2026-11");
 });
 
-it("keeps calculation secondary and opening or dismissing holiday management read-only", () => {
+it("does not render calculation controls or a second holiday editor", () => {
   const view = mount();
   const state = view.read().state;
-  const details = screen.getByText("Budgetberechnung").closest("details");
-  expect(details?.hasAttribute("open")).toBe(false);
-  const dialog = holidays();
-  expect(dialog.getByLabelText("Von", { exact: true })).toBeTruthy();
-  fireEvent.keyDown(dialog.getByRole("button", { name: "Fertig" }), {
-    key: "Escape",
-  });
+  expect(screen.queryByText("Budgetberechnung")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Urlaub" })).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(view.read().state).toBe(state);
 });
 
-it("reuses confirmed holiday updates for lunch while preserving transactions, goals and other budget amounts", () => {
+it("automatically reflects saved holiday changes and restores the calculated budget after reload", () => {
   const view = mount();
   const before = view.read().state;
   const beforePlan = view.read().dashboard.plan;
-  const dialog = holidays();
-  fireEvent.change(dialog.getByLabelText("Von", { exact: true }), {
-    target: { value: "2026-10-05" },
+  act(() => {
+    view.read().update((current) => ({
+      ...current,
+      holidayRanges: [{ from: "2026-10-05", to: "2026-10-09" }],
+    }));
   });
-  fireEvent.change(dialog.getByLabelText("Bis", { exact: true }), {
-    target: { value: "2026-10-09" },
-  });
-  expect(view.read().state).toBe(before);
-  fireEvent.click(dialog.getByRole("button", { name: "Zeitraum speichern" }));
   expect(view.read().state.holidayRanges).toEqual([
     { from: "2026-10-05", to: "2026-10-09" },
   ]);
@@ -255,21 +241,7 @@ it("reuses confirmed holiday updates for lunch while preserving transactions, go
   expect(view.read().state.transactions).toEqual(before.transactions);
   expect(view.read().state.savingsGoals).toEqual(before.savingsGoals);
   expect(view.read().state.trBalances).toEqual(before.trBalances);
-  fireEvent.click(dialog.getByRole("button", { name: "Fertig" }));
-  expect(screen.queryByRole("dialog")).toBeNull();
   cleanup();
   mount();
   figure("Mittagessen Plan", 85);
-});
-
-it("blocks an incomplete holiday draft without changing the budget", () => {
-  const view = mount();
-  const state = view.read().state;
-  const dialog = holidays();
-  fireEvent.click(dialog.getByRole("button", { name: "Zeitraum speichern" }));
-  expect(dialog.getByRole("alert").textContent).toContain(
-    "Bitte Anfang und Ende",
-  );
-  expect(view.read().state).toBe(state);
-  figure("Monatsbudget", 911.5);
 });
