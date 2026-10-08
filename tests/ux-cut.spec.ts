@@ -114,11 +114,13 @@ test("months and budget details are read-only unless exceptions are explicitly o
   await expect(
     page.getByRole("heading", { name: "Alltagsbudget", exact: true }),
   ).toBeVisible();
-  await expect(page.locator("table")).not.toBeVisible();
+  await expect(page.locator("table")).toHaveCount(0);
+  await expect(page.getByRole("article")).toHaveCount(7);
+  await expect(page.getByRole("button", { name: "Urlaub", exact: true })).not.toBeVisible();
   await page.getByText("Budgetberechnung", { exact: true }).click();
-  await expect(page.locator("table")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Urlaub", exact: true })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Zugehörige Umsätze ansehen" }),
+    page.getByRole("link", { name: "Umsätze ansehen" }),
   ).toBeVisible();
   await expect(page.getByText(/Abweichende Monatsbudgets/)).toHaveCount(0);
 });

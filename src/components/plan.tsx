@@ -1,107 +1,95 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
-import {
-  PageHeading,
-  SectionHeading,
-} from "@/components/finance-ui";
-import { currency, dateLabel, monthLabel } from "@/lib/format";
+import { PageHeading } from "@/components/finance-ui";
+import { BudgetCard, BudgetSummary } from "@/components/budget-cards";
+import { BudgetCalculation } from "@/components/budget-calculation";
+import { round, sum } from "@/lib/calc";
+import { dateLabel, monthLabel } from "@/lib/format";
 
 export function Plan() {
   const {
     dashboard: { plan },
     state,
   } = useFinance();
+  const [onlyOverBudget, setOnlyOverBudget] = useState(false);
+  const rows = plan.rows.map((row) => ({
+    ...row,
+    remaining: round(row.total - row.actual),
+  }));
+  const overBudget = rows.filter((row) => row.remaining < 0);
+  const visibleRows = onlyOverBudget ? overBudget : rows;
+  const actual = round(sum(rows.map((row) => row.actual)));
+
   return (
     <>
       <PageHeading
-        eyebrow="VARIABLE AUSGABEN"
+        eyebrow="BUDGETDETAILS"
         title="Alltagsbudget"
-        description={`${monthLabel(plan.currentMonth)} · Feste Monatsbudgets`}
+        description={`${monthLabel(plan.currentMonth)} · Ist bis ${dateLabel(state.settings.asOf)}`}
       >
         <Button asChild size="sm" variant="outline">
           <Link href="/umsaetze">
-            Zugehörige Umsätze ansehen
-            <ArrowRight className="size-4" />
+            Umsätze ansehen
+            <ArrowRight className="size-4" aria-hidden="true" />
           </Link>
         </Button>
       </PageHeading>
-      <div className="panel mb-5 border-primary/30 bg-primary/5 p-5">
-        <p className="text-xs">Alltagsbudget</p>
-        <p className="mt-3 text-2xl font-semibold text-primary">
-          {currency(plan.total)}
-        </p>
-      </div>
-      <details>
-        <summary className="mb-4 cursor-pointer text-sm">
-          Budgetberechnung
-        </summary>
-        <div className="panel mb-6 p-5 text-sm">
-          Mittagessen: {plan.lunch.homeOfficeDays} Homeoffice-Tage × 5,00 € + {plan.lunch.officeDays} Bürotage × 5,50 € = {currency(plan.lunch.total)}
-          <p className="mt-2 text-xs text-muted-foreground">Ohne Feiertage und Urlaubstage.</p>
-        </div>
-        <section className="panel overflow-hidden">
-          <div className="p-5 pb-0">
-            <SectionHeading
-              title="Monatsbudgets"
-              subtitle={`Fester Plan · Ist bis ${dateLabel(state.settings.asOf)}`}
-            />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="data-table w-full">
-              <thead>
-                <tr>
-                  <th>Position</th>
-                  <th className="text-right">Plan</th>
-                  <th className="text-right">Ist</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plan.rows.map((row) => (
-                  <tr key={row.id}>
-                    <td className="font-medium">{row.label}</td>
-                    <td className="text-right font-mono font-semibold whitespace-nowrap">
-                      {currency(row.total)}
-                    </td>
-                    <td className="text-right font-mono whitespace-nowrap">{currency(row.actual)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td className="font-semibold">
-                    Monatsbudget
-                  </td>
-                  <td className="text-right font-mono font-semibold text-primary">
-                    {currency(plan.total)}
-                  </td>
-                  <td className="text-right font-mono font-semibold">
-                    {currency(plan.rows.reduce((total, row) => total + row.actual, 0))}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
+      <div className="space-y-6">
+        <BudgetSummary total={plan.total} actual={actual} />
+        <section aria-labelledby="budget-positions">
+          <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="budget-positions" className="font-semibold tracking-tight">
+              Monatsbudgets
+            </h2>
+            <div
+              className="flex flex-wrap gap-1"
+              role="group"
+              aria-label="Budgetansicht"
+            >
+              <Button
+                size="sm"
+                variant={onlyOverBudget ? "ghost" : "secondary"}
+                aria-pressed={!onlyOverBudget}
+                onClick={() => setOnlyOverBudget(false)}
+              >
+                Alle ({rows.length})
+              </Button>
+              <Button
+                size="sm"
+                variant={onlyOverBudget ? "secondary" : "ghost"}
+                aria-pressed={onlyOverBudget}
+                onClick={() => setOnlyOverBudget(true)}
+              >
+                Über Budget ({overBudget.length})
+              </Button>
+            </div>
+          </header>
+          {visibleRows.length > 0 ? (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {visibleRows.map((row) => (
+                <BudgetCard key={row.id} row={row} />
+              ))}
+            </div>
+          ) : (
+            <p
+              role="status"
+              className="panel rounded-2xl p-6 text-sm text-muted-foreground"
+            >
+              Keine Budgetüberschreitungen bis zum angezeigten Stand.
+            </p>
+          )}
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            Geteilte Ausgaben zählen mit deinem Eigenanteil. Erstattungen
+            mindern das Ist. Der Budgetrest ist kein Kontostand und keine
+            Sparempfehlung.
+          </p>
         </section>
-      </details>
-      <div className="mt-5 grid gap-4 lg:grid-cols-3">
-        {plan.rows.map((row) => (
-          <div
-            className="panel flex items-center justify-between p-4"
-            key={row.id}
-          >
-            <span className="text-sm text-muted-foreground">
-              {row.label}
-            </span>
-            <span className="text-right text-sm">
-              <span className="block font-mono">{currency(row.total)} <span className="font-sans text-xs text-muted-foreground">Plan</span></span>
-              <span className="mt-1 block text-xs text-muted-foreground">{currency(row.actual)} Ist</span>
-            </span>
-          </div>
-        ))}
+        <BudgetCalculation lunch={plan.lunch} />
       </div>
     </>
   );

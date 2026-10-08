@@ -103,9 +103,9 @@ test("category search, draft discard and save preserve bank facts in the new ins
   await expect(page.getByRole("cell", { name: "Beispielkauf", exact: true })).toBeVisible();
   await page.goto("/plan");
   await page.getByText("Budgetberechnung", { exact: true }).click();
-  const budget = page.getByRole("row").filter({ has: page.getByRole("cell", { name: "Giro Puffer", exact: true }) });
-  await expect(budget.getByRole("cell").nth(1)).toContainText("100,00");
-  await expect(budget.getByRole("cell").nth(2)).toContainText("89,90");
+  const budget = page.getByRole("article", { name: "Giro Puffer", exact: true });
+  await expect(budget.getByLabel("Giro Puffer Plan", { exact: true })).toContainText("100,00");
+  await expect(budget.getByLabel("Giro Puffer Ist", { exact: true })).toContainText("89,90");
   expect(errors).toEqual([]);
 });
 
