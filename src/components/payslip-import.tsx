@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FileUp, LoaderCircle, Trash2 } from "lucide-react";
+import { FileUp, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { SectionHeading } from "@/components/finance-ui";
@@ -13,6 +13,7 @@ import { payslipKey, payslipSchema, payrollEmployerKey, type Payslip, type Paysl
 import { preparePayslipMerge } from "@/lib/payslip-storage";
 import { currency, monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { PayslipRecords } from "@/components/payslip-records";
 
 const moneyFields = [
   ["regularGross", "Sechstelrelevantes laufendes Brutto"],
@@ -47,6 +48,8 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const importer = useRef<HTMLElement>(null);
+  const deleteTrigger = useRef<HTMLButtonElement>(null);
   const inFlight = useRef(false);
   const request = useRef(0);
   const live = useRef({ state, update, storageError, onImported });
@@ -131,9 +134,9 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const records = (state.payslips ?? []).filter((entry) => entry.year === year &&
     (!employer || payrollEmployerKey(entry.employer) === payrollEmployerKey(employer))).sort((a, b) => b.month - a.month);
   return <>
-    <section className="panel mb-6 p-5 sm:p-6" aria-label="Lohnabrechnungen importieren">
+    <section ref={importer} id="payroll-import" tabIndex={-1} className="panel min-w-0 rounded-2xl p-5 shadow-sm focus-visible:outline-2 focus-visible:outline-ring" aria-label="Lohnabrechnungen importieren">
       <SectionHeading title="Lohnabrechnungen" subtitle="PDF · max. 24 Dateien · 20 MB je Datei" />
-      <div className="grid gap-4 sm:grid-cols-[1fr_16rem]">
+      <div className="space-y-4">
         <div role="group" aria-label="PDF-Ablage für Lohnabrechnungen" className={cn("rounded-xl border border-dashed p-5 text-center", dragging && "border-primary bg-primary/5")}
           onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
           onDragLeave={() => setDragging(false)}
@@ -148,14 +151,17 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </Button>
           {busy && <p role="status" className="mt-2 text-xs text-muted-foreground">PDFs werden lokal gelesen.</p>}
         </div>
-        <div className="space-y-3">
+        <details open={filesToRetry.length > 0 || undefined} className="text-sm">
+          <summary className="min-h-10 cursor-pointer rounded-md py-2 font-medium focus-visible:outline-2 focus-visible:outline-ring">Passwortgeschützte PDF</summary>
+          <div className="space-y-3 pt-2">
           <label className="block space-y-2 text-sm">PDF-Passwort
             <Input type="password" autoComplete="off" value={password} disabled={busy} maxLength={200}
               onChange={(event) => setPassword(event.target.value)} />
           </label>
           <p className="text-xs leading-relaxed text-muted-foreground">PDF und Passwort: nur lokal für diesen Seitenbesuch, nicht gespeichert oder versendet.</p>
           {filesToRetry.length > 0 && <Button variant="outline" disabled={busy || !password || !!storageError} onClick={() => { void readFiles(filesToRetry); }}>Mit Passwort erneut lesen</Button>}
-        </div>
+          </div>
+        </details>
       </div>
       {(error || storageError) && <p role="alert" className="mt-3 text-sm text-destructive">{storageError || error}</p>}
       {notice && <p role="status" className="mt-3 text-sm">{notice}</p>}
@@ -186,22 +192,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         </details>
       </div>}
       <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Kontoumsätze bleiben unverändert.</p>
-      {records.length > 0 && <div className="mt-5 overflow-x-auto">
-        <table className="w-full text-left text-sm" aria-label="Gespeicherte Lohnabrechnungen">
-          <thead><tr className="border-b text-xs text-muted-foreground"><th className="p-2">Abrechnung</th><th className="p-2 text-right">Laufendes Brutto</th><th className="p-2 text-right">Sonderzahlung</th><th><span className="sr-only">Aktionen</span></th></tr></thead>
-          <tbody>{records.map((record) => <tr key={payslipKey(record)} className="border-b last:border-0">
-            <td className="p-2">{monthLabel(`${record.year}-${String(record.month).padStart(2, "0")}`)}<span className="block text-xs text-muted-foreground">{record.employer}</span>
-              {!!record.unresolvedSixthBonus && <span className="block text-xs text-muted-foreground">Weitere Prämie: {currency(record.unresolvedSixthBonus)} · Sechstelzuordnung offen</span>}
-            </td>
-            <td className="p-2 text-right whitespace-nowrap tabular-nums">{currency(record.regularGross)}</td>
-            <td className="p-2 text-right whitespace-nowrap tabular-nums">{currency(record.specialGross)}</td>
-            <td className="p-2"><div className="flex justify-end">
-              <Button variant="ghost" size="icon" className="size-7" aria-label={`Abrechnung entfernen: ${record.month}/${record.year}`}
-                disabled={busy || !!storageError} onClick={() => setDeleting(record)}><Trash2 className="size-3.5" /></Button>
-            </div></td>
-          </tr>)}</tbody>
-        </table>
-      </div>}
+      <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setDeleting(record); }} />
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {
       if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }
@@ -234,8 +225,13 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       </DialogContent>
     </Dialog>
     <Dialog open={!!deleting} onOpenChange={(open) => { if (!open) setDeleting(null); }}>
-      <DialogContent variant="confirmation">
-        <DialogHeader><DialogTitle>Lohnabrechnung entfernen?</DialogTitle><DialogDescription>Nur lokale Rechenwerte entfernen; Original-PDF und Kontoumsätze bleiben unverändert.</DialogDescription></DialogHeader>
+      <DialogContent variant="confirmation" onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        const trigger = deleteTrigger.current;
+        if (trigger?.isConnected && !trigger.disabled) trigger.focus();
+        else importer.current?.focus();
+      }}>
+        <DialogHeader><DialogTitle>Lohnabrechnung entfernen?</DialogTitle><DialogDescription>Nur gespeicherte Rechenwerte entfernen; Original-PDF und Kontoumsätze bleiben unverändert.</DialogDescription></DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => setDeleting(null)}>Abbrechen</Button>
           <Button variant="destructive" disabled={!!storageError} onClick={() => {

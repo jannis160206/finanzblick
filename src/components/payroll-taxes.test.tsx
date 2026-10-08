@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PayrollTaxes } from "@/components/payroll-taxes";
@@ -8,6 +8,7 @@ import { createSeed } from "@/lib/seed";
 import { appStateSchema, type AppState } from "@/lib/types";
 import type { Payslip } from "@/lib/payslip-schema";
 import { currency, monthLabel } from "@/lib/format";
+import { payrollPresentation } from "@/components/payroll-presentation";
 
 const pdf = vi.hoisted(() => {
   class PasswordError extends Error {}
@@ -36,8 +37,7 @@ afterEach(cleanup);
 
 function Fixture({ initial = seed(), storageError = null }: { initial?: AppState; storageError?: string | null }) {
   const [state, setState] = useState(initial);
-  externalUpdate = setState;
-  latest = state;
+  useEffect(() => { externalUpdate = setState; latest = state; }, [state]);
   vi.mocked(useFinance).mockReturnValue({
     state, get dashboard(): never { throw new Error("Payroll must not infer gross from net dashboard data"); },
     update: (updater) => setState((current) => {
@@ -75,13 +75,16 @@ const bonusPayslips = () => Array.from({ length: 8 }, (_, index) => ({
   ...(index === 5 ? { specialGross: 3000, specialSv: 512.1 } : {}),
 }));
 
-it("shows additional gross bonus room and an isolated tariff example prominently without manual inputs", () => {
+it("shows additional gross bonus room with the isolated tariff example collapsed by default", () => {
   render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(moneyText(2000))).toBeTruthy();
   expect(bonus.getByText(/Auszahlung im November 2026/)).toBeTruthy();
   expect(bonus.getByText(/Geplante Sonderzahlungen bereits reserviert:/).textContent).toContain(currency(3000));
   const example = within(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }));
+  expect(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }).closest("details")?.open).toBe(false);
+  fireEvent.click(bonus.getByText("Steuerbeispiel für 1.000 €"));
+  expect(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }).closest("details")?.open).toBe(true);
   expect(example.getByText("40 %")).toBeTruthy();
   for (const value of [170.7, 331.72, 502.42, 497.58]) expect(example.getByText(moneyText(value))).toBeTruthy();
   expect(bonus.getByText(/nicht für die ganze Prämie/)).toBeTruthy();
@@ -96,7 +99,7 @@ it("shows a conservative bonus range when February's sixth classification is unr
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(`${moneyText(1000)} – ${moneyText(2166.67)}`)).toBeTruthy();
   expect(bonus.getByText(/vorsichtig am unteren Wert orientieren/)).toBeTruthy();
-  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(2);
+  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(3);
 });
 
 it("does not substitute zero bonus room or zero net when historical payrolls are missing", () => {
@@ -317,7 +320,7 @@ it("shows current and year-end estimates prominently while a missing February bl
   expect(forecast.getByText("Jahresende · Dezember 2026")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain(`Fehlende Abrechnung: ${monthLabel("2026-02")}`);
   const special = within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" }));
-  expect(special.getAllByText("Noch offen")).toHaveLength(2);
+  expect(special.getAllByText("Noch offen")).toHaveLength(3);
   expectNoManualInputs();
 });
 
@@ -364,7 +367,7 @@ it("automatically saves a recognized February bonus and displays its sixth range
   expect(forecast.getByText(`${moneyText(6011.11)} – ${moneyText(6233.33)}`)).toBeTruthy();
   expect(forecast.getByText(`${moneyText(6008.33)} – ${moneyText(6175)}`)).toBeTruthy();
   expect(screen.getByText(/Datei 1: Seite 1 \(02\/2026\): VEB-Prämie erkannt/).closest("details")?.open).toBe(false);
-  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(2);
+  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(3);
   expectNoManualInputs();
 });
 it("invalidates legacy forecast confirmation after an upload without touching another employer", async () => {
@@ -385,6 +388,7 @@ it("removes an explicitly selected payroll without changing bank transactions", 
     { year: 2026 as const, employer: january.employer, months: [], standardPayrollConfirmed: true },
   ] };
   render(<Fixture initial={initial} />);
+  fireEvent.click(screen.getByText("Gespeicherte Abrechnungen (1)"));
   fireEvent.click(screen.getByRole("button", { name: "Abrechnung entfernen: 1/2026" }));
   const dialog = within(screen.getByRole("dialog", { name: "Lohnabrechnung entfernen?" }));
   fireEvent.click(dialog.getByRole("button", { name: "Entfernen" }));
@@ -424,4 +428,48 @@ it("initializes the selected year only after local finance data has hydrated", (
   });
   view.rerender(<PayrollTaxes />);
   expect(screen.getByLabelText<HTMLSelectElement>("Steuerjahr").value).toBe("2027");
+});
+
+it("offers a useful empty year without invented zero results or tax cards", () => {
+  render(<Fixture />);
+  expect(screen.getByText("Noch keine Lohnabrechnungen für 2026")).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Jahressechstel Abrechnungsstand" })).toBeNull();
+  expect(screen.queryByText("Noch offen")).toBeNull();
+  expect(screen.getByRole("link", { name: "Abrechnung hinzufügen" }).getAttribute("href")).toBe("#payroll-import");
+  expect(screen.getByRole("region", { name: "Lohnabrechnungen importieren" }).id).toBe("payroll-import");
+});
+
+it("shows the existing net special-payment model and never infers it from bank receipts", () => {
+  const payslips = bonusPayslips();
+  const initial = { ...seed(), payslips };
+  render(<Fixture initial={initial} />);
+  const view = payrollPresentation(payslips, 2026, january.employer, initial.settings.asOf);
+  const special = within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" }));
+  const net = view.next?.tax?.netSpecial;
+  if (net === undefined) throw new Error("Synthetic payroll fixture must have a projected net payment.");
+  expect(special.getByText("Geschätzter Auszahlungsanteil netto").nextElementSibling?.textContent).toBe(currency(net));
+  expect(special.getByText(/kein bestätigter Auszahlungsbetrag/)).toBeTruthy();
+  expect(latest).toBe(initial);
+});
+
+it("filters years and employers without merging their payroll data or saving view choices", () => {
+  const other: Payslip = { ...january, employer: "Anderer Betrieb", regularGross: 6000 };
+  const future: Payslip = { ...january, year: 2027 };
+  const initial = { ...seed(), payslips: [january, other, future] };
+  render(<Fixture initial={initial} />);
+  fireEvent.change(screen.getByLabelText("Dienstverhältnis"), { target: { value: other.employer } });
+  expect(within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" })).getByText(moneyText(12000))).toBeTruthy();
+  fireEvent.change(screen.getByLabelText("Steuerjahr"), { target: { value: "2027" } });
+  expect(screen.getByLabelText<HTMLSelectElement>("Dienstverhältnis").value).toBe(january.employer);
+  expect(within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" })).getByText(moneyText(6000))).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(3);
+  expect(latest).toBe(initial);
+  expect(localStorage.getItem("payroll-test")).toBeNull();
+});
+
+it("keeps saved records and optional PDF passwords collapsed without hiding the import action", () => {
+  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
+  expect(screen.getByText("Gespeicherte Abrechnungen (8)").closest("details")?.open).toBe(false);
+  expect(screen.getByLabelText("PDF-Passwort").closest("details")?.open).toBe(false);
+  expect(screen.getByRole("button", { name: "PDF auswählen" }).closest("details")).toBeNull();
 });
