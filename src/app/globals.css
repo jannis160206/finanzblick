@@ -147,6 +147,41 @@
   scroll-behavior: auto !important;
 }
 
+.automation-progress-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 28%),
+    transparent
+  );
+  animation: automation-progress-shimmer 2.4s linear infinite;
+}
+
+@keyframes automation-progress-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+:root[data-reduce-motion="true"] .automation-progress-shimmer::after {
+  animation: none;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .automation-progress-shimmer::after {
+    animation: none;
+    opacity: 0;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
