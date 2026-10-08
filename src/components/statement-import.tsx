@@ -1,5 +1,7 @@
 "use client";
 
+import { merchantAliasAssignment } from "@/lib/merchant-identity";
+
 import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { FileUp, LoaderCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
@@ -131,7 +133,7 @@ const BookingReview = memo(function BookingReview({
               className={!repairOcr ? "pr-10" : undefined}
               aria-invalid={nameMissing}
               onChange={(event) => changeDraft(item.id, { ...draft,
-                ...(repairOcr ? { description: event.target.value } : { merchantAlias: event.target.value }) })}
+                ...(repairOcr ? { description: event.target.value } : merchantAliasAssignment(draft, event.target.value)) })}
             />
             {!repairOcr && (
               <Button type="button" variant="ghost" size="icon-xs" className="absolute right-2 top-2"
@@ -231,7 +233,7 @@ function FixedReview({
     const name = names[booking.id];
     return name === undefined || name === (booking.merchantAlias ?? booking.description)
       ? transactionSchema.safeParse(booking)
-      : transactionSchema.safeParse({ ...booking, merchantAlias: name, categoryOverride: true, reviewed: true });
+      : transactionSchema.safeParse({ ...booking, ...merchantAliasAssignment(booking, name), categoryOverride: true, reviewed: true });
   });
   const invalid = bookings.some((booking) => !booking.success);
   const confirm = (accept: boolean) => {

@@ -17,6 +17,7 @@
     "start": "next start --hostname 127.0.0.1",
     "worker": "tsx --env-file-if-exists=.env.local scripts/statement-worker.ts",
     "backfill": "tsx --env-file-if-exists=.env.local scripts/statement-backfill.ts",
+    "merchants:import": "tsx --env-file-if-exists=.env.local scripts/merchant-import.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

@@ -233,6 +233,8 @@ export function classify(
   if (!transaction.categoryOverride && unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
   if (!transaction.categoryOverride && ambiguousMerchant(recovered) && !detectedTransfer) category = "Prüfen";
   if (known === "Prüfen" && !transaction.categoryOverride && !detectedTransfer) category = "Prüfen";
+  if (amount > 0 && transaction.categoryOverride && transaction.category === "Rückerstattungen" &&
+    !detectedTransfer && !reimbursement) category = "Rückerstattungen";
   // A partner transfer must not become a salary receipt before reconciliation.
   if (isRaphaelPayment(transaction) && ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(category)) category = "Sonstiges";
   if (reimbursement) category = "Transfer";

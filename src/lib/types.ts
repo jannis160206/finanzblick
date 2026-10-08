@@ -108,6 +108,8 @@ const transactionFieldsSchema = z.object({
   amexScreenshotKeys: z.array(z.string().min(1).max(2000)).max(20).optional(),
   merchantAlias: z.string().trim().min(1).max(200).optional(),
   merchantId: z.string().max(100).optional(),
+  merchantLogo: z.boolean().optional(),
+  merchantMatch: z.enum(["alias", "rule"]).optional(),
   is_locked: z.boolean().optional(),
   requires_manual_review: z.boolean().optional(),
   category: categorySchema.catch("Prüfen"),

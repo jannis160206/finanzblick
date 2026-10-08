@@ -261,6 +261,10 @@ export async function parseWorkbook(
           : {}),
         ...(native && text(get("Händleralias")) ? { merchantAlias: text(get("Händleralias")) } : {}),
         ...(native && text(get("Händler-ID")) ? { merchantId: text(get("Händler-ID")) } : {}),
+        ...(native && text(get("Händlerlogo vorhanden")) ? { merchantLogo:
+          /^(ja|true|1)$/i.test(text(get("Händlerlogo vorhanden"))) ? true :
+            /^(nein|false|0)$/i.test(text(get("Händlerlogo vorhanden"))) ? false : text(get("Händlerlogo vorhanden")) } : {}),
+        ...(native && text(get("Händler-Treffertyp")) ? { merchantMatch: text(get("Händler-Treffertyp")) } : {}),
         ...(native && text(get("Zuordnung gesperrt")) ? { is_locked:
           /^(ja|true|1)$/i.test(text(get("Zuordnung gesperrt"))) ? true :
             /^(nein|false|0)$/i.test(text(get("Zuordnung gesperrt"))) ? false : text(get("Zuordnung gesperrt")) } : {}),
@@ -685,6 +689,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Händler-ID",
     "Zuordnung gesperrt",
     "Automatische Zuordnung unsicher",
+    "Händlerlogo vorhanden",
+    "Händler-Treffertyp",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -726,6 +732,8 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.merchantId ?? "",
       row.is_locked === undefined ? "" : row.is_locked ? "Ja" : "Nein",
       row.requires_manual_review === undefined ? "" : row.requires_manual_review ? "Ja" : "Nein",
+      row.merchantLogo === undefined ? "" : row.merchantLogo ? "Ja" : "Nein",
+      row.merchantMatch ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {

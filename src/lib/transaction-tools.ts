@@ -4,6 +4,7 @@ import { actualBookings, classify } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
 import { statementFingerprint } from "@/lib/import/identity";
 import { rememberMerchants } from "@/lib/import/merchant-rules";
+import { merchantAliasAssignment } from "@/lib/merchant-identity";
 import {
   isSharedHoliday,
   personalAmount,
@@ -176,7 +177,7 @@ export function assignTransactions(
       reviewed: choice.category !== "Prüfen",
       includeInPlan: true,
       ...(choice.merchantAlias !== undefined
-        ? { merchantAlias: choice.merchantAlias }
+        ? merchantAliasAssignment(row, choice.merchantAlias)
         : {}),
       ...(choice.fixedCost !== undefined
         ? { fixedCost: canMarkFixed && choice.fixedCost }

@@ -17,13 +17,17 @@ const merchant = (overrides: Partial<Merchant> = {}): Merchant => ({
   defaultCategory: "Shopping",
   region: "AT",
   source: "local",
+  city: null,
+  license: null,
+  attribution: null,
+  logo: null,
   updatedAt: 0,
   ...overrides,
 });
 const expectMerchant = (text: string, id: string, method = "exact") => {
   const result = index.match(text);
   expect(result.merchant?.id).toBe(id);
-  expect(result.requiresManualReview).toBe(false);
+  expect(result.requiresManualReview).toBe(method === "fuzzy");
   expect(result.method).toBe(method);
 };
 
@@ -55,6 +59,19 @@ describe("merchant schema and local seeds", () => {
       expect(merchantSchema.safeParse({ ...merchant(), ...item }).success).toBe(
         false,
       );
+  });
+
+  it("rejects logos with unknown rights or non-Commons attribution sources at the storage boundary", () => {
+    const logo = {
+      file: `${"a".repeat(64)}.png`, license: "CC-BY-4.0", attribution: "Test artist",
+      sourceUrl: "https://commons.wikimedia.org/wiki/File:Test.png",
+    };
+    expect(merchantSchema.safeParse({ ...merchant(), logo }).success).toBe(true);
+    for (const invalid of [
+      { ...logo, license: "All rights reserved" },
+      { ...logo, sourceUrl: "https://example.com/logo.png" },
+    ])
+      expect(merchantSchema.safeParse({ ...merchant(), logo: invalid }).success).toBe(false);
   });
 
   it.each([
@@ -106,6 +123,7 @@ describe("merchant text normalization", () => {
     ["MÜLLER Fil. 0042 Wien 08.10.2026 14:32:01", "mueller wien"],
     ["Mueller #0042 WIEN", "mueller wien"],
     ["BILLA1234 Filiale AB0042 POS", "billa"],
+    ["POS BILLA4711", "billa"],
     ["PENNY Markt 1234 Graz 2026-10-08T14:32:01Z", "penny markt graz"],
     [
       "Händler: Müller; Referenz: PP-BILLA12345; IBAN: AT61 1904 3002 3457 3201",
@@ -116,6 +134,15 @@ describe("merchant text normalization", () => {
     ["BILLA DE89 3704 0044 0532 0130 00", "billa"],
     ["BILLA GB82 WEST 1234 5698 7654 32", "billa"],
     ["ID: BILLA99999", ""],
+    [
+      "POS Terminal-ID: BILLA4711 Händler: PENNY 12:42 Referenz: MUELLER99",
+      "penny",
+    ],
+    [
+      "POS 0142 Terminal Nr. X1234 Müller Filiale 47 08.10.2026 12:32",
+      "mueller",
+    ],
+    ["Rückerstattung BILLA 08.10.2026", "billa"],
   ])("cleans %s without losing merchant letters", (input, expected) => {
     expect(normalizeMerchantText(input)).toBe(expected);
   });

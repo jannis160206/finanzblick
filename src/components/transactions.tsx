@@ -45,6 +45,7 @@ import {
   SelectionCheckbox,
   TransactionAmountCell,
   TransactionCategoryCell,
+  TransactionDescriptionCell,
   useMobileLedger,
 } from "@/components/transaction-workspace";
 import {
@@ -313,13 +314,11 @@ const TransactionLedger = memo(function TransactionLedger({
       id: "description",
       accessorFn: (row) => row.merchantAlias ?? row.description,
       header: "Beschreibung",
-      cell: ({ getValue }) => (
-        <span
-          className="block max-w-[300px] truncate text-sm font-medium"
-          title={getValue<string>()}
-        >
-          {getValue<string>()}
-        </span>
+      cell: ({ row }) => (
+        <TransactionDescriptionCell
+          booking={row.original}
+          classification={classifications.get(row.original)!}
+        />
       ),
     },
     {

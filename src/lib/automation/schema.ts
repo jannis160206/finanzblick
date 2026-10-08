@@ -31,3 +31,4 @@ export const MAX_QUEUE_BYTES = 128 * 1024 * 1024;
 export const BACKFILL_BATCH = 200;
 export const MAX_ATTEMPTS = 5;
 export const LEASE_MS = 60_000;
+export const MERCHANT_BACKFILL_VERSION = "merchant-reliability-v2";

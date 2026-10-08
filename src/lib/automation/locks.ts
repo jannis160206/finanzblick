@@ -10,6 +10,7 @@ type Assignment = Partial<
     | "categoryOverride"
     | "merchantAlias"
     | "merchantId"
+    | "merchantMatch"
   >
 >;
 
@@ -17,7 +18,7 @@ export function isAutomationLocked(row: Assignment): boolean {
   return (
     row.is_locked === true ||
     hasCategoryChoice(row) ||
-    (!!row.merchantAlias && !row.merchantId)
+    (!!row.merchantAlias && !row.merchantId && !row.merchantMatch)
   );
 }
 

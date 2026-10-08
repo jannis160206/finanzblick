@@ -110,8 +110,18 @@ export class AutomationStore {
   enqueueBackfill(
     userId: string,
     now = Date.now(),
-    options: { rerun?: boolean } = {},
+    options: { rerun?: boolean; onceVersion?: string } = {},
   ): AutomationJob {
+    if (options.onceVersion) {
+      z.string()
+        .regex(/^[a-z0-9-]{1,80}$/)
+        .parse(options.onceVersion);
+      if (options.rerun)
+        throw new AccountError(
+          400,
+          "Ein einmaliger Nachlauf darf nicht zurückgesetzt werden.",
+        );
+    }
     return this.accounts.transaction((db) => {
       const existing = db
         .prepare(
@@ -119,9 +129,32 @@ export class AutomationStore {
         )
         .get(userId);
       const previous = existing ? automationJobSchema.parse(existing) : null;
+      if (options.onceVersion) {
+        const pass = db
+          .prepare(
+            "SELECT job_id FROM automation_backfill_passes WHERE user_id = ? AND version = ?",
+          )
+          .get(userId, options.onceVersion);
+        if (pass && previous) return previous;
+        if (
+          previous &&
+          previous.status !== "COMPLETED" &&
+          previous.status !== "FAILED"
+        )
+          throw new AccountError(
+            409,
+            "Der bisherige Backfill läuft noch. Den einmaligen Nachlauf danach starten.",
+          );
+      }
       if (
         previous &&
-        (!options.rerun ||
+        (options.rerun || options.onceVersion) &&
+        db.prepare("SELECT job_id FROM automation_backfill_passes WHERE job_id = ?").get(previous.id)
+      )
+        throw new AccountError(409, "Ein versionierter Nachlauf darf nicht zurückgesetzt werden.");
+      if (
+        previous &&
+        ((!options.rerun && !options.onceVersion) ||
           (previous.status !== "COMPLETED" && previous.status !== "FAILED"))
       )
         return previous;
@@ -161,6 +194,10 @@ export class AutomationStore {
         `UPDATE automation_jobs SET total =
         (SELECT count(*) FROM automation_backfill_items WHERE job_id = ?) WHERE id = ?`,
       ).run(id, id);
+      if (options.onceVersion)
+        db.prepare(
+          "INSERT INTO automation_backfill_passes (user_id, version, job_id) VALUES (?, ?, ?)",
+        ).run(userId, options.onceVersion, id);
       return automationJobSchema.parse(
         db
           .prepare(`SELECT ${columns} FROM automation_jobs WHERE id = ?`)
@@ -169,7 +206,9 @@ export class AutomationStore {
     });
   }
 
-  enqueueAllBackfills(options: { rerun?: boolean } = {}): number {
+  enqueueAllBackfills(
+    options: { rerun?: boolean; onceVersion?: string } = {},
+  ): number {
     const users = this.accounts.read((db) =>
       db.prepare("SELECT user_id FROM finance ORDER BY user_id").all(),
     );
@@ -339,10 +378,14 @@ export class AutomationStore {
       job.id,
       job.userId,
     );
-    if (completed)
+    if (completed) {
+      db.prepare(
+        "UPDATE automation_backfill_passes SET completed_at = ? WHERE job_id = ? AND completed_at IS NULL",
+      ).run(Date.now(), job.id);
       db.prepare("DELETE FROM automation_backfill_items WHERE job_id = ?").run(
         job.id,
       );
+    }
   }
 
   fail(
@@ -411,12 +454,16 @@ export class AutomationStore {
       merchantSchema.parse(merchant),
     );
     this.accounts.transaction((db) => {
-      const statement =
-        db.prepare(`INSERT INTO merchants VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      const statement = db.prepare(`INSERT INTO merchants
+        (id, canonical_name, aliases_json, regex_json, default_category, region, source,
+         updated_at, city, license, attribution, logo_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET canonical_name = excluded.canonical_name,
         aliases_json = excluded.aliases_json, regex_json = excluded.regex_json,
         default_category = excluded.default_category, region = excluded.region,
-        source = excluded.source, updated_at = excluded.updated_at
+        source = excluded.source, updated_at = excluded.updated_at,
+        city = excluded.city, license = excluded.license,
+        attribution = excluded.attribution, logo_json = excluded.logo_json
         WHERE excluded.updated_at > merchants.updated_at`);
       for (const merchant of validated)
         statement.run(
@@ -428,6 +475,10 @@ export class AutomationStore {
           merchant.region,
           merchant.source,
           merchant.updatedAt,
+          merchant.city,
+          merchant.license,
+          merchant.attribution,
+          merchant.logo ? JSON.stringify(merchant.logo) : null,
         );
     });
   }
@@ -438,7 +489,7 @@ export class AutomationStore {
         .prepare(
           `SELECT id, canonical_name AS canonicalName,
       aliases_json, regex_json, default_category AS defaultCategory, region, source,
-      updated_at AS updatedAt FROM merchants`,
+      updated_at AS updatedAt, city, license, attribution, logo_json FROM merchants`,
         )
         .all()
         .map((row) =>
@@ -446,8 +497,31 @@ export class AutomationStore {
             ...row,
             aliases: JSON.parse(String(row.aliases_json)),
             regexPatterns: JSON.parse(String(row.regex_json)),
+            logo:
+              row.logo_json === null ? null : JSON.parse(String(row.logo_json)),
           }),
         ),
     );
+  }
+
+  getMerchant(id: string): Merchant | null {
+    return this.accounts.read((db) => {
+      const row = db
+        .prepare(
+          `SELECT id, canonical_name AS canonicalName, aliases_json, regex_json,
+        default_category AS defaultCategory, region, source, updated_at AS updatedAt,
+        city, license, attribution, logo_json FROM merchants WHERE id = ?`,
+        )
+        .get(id);
+      return row
+        ? merchantSchema.parse({
+            ...row,
+            aliases: JSON.parse(String(row.aliases_json)),
+            regexPatterns: JSON.parse(String(row.regex_json)),
+            logo:
+              row.logo_json === null ? null : JSON.parse(String(row.logo_json)),
+          })
+        : null;
+    });
   }
 }

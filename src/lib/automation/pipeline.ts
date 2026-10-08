@@ -4,34 +4,99 @@ import {
   type AppState,
   type Transaction,
 } from "@/lib/types";
-import { createMerchantRuleApplier } from "@/lib/import/merchant-rules";
 import { MerchantIndex } from "./merchants";
 import { isAutomationLocked } from "./locks";
+import { createAccountMerchantResolver } from "./aliases";
+import { isMerchantTransfer } from "@/lib/merchant-transfer";
+import { isIncomeCategory } from "@/lib/fixed";
+import { ambiguousMerchant } from "@/lib/import/merchant-description";
 export { isAutomationLocked } from "./locks";
 
 export function enrichTransaction(
   row: Transaction,
   index: MerchantIndex,
+  resolveAccount?: ReturnType<typeof createAccountMerchantResolver>,
 ): Transaction {
   if (isAutomationLocked(row)) return { ...row, is_locked: true };
   const classified = classify(row);
-  if (classified.isTransfer || row.amount >= 0) return row;
+  if (isMerchantTransfer(row)) return row;
+  const refund =
+    row.amount > 0 &&
+    (!isIncomeCategory(classified.category) ||
+      /\b(?:r[üu]ckerstattung|erstattung|refund|retoure|gutschrift)\b/i.test(
+        row.description,
+      ));
+  if (row.amount > 0 && !refund) return row;
+  if (ambiguousMerchant(row))
+    return { ...row, requires_manual_review: true };
+  const learned = resolveAccount?.(row);
+  if (learned?.kind === "conflict")
+    return { ...row, requires_manual_review: true };
+  if (learned?.kind === "matched") {
+    const { choice } = learned;
+    const identity = choice.merchantAlias
+      ? index.match(choice.merchantAlias)
+      : undefined;
+    const merchant =
+      identity && !identity.requiresManualReview && identity.method !== "fuzzy"
+        ? identity.merchant
+        : undefined;
+    return transactionSchema.parse({
+      ...row,
+      ...(choice.merchantAlias
+        ? { merchantAlias: choice.merchantAlias, merchantId: merchant?.id }
+        : {}),
+      merchantLogo: !!merchant?.logo,
+      merchantMatch: "rule",
+      category: refund ? "Rückerstattungen" : choice.category,
+      categoryOverride: true,
+      ...(choice.fixedCost !== undefined &&
+      !refund &&
+      row.fixedCost === undefined
+        ? { fixedCost: choice.fixedCost }
+        : {}),
+      requires_manual_review: false,
+    });
+  }
   const match = index.match(row.description);
   if (
     !match.merchant ||
     match.requiresManualReview ||
-    match.method === "fuzzy"
+    match.method === "fuzzy" ||
+    match.merchant.defaultCategory === null
   ) {
     return { ...row, requires_manual_review: true };
   }
-  // Existing contextual rules (e.g. lunch time) keep precedence over defaults.
-  const category =
-    row.category === "Prüfen" ? match.merchant.defaultCategory : row.category;
+  // A new index must not replace a previously safe, different identity.
+  if (
+    row.merchantId &&
+    row.requires_manual_review === false &&
+    row.merchantId !== match.merchant.id
+  )
+    return { ...row, requires_manual_review: true };
+  // Existing safe assignments and contextual rules (e.g. lunch time) keep precedence.
+  const contextual = classify({
+    ...row,
+    category: "Prüfen",
+    categoryOverride: false,
+  }).category;
+  const category = refund
+    ? "Rückerstattungen"
+    : row.merchantId === match.merchant.id &&
+        row.requires_manual_review === false &&
+        row.category !== "Prüfen"
+      ? row.category
+      : contextual !== "Prüfen"
+        ? contextual
+        : match.merchant.defaultCategory;
   return transactionSchema.parse({
     ...row,
     merchantId: match.merchant.id,
     merchantAlias: match.merchant.canonicalName,
+    merchantLogo: !!match.merchant.logo,
+    merchantMatch: match.method === "regex" ? "rule" : "alias",
     category,
+    categoryOverride: true,
     requires_manual_review: false,
   });
 }
@@ -41,14 +106,11 @@ export function backfillBatch(
   ids: Set<string>,
   index: MerchantIndex,
 ): AppState {
-  const applyRule = createMerchantRuleApplier(state);
+  const resolveAccount = createAccountMerchantResolver(state);
   const updated = new Map<string, Transaction>();
   const update = (row: Transaction): Transaction => {
     if (!ids.has(row.id)) return row;
-    const next = enrichTransaction(
-      isAutomationLocked(row) ? row : applyRule(row),
-      index,
-    );
+    const next = enrichTransaction(row, index, resolveAccount);
     updated.set(row.id, next);
     return next;
   };
@@ -59,7 +121,7 @@ export function backfillBatch(
     return { ...item, booking, category: booking.category };
   });
   const needsReview = (row: Transaction) =>
-    row.category === "Prüfen" ||
+    (!isMerchantTransfer(row) && row.category === "Prüfen") ||
     (row.requires_manual_review === true && !isAutomationLocked(row));
   const queue = (state.reviewQueue ?? []).flatMap((item) => {
     if (item.kind !== "booking" || !ids.has(item.draft.id)) return [item];
@@ -117,6 +179,8 @@ export function retainLockedAssignments(
       description: original.description,
       merchantAlias: original.merchantAlias,
       merchantId: original.merchantId,
+      merchantLogo: original.merchantLogo,
+      merchantMatch: original.merchantMatch,
       category: original.category,
       categoryOverride: original.categoryOverride,
       manualCategory: original.manualCategory,

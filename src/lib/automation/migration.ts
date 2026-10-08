@@ -52,4 +52,38 @@ export function migrateAutomation(db: DatabaseSync): void {
     );
     INSERT OR IGNORE INTO automation_migrations VALUES (1, unixepoch() * 1000);
   `);
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 2").get()
+  ) {
+    db.exec(`
+      ALTER TABLE merchants RENAME TO merchants_v1;
+      CREATE TABLE merchants (
+        id TEXT PRIMARY KEY,
+        canonical_name TEXT NOT NULL,
+        aliases_json TEXT NOT NULL CHECK(json_valid(aliases_json)),
+        regex_json TEXT NOT NULL CHECK(json_valid(regex_json)),
+        default_category TEXT,
+        region TEXT NOT NULL,
+        source TEXT NOT NULL,
+        updated_at INTEGER NOT NULL,
+        city TEXT,
+        license TEXT,
+        attribution TEXT,
+        logo_json TEXT CHECK(logo_json IS NULL OR json_valid(logo_json))
+      );
+      INSERT INTO merchants
+        (id, canonical_name, aliases_json, regex_json, default_category, region, source, updated_at)
+        SELECT id, canonical_name, aliases_json, regex_json, default_category, region, source, updated_at
+        FROM merchants_v1;
+      DROP TABLE merchants_v1;
+      CREATE TABLE automation_backfill_passes (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        version TEXT NOT NULL,
+        job_id TEXT NOT NULL REFERENCES automation_jobs(id) ON DELETE CASCADE,
+        completed_at INTEGER,
+        PRIMARY KEY(user_id, version)
+      );
+      INSERT INTO automation_migrations VALUES (2, unixepoch() * 1000);
+    `);
+  }
 }

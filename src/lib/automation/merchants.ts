@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { categories } from "@/lib/categories";
 import { merchantText } from "@/lib/import/merchant-description";
+import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
 
 const MAX_INPUT = 1024;
 const MAX_NORMALIZED = 512;
@@ -9,6 +10,7 @@ const MAX_ALIAS_TOKENS = 4;
 const MAX_REGEX_PATTERNS = 256;
 const MAX_POSTING = 64;
 const MAX_FUZZY_CANDIDATES = 128;
+export const MAX_MERCHANT_ALIASES = 40_000;
 const providers =
   /\b(?:pay\s*pal|klarna|sum\s*up|stripe|adyen|mollie|worldline|revolut(?:\s+epayment)?|apple\s+pay|google\s+pay)\b/i;
 const ibanLengths: Record<string, number> = {
@@ -62,6 +64,11 @@ export function normalizeMerchantText(text: string): string {
     .replace(/\biban\s*:?\s*[A-Z]{2}\s*\d{2}[A-Z0-9]*/gi, " ")
     .replace(/\bbic\s*:?\s*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/gi, " ")
     .replace(
+      /\b(?:terminal|kartenterminal|kartenfolge)[-\s]*(?:id|nr|nummer)?\.?\s*[:=#]?\s*(?=[A-Z0-9*-]*\d)[A-Z0-9*-]+\b/gi,
+      " ",
+    )
+    .replace(/\bpos[-\s]*(?:id|nr|nummer)\.?\s*[:=#]?\s*[A-Z0-9*-]+/gi, " ")
+    .replace(
       /\b(?:zahlungsreferenz|auftraggeberreferenz|mandat(?:sreferenz)?|referenz|reference|ref|transaktions[-\s]*id|transaction[-\s]*id|end[-\s]*to[-\s]*end(?:[-\s]*id)?|id)\b\.?\s*[:=]\s*[^;|\r\n]*?(?=\s*(?:merchant|h(?:ä|ae)ndler)(?:[-\s]*name)?\s*:|[;|\r\n]|$)/gi,
       " ",
     )
@@ -76,7 +83,8 @@ export function normalizeMerchantText(text: string): string {
     .replace(
       /\b\d{4}[-/]\d{2}[-/]\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?\b/gi,
       " ",
-    );
+    )
+    .replace(/\b(?:h(?:ä|ae)ndler|merchant)(?:[-\s]*name)?\s*:/gi, " ");
   const value = merchantText(metadataFree)
     .toLocaleLowerCase("de-AT")
     .replace(/ä/g, "ae")
@@ -90,7 +98,7 @@ export function normalizeMerchantText(text: string): string {
     .replace(/\b\d+\b/g, " ")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(
-      /\b(?:iban|bic|sepa|pos|kartenzahlung|zahlung|debit|filiale|fil|branch|store|nr|nummer)\b/g,
+      /\b(?:iban|bic|sepa|pos|terminal|kartenterminal|kartenfolge|kartenzahlung|zahlung|debit|erstattung|rueckerstattung|rueckverguetung|refund|gutschrift|filiale|fil|branch|store|nr|nummer)\b/g,
       " ",
     )
     .replace(/\s+/g, " ")
@@ -168,6 +176,8 @@ const nameSchema = z
     );
   }, "A specific merchant name of at most four words is required; payment providers are not merchants.");
 
+export const merchantLogoSchema = privateMerchantLogoSchema;
+
 export const merchantSchema = z
   .object({
     id: z.string().trim().min(1).max(80),
@@ -178,9 +188,13 @@ export const merchantSchema = z
         z.string().refine(safeRegex, "Unsafe or unsupported merchant regex."),
       )
       .max(8),
-    defaultCategory: z.enum(categories),
+    defaultCategory: z.enum(categories).nullable(),
     region: z.string().trim().min(2).max(20),
     source: z.string().trim().min(1).max(80),
+    city: z.string().trim().min(1).max(150).nullable().default(null),
+    license: z.string().trim().min(1).max(200).nullable().default(null),
+    attribution: z.string().trim().min(1).max(2000).nullable().default(null),
+    logo: merchantLogoSchema.nullable().default(null),
     updatedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   })
   .superRefine((merchant, context) => {
@@ -215,7 +229,9 @@ const localMerchant = (
     defaultCategory,
     region: "AT",
     source: "local",
-    updatedAt: Date.UTC(2026, 9, 8),
+    license: "Local factual merchant rules; no logo rights asserted",
+    attribution: "Finanzblick: lokal gepflegte Händlerregeln",
+    updatedAt: Date.UTC(2026, 9, 8, 17),
   });
 
 /** Curated offline identities, not account-specific learned category overrides. */
@@ -329,7 +345,9 @@ const resolved = (
   matches.size === 1
     ? {
         merchant: matches.values().next().value,
-        requiresManualReview: false,
+        requiresManualReview:
+          method === "fuzzy" ||
+          matches.values().next().value?.defaultCategory === null,
         method,
       }
     : unresolved(method);
@@ -361,6 +379,10 @@ export class MerchantIndex {
         };
         entry.merchants.add(merchant);
         this.exact.set(text, entry);
+        if (this.exact.size > MAX_MERCHANT_ALIASES)
+          throw new RangeError(
+            "Merchant index supports at most 40,000 aliases.",
+          );
       }
       for (const pattern of merchant.regexPatterns) {
         if (this.regex.length >= MAX_REGEX_PATTERNS)

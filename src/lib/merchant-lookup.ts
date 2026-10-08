@@ -5,6 +5,7 @@ import { bookingReviewReason } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
 import { merchantLookupQuerySchema, merchantLookupResultSchema, type MerchantLookupResult } from "@/lib/merchant-lookup-schema";
 import type { AppState, Transaction } from "@/lib/types";
+import { merchantAliasAssignment } from "@/lib/merchant-identity";
 
 const unknownMerchant = /h(?:ä|ae)ndler\s+unbekannt/i;
 type AliasBooking = Omit<Transaction, "amount"> & { amount: number | null };
@@ -61,14 +62,16 @@ export function confirmMerchantAlias(state: AppState, selected: Transaction, res
   const matches = (row: AliasBooking) => row.id === selected.id ||
     (canMatchTwins && row.merchantAlias === current.merchantAlias && !row.reviewed && merchantRuleKey(row) === key &&
       (openIds.has(row.id) || (row.amount !== null && !!bookingReviewReason(state, { ...row, amount: row.amount }))));
-  const apply = <T extends AliasBooking>(row: T): T => matches(row) ? { ...row, merchantAlias: alias } : row;
+  const apply = <T extends AliasBooking>(row: T): T => matches(row)
+    ? { ...row, ...merchantAliasAssignment(row, alias) }
+    : row;
   return {
     ...state,
     transactions: state.transactions.map(apply),
     ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((receipt) => {
       const booking = receipt.booking;
       const updated = receipt.key === selected.id || receipt.key === statementFingerprint(current)
-        ? { ...(booking ?? current), merchantAlias: alias } : booking && apply(booking);
+        ? { ...(booking ?? current), ...merchantAliasAssignment(booking ?? current, alias) } : booking && apply(booking);
       return updated && updated !== booking ? { ...receipt, booking: updated, merchantKey: merchantRuleKey(updated) } : receipt;
     }) } : {}),
     ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.map((item) => item.kind === "fixed"

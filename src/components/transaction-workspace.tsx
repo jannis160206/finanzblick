@@ -11,12 +11,14 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MerchantMark } from "@/components/merchant-mark";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { currency, dateLabel } from "@/lib/format";
+import type { classify } from "@/lib/calc";
 import type { Category } from "@/lib/types";
 import type {
   AccountedTransaction,
@@ -156,6 +158,27 @@ export function SelectionCheckbox({
   );
 }
 
+export function TransactionDescriptionCell({
+  booking,
+  classification,
+}: {
+  booking: AccountedTransaction;
+  classification: Pick<ReturnType<typeof classify>, "category" | "isTransfer">;
+}) {
+  const description = booking.merchantAlias ?? booking.description;
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <MerchantMark booking={booking} classification={classification} />
+      <span
+        className="block min-w-0 text-sm font-medium break-words md:max-w-[300px] md:truncate"
+        title={description}
+      >
+        {description}
+      </span>
+    </div>
+  );
+}
+
 export function TransactionCategoryCell({
   booking,
   category,
@@ -291,9 +314,7 @@ export function MobileTransactionList({
               {mobileCell(row, "selection")}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium break-words">
-                {row.original.merchantAlias ?? row.original.description}
-              </p>
+              {mobileCell(row, "description")}
               <p className="mt-1 text-xs text-muted-foreground">
                 {dateLabel(row.original.date)}
               </p>

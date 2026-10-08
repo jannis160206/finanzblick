@@ -137,6 +137,66 @@ auch bei einer Wiederholung geschützt; es entstehen keine zusätzlichen Buchung
 Beim vServer-Aufruf den Schalter ebenfalls hinter `scripts/statement-backfill.ts`
 anhängen.
 
+Für dieses Händlerindex-Upgrade gibt es einen **einmaligen Nachlauf je Konto**:
+
+```sh
+npm run backfill -- --merchant-upgrade
+```
+
+Die Version `merchant-reliability-v2` wird mit Job und ID-Snapshot atomar in
+`automation_backfill_passes` gespeichert. Erneutes Ausführen übernimmt denselben
+Cursor, auch nach Neustart oder nach Abschluss; es setzt den Job nicht zurück.
+Ein noch laufender älterer Backfill muss zuerst fertig werden. Ein endgültiger
+Fehler bleibt sichtbar statt beim erneuten Start ein neues Retry-Budget zu erhalten.
+`--rerun` und `--merchant-upgrade` dürfen nicht kombiniert werden.
+Ein bereits versionierter Job ist auch vor einem späteren Aufruf nur mit
+`--rerun` geschützt; der Befehl meldet dann einen Konflikt statt neu anzufangen.
+
+Der Worker verwendet weiterhin einen einzigen Prozess und einen Händlerindex pro
+Start. Vor dem Vergleich entfernt er POS-/Terminal-IDs, Uhrzeit, IBAN und Referenzen.
+Exakte Aliase oder vertrauenswürdige lokale Regexregeln dürfen Namen und Kategorie
+setzen. Fuzzy, fehlende Kategorie, mehrere globale Treffer oder widersprüchliche
+Kontoregeln verändern bestehende Zuordnungen nicht und bleiben in der Prüfliste.
+Eine schon sichere, andere Händler-ID wird nicht automatisch ausgetauscht.
+Manuelle/ausdrücklich bestätigte Zuordnungen bleiben gesperrt. Sichere bestehende
+Kontextkategorien (z. B. Mittagessen) werden nicht durch einen allgemeinen
+Händlerstandard ersetzt. Erstattungen behalten den Händler, aber den positiven
+Betrag und die Kategorie Rückerstattungen; Kontoüberweisungen/Interne Transfers
+erhalten keine Händlerzuordnung und kein Händlerzeichen.
+
+Bestätigte Namen/Kategorien werden bereits im kontospezifischen `merchantRules`
+des Finanzsnapshots gelernt. Der Worker baut daraus einmal pro Verarbeitung einen
+Aliasindex; ein Konto kann damit niemals die globale Händlertabelle oder ein anderes
+Konto verändern. Die 32-px-Zeichen verwenden ausschließlich diese kanonischen Namen
+oder privat gespeicherte, lizenzierte Logos. Unbekannte Namen erhalten ein neutrales
+Fragezeichen, keine vermuteten Markeninitialen. Siehe [Händlerdaten](merchant-data.md)
+für offenen Datenimport, Herkunft und Logo-Lizenzen.
+
+Automatische Index-Treffer sind keine Nutzerbestätigung und lernen deshalb keine
+neuen Kontoregeln. Alte Regeln, die ausschließlich durch passende automatische
+Worker-Zuordnungen belegt sind, bleiben gespeichert, werden aber nicht als manuelle
+Bestätigung verwendet. Widersprüchliche Händlerfelder im Originalauszug bleiben
+ebenfalls offen; ein einzelner Treffer im verkürzten Buchungstext reicht nicht.
+
+### Deployment zu Hause
+
+Nur im vorhandenen WebStorm-SSH-Terminal auf dem Server:
+
+```sh
+git pull --ff-only
+npm install
+npm run build
+sudo systemctl restart finanzblick finanzblick-worker
+```
+
+Nach einem optionalen, begrenzten Händlerdatenimport den Worker erneut starten,
+damit er den neuen Index lädt. Den einmaligen Nachlauf unter derselben Server-
+Umgebung starten wie oben gezeigt, mit `--merchant-upgrade` hinter
+`scripts/statement-backfill.ts`. Status und Abschluss im SSE-Frontend bzw.
+`journalctl -u finanzblick-worker` kontrollieren. Wenn SSH am Arbeitsort blockiert
+ist oder das WebStorm-Terminal nicht verfügbar ist, bleibt Deployment ausstehend;
+lokale Prüfung oder ein Git-Push sind kein Server-Deploy.
+
 Die bestehende App speichert Finanzstände als JSON-Snapshot, nicht als einzelne
 Umsatzzeilen. Deshalb wird für jeden Batch **nur ein Konto**, aber dessen
 vollständiger, auf 20 MiB begrenzter Snapshot gelesen/geschrieben. Der

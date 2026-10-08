@@ -17,6 +17,7 @@ import {
   retainLockedAssignments,
 } from "./pipeline";
 import { AutomationStore, type ClaimedJob } from "./store";
+import { createAccountMerchantResolver } from "./aliases";
 
 export class AutomationWorker {
   constructor(
@@ -52,15 +53,20 @@ export class AutomationWorker {
     if (bytes.byteLength !== job.bytes) throw new Error("Upload size mismatch");
     const result = await parseServerStatement(bytes, job.name);
     this.store.progress(this.owner, job, 40);
+    const snapshot = this.store.accounts.getFinance(job.userId);
+    const resolveAccount = createAccountMerchantResolver(
+      snapshot.state ?? createEmptyAccountState(),
+    );
+    const rows: typeof result.rows = [];
     for (let offset = 0; offset < result.rows.length; offset += 200) {
       for (let i = offset; i < Math.min(offset + 200, result.rows.length); i++)
-        result.rows[i] = enrichTransaction(result.rows[i], this.index);
+        rows.push(
+          enrichTransaction(result.rows[i], this.index, resolveAccount),
+        );
       this.store.progress(
         this.owner,
         job,
-        40 +
-          (40 * Math.min(offset + 200, result.rows.length)) /
-            Math.max(1, result.rows.length),
+        40 + (40 * rows.length) / Math.max(1, result.rows.length),
       );
       await delay(0);
     }
@@ -69,7 +75,26 @@ export class AutomationWorker {
       job.userId,
       (stored) => {
         const state = stored ?? createEmptyAccountState();
-        const prepared = prepareStatementImport([result], state);
+        const revision = this.store.accounts.read((db) =>
+          Number(
+            db
+              .prepare("SELECT revision FROM finance WHERE user_id = ?")
+              .get(job.userId)?.revision ?? 0,
+          ),
+        );
+        const currentRules =
+          revision !== snapshot.revision
+            ? createAccountMerchantResolver(state)
+            : null;
+        const enriched = {
+          ...result,
+          rows: currentRules
+            ? result.rows.map((row) =>
+                enrichTransaction(row, this.index, currentRules),
+              )
+            : rows,
+        };
+        const prepared = prepareStatementImport([enriched], state);
         const committed = commitStatementImport(
           state,
           prepared.automatic,

@@ -51,6 +51,43 @@ export function merchantAliasSourceKey(row: Parameters<typeof merchantRuleKey>[0
 type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
 export type MerchantChoice = Pick<Transaction, "category" | "fixedCost" | "merchantAlias">;
 
+export function isAutomaticMerchantAssignment(row: Transaction): boolean {
+  return !!(row.merchantId || row.merchantMatch) && !row.is_locked && !hasCategoryChoice(row);
+}
+
+// Legacy worker imports could learn their own guesses. Keep stored rules, but
+// do not treat matching automatic-only history as a user's confirmation.
+export function activeMerchantRules(state: AppState) {
+  const automatic = new Map<string, {
+    categories: Set<Transaction["category"]>;
+    assignments: Set<string>;
+  }>();
+  const confirmed = new Set<string>();
+  for (const row of [
+    ...state.transactions,
+    ...(state.fixedReceipts ?? []).flatMap(item => item.booking ? [item.booking] : []),
+  ]) {
+    const keys = new Set([merchantRuleKey(row), merchantAliasSourceKey(row)].filter(key => key !== undefined));
+    for (const key of keys) {
+      if (isAutomaticMerchantAssignment(row)) {
+        const choices = automatic.get(key) ?? {
+          categories: new Set<Transaction["category"]>(), assignments: new Set<string>(),
+        };
+        choices.categories.add(row.category);
+        choices.assignments.add(JSON.stringify([row.category, row.merchantAlias]));
+        automatic.set(key, choices);
+      } else if (row.is_locked || hasCategoryChoice(row) || row.categoryOverride) confirmed.add(key);
+    }
+  }
+  return (state.merchantRules ?? []).filter(rule => {
+    const key = storedMerchantKey(rule.key);
+    const choices = automatic.get(key);
+    return confirmed.has(key) || !(rule.merchantAlias
+      ? choices?.assignments.has(JSON.stringify([rule.category, rule.merchantAlias]))
+      : choices?.categories.has(rule.category));
+  });
+}
+
 function addChoice(choices: Map<string, MerchantChoice | null>, key: string, choice: MerchantChoice) {
   const previous = choices.get(key);
   // Conflicting history is not a new decision. Keep it unresolved, independent
@@ -64,6 +101,7 @@ function addChoice(choices: Map<string, MerchantChoice | null>, key: string, cho
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
   const choices = new Map<string, MerchantChoice | null>();
   for (const row of rows) {
+    if (isAutomaticMerchantAssignment(row)) continue;
     if ((!row.categoryOverride && !hasManualCategory(row)) || row.category === "Prüfen" || payrollCategory(row)) continue;
     const key = merchantRuleKey(row);
     if (
@@ -145,6 +183,7 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
   const remembered = merchantChoices(state.transactions, classifyBooking);
   const inferred = new Map<string, MerchantChoice | null>();
   for (const receipt of state.fixedReceipts ?? []) {
+    if (receipt.booking && isAutomaticMerchantAssignment(receipt.booking)) continue;
     const key = receipt.merchantKey ? storedMerchantKey(receipt.merchantKey) : undefined;
     if (key && isSpecificMerchantKey(key))
       addChoice(inferred, key, { category: canonicalCategory(receipt.category) });
@@ -154,7 +193,7 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
       .filter(([key]) => isSpecificMerchantKey(key)),
   );
   const explicit = new Map<string, MerchantChoice | null>();
-  for (const rule of state.merchantRules ?? []) {
+  for (const rule of activeMerchantRules(state)) {
     const key = storedMerchantKey(rule.key);
     if (isSpecificMerchantKey(key)) addChoice(explicit, key, {
       category: canonicalCategory(rule.category),

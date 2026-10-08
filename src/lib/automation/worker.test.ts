@@ -14,6 +14,7 @@ import {
   LEASE_MS,
   MAX_ATTEMPTS,
   MAX_QUEUE_BYTES,
+  MERCHANT_BACKFILL_VERSION,
 } from "./schema";
 
 let directory: string;
@@ -470,4 +471,119 @@ it("enforces bounded queued storage, active jobs and idempotent merchant upserts
   expect(() =>
     store.reserveUpload(userId, randomUUID(), "test.csv", 1),
   ).toThrow("voll");
+});
+
+it("runs the upgraded merchant backfill once per tenant and never resets its durable cursor", async () => {
+  const bob = (await accounts.register("bob", "test-only-password-123")).user
+    .id;
+  const row = transactionSchema.parse({
+    id: "original",
+    date: "2026-10-08",
+    bank: "Amex",
+    pocket: "Amex",
+    description: "BILLA",
+    amount: -42,
+    category: "Prüfen",
+    includeInPlan: true,
+  });
+  accounts.putFinance(userId, { ...blankTestState(), transactions: [row] }, 0);
+  const original = store.enqueueBackfill(userId);
+  await worker.process(store.claim(owner)!);
+  const snapshot = accounts.getFinance(userId);
+  accounts.putFinance(
+    userId,
+    {
+      ...snapshot.state!,
+      transactions: [
+        ...snapshot.state!.transactions,
+        ...Array.from({ length: 202 }, (_, index) => ({
+          ...row,
+          id: `added-${index}`,
+        })),
+      ],
+    },
+    snapshot.revision,
+  );
+  const options = { onceVersion: MERCHANT_BACKFILL_VERSION };
+  expect(store.enqueueBackfill(userId, Date.now(), options)).toMatchObject({
+    id: original.id,
+    status: "QUEUED",
+    cursor: 0,
+    total: 203,
+  });
+  await worker.process(store.claim(owner)!);
+  expect(store.enqueueBackfill(userId, Date.now(), options)).toMatchObject({
+    status: "QUEUED",
+    cursor: 200,
+    total: 203,
+  });
+  expect(store.snapshot(bob).jobs).toEqual([]);
+  await worker.process(store.claim(owner)!);
+  const completed = store.snapshot(userId).jobs[0];
+  const revision = accounts.getFinance(userId).revision;
+  expect(completed).toMatchObject({
+    status: "COMPLETED",
+    cursor: 203,
+    progress: 100,
+  });
+  expect(store.enqueueBackfill(userId, Date.now(), options)).toEqual(completed);
+  expect(() => store.enqueueBackfill(userId, Date.now(), { rerun: true })).toThrow("nicht zurückgesetzt");
+  expect(store.claim(owner)).toBeNull();
+  expect(accounts.getFinance(userId).revision).toBe(revision);
+  expect(accounts.getFinance(userId).state!.transactions).toHaveLength(203);
+  expect(
+    accounts.read(
+      (db) =>
+        db
+          .prepare(
+            "SELECT completed_at FROM automation_backfill_passes WHERE user_id = ? AND version = ?",
+          )
+          .get(userId, MERCHANT_BACKFILL_VERSION)?.completed_at,
+    ),
+  ).toEqual(expect.any(Number));
+  accounts.putFinance(
+    bob,
+    { ...blankTestState(), transactions: [{ ...row, id: "bob-row" }] },
+    0,
+  );
+  expect(store.enqueueBackfill(bob, Date.now(), options).total).toBe(1);
+});
+
+it("does not replace an unrelated active backfill or retry a failed once-only pass on restart", () => {
+  store.enqueueBackfill(userId);
+  expect(() =>
+    store.enqueueBackfill(userId, Date.now(), {
+      onceVersion: MERCHANT_BACKFILL_VERSION,
+    }),
+  ).toThrow("bisherige Backfill läuft");
+  const claimed = store.claim(owner)!;
+  accounts.transformFinance(
+    userId,
+    () => blankTestState(),
+    (db) => store.checkpoint(db, owner, claimed, 0, true),
+  );
+  store.enqueueBackfill(userId, Date.now(), {
+    onceVersion: MERCHANT_BACKFILL_VERSION,
+  });
+  accounts.transaction((db) =>
+    db
+      .prepare("UPDATE automation_jobs SET attempts = ? WHERE id = ?")
+      .run(MAX_ATTEMPTS - 1, claimed.id),
+  );
+  store.fail(owner, store.claim(owner)!, "Test failure");
+  expect(
+    store.enqueueBackfill(userId, Date.now(), {
+      onceVersion: MERCHANT_BACKFILL_VERSION,
+    }),
+  ).toMatchObject({
+    status: "FAILED",
+    attempts: MAX_ATTEMPTS,
+  });
+  expect(() => store.enqueueBackfill(userId, Date.now(), { rerun: true })).toThrow("nicht zurückgesetzt");
+  expect(() =>
+    store.enqueueBackfill(userId, Date.now(), {
+      onceVersion: MERCHANT_BACKFILL_VERSION,
+      rerun: true,
+    }),
+  ).toThrow("nicht zurückgesetzt");
 });

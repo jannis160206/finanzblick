@@ -106,6 +106,122 @@ function mount(initial = fixture(), storageError: string | null = null) {
 }
 
 it.each([false, true])(
+  "renders the same 32px merchant cell before booking text without changing ledger order (mobile: %s)",
+  (mobile) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: mobile,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const initial = fixture();
+    initial.transactions[0].merchantId = "muller/at";
+    initial.transactions[0].merchantLogo = true;
+    initial.transactions.push(
+      {
+        ...initial.transactions[0],
+        id: "refund",
+        date: "2026-10-04",
+        description: "Erstattung",
+        merchantAlias: "Martin Auer",
+        merchantId: undefined,
+        merchantLogo: undefined,
+        category: "Rückerstattungen",
+        amount: 20,
+        sharedWithRaphael: false,
+      },
+      {
+        ...initial.transactions[0],
+        id: "transfer",
+        date: "2026-10-03",
+        description: "Interne Überweisung",
+        merchantAlias: "Eigenes Konto",
+        category: "Transfer intern",
+        sharedWithRaphael: false,
+      },
+      {
+        ...initial.transactions[1],
+        id: "income",
+        date: "2026-10-02",
+        description: "Lohnzahlung",
+        category: "Gehalt",
+        amount: 4000,
+      },
+    );
+    const view = mount(initial);
+    fireEvent.click(screen.getByRole("button", { name: "Weitere Filter" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Transfers anzeigen" }));
+    fireEvent.keyDown(document, { key: "Escape" });
+    const ledger = mobile
+      ? screen.getByRole("list", { name: "Mobile Buchungen" })
+      : screen.getByRole("table", { name: "Buchungen" });
+    const rows = mobile
+      ? within(ledger).getAllByRole("listitem")
+      : Array.from(ledger.querySelectorAll("tbody tr"));
+    expect(rows).toHaveLength(5);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining("Möbel Müller"),
+      expect.stringContaining("BILLA"),
+      expect.stringContaining("Martin Auer"),
+      expect.stringContaining("Eigenes Konto"),
+      expect.stringContaining("Lohnzahlung"),
+    ]);
+    const description = within(rows[0] as HTMLElement).getByText("Möbel Müller");
+    const logoMark = description.previousElementSibling!;
+    const image = logoMark.querySelector("img")!;
+    expect(logoMark.className).toContain("size-8");
+    expect(image.getAttribute("src")).toBe("/api/merchants/muller%2Fat/logo");
+    expect(image.width).toBe(32);
+    expect(image.height).toBe(32);
+    expect(description.className).toContain("md:truncate");
+    expect(description.className).toContain("break-words");
+    const unknown = within(rows[1] as HTMLElement).getByText("BILLA");
+    expect(unknown.previousElementSibling?.textContent).toBe("?");
+    const refund = within(rows[2] as HTMLElement).getByText("Martin Auer");
+    expect(refund.previousElementSibling?.textContent).toBe("MA");
+    expect(
+      within(rows[3] as HTMLElement).getByText("Eigenes Konto")
+        .previousElementSibling,
+    ).toBeNull();
+    expect(
+      within(rows[4] as HTMLElement).getByText("Lohnzahlung")
+        .previousElementSibling,
+    ).toBeNull();
+    expect(ledger.querySelectorAll("img")).toHaveLength(1);
+    fireEvent.error(image);
+    expect(description.previousElementSibling?.textContent).toBe("MM");
+    expect(ledger.querySelector("img")).toBeNull();
+    expect(view.read()).toBe(initial);
+    expect(view.update).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
+  "suppresses merchant marks for bank transfer source metadata in the shared cell (mobile: %s)",
+  (mobile) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: mobile,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const initial = fixture();
+    initial.transactions = [{
+      ...initial.transactions[0],
+      sourceCategory: "SEPA Überweisung",
+      merchantId: "muller",
+      merchantLogo: true,
+    }];
+    const view = mount(initial);
+    const ledger = mobile
+      ? screen.getByRole("list", { name: "Mobile Buchungen" })
+      : screen.getByRole("table", { name: "Buchungen" });
+    const description = within(ledger).getByText("Möbel Müller");
+    expect(description.previousElementSibling).toBeNull();
+    expect(ledger.querySelector("img")).toBeNull();
+    expect(view.update).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
   "uses only an accessible blue Repeat icon for fixed costs (mobile: %s)",
   (mobile) => {
     vi.stubGlobal("matchMedia", () => ({
