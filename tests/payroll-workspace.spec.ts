@@ -148,7 +148,7 @@ for (const width of [1440, 390, 320]) {
       page.getByRole("button", { name: "PDF auswählen", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("table", {
+      page.getByRole("region", {
         name: "Monatliche Gehaltsprognose",
         exact: true,
       }),
@@ -193,13 +193,13 @@ for (const width of [1440, 390, 320]) {
     await page
       .getByText("Monatliche Prognose anzeigen", { exact: true })
       .click();
-    const table = page.getByRole("table", {
+    const forecast = page.getByRole("region", {
       name: "Monatliche Gehaltsprognose",
       exact: true,
     });
-    await expect(table).toBeVisible();
+    await expect(forecast).toBeVisible();
     await expect(
-      table.getByRole("rowheader", {
+      forecast.getByRole("article", {
         name: monthLabel("2026-10"),
         exact: true,
       }),
@@ -423,3 +423,48 @@ test("large supported amounts fit 320px without overflowing result cards", async
   await page.getByText("Monatliche Prognose anzeigen", { exact: true }).click();
   await noOverflow(page);
 });
+
+for (const width of [1440, 390]) {
+  test(`monthly forecast cards preserve January-based values and highlight special payments at ${width}px`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const fixture = payrollFixture();
+    fixture.payslips = fixture.payslips?.filter((entry) =>
+      entry.employer === payrollEmployer && entry.year === 2026 && entry.month === 1,
+    );
+    const state = await open(page, fixture);
+    const model = analyzePayrollAutomatically(state.payslips ?? [], 2026, payrollEmployer);
+    await expect(page.getByText("Berechnungsdetails, Annahmen & Quellen", { exact: true })).toHaveCount(0);
+    const disclosure = page.getByText("Monatliche Prognose anzeigen", { exact: true });
+    await disclosure.focus();
+    await page.keyboard.press("Enter");
+    const forecast = page.getByRole("region", { name: "Monatliche Gehaltsprognose", exact: true });
+    await expect(forecast.getByRole("article")).toHaveCount(11);
+    for (const month of model.forecast.months) {
+      const label = monthLabel(`2026-${String(month.month).padStart(2, "0")}`);
+      const card = forecast.getByRole("article", { name: label, exact: true });
+      await expect(card.getByLabel(`${label} Laufendes Brutto`, { exact: true })).toHaveText(currency(month.regularGross));
+      await expect(card.getByLabel(`${label} Sonderzahlung`, { exact: true })).toHaveText(
+        month.specialGross > 0 ? currency(month.specialGross) : "Keine geplant",
+      );
+      await expect(card.locator("header").getByText("Sonderzahlung", { exact: true })).toHaveCount(month.specialGross > 0 ? 1 : 0);
+      const sixth = model.sixthEstimates.find((entry) => entry.month === month.month)!;
+      await expect(card.getByLabel(`${label} Jahressechstel`, { exact: true })).toHaveText(currency(sixth.sixth));
+    }
+    const first = await forecast.getByRole("article").nth(0).boundingBox();
+    const second = await forecast.getByRole("article").nth(1).boundingBox();
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    if (width === 1440) expect(second!.y).toBe(first!.y);
+    else expect(second!.y).toBeGreaterThan(first!.y);
+    for (const theme of ["dark", "light"]) {
+      await noOverflow(page);
+      await page.screenshot({ path: testInfo.outputPath(`forecast-${width}-${theme}.png`), fullPage: true });
+      if (theme === "dark") await page.getByRole("button", { name: "Farbschema wechseln", exact: true }).click();
+    }
+    expect((await snapshot(page)).state).toEqual(state);
+    await disclosure.click();
+    await expect(forecast).not.toBeVisible();
+  });
+}

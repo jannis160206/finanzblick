@@ -139,10 +139,10 @@ it("automatically imports dropped PDFs without a form and keeps secrets and bank
   const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
   expect(actual.getAllByText(moneyText(6000)).length).toBeGreaterThan(0);
   expect(actual.getByText(`Stand: ${monthLabel("2026-01")}`)).toBeTruthy();
-  expect(screen.getByRole("table", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(false);
+  expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(false);
   fireEvent.click(screen.getByText("Monatliche Prognose anzeigen"));
-  expect(screen.getByRole("table", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(true);
-  expect(screen.getByRole("table", { name: "Monatliche Gehaltsprognose" })).toBeTruthy();
+  expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(true);
+  expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" })).toBeTruthy();
 });
 
 it("retries a protected PDF using only its password, then analyzes it automatically", async () => {
@@ -324,15 +324,12 @@ it("shows current and year-end estimates prominently while a missing February bl
   expectNoManualInputs();
 });
 
-it("keeps lengthy assumptions and diagnostic reasons collapsed instead of repeating them above the results", () => {
+it("removes the technical assumptions and sources block while keeping forecast access", () => {
   render(<Fixture initial={{ ...seed(), payslips: [january] }} />);
-  const explanation = screen.getByText(/Automatisches Standardmodell mit unbestätigten Annahmen/);
-  expect(explanation.closest("details")?.open).toBe(false);
-  const source = screen.getByRole("link", { name: /RIS · § 67/, hidden: true });
-  expect(source.closest("details")?.open).toBe(false);
-  fireEvent.click(screen.getByText("Berechnungsdetails, Annahmen & Quellen"));
-  expect(explanation.closest("details")?.open).toBe(true);
-  expect(screen.getByRole("link", { name: /RIS · § 67/ })).toBeTruthy();
+  expect(screen.queryByText("Berechnungsdetails, Annahmen & Quellen")).toBeNull();
+  expect(screen.queryByText(/Automatisches Standardmodell mit unbestätigten Annahmen/)).toBeNull();
+  expect(screen.queryByRole("link", { name: /RIS · § 67/, hidden: true })).toBeNull();
+  expect(screen.getByText("Monatliche Prognose anzeigen")).toBeTruthy();
 });
 
 it("replaces provisional values with the computed sixth when February closes the historical gap", async () => {

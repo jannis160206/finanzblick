@@ -157,7 +157,7 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
               <p className="mt-2 text-xs text-muted-foreground">
                 {missing
                   ? "Steuerprognose offen: fehlende Belege klären."
-                  : "Weitere Nachweise nötig; siehe Berechnungsdetails."}
+                  : "Steuerprognose offen: weitere Nachweise nötig."}
               </p>
             )}
           </>
