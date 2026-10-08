@@ -14,6 +14,8 @@ import {
 import type { AppState } from "@/lib/types";
 import { AccountConfigError, AccountError } from "./errors";
 import { hashPassword, verifyPassword } from "./password";
+import { migrateAutomation } from "@/lib/automation/migration";
+import { lockManualAssignments } from "@/lib/automation/locks";
 
 export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 // Large workbook imports can contain 100,000 transactions; bound both input and storage.
@@ -122,6 +124,7 @@ export class AccountDatabase {
             "UPDATE finance SET state_bytes = length(CAST(state_json AS BLOB))",
           );
         }
+        migrateAutomation(this.db);
       });
       for (const suffix of ["-wal", "-shm"]) {
         if (existsSync(path + suffix)) chmodSync(path + suffix, 0o600);
@@ -134,6 +137,10 @@ export class AccountDatabase {
 
   close(): void {
     this.db.close();
+  }
+
+  read<T>(action: (database: DatabaseSync) => T): T {
+    return action(this.db);
   }
 
   configureLimits(limits: AccountLimits): void {
@@ -149,10 +156,10 @@ export class AccountDatabase {
     this.limits = { ...limits };
   }
 
-  private transaction<T>(action: () => T): T {
+  transaction<T>(action: (database: DatabaseSync) => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const result = action();
+      const result = action(this.db);
       this.db.exec("COMMIT");
       return result;
     } catch (error) {
@@ -326,13 +333,31 @@ export class AccountDatabase {
     revision: number,
     now = Date.now(),
   ): FinanceSnapshot {
-    const validated = financeUpdateSchema.parse({ state, revision });
+    return this.transaction(() => this.writeFinance(userId, state, revision, now));
+  }
+
+  transformFinance(
+    userId: string,
+    transform: (state: AppState | null) => AppState,
+    checkpoint: (database: DatabaseSync) => void,
+  ): FinanceSnapshot {
+    return this.transaction(() => {
+      const snapshot = this.getFinance(userId);
+      const result = this.writeFinance(userId, transform(snapshot.state), snapshot.revision, Date.now());
+      checkpoint(this.db);
+      return result;
+    });
+  }
+
+  private writeFinance(
+    userId: string, state: AppState, revision: number, now: number,
+  ): FinanceSnapshot {
+    const validated = financeUpdateSchema.parse({ state: lockManualAssignments(state), revision });
     const serialized = JSON.stringify(validated.state);
     const stateBytes = Buffer.byteLength(serialized);
     if (stateBytes > MAX_FINANCE_BYTES) {
       throw new AccountError(413, "Der Finanzdatenstand überschreitet 20 MiB.");
     }
-    return this.transaction(() => {
       const row = this.db
         .prepare("SELECT revision, state_bytes FROM finance WHERE user_id = ?")
         .get(userId) as { revision: number; state_bytes: number } | undefined;
@@ -365,7 +390,6 @@ export class AccountDatabase {
         )
         .run(userId, serialized, nextRevision, stateBytes, now);
       return { state: validated.state, revision: nextRevision };
-    });
   }
 
   consumeRateLimit(

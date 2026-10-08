@@ -90,6 +90,7 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (isNamedTransfer(row)) return;
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
+  if (row.requires_manual_review && !row.is_locked) return "Händlerzuordnung unsicher – bitte prüfen.";
   if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
   if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;
@@ -98,6 +99,7 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (categories && (categories.size > 1 || !categories.has(result.category)))
     return "Widersprüchliche Händlerregel: Zuordnung prüfen.";
   if (row.categoryOverride || result.isTransfer) return;
+  if (row.merchantId && row.requires_manual_review === false) return;
   if (classify({ ...row, category: "Prüfen", sourceCategory: undefined }).category === "Prüfen")
     return "Händler noch nicht sicher zugeordnet.";
 }
@@ -124,6 +126,7 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
   };
   let applyRule: ReturnType<typeof createMerchantRuleApplier> | undefined;
   const repair = (row: Transaction): Transaction => {
+    if (row.is_locked) return row;
     let updated = recoverMerchant(row);
     if (unresolvedTerminal(updated.description)) {
       const matches = recovered.filter((candidate) => sameTerminalBooking(row, candidate));
@@ -167,6 +170,7 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
 
 function repairPayrollBookings(state: AppState): AppState {
   const repair = (row: Transaction): Transaction => {
+    if (row.is_locked) return row;
     const payroll = payrollCategory(row);
     if (!payroll || classify(row).category !== payroll || row.category === payroll) return row;
     return { ...row, category: payroll, includeInPlan: false };

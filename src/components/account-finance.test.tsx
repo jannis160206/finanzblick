@@ -14,7 +14,15 @@ const account = { id: "admin-test", username: "admin", role: "admin" as const };
 let remote: AppState | null;
 let revision: number;
 let request: ReturnType<typeof vi.fn>;
+const sources: EventTarget[] = [];
+class TestEventSource extends EventTarget {
+  onerror: (() => void) | null = null;
+  constructor(readonly url: string) { super(); sources.push(this); }
+  close() {}
+}
 beforeEach(() => {
+  vi.stubGlobal("EventSource", TestEventSource);
+  sources.length = 0;
   localStorage.clear();
   remote = null;
   revision = 0;
@@ -126,6 +134,7 @@ it("retries the current working state after a cache-quota failure, never the old
   const write = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
     throw new DOMException("quota", "QuotaExceededError");
   });
+
   act(() => view.read().update((state) => ({ ...state, holidayRanges: [{ from: "2026-10-20", to: "2026-10-22" }] })));
   await waitFor(() => expect(view.read().storageError).toBeTruthy());
   write.mockRestore();
@@ -133,4 +142,39 @@ it("retries the current working state after a cache-quota failure, never the old
   await waitFor(() => expect(view.read().saved).toBe(true));
   expect(view.read().state.holidayRanges).toEqual([{ from: "2026-10-20", to: "2026-10-22" }]);
   expect(remote?.holidayRanges).toEqual(view.read().state.holidayRanges);
+});
+
+it("loads worker changes through SSE without a cyclic HTTP polling timer", async () => {
+  const view = mount();
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  const before = request.mock.calls.filter((call) => call[1].method === "GET").length;
+  remote = { ...remote!, holidayRanges: [{ from: "2026-11-01", to: "2026-11-03" }] };
+  revision++;
+  act(() => sources.at(-1)!.dispatchEvent(new MessageEvent("progress", {
+    data: JSON.stringify({ revision, jobs: [] }),
+  })));
+  await waitFor(() => expect(view.read().state.holidayRanges).toEqual(remote?.holidayRanges));
+  expect(request.mock.calls.filter((call) => call[1].method === "GET")).toHaveLength(before + 1);
+});
+
+it("coalesces overlapping SSE revisions without advancing the cache ahead of the displayed ledger", async () => {
+  const view = mount();
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  let release!: (response: Response) => void;
+  request.mockImplementationOnce(() => new Promise<Response>((resolve) => { release = resolve; }));
+  act(() => sources.at(-1)!.dispatchEvent(new MessageEvent("progress", {
+    data: JSON.stringify({ revision: revision + 1, jobs: [] }),
+  })));
+  await waitFor(() => expect(release).toBeDefined());
+  remote = { ...remote!, holidayRanges: [{ from: "2026-11-01", to: "2026-11-03" }] };
+  revision += 2;
+  act(() => sources.at(-1)!.dispatchEvent(new MessageEvent("progress", {
+    data: JSON.stringify({ revision, jobs: [] }),
+  })));
+  await act(async () => release(Response.json({ state: remote, revision })));
+  await waitFor(() => expect(view.read().state.holidayRanges).toEqual(remote?.holidayRanges));
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  act(() => view.read().update((state) => ({ ...state, seasonalTheme: { reduceMotion: true } })));
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  expect(remote?.holidayRanges).toEqual([{ from: "2026-11-01", to: "2026-11-03" }]);
 });

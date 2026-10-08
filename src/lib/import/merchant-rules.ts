@@ -109,6 +109,7 @@ export function rememberMerchants(
       ...(aliases.size === 1 ? { merchantAlias: [...aliases][0] } : {}), ...choice }]);
   }
   const applyChoice = (row: Transaction): Transaction => {
+    if (row.is_locked) return row;
     if (hasCategoryChoice(row)) return row;
     const sourceKey = merchantAliasSourceKey(row);
     const sourceChoice = sourceKey ? choices.get(sourceKey) : undefined;
@@ -163,6 +164,7 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
   }
   for (const [key, choice] of explicit) rules.set(key, choice);
   return (source: Transaction): Transaction => {
+    if (source.is_locked) return source;
     const row = recoverMerchant(source);
     if (hasCategoryChoice(row)) return row;
     const detected = classifyBooking(row);

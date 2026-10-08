@@ -1,0 +1,28 @@
+[Unit]
+Description=Finanzblick local statement worker
+After=network.target
+
+[Service]
+Type=simple
+User=finanzblick
+Group=finanzblick
+WorkingDirectory=/home/finanzblick/finanzblick
+EnvironmentFile=/etc/finanzblick.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --max-old-space-size=384 --import tsx scripts/statement-worker.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+MemoryMax=768M
+CPUQuota=100%
+Nice=10
+TasksMax=64
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/finanzblick
+
+[Install]
+WantedBy=multi-user.target

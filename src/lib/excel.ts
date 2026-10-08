@@ -260,6 +260,13 @@ export async function parseWorkbook(
           ? { manualCategory: /^(ja|true|1)$/i.test(manualCategoryCell) ? true : /^(nein|false|0)$/i.test(manualCategoryCell) ? false : manualCategoryCell }
           : {}),
         ...(native && text(get("Händleralias")) ? { merchantAlias: text(get("Händleralias")) } : {}),
+        ...(native && text(get("Händler-ID")) ? { merchantId: text(get("Händler-ID")) } : {}),
+        ...(native && text(get("Zuordnung gesperrt")) ? { is_locked:
+          /^(ja|true|1)$/i.test(text(get("Zuordnung gesperrt"))) ? true :
+            /^(nein|false|0)$/i.test(text(get("Zuordnung gesperrt"))) ? false : text(get("Zuordnung gesperrt")) } : {}),
+        ...(native && text(get("Automatische Zuordnung unsicher")) ? { requires_manual_review:
+          /^(ja|true|1)$/i.test(text(get("Automatische Zuordnung unsicher"))) ? true :
+            /^(nein|false|0)$/i.test(text(get("Automatische Zuordnung unsicher"))) ? false : text(get("Automatische Zuordnung unsicher")) } : {}),
         ...(native && text(get("Bankreferenz"))
           ? { bankReference: text(get("Bankreferenz")) }
           : {}),
@@ -675,6 +682,9 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Amex-Aufnahme",
     "Amex-Zeitraum",
     "Amex-Bildidentitäten",
+    "Händler-ID",
+    "Zuordnung gesperrt",
+    "Automatische Zuordnung unsicher",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -713,6 +723,9 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.amexCapturedAt ?? "",
       row.amexPeriodStart ?? "",
       row.amexScreenshotKeys?.join("\n") ?? "",
+      row.merchantId ?? "",
+      row.is_locked === undefined ? "" : row.is_locked ? "Ja" : "Nein",
+      row.requires_manual_review === undefined ? "" : row.requires_manual_review ? "Ja" : "Nein",
     ]);
   });
   for (const year of [2026, 2027]) {

@@ -18,7 +18,7 @@ http://127.0.0.1:3000
 
 ## Speicherung
 
-Im **Kontomodus auf dem Server** werden die vollständigen Finanzdaten pro Benutzer in einer SQLite-Datenbank gespeichert: Buchungen, Zuordnungen, Prüfungen, Planung, Sparziele, Lohnabrechnungen, Urlaub und Erscheinungsbild. Nach Anmeldung erscheint derselbe Stand auf Rechner und Handy. Bestätigte Änderungen werden sofort zusätzlich geräte- und kontogetrennt zwischengespeichert; **Synchronisiert** erscheint erst nach der Serverbestätigung. Andere Geräte laden Änderungen beim Fokuswechsel und alle 15 Sekunden. Gleichzeitige Änderungen überschreiben sich nicht: ein veralteter Stand bleibt lokal erhalten und zeigt einen Konflikt, der bewusst über Sicherung und **Serverstand laden** aufgelöst wird. Sichtschutz, Interaktionsklänge und Hell-/Dunkelwahl bleiben Geräteeinstellungen. Originale CSV/PDF/Bilder werden weiterhin im Browser ausgewertet; gespeichert werden die daraus übernommenen Daten.
+Im **Kontomodus auf dem Server** werden die vollständigen Finanzdaten pro Benutzer in einer SQLite-Datenbank gespeichert: Buchungen, Zuordnungen, Prüfungen, Planung, Sparziele, Lohnabrechnungen, Urlaub und Erscheinungsbild. Nach Anmeldung erscheint derselbe Stand auf Rechner und Handy. Bestätigte Änderungen werden sofort zusätzlich geräte- und kontogetrennt zwischengespeichert; **Synchronisiert** erscheint erst nach der Serverbestätigung. Andere Geräte laden Änderungen per SSE-Ereignis und beim Fokuswechsel, nicht mehr zyklisch. Gleichzeitige Änderungen überschreiben sich nicht: ein veralteter Stand bleibt lokal erhalten und zeigt einen Konflikt, der bewusst über Sicherung und **Serverstand laden** aufgelöst wird. Sichtschutz, Interaktionsklänge und Hell-/Dunkelwahl bleiben Geräteeinstellungen. Kontoauszüge werden lokal auf dem eigenen Server verarbeitet; hochgeladene Originale bleiben nur bis zum Jobabschluss erhalten. Ohne Konto erfolgt der Import weiterhin im Browser.
 
 Neue Benutzer starten ohne persönliche Kontostände, Ziele, Einmalbeträge oder Startarbeitsmappe des Administrators. Für die Übernahme bestehender Daten zuerst auf der bisherigen Adresse unter **Einstellungen → Sicherung** Excel exportieren, anschließend als `admin` anmelden und wiederherstellen. Nur der Administrator erhält bei vorhandenen Alt-Daten auf derselben Adresse zusätzlich **Bisherige Browserdaten übernehmen**. Der Hinweis erscheint einmal pro Browser und Admin-Konto; seine Markierung bleibt nach Neuladen und Abmelden erhalten. Ausblenden oder Neuladen übernimmt und löscht keine Daten. Eine spätere ausdrückliche Übernahme bleibt unter **Einstellungen → Sicherung → Bisherige Browserdaten** möglich; sie benötigt weiterhin eine Bestätigung und lässt die Originaldaten erhalten. Synchronisierungs- und Speicherfehler bleiben unabhängig davon sichtbar. Daten verschiedener Adressen oder Benutzer werden nie automatisch vermischt.
 
@@ -101,17 +101,19 @@ Danach muss ein anonymer Besuch zur Loginseite führen und `/api/finance` ohne S
 
 ### Datenbank sichern
 
-Finanzdaten sind nicht durch Git gesichert. Zusätzlich zu den Excel-Sicherungen regelmäßig die Datenbank privat sichern. Für eine einfache konsistente Dateisicherung den App-Dienst kurz anhalten und den vollständigen Datenbankordner einschließlich eventuell vorhandener WAL-Dateien kopieren:
+Finanzdaten sind nicht durch Git gesichert. Zusätzlich zu den Excel-Sicherungen regelmäßig die Datenbank privat sichern. Für eine einfache konsistente Dateisicherung Web- und Worker-Dienst kurz anhalten und den vollständigen Datenbankordner einschließlich WAL-Dateien und `statement-uploads` kopieren:
 
 ```sh
-systemctl stop finanzblick
+systemctl stop finanzblick finanzblick-worker
 cp -a /var/lib/finanzblick "/root/finanzblick-backup-$(date +%Y%m%d-%H%M%S)"
-systemctl start finanzblick
+systemctl start finanzblick finanzblick-worker
 ```
 
 Die Sicherung enthält Finanzdaten, Passwort-Hashes und Sitzungseinträge und gehört nicht in Git oder öffentliche Speicher. Eine laufende SQLite-Datei nicht isoliert ohne ihr WAL kopieren. Für die Wiederherstellung ebenfalls den Dienst anhalten, den gesamten gesicherten Ordner zurückkopieren und Eigentümer `finanzblick:finanzblick` sowie Modus 700 für das Verzeichnis wiederherstellen.
 
 ## Kontoauszüge
+
+**Kontomodus:** Originaldateien werden auf den eigenen Server hochgeladen und von einem getrennten TypeScript-Worker sequenziell verarbeitet; Fortschritt kommt per SSE, ohne HTTP-Polling. Den Worker zusätzlich zum Webdienst starten. Einrichtung, Ressourcenlimits und einmaliger Backfill: [Hintergrundverarbeitung](docs/statement-worker.md). Die folgenden Hinweise zur reinen Browserverarbeitung gelten nur für den lokalen Modus ohne Konto.
 
 - Unter **Umsätze** CSV-/XLSX-Dateien, Amex-PDFs oder Screenshots der Amex-App (PNG/JPEG/WebP) ablegen. Raiffeisen-Umsatzlisten ohne Kopfzeile und konsolidierte Revolut-Auszüge werden erkannt.
 - Sicher zugeordnete Buchungen werden automatisch gespeichert. Nur unklare Zeilen und Fixkostenänderungen erscheinen in der Prüfliste. Schließen der Prüfliste macht bereits gespeicherte Buchungen nicht rückgängig.

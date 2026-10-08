@@ -36,6 +36,8 @@ import type { AccountUser } from "@/lib/account-schema";
 import { AccountFinanceStorage, AccountSessionError } from "@/lib/account-finance-storage";
 import { AccountWorkspaceContext } from "@/components/account-context";
 import { createEmptyAccountState } from "@/lib/account-state";
+import { AutomationContext } from "@/components/automation-context";
+import { automationEventSchema, type AutomationEvent } from "@/lib/automation/schema";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -214,6 +216,8 @@ export function FinanceProvider({
     blocked: false,
   });
   const [storage] = useState(() => new FinanceStorage());
+  const [automation, setAutomation] = useState<AutomationEvent>({ revision: 0, jobs: [] });
+  const [automationError, setAutomationError] = useState<string | null>(null);
   const handleCloudError = useCallback((error: unknown) => {
     if (error instanceof AccountSessionError) {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Clear the previous account's in-memory ledger.
@@ -306,7 +310,6 @@ export function FinanceProvider({
       }
     }
     void hydrateAccount();
-    const timer = window.setInterval(() => { void poll(); }, 15_000);
     const refresh = () => { void poll(); };
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
@@ -317,12 +320,40 @@ export function FinanceProvider({
     return () => {
       active = false;
       cloud.dispose();
-      window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("online", refresh);
       window.removeEventListener("beforeunload", beforeUnload);
     };
   }, [cloud, handleCloudError, accountInitial]);
+  useEffect(() => {
+    if (!account || !cloud) return;
+    const source = new EventSource(`/api/statements/events?account=${encodeURIComponent(account.id)}`);
+    source.addEventListener("progress", (event) => {
+      try {
+        const parsed = automationEventSchema.parse(JSON.parse((event as MessageEvent<string>).data));
+        setAutomation(parsed);
+        setAutomationError(null);
+      } catch {
+        setAutomationError("Ungültiges Echtzeit-Update. Bitte die Seite neu laden.");
+        source.close();
+      }
+    });
+    source.addEventListener("unauthorized", () => {
+      source.close();
+      handleCloudError(new AccountSessionError("Bitte erneut anmelden."));
+    });
+    source.addEventListener("unavailable", () => {
+      setAutomationError("Hintergrundstatus derzeit nicht verfügbar. Die Verbindung wird wiederhergestellt.");
+    });
+    source.onerror = () => setAutomationError("Echtzeit-Verbindung unterbrochen. Wiederverbindung erfolgt automatisch.");
+    return () => source.close();
+  }, [account, cloud, handleCloudError]);
+  useEffect(() => {
+    if (!cloud || !store.saved || store.error || automation.revision <= cloud.revision) return;
+    void cloud.poll().then((data) => {
+      if (data && latest.current.saved) dispatch({ type: "hydrate", data });
+    }, handleCloudError);
+  }, [automation.revision, cloud, store.saved, store.error, handleCloudError]);
   useEffect(() => {
     let day = localToday();
     const refresh = () => {
@@ -446,8 +477,10 @@ export function FinanceProvider({
     >
       <FinanceContext.Provider value={value}>
         <AccountWorkspaceContext.Provider value={workspace}>
+        <AutomationContext.Provider value={{ jobs: automation.jobs, error: automationError }}>
         {children}
         <FinanceNotifications />
+        </AutomationContext.Provider>
         </AccountWorkspaceContext.Provider>
       </FinanceContext.Provider>
     </ThemeProvider>

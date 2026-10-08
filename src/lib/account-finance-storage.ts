@@ -26,6 +26,7 @@ export class AccountFinanceStorage {
   error: FinanceStorageError | null = null;
 
   get cachedState() { return this.cache?.state; }
+  get revision() { return this.cache?.revision ?? 0; }
 
   constructor(
     readonly userId: string,

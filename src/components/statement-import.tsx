@@ -43,6 +43,9 @@ import { isAmexScreenshot } from "@/lib/import/identity";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 import { screenshotReviewMessage } from "@/lib/import/amex-screenshot";
 import { StatementImportStatus } from "@/components/statement-import-status";
+import { useAccountWorkspace } from "@/components/account-context";
+import { AutomationStatus } from "@/components/automation-status";
+import { MAX_UPLOAD_BYTES } from "@/lib/automation/schema";
 
 type Pending = {
   requestId: string;
@@ -294,7 +297,8 @@ function FixedReview({
 export function StatementImport({ reviewRequest = 0 }: {
   reviewRequest?: number;
 }) {
-  const { state, ready, storageError, appendStatements, statementImport, openReviewCount } =
+  const workspace = useAccountWorkspace();
+  const { state, ready, saved, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
@@ -418,6 +422,25 @@ export function StatementImport({ reviewRequest = 0 }: {
     setUI({ busy: true, dragging: false, ledgerOnly: false });
     const results: StatementResult[] = [];
     try {
+      if (workspace) {
+        if (!saved) throw new Error("Bitte zuerst die laufende Synchronisierung abwarten.");
+        if (files.length > 5) throw new Error("Bitte höchstens fünf Auszüge gleichzeitig auswählen.");
+        for (const file of files) {
+          if (!file.size || file.size > MAX_UPLOAD_BYTES) throw new Error("Ein Kontoauszug darf höchstens 20 MiB groß sein.");
+          const response = await fetch(`/api/statements?name=${encodeURIComponent(file.name)}`, {
+            method: "POST", credentials: "same-origin", body: file,
+            signal: AbortSignal.timeout(90_000),
+            headers: { "Content-Type": "application/octet-stream", "X-Upload-Size": String(file.size),
+              "X-Finanzblick-Account": workspace.user.id },
+          });
+          if (!response.ok) {
+            const body = await response.json();
+            throw new Error(typeof body.error === "string" ? body.error : "Der Auszug konnte nicht hochgeladen werden.");
+          }
+          toast.success(`${file.name}: zur Hintergrundverarbeitung angenommen.`);
+        }
+        return;
+      }
       for (const file of files) {
         try {
           results.push(await parseStatementFile(file));
@@ -518,6 +541,7 @@ export function StatementImport({ reviewRequest = 0 }: {
         />
         {fileButton}
       </section>
+      {workspace && <AutomationStatus />}
       {state.importStatus && (
         <StatementImportStatus imported={state.importStatus.imported} reviewCount={openReviewCount}
           issues={state.importStatus.issues} />
