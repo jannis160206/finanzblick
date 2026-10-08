@@ -255,7 +255,7 @@ test("TR manual balance wins across reload and Revolut names remain read-only an
   await expect(everyday).toContainText("40,00");
   await expect(everyday.locator("input, select, form")).toHaveCount(0);
   await expect(page.locator("form:visible")).toHaveCount(0);
-  await page.getByText("Kontostand aktualisieren", { exact: true }).click();
+  await page.getByRole("button", { name: "Kontostand aktualisieren", exact: true }).click();
   await page.getByLabel("TR Kontostand", { exact: true }).fill("6.123,45");
   await page.getByLabel("TR Kontostand", { exact: true }).press("Tab");
   await page.getByLabel("TR Standdatum").fill("2026-09-12");

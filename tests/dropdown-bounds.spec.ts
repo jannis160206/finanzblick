@@ -201,7 +201,7 @@ for (const viewport of viewports) {
     }
     await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
     await page.goto("/pockets");
-    await page.getByText("Sparkonto-Details", { exact: true }).click();
+    await page.getByText("Round-ups", { exact: true }).first().click();
     await checkSelect(page, cdp, page.getByLabel("Round-up Jahr", { exact: true }), testInfo, "round-up");
     await page.goto("/einstellungen");
     await page.getByText("Saisonvorschau", { exact: true }).click();
