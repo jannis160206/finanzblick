@@ -3,7 +3,11 @@ import {
   accountMerchantNamePresentations,
   accountMerchantPresentations,
 } from "@/lib/automation/merchant-logo-presentations";
-import { merchantMarksRequestSchema } from "@/lib/automation/merchant-presentation-schema";
+import {
+  MAX_MERCHANT_MARKS_BYTES,
+  merchantMarksRequestSchema,
+} from "@/lib/automation/merchant-presentation-schema";
+import { accountMerchantBookingPresentations } from "@/lib/automation/merchant-booking-presentations";
 import { authorizeApi, isAccountMode } from "@/lib/server/auth";
 import {
   accountErrorResponse,
@@ -21,7 +25,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     if (!isAccountMode()) return jsonResponse({ marks: [] });
     const input = merchantMarksRequestSchema.parse(
-      await readJsonBody(request, 16 * 1024),
+      await readJsonBody(request, MAX_MERCHANT_MARKS_BYTES),
     );
     const { database } = await getAccountRuntime();
     const user = database.currentUser(requestSessionToken(request));
@@ -34,6 +38,15 @@ export async function POST(request: Request): Promise<Response> {
             nameMarks: await accountMerchantNamePresentations(
               store,
               input.merchantNames,
+              user.id,
+            ),
+          }
+        : {}),
+      ...(input.bookingIds?.length
+        ? {
+            bookingMarks: await accountMerchantBookingPresentations(
+              store,
+              input.bookingIds,
               user.id,
             ),
           }

@@ -28,7 +28,10 @@ import { StatementImport } from "@/components/statement-import";
 import { MerchantLookupDialog } from "@/components/merchant-lookup-dialog";
 import { shouldShowMerchantMark } from "@/components/merchant-mark";
 import { MerchantMarksProvider } from "@/components/merchant-marks-provider";
-import { merchantLogoName } from "@/lib/automation/merchant-mark-name";
+import {
+  merchantLogoName,
+  merchantLogoBookingId,
+} from "@/lib/automation/merchant-mark-name";
 import {
   TransactionActions,
   type LedgerAction,
@@ -425,6 +428,13 @@ const TransactionLedger = memo(function TransactionLedger({
       ? [name]
       : [];
   });
+  const bookingIds = displayedRows.flatMap(({ original }) => {
+    const id = merchantLogoBookingId(original);
+    return id &&
+      shouldShowMerchantMark(original, classifications.get(original)!)
+      ? [id]
+      : [];
+  });
   function exportView() {
     const rows = table
       .getPrePaginationRowModel()
@@ -505,6 +515,7 @@ const TransactionLedger = memo(function TransactionLedger({
         <MerchantMarksProvider
           merchantIds={merchantIds}
           merchantNames={merchantNames}
+          bookingIds={bookingIds}
         >
           {mobile ? (
             <>

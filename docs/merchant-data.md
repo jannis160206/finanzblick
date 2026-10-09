@@ -218,9 +218,11 @@ association rejection clears it. Writes change only logo metadata, entity
 evidence and its timestamp, using an optimistic revision guard. They never
 rewrite financial snapshots, categories, aliases, locks or backfill cursors.
 
-The transaction list batches **visible known IDs**, not bank text, to authenticated
-`POST /api/merchants/marks` (100 IDs / 16 KiB). It performs bounded local queries
-and file integrity checks, not remote downloads or per-transaction matching.
+The transaction list batches **visible known IDs, existing aliases and missing-identity
+booking references** to authenticated `POST /api/merchants/marks`
+(100 references / 16 KiB). Long receipt references are split by UTF-8 byte size
+as well as count. It performs bounded local queries and file integrity checks,
+not remote downloads or per-row database queries.
 Proven same-entity/name/region references can supply an image with that asset's
 own attribution. Same names without entity proof cannot. The account-scoped
 client cache is bounded to 500 entries and is reset/aborted on account changes;
@@ -241,12 +243,21 @@ logo, and no transaction backfill is needed for image updates.
 Desktop and mobile keep the same 32px cell. Missing/unlicensed images fall back
 to canonical initials; transfers have no mark. Rows without an ID may now resolve
 their existing merchant alias against exact local canonical names or factual
-aliases, but never bank text, fuzzy spelling or a conflicting identity. The legacy
+aliases, but never fuzzy spelling or a conflicting identity. The legacy
 `Audi | Abo` subscription annotation resolves the display name `Audi`; other
 arbitrary suffixes are not stripped. This only supplies an image and attribution:
 it never edits a transaction, category, lock, confirmed name or learned rule.
-Visible names and IDs share the 100-reference batch limit and 500-entry account
-cache; names are sent only to the authenticated same-origin API, not outside.
+If both ID and alias are absent, the server reads only the authenticated account's
+snapshot and resolves the requested ledger/receipt references through the existing
+worker evidence and exact/regex index. Fuzzy hits, collisions, conflicting evidence,
+qualified unrelated companies, transfers and confirmed empty names remain without
+an inferred logo. Account-confirmed aliases take precedence using exact name lookup.
+The shared display index is cached per database connection and invalidated after
+local or external database changes; finance snapshots are never cached in it.
+Locked historical rows can therefore show the same logo as newer rows without
+changing any identity, category, review flag, rule, lock or backfill checkpoint.
+Visible names, IDs and booking references share the 100-reference batch limit and
+500-entry account cache; inputs stay on the authenticated same-origin API.
 Unknown and ambiguous names still use initials. A changed image
 version resets failed-image state. Versions hash both the PNG reference and its
 full validated license/source/credits, so a credit-only change also gets a new

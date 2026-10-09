@@ -2,9 +2,23 @@ import { describe, expect, it } from "vitest";
 import {
   merchantLogoName,
   normalizeLogoIdentityName,
+  merchantLogoBookingId,
+  merchantBookingMarkKey,
 } from "./merchant-mark-name";
 
 describe("display-only merchant names", () => {
+  it("uses a bounded booking reference only when no identity or confirmed name exists", () => {
+    expect(merchantLogoBookingId({ id: "legacy" })).toBe("legacy");
+    expect(merchantBookingMarkKey("legacy")).toBe("booking:legacy");
+    for (const row of [
+      { id: "legacy", merchantAlias: "Mein Händler" },
+      { id: "legacy", merchantId: "old-id" },
+      { id: "legacy", merchantNameConfirmed: true },
+      { id: "x".repeat(2001) },
+      { id: "private\nid" },
+    ])
+      expect(merchantLogoBookingId(row)).toBeNull();
+  });
   it("uses an existing alias, including the legacy subscription annotation", () => {
     expect(merchantLogoName({ merchantAlias: "Audi | Abo" })).toBe("Audi");
     expect(merchantLogoName({ merchantAlias: " Shell " })).toBe("Shell");

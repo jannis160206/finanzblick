@@ -12,12 +12,16 @@ import {
 import { useAccountWorkspace } from "@/components/account-context";
 import {
   MAX_MERCHANT_MARKS,
+  MAX_MERCHANT_MARKS_BYTES,
   merchantMarksRequestSchema,
   merchantMarksResponseSchema,
   merchantLogoNameSchema,
   type MerchantPresentation,
 } from "@/lib/automation/merchant-presentation-schema";
-import { merchantNameMarkKey } from "@/lib/automation/merchant-mark-name";
+import {
+  merchantNameMarkKey,
+  merchantBookingMarkKey,
+} from "@/lib/automation/merchant-mark-name";
 import { Button } from "@/components/ui/button";
 import { z } from "zod";
 
@@ -35,10 +39,38 @@ const responseEnvelopeSchema = z
   .object({
     marks: merchantMarksResponseSchema.shape.marks,
     nameMarks: z.unknown().optional(),
+    bookingMarks: z.unknown().optional(),
   })
   .strict();
 const ERROR_MESSAGE =
   "Einige Händlerlogos konnten nicht geladen werden. Verfügbare Logos bleiben sichtbar; für fehlende Bilder werden Initialen angezeigt.";
+
+function markBatches(keys: string[]) {
+  const encoder = new TextEncoder();
+  const batches: string[][] = [];
+  let batch: string[] = [];
+  let bytes = 64;
+  for (const key of keys) {
+    const value = key.startsWith("name:")
+      ? key.slice(5)
+      : key.startsWith("booking:")
+        ? key.slice(8)
+        : key;
+    const size = encoder.encode(JSON.stringify(value)).byteLength + 1;
+    if (
+      batch.length === MAX_MERCHANT_MARKS ||
+      bytes + size > MAX_MERCHANT_MARKS_BYTES
+    ) {
+      batches.push(batch);
+      batch = [];
+      bytes = 64;
+    }
+    batch.push(key);
+    bytes += size;
+  }
+  if (batch.length) batches.push(batch);
+  return batches;
+}
 
 export function useMerchantMarks() {
   return useContext(MerchantMarksContext);
@@ -78,10 +110,12 @@ async function readMarksResponse(response: Response) {
 export function MerchantMarksProvider({
   merchantIds,
   merchantNames = [],
+  bookingIds = [],
   children,
 }: {
   merchantIds: string[];
   merchantNames?: string[];
+  bookingIds?: string[];
   children: ReactNode;
 }) {
   const workspace = useAccountWorkspace();
@@ -92,6 +126,7 @@ export function MerchantMarksProvider({
       enabled={!!workspace}
       merchantIds={merchantIds}
       merchantNames={merchantNames}
+      bookingIds={bookingIds}
     >
       {children}
     </AccountMerchantMarks>
@@ -102,11 +137,13 @@ function AccountMerchantMarks({
   enabled,
   merchantIds,
   merchantNames,
+  bookingIds,
   children,
 }: {
   enabled: boolean;
   merchantIds: string[];
   merchantNames: string[];
+  bookingIds: string[];
   children: ReactNode;
 }) {
   const cache = useRef(new Map<string, MerchantLogo | null>());
@@ -133,6 +170,14 @@ function AccountMerchantMarks({
               merchantLogoNameSchema.safeParse(name).success,
           )
           .map(merchantNameMarkKey),
+        ...bookingIds
+          .filter(
+            (id) =>
+              merchantMarksRequestSchema.shape.bookingIds
+                .unwrap()
+                .element.safeParse(id).success,
+          )
+          .map(merchantBookingMarkKey),
       ]),
     ]
       .slice(0, CACHE_LIMIT)
@@ -193,18 +238,43 @@ function AccountMerchantMarks({
       setMarks(new Map(cache.current));
     }
 
+    function rememberReferences(
+      requested: string[],
+      entries: { key: string; logo: MerchantLogo | null }[] | undefined,
+      keyFor: (key: string) => string,
+      requireComplete = false,
+    ) {
+      if (requested.length && !entries) return false;
+      const available = new Map<string, MerchantLogo | null>();
+      for (const mark of entries ?? []) {
+        if (!requested.includes(mark.key) || available.has(mark.key))
+          return false;
+        available.set(mark.key, mark.logo);
+      }
+      if (requireComplete && requested.some((key) => !available.has(key)))
+        return false;
+      remember(
+        requested.map((key) => [keyFor(key), available.get(key) ?? null]),
+      );
+      return true;
+    }
+
     async function load() {
       // Deferring prevents Strict Mode's discarded effect from sending a batch.
       await Promise.resolve();
       if (!active) return;
       setLoading(true);
       try {
-        for (let start = 0; start < ids.length; start += MAX_MERCHANT_MARKS) {
-          const batch = ids.slice(start, start + MAX_MERCHANT_MARKS);
-          const merchantIds = batch.filter((key) => !key.startsWith("name:"));
+        for (const batch of markBatches(ids)) {
+          const merchantIds = batch.filter(
+            (key) => !key.startsWith("name:") && !key.startsWith("booking:"),
+          );
           const merchantNames = batch
             .filter((key) => key.startsWith("name:"))
             .map((key) => key.slice(5));
+          const bookingIds = batch
+            .filter((key) => key.startsWith("booking:"))
+            .map((key) => key.slice(8));
           const response = await fetch("/api/merchants/marks", {
             method: "POST",
             credentials: "same-origin",
@@ -213,6 +283,7 @@ function AccountMerchantMarks({
             body: JSON.stringify({
               merchantIds,
               ...(merchantNames.length ? { merchantNames } : {}),
+              ...(bookingIds.length ? { bookingIds } : {}),
             }),
             signal: controller.signal,
           });
@@ -230,21 +301,37 @@ function AccountMerchantMarks({
           }
           // An incomplete named response must not erase independently valid ID marks.
           remember(merchantIds.map((id) => [id, available.get(id) ?? null]));
-          const nameMarks = merchantMarksResponseSchema.shape.nameMarks.parse(
-            result.nameMarks,
-          );
-          if (merchantNames.length && !nameMarks)
-            throw new Error("Missing named merchant marks response");
-          for (const mark of nameMarks ?? []) {
-            const key = merchantNameMarkKey(mark.merchantName);
-            if (
-              !merchantNames.includes(mark.merchantName) ||
-              available.has(key)
-            )
-              throw new Error("Unexpected named merchant marks response");
-            available.set(key, mark.logo);
-          }
-          remember(batch.map((id) => [id, available.get(id) ?? null]));
+          const nameMarks =
+            merchantMarksResponseSchema.shape.nameMarks.safeParse(
+              result.nameMarks,
+            );
+          const namesValid =
+            nameMarks.success &&
+            rememberReferences(
+              merchantNames,
+              nameMarks.data?.map((mark) => ({
+                key: mark.merchantName,
+                logo: mark.logo,
+              })),
+              merchantNameMarkKey,
+            );
+          const bookingMarks =
+            merchantMarksResponseSchema.shape.bookingMarks.safeParse(
+              result.bookingMarks,
+            );
+          const bookingsValid =
+            bookingMarks.success &&
+            rememberReferences(
+              bookingIds,
+              bookingMarks.data?.map((mark) => ({
+                key: mark.bookingId,
+                logo: mark.logo,
+              })),
+              merchantBookingMarkKey,
+              true,
+            );
+          if (!namesValid || !bookingsValid)
+            throw new Error("Incomplete merchant reference marks response");
         }
         if (active) setError(imageFailed.current);
       } catch {

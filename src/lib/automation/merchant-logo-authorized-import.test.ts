@@ -9,6 +9,7 @@ import { AccountDatabase, hashToken } from "@/lib/server/database";
 import { blankTestState, createTestDirectory } from "@/lib/server/test-support";
 import { requestSessionToken, sessionCookieName } from "@/lib/server/http";
 import { merchantSchema } from "./merchants";
+import { transactionSchema } from "@/lib/types";
 import { AutomationStore } from "./store";
 import { authorizedMerchantLogoSchema } from "./merchant-logo-grant-metadata";
 import {
@@ -251,6 +252,57 @@ afterEach(async () => {
 });
 
 describe("account-scoped authorized logos", () => {
+  it("serves identical private assets for identified and locked legacy bookings without leaking tenant references", async () => {
+    await importLocal();
+    const row = transactionSchema.parse({
+      id: "legacy",
+      description: "Synthetic market",
+      date: "2026-10-01",
+      bank: "Revolut",
+      pocket: null,
+      amount: -42,
+      category: "Shopping",
+      includeInPlan: true,
+      categoryOverride: true,
+      is_locked: true,
+      requires_manual_review: true,
+    });
+    accounts.putFinance(alice, { ...blankTestState(), transactions: [row] }, 0);
+    const before = accounts.getFinance(alice);
+    const response = await marksApi(
+      request("marks", "alice", {
+        merchantIds: ["example"],
+        bookingIds: ["legacy", "foreign"],
+      }),
+    );
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result.marks[0].logo).not.toBeNull();
+    expect(result.bookingMarks).toEqual([
+      { bookingId: "legacy", logo: result.marks[0].logo },
+      { bookingId: "foreign", logo: null },
+    ]);
+    const bobResponse = await marksApi(
+      request("marks", "bob", {
+        merchantIds: [],
+        bookingIds: ["legacy"],
+      }),
+    );
+    expect(await bobResponse.json()).toEqual({
+      marks: [],
+      bookingMarks: [{ bookingId: "legacy", logo: null }],
+    });
+    const { merchantId, version } = result.bookingMarks[0].logo;
+    expect(
+      (
+        await logoApi(request(`${merchantId}/logo?v=${version}`), {
+          params: Promise.resolve({ id: merchantId }),
+        })
+      ).status,
+    ).toBe(200);
+    expect(accounts.getFinance(alice)).toEqual(before);
+    expect(network).not.toHaveBeenCalled();
+  });
   it("imports explicitly reviewed Commons artwork without inventing P154 proof, preserving finance and tenant isolation", async () => {
     const evidence =
       "Commons file description explicitly identifies this synthetic market logo; operator verified its exact public entity and artwork association.";

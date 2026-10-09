@@ -4,7 +4,7 @@ import {
   type AppState,
   type Transaction,
 } from "@/lib/types";
-import { MerchantIndex, normalizeMerchantDescriptor } from "./merchants";
+import { MerchantIndex } from "./merchants";
 import { isAutomationLocked } from "./locks";
 import { createAccountMerchantResolver } from "./aliases";
 import {
@@ -14,19 +14,9 @@ import {
 import { isIncomeCategory } from "@/lib/fixed";
 import { knownMerchantCategory } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
-import { merchantEvidence } from "./evidence";
+import { merchantEvidence, qualifiedCompany } from "./evidence";
 import { bankOperation, bankOperationReviewMessage, bankTransferPurpose } from "@/lib/bank-operation";
 export { isAutomationLocked } from "./locks";
-
-function qualifiedCompany(text: string, canonicalName: string): boolean {
-  return (
-    /\b(?:steuerberatung|rechtsanwalt|kanzlei|immobilien|transporte|und partner)\b/i.test(
-      text,
-    ) &&
-    normalizeMerchantDescriptor(text) !==
-      normalizeMerchantDescriptor(canonicalName)
-  );
-}
 
 export function enrichTransaction(
   row: Transaction,

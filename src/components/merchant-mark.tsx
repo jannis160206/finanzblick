@@ -5,36 +5,19 @@ import {
   useMerchantLogoFailure,
   useMerchantMarks,
 } from "@/components/merchant-marks-provider";
-import type { classify } from "@/lib/calc";
-import { isIncomeCategory } from "@/lib/fixed";
-import { isMerchantTransfer } from "@/lib/merchant-transfer";
+import {
+  shouldShowMerchantMark,
+  type MarkClassification,
+} from "@/lib/merchant-mark-policy";
+export { shouldShowMerchantMark } from "@/lib/merchant-mark-policy";
 import type { Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   merchantLogoName,
   merchantNameMarkKey,
+  merchantLogoBookingId,
+  merchantBookingMarkKey,
 } from "@/lib/automation/merchant-mark-name";
-
-type MarkClassification = Pick<
-  ReturnType<typeof classify>,
-  "category" | "isTransfer"
->;
-
-export function shouldShowMerchantMark(
-  booking: Transaction,
-  classification: MarkClassification,
-) {
-  return !(
-    classification.isTransfer ||
-    isMerchantTransfer(booking) ||
-    ["Kontoüberweisung", "Interne Umbuchung"].includes(booking.category) ||
-    ["Kontoüberweisung", "Interne Umbuchung"].includes(
-      classification.category,
-    ) ||
-    (!booking.merchantAlias?.trim() &&
-      isIncomeCategory(classification.category))
-  );
-}
 
 function initials(alias: string) {
   const words = alias.match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -122,6 +105,7 @@ export function MerchantMark({
     className,
   );
   const name = merchantLogoName(booking);
+  const bookingId = merchantLogoBookingId(booking);
   const logo = booking.merchantId
     ? marks !== null
       ? marks.get(booking.merchantId)
@@ -130,7 +114,9 @@ export function MerchantMark({
         : null
     : name && marks !== null
       ? marks.get(merchantNameMarkKey(name))
-      : null;
+      : bookingId && marks !== null
+        ? marks.get(merchantBookingMarkKey(bookingId))
+        : null;
   return logo ? (
     <LocalMerchantLogo
       key={`${logo.merchantId}:${logo.version ?? ""}`}

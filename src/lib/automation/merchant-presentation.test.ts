@@ -10,6 +10,9 @@ import { type PrivateMerchantLogo } from "./merchant-logo-metadata";
 import { merchantLogoVersion } from "./merchant-logo-version";
 import { merchantPresentations } from "./merchant-presentation";
 import { accountMerchantNamePresentations } from "./merchant-logo-presentations";
+import { accountMerchantBookingPresentations } from "./merchant-booking-presentations";
+import { merchantRuleKey } from "@/lib/import/merchant-rules";
+import { transactionSchema, type Transaction } from "@/lib/types";
 import {
   MAX_MERCHANT_MARKS,
   merchantMarksResponseSchema,
@@ -35,6 +38,36 @@ function merchant(overrides: Partial<Merchant> = {}): Merchant {
     updatedAt: 100,
     ...overrides,
   });
+}
+
+function booking(description: string, id = "legacy"): Transaction {
+  return transactionSchema.parse({
+    id,
+    description,
+    date: "2026-10-01",
+    bank: "Revolut",
+    pocket: null,
+    amount: -42,
+    category: "Shopping",
+    categoryOverride: true,
+    is_locked: true,
+    requires_manual_review: true,
+    includeInPlan: true,
+  });
+}
+
+async function referenceLogos() {
+  const logo = await privatePng();
+  store.upsertMerchants(
+    seedMerchants
+      .filter((m) =>
+        ["amazon", "at-shell", "at-billa", "at-penny", "at-mueller"].includes(
+          m.id,
+        ),
+      )
+      .map((m) => ({ ...m, logo })),
+  );
+  return logo;
 }
 
 async function privatePng(color = 20): Promise<PrivateMerchantLogo> {
@@ -64,6 +97,13 @@ beforeEach(() => {
   directory = createTestDirectory();
   accounts = new AccountDatabase(join(directory, "presentation.sqlite"));
   store = new AutomationStore(accounts);
+  accounts.transaction((db) => {
+    for (const id of ["display-account", "other-account"]) {
+      db.prepare(
+        "INSERT INTO users VALUES (?, ?, 'user', 'fixture-not-a-password', 1)",
+      ).run(id, id);
+    }
+  });
   network = vi
     .fn<typeof fetch>()
     .mockRejectedValue(new Error("Network forbidden"));
@@ -79,6 +119,303 @@ afterEach(async () => {
 });
 
 describe("bounded private merchant presentation", () => {
+  it("shows the same current logo on locked legacy Amazon, Shell and POS bookings without modifying finance", async () => {
+    const logo = await referenceLogos();
+    const rows = [
+      booking("AMZN Mktp EU*AB123456", "amazon-old"),
+      booking("PayPal * AMAZON", "amazon-provider"),
+      booking("POS SHELL Terminal 0042 Ref: ABC123", "shell-old"),
+      booking("Kontaktlos BILLA Filiale 0042", "billa-old"),
+    ];
+    accounts.putFinance(
+      "display-account",
+      { ...blankTestState(), transactions: rows },
+      0,
+    );
+    const before = accounts.getFinance("display-account");
+    const snapshotRead = vi.spyOn(accounts, "getFinance");
+    const catalogRead = vi.spyOn(store, "loadMerchants");
+    const marks = await accountMerchantBookingPresentations(
+      store,
+      rows.map((r) => r.id),
+      "display-account",
+    );
+    expect(marks.map((m) => m.logo)).toEqual(
+      ["amazon", "amazon", "at-shell", "at-billa"].map((merchantId) => ({
+        merchantId,
+        version: merchantLogoVersion(logo),
+      })),
+    );
+    expect(snapshotRead).toHaveBeenCalledExactlyOnceWith("display-account");
+    expect(catalogRead).toHaveBeenCalledTimes(1);
+    await accountMerchantBookingPresentations(
+      store,
+      ["amazon-old"],
+      "display-account",
+    );
+    expect(catalogRead).toHaveBeenCalledTimes(1);
+    expect(accounts.getFinance("display-account")).toEqual(before);
+  });
+
+  it("keeps fuzzy, conflicting, reference-only, transfer and manually named rows without inferred logos", async () => {
+    await referenceLogos();
+    const rows = [
+      booking("Muelller", "fuzzy"),
+      booking("AMAZON SHELL", "two-brands"),
+      booking("POS 42,00 AT D1 Terminal 0042", "metadata"),
+      booking("ID: STRIPEBILLA47110810", "id-only"),
+      booking("Amazon", "contradictory-fields"),
+      booking("Müller Steuerberatung", "qualified-company"),
+      {
+        ...booking("Amazon", "transfer"),
+        category: "Transfer intern" as const,
+      },
+      {
+        ...booking("Amazon", "external-transfer"),
+        sourceCategory: "SEPA Überweisung",
+      },
+      {
+        ...booking("Amazon", "manual"),
+        merchantAlias: "Mein Händler",
+        merchantNameConfirmed: true,
+      },
+      { ...booking("Amazon", "confirmed-empty"), merchantNameConfirmed: true },
+      { ...booking("Amazon", "existing-id"), merchantId: "other-identity" },
+    ];
+    rows[4].rawDetails = ["Händler: Shell"];
+    accounts.putFinance(
+      "display-account",
+      { ...blankTestState(), transactions: rows },
+      0,
+    );
+    expect(
+      await accountMerchantBookingPresentations(
+        store,
+        rows.map((r) => r.id),
+        "display-account",
+      ),
+    ).toEqual(rows.map((r) => ({ bookingId: r.id, logo: null })));
+  });
+
+  it("honors confirmed account aliases without changing the locked row or global catalogue", async () => {
+    const logo = await referenceLogos();
+    const rows = [
+      booking("Amazon", "known-alias"),
+      booking("BILLA", "unknown-alias"),
+    ];
+    const state = {
+      ...blankTestState(),
+      transactions: rows,
+      merchantRules: [
+        {
+          key: merchantRuleKey(rows[0]),
+          merchantAlias: "Shell",
+          category: "Prüfen" as const,
+          identityOnly: true,
+        },
+        {
+          key: merchantRuleKey(rows[1]),
+          merchantAlias: "BILLA Spezialgeschäft",
+          category: "Prüfen" as const,
+          identityOnly: true,
+        },
+      ],
+    };
+    accounts.putFinance("display-account", state, 0);
+    const before = accounts.getFinance("display-account");
+    const catalogue = store.loadMerchants();
+    expect(
+      await accountMerchantBookingPresentations(
+        store,
+        rows.map((r) => r.id),
+        "display-account",
+      ),
+    ).toEqual([
+      {
+        bookingId: "known-alias",
+        logo: { merchantId: "at-shell", version: merchantLogoVersion(logo) },
+      },
+      { bookingId: "unknown-alias", logo: null },
+    ]);
+    expect(accounts.getFinance("display-account")).toEqual(before);
+    expect(store.loadMerchants()).toEqual(catalogue);
+  });
+
+  it("resolves receipt-only display keys and never reads another account's bookings", async () => {
+    const logo = await referenceLogos();
+    const receipt = booking("SHELL");
+    accounts.putFinance(
+      "display-account",
+      {
+        ...blankTestState(),
+        fixedReceipts: [
+          {
+            key: "receipt-display-key",
+            date: receipt.date,
+            amount: receipt.amount,
+            category: receipt.category,
+            booking: receipt,
+          },
+        ],
+      },
+      0,
+    );
+    accounts.putFinance(
+      "other-account",
+      {
+        ...blankTestState(),
+        transactions: [booking("Amazon", "foreign-booking")],
+      },
+      0,
+    );
+    expect(
+      await accountMerchantBookingPresentations(
+        store,
+        ["receipt-display-key", "foreign-booking", "missing"],
+        "display-account",
+      ),
+    ).toEqual([
+      {
+        bookingId: "receipt-display-key",
+        logo: { merchantId: "at-shell", version: merchantLogoVersion(logo) },
+      },
+      { bookingId: "foreign-booking", logo: null },
+      { bookingId: "missing", logo: null },
+    ]);
+    expect(
+      await accountMerchantBookingPresentations(
+        store,
+        ["receipt-display-key"],
+        "other-account",
+      ),
+    ).toEqual([{ bookingId: "receipt-display-key", logo: null }]);
+  });
+
+  it("allows a unique fixed regex identity without deciding its category", async () => {
+    const logo = await privatePng();
+    store.upsertMerchants([
+      merchant({
+        id: "northlight",
+        canonicalName: "Northlight",
+        source: "local",
+        aliases: [],
+        regexPatterns: ["\\bnorthpay\\b"],
+        defaultCategory: null,
+        logo,
+      }),
+    ]);
+    accounts.putFinance(
+      "display-account",
+      {
+        ...blankTestState(),
+        transactions: [booking("NORTHPAY")],
+      },
+      0,
+    );
+    const before = accounts.getFinance("display-account");
+    expect(
+      await accountMerchantBookingPresentations(
+        store,
+        ["legacy"],
+        "display-account",
+      ),
+    ).toEqual([
+      {
+        bookingId: "legacy",
+        logo: {
+          merchantId: "northlight",
+          version: merchantLogoVersion(logo),
+        },
+      },
+    ]);
+    expect(accounts.getFinance("display-account")).toEqual(before);
+  });
+
+  it("does not select among duplicate booking IDs or conflicting account aliases", async () => {
+    await referenceLogos();
+    const source = booking("BILLA", "alias-conflict");
+    accounts.putFinance(
+      "display-account",
+      {
+        ...blankTestState(),
+        transactions: [
+          booking("Amazon", "duplicate"),
+          booking("SHELL", "duplicate"),
+          source,
+        ],
+        merchantRules: [
+          {
+            key: merchantRuleKey(source),
+            category: "Shopping",
+            merchantAlias: "Amazon",
+          },
+          {
+            key: merchantRuleKey(source),
+            category: "Shopping",
+            merchantAlias: "Shell",
+          },
+        ],
+      },
+      0,
+    );
+    expect(
+      await accountMerchantBookingPresentations(
+        store,
+        ["duplicate", "alias-conflict"],
+        "display-account",
+      ),
+    ).toEqual([
+      { bookingId: "duplicate", logo: null },
+      { bookingId: "alias-conflict", logo: null },
+    ]);
+  });
+
+  it.each(["local", "external"])(
+    "invalidates the display index after a %s catalogue change",
+    async (connection) => {
+      await referenceLogos();
+      accounts.putFinance(
+        "display-account",
+        {
+          ...blankTestState(),
+          transactions: [booking("Amazon")],
+        },
+        0,
+      );
+      expect(
+        (
+          await accountMerchantBookingPresentations(
+            store,
+            ["legacy"],
+            "display-account",
+          )
+        )[0].logo,
+      ).not.toBeNull();
+      const other =
+        connection === "external" ? new AccountDatabase(accounts.path) : null;
+      try {
+        const writer = other ? new AutomationStore(other) : store;
+        writer.upsertMerchants([
+          merchant({
+            id: "unrelated-amazon",
+            canonicalName: "Amazon",
+            aliases: [],
+            wikidataId: "Q123",
+          }),
+        ]);
+        expect(
+          await accountMerchantBookingPresentations(
+            store,
+            ["legacy"],
+            "display-account",
+          ),
+        ).toEqual([{ bookingId: "legacy", logo: null }]);
+      } finally {
+        other?.close();
+      }
+    },
+  );
+
   it("resolves only exact existing canonical identities for display without fuzzy/category inference", async () => {
     const logo = await privatePng();
     store.upsertMerchants([

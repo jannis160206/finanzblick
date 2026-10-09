@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   constructStore: vi.fn(),
   presentations: vi.fn(),
   namedPresentations: vi.fn(),
+  bookingPresentations: vi.fn(),
 }));
 vi.mock("@/lib/server/auth", () => ({
   authorizeApi: mocks.authorize,
@@ -27,6 +28,9 @@ vi.mock("@/lib/automation/store", () => ({
 vi.mock("@/lib/automation/merchant-logo-presentations", () => ({
   accountMerchantPresentations: mocks.presentations,
   accountMerchantNamePresentations: mocks.namedPresentations,
+}));
+vi.mock("@/lib/automation/merchant-booking-presentations", () => ({
+  accountMerchantBookingPresentations: mocks.bookingPresentations,
 }));
 import { POST } from "./route";
 
@@ -82,6 +86,9 @@ beforeEach(() => {
   mocks.namedPresentations.mockImplementation(async (_store, names: string[]) =>
     names.map((merchantName) => ({ merchantName, logo: null })),
   );
+  mocks.bookingPresentations.mockImplementation(async (_store, ids: string[]) =>
+    [...new Set(ids)].map((bookingId) => ({ bookingId, logo: null })),
+  );
   network = vi
     .fn<typeof fetch>()
     .mockRejectedValue(new Error("Network forbidden"));
@@ -94,6 +101,37 @@ afterEach(() => {
 });
 
 describe("private batched merchant marks API", () => {
+  it("resolves booking references only under the session account within the shared batch cap", async () => {
+    const input = {
+      merchantIds: ["amazon"],
+      merchantNames: ["Audi"],
+      bookingIds: ["legacy"],
+    };
+    const response = await POST(request(input));
+    expect(await response.json()).toEqual({
+      marks: [{ merchantId: "amazon", logo: null }],
+      nameMarks: [{ merchantName: "Audi", logo: null }],
+      bookingMarks: [{ bookingId: "legacy", logo: null }],
+    });
+    expect(mocks.bookingPresentations).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Object),
+      ["legacy"],
+      "synthetic-account",
+    );
+    for (const body of [
+      { merchantIds: Array(100).fill("amazon"), bookingIds: ["legacy"] },
+      { merchantIds: [], bookingIds: ["private\nid"] },
+      { merchantIds: [], bookingIds: ["a".repeat(2001)] },
+      { ...input, userId: "foreign-account" },
+    ])
+      expect((await POST(request(body))).status).toBe(400);
+    expect(() =>
+      merchantMarksResponseSchema.parse({
+        marks: Array(100).fill({ merchantId: "amazon", logo: null }),
+        bookingMarks: [{ bookingId: "legacy", logo: null }],
+      }),
+    ).toThrow();
+  });
   it("resolves named marks locally under the authenticated account with a combined batch limit", async () => {
     const input = { merchantIds: ["at-shell"], merchantNames: ["Audi"] };
     const response = await POST(request(input));

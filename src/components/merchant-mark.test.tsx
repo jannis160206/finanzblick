@@ -48,6 +48,23 @@ it.each(["B1LLA", "BILLA", booking.description])(
   },
 );
 
+it.each(["Transfer", "Transfer intern"] as const)(
+  "does not show logos for an explicitly stored %s even when its review flag hides classifier transfer evidence",
+  (category) => {
+    const { container } = render(
+      mark({
+        ...booking,
+        category,
+        requires_manual_review: true,
+        merchantId: "amazon",
+        merchantAlias: "Amazon",
+        merchantLogo: true,
+      }),
+    );
+    expect(container.childElementCount).toBe(0);
+  },
+);
+
 it("requests only a licensed same-origin image and exposes its attribution link", () => {
   const fetch = vi.fn();
   vi.stubGlobal("fetch", fetch);

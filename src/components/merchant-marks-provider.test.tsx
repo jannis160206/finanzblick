@@ -68,10 +68,15 @@ function tree(
   workspace: AccountWorkspace | null = account(),
   children: ReactNode = mark(),
   names: string[] = [],
+  bookingIds: string[] = [],
 ) {
   return (
     <AccountWorkspaceContext.Provider value={workspace}>
-      <MerchantMarksProvider merchantIds={ids} merchantNames={names}>
+      <MerchantMarksProvider
+        merchantIds={ids}
+        merchantNames={names}
+        bookingIds={bookingIds}
+      >
         {children}
       </MerchantMarksProvider>
     </AccountWorkspaceContext.Provider>
@@ -158,6 +163,176 @@ it("batches exact named marks for legacy subscriptions without sending descripti
   );
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(row).toEqual(before);
+});
+
+it("shares the same logo for identified and locked legacy rows using only private booking references", async () => {
+  const legacy = {
+    ...booking,
+    id: "legacy",
+    merchantId: undefined,
+    merchantAlias: undefined,
+    is_locked: true,
+  };
+  const before = structuredClone(legacy);
+  const fetch = vi.fn().mockResolvedValue(
+    Response.json({
+      marks: [
+        {
+          merchantId: "muller",
+          logo: { merchantId: "muller-licensed", version },
+        },
+      ],
+      bookingMarks: [
+        {
+          bookingId: "legacy",
+          logo: { merchantId: "muller-licensed", version },
+        },
+      ],
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(
+    tree(
+      ["muller"],
+      account(),
+      <>
+        {mark()}
+        {mark(legacy)}
+      </>,
+      [],
+      ["legacy", "legacy"],
+    ),
+  );
+  await waitFor(() =>
+    expect(container.querySelectorAll("img")).toHaveLength(2),
+  );
+  const images = container.querySelectorAll("img");
+  expect(images[0].getAttribute("src")).toBe(images[1].getAttribute("src"));
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    merchantIds: ["muller"],
+    bookingIds: ["legacy"],
+  });
+  expect(fetch.mock.calls[0][1].body).not.toContain(legacy.description);
+  expect(legacy).toEqual(before);
+});
+
+it("preserves independently valid booking and ID logos when named metadata is malformed", async () => {
+  const legacy = {
+    ...booking,
+    id: "legacy",
+    merchantId: undefined,
+    merchantAlias: undefined,
+  };
+  const fetch = vi.fn().mockResolvedValue(
+    Response.json({
+      marks: [
+        {
+          merchantId: "muller",
+          logo: { merchantId: "muller-licensed", version },
+        },
+      ],
+      nameMarks: "invalid",
+      bookingMarks: [
+        {
+          bookingId: "legacy",
+          logo: { merchantId: "muller-licensed", version },
+        },
+      ],
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(
+    tree(
+      ["muller"],
+      account(),
+      <>
+        {mark()}
+        {mark(legacy)}
+      </>,
+      ["Audi"],
+      ["legacy"],
+    ),
+  );
+  await waitFor(() =>
+    expect(container.querySelectorAll("img")).toHaveLength(2),
+  );
+  expect(
+    screen.getByRole("button", { name: "Logos erneut laden" }),
+  ).toBeTruthy();
+});
+
+it.each([
+  undefined,
+  [],
+  [{ bookingId: "unexpected", logo: null }],
+  [
+    { bookingId: "legacy", logo: null },
+    { bookingId: "legacy", logo: null },
+  ],
+])(
+  "never permanently caches missing or invalid booking metadata and retries it explicitly: %j",
+  async (bookingMarks) => {
+    const legacy = {
+      ...booking,
+      id: "legacy",
+      merchantId: undefined,
+      merchantAlias: undefined,
+    };
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ marks: [], bookingMarks }))
+      .mockResolvedValueOnce(
+        Response.json({
+          marks: [],
+          bookingMarks: [
+            { bookingId: "legacy", logo: { merchantId: "muller", version } },
+          ],
+        }),
+      );
+    vi.stubGlobal("fetch", fetch);
+    const { container } = render(
+      tree([], account(), mark(legacy), [], ["legacy"]),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Logos erneut laden" }),
+    );
+    await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("splits long Unicode receipt references by byte size without exceeding the shared 100-reference cap", async () => {
+  const references = Array.from(
+    { length: 30 },
+    (_, i) => `receipt-${i}-${"ü".repeat(1500)}`,
+  );
+  const fetch = vi.fn().mockImplementation(async (_url, options) => {
+    const input = JSON.parse(options.body);
+    expect(
+      new TextEncoder().encode(options.body).byteLength,
+    ).toBeLessThanOrEqual(16 * 1024);
+    expect(
+      input.merchantIds.length + (input.bookingIds?.length ?? 0),
+    ).toBeLessThanOrEqual(100);
+    return Response.json({
+      marks: input.merchantIds.map((merchantId: string) => ({
+        merchantId,
+        logo: null,
+      })),
+      bookingMarks: input.bookingIds.map((bookingId: string) => ({
+        bookingId,
+        logo: null,
+      })),
+    });
+  });
+  vi.stubGlobal("fetch", fetch);
+  render(tree(["muller"], account(), mark(), [], references));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(6));
+  const sent = fetch.mock.calls.flatMap(
+    ([, options]) => JSON.parse(options.body).bookingIds ?? [],
+  );
+  expect(new Set(sent)).toEqual(new Set(references));
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
 it("keeps valid ID logos when a stale API omits named marks and can explicitly recover the missing names", async () => {
@@ -634,6 +809,12 @@ it.each([false, true])(
           { merchantName: "Audi", logo: { merchantId: "audi", version } },
           { merchantName: "Mein Händler", logo: null },
         ],
+        bookingMarks: [
+          {
+            bookingId: "legacy-locked",
+            logo: { merchantId: "muller-licensed", version },
+          },
+        ],
       }),
     );
     vi.stubGlobal("fetch", fetch);
@@ -643,6 +824,13 @@ it.each([false, true])(
     state.transactions = [
       booking,
       { ...booking, id: "repeat", date: "2026-10-05" },
+      {
+        ...booking,
+        id: "legacy-locked",
+        merchantId: undefined,
+        merchantAlias: undefined,
+        is_locked: true,
+      },
       {
         ...booking,
         id: "subscription",
@@ -709,11 +897,12 @@ it.each([false, true])(
     const ledger = mobile
       ? screen.getByRole("list", { name: "Mobile Buchungen" })
       : screen.getByRole("table", { name: "Buchungen" });
-    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(3));
+    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(4));
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       merchantIds: ["muller"],
       merchantNames: ["Audi", "Mein Händler"],
+      bookingIds: ["legacy-locked"],
     });
     for (const image of ledger.querySelectorAll("img")) {
       const audi = image.getAttribute("src")?.includes("/audi/");
@@ -727,10 +916,15 @@ it.each([false, true])(
       expect(image.closest("a")!.getAttribute("href")).toBe(
         `/api/merchants/${asset}/attribution?v=${version}`,
       );
-      expect(image.closest("a")!.nextElementSibling!.textContent).toBe(
-        audi ? "Audi | Abo" : "Möbel Müller",
+      expect(["Audi | Abo", "Möbel Müller", booking.description]).toContain(
+        image.closest("a")!.nextElementSibling!.textContent,
       );
     }
+    expect(
+      screen
+        .getByText(booking.description)
+        .previousElementSibling?.querySelector("img"),
+    ).not.toBeNull();
     expect(screen.getByText("Eigenes Konto").previousElementSibling).toBeNull();
     expect(
       screen.getByText("Externes Konto").previousElementSibling,
@@ -747,7 +941,7 @@ it.each([false, true])(
     const switchedLedger = mobile
       ? screen.getByRole("table", { name: "Buchungen" })
       : screen.getByRole("list", { name: "Mobile Buchungen" });
-    expect(switchedLedger.querySelectorAll("img")).toHaveLength(3);
+    expect(switchedLedger.querySelectorAll("img")).toHaveLength(4);
     expect(fetch).toHaveBeenCalledTimes(1);
   },
 );

@@ -7,6 +7,16 @@ import {
 import type { Transaction } from "@/lib/types";
 import { MerchantIndex, normalizeMerchantDescriptor } from "./merchants";
 
+export function qualifiedCompany(text: string, canonicalName: string): boolean {
+  return (
+    /\b(?:steuerberatung|rechtsanwalt|kanzlei|immobilien|transporte|und partner)\b/i.test(
+      text,
+    ) &&
+    normalizeMerchantDescriptor(text) !==
+      normalizeMerchantDescriptor(canonicalName)
+  );
+}
+
 export function merchantEvidence(
   row: Transaction,
   index: MerchantIndex,

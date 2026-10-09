@@ -1,4 +1,5 @@
 import type { Transaction } from "@/lib/types";
+import { merchantBookingIdSchema } from "./merchant-presentation-schema";
 
 export const merchantNameMarkKey = (name: string) => `name:${name}`;
 
@@ -21,4 +22,24 @@ export function normalizeLogoIdentityName(name: string) {
     .toLocaleLowerCase("de-AT")
     .replace(/\s+/g, " ")
     .trim();
+}
+export function merchantLogoBookingId(
+  booking: Pick<
+    Transaction,
+    "id" | "merchantId" | "merchantAlias" | "merchantNameConfirmed"
+  >,
+) {
+  if (
+    booking.merchantId ||
+    booking.merchantAlias?.trim() ||
+    booking.merchantNameConfirmed
+  )
+    return null;
+  return merchantBookingIdSchema.safeParse(booking.id).success
+    ? booking.id
+    : null;
+}
+
+export function merchantBookingMarkKey(id: string) {
+  return `booking:${id}`;
 }
