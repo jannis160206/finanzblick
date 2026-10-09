@@ -110,6 +110,7 @@ const transactionFieldsSchema = z.object({
   merchantId: z.string().max(100).optional(),
   merchantLogo: z.boolean().optional(),
   merchantMatch: z.enum(["alias", "rule"]).optional(),
+  merchantNameConfirmed: z.boolean().optional(),
   is_locked: z.boolean().optional(),
   requires_manual_review: z.boolean().optional(),
   category: categorySchema.catch("Prüfen"),
@@ -145,7 +146,10 @@ export const merchantRuleSchema = z.object({
   category: categorySchema,
   fixedCost: z.boolean().optional(),
   merchantAlias: transactionFieldsSchema.shape.merchantAlias,
-});
+  identityOnly: z.boolean().optional(),
+}).refine(rule => !rule.identityOnly ||
+  (!!rule.merchantAlias && rule.category === "Prüfen" && rule.fixedCost === undefined),
+  "Eine reine Namensregel darf keine Kategorie oder Fixkosten setzen.");
 export const fixedReceiptSchema = z.object({
   key: z.string().max(2000).overwrite(normalizeStatementKey),
   merchantKey: z.string().max(1200).optional(),

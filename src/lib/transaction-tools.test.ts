@@ -104,7 +104,7 @@ function previousSingleSave(
     reviewed: choice.category !== "Prüfen",
     includeInPlan: true,
     ...(choice.merchantAlias !== undefined
-      ? { merchantAlias: choice.merchantAlias }
+      ? { merchantAlias: choice.merchantAlias, merchantNameConfirmed: true }
       : {}),
     ...(choice.fixedCost !== undefined
       ? { fixedCost: canMarkFixed && choice.fixedCost }

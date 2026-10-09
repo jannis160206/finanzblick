@@ -66,18 +66,21 @@ describe("discreet merchant lookup", () => {
     const seed = fixture();
     const state = { ...seed, transactions: [original, twin, closed, unrelated] };
     const saved = confirmMerchantAlias(state, original, hit);
-    expect(saved.transactions).toEqual([{ ...original, merchantAlias: hit.name }, { ...twin, merchantAlias: hit.name }, closed, unrelated]);
+    expect(saved.transactions).toEqual([{ ...original, merchantAlias: hit.name, merchantNameConfirmed: true },
+      { ...twin, merchantAlias: hit.name, merchantMatch: "rule", merchantNameConfirmed: undefined,
+        requires_manual_review: true }, closed, unrelated]);
     expect(state.transactions[0]).toBe(original);
     expect(statementFingerprint(saved.transactions[0])).toBe(statementFingerprint(original));
     expect(merchantRuleKey(saved.transactions[0])).toBe("raiffeisen|blumenatelier");
     expect(merchantName(original.description, saved.transactions[0].merchantAlias)).toBe(hit.name);
     expect(classify(saved.transactions[0]).merchant).toBe(hit.name);
-    expect(saved.merchantRules).toEqual(seed.merchantRules);
+    expect(saved.merchantRules?.find(rule => rule.merchantAlias === hit.name))
+      .toMatchObject({ identityOnly: true, category: "Prüfen" });
     expect(saved.financeRows).toBe(seed.financeRows);
     expect(saved.transactions[0].reviewed).toBeUndefined();
   });
 
-  it("can recheck reviewed bookings and replace an existing alias on only the selected row and its open twins", () => {
+  it("can recheck the selected name without overwriting protected aliases on other rows", () => {
     const selected = { ...original, description: "POS 3,50 AT D1", merchantAlias: "Alter Name",
       category: "Shopping" as const, categoryOverride: true, manualCategory: true, reviewed: true };
     const twin = { ...original, id: "open-twin", merchantAlias: selected.merchantAlias };
@@ -86,7 +89,7 @@ describe("discreet merchant lookup", () => {
     const state = { ...fixture(), transactions: [selected, twin, closed, differentAlias] };
     const saved = confirmMerchantAlias(state, selected, hit);
     expect(saved.transactions).toEqual([
-      { ...selected, merchantAlias: hit.name }, { ...twin, merchantAlias: hit.name }, closed, differentAlias,
+      { ...selected, merchantAlias: hit.name, merchantNameConfirmed: true }, twin, closed, differentAlias,
     ]);
     expect(statementFingerprint(saved.transactions[0])).toBe(statementFingerprint(selected));
     expect(merchantRuleKey(saved.transactions[0])).toBe("raiffeisen|blumenatelier");
@@ -108,7 +111,8 @@ describe("discreet merchant lookup", () => {
     expect(saved.reviewQueue?.[0]).toMatchObject({ draft: { ...pending, merchantAlias: hit.name } });
     expect(saved.reviewQueue?.[1]).toMatchObject({ draft: { ...pending, id: "no-amount", amount: null, merchantAlias: hit.name } });
     const selectedReceipt = actualBookings(state).find((row) => row.id === key)!;
-    expect(confirmMerchantAlias(state, selectedReceipt, hit).fixedReceipts?.[0].booking).toEqual({ ...receiptBooking, merchantAlias: hit.name });
+    expect(confirmMerchantAlias(state, selectedReceipt, hit).fixedReceipts?.[0].booking)
+      .toEqual({ ...receiptBooking, merchantAlias: hit.name, merchantNameConfirmed: true });
   });
 
   it("persists aliases in JSON, Excel and repeated imports while preserving original source fields", async () => {

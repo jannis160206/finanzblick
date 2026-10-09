@@ -19,6 +19,18 @@ const row = (description: string, rawDetails?: string[]) =>
   });
 
 describe("bounded authoritative merchant evidence", () => {
+  it("recognizes matching named variants even while their purchase category is unknown", () => {
+    expect(
+      enrichTransaction(
+        row("POS", ["Händler Name: Apple.com/bill", "Merchant Name: iTunes"]),
+        index,
+      ),
+    ).toMatchObject({
+      merchantAlias: "Apple",
+      requires_manual_review: true,
+      category: "Prüfen",
+    });
+  });
   it("recovers explicit merchant names without rewriting original transaction facts", () => {
     const source = row("POS 3,00 AT D1", ["Händler Name: H&M"]);
     const result = enrichTransaction(source, index);

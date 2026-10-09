@@ -47,6 +47,10 @@ The matcher resolves duplicate records only when entity, canonical name, region
 and default category/purpose requirements agree. Same names without this evidence remain collisions;
 different categories and sub-brand names remain open. No source attribution is
 deleted, and existing canonical IDs remain stable.
+Verified identity groups and ambiguous alias postings are compiled once per
+worker start. A previous equivalent table ID can be retained, preserving its
+licensed private logo metadata; unresolved collisions cannot be resolved merely
+by requesting a preferred ID.
 `requiresCategoryEvidence` distinguishes a reference's usual business category
 from evidence of the actual purchase purpose. Marketplace/fuel references can
 identify a merchant without automatically categorizing a multipurpose purchase.

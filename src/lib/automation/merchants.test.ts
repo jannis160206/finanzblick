@@ -34,6 +34,58 @@ const expectMerchant = (text: string, id: string, method = "exact") => {
 };
 
 describe("merchant schema and local seeds", () => {
+  it("indexes verified shared aliases once and preserves an existing public identity on request", () => {
+    const local = merchant({
+      id: "local-identity",
+      canonicalName: "Nordlicht",
+      wikidataId: "Q123",
+    });
+    const imported = merchant({
+      id: "osm-identity",
+      canonicalName: "Nordlicht",
+      aliases: ["Northern Lights"],
+      wikidataId: "Q123",
+      source: "osm",
+    });
+    const index = new MerchantIndex([imported, local]);
+    expect(index.match("Northern Lights")).toMatchObject({
+      merchant: { id: local.id },
+      method: "exact",
+    });
+    expect(index.match("Northern Lights", imported.id)).toMatchObject({
+      merchant: { id: imported.id },
+    });
+    expect(index.match("Northern Lights", "unrelated")).toMatchObject({
+      merchant: { id: local.id },
+    });
+    expect(index.match("Northern Lighst").requiresManualReview).toBe(true);
+  });
+
+  it("keeps very large ambiguous alias postings bounded during matching", () => {
+    const index = new MerchantIndex(
+      Array.from({ length: 1000 }, (_, id) =>
+        merchant({ id: `collision-${id}`, canonicalName: "Nordlicht" }),
+      ),
+    );
+    expect(index.match("Nordlicht")).toEqual({
+      method: "exact",
+      requiresManualReview: true,
+    });
+    expect(index.match("Nordlihct")).toMatchObject({
+      requiresManualReview: true,
+    });
+    expect(index.match("Nordlicht").merchant).toBeUndefined();
+  });
+
+  it.each([
+    ["MPREIS", "at-mpreis"],
+    ["Ströck", "at-stroeck"],
+    ["Kentucky Fried Chicken", "kfc"],
+    ["Paramount+", "paramount-plus"],
+    ["Wiener Staedtische", "at-wiener-staedtische"],
+  ])("recognizes the additional concrete reference %s", (text, id) => {
+    expect(index.match(text).merchant?.id).toBe(id);
+  });
   it("does not discard stricter purpose requirements while resolving duplicate public identities", () => {
     const common = merchant({
       canonicalName: "Test Merchant",

@@ -195,11 +195,28 @@ Bestätigte kontospezifische Namen können wechselnde POS-/Referenzmetadaten
 überstehen. Dabei bleiben normalisierte Regelkollisionen und abweichende
 Sonderzwecke wie Urlaub, Geschenke oder Mittagessen in der Prüfung.
 
+Namensbestätigungen werden separat als `merchantNameConfirmed` festgehalten.
+Eine reine Namensregel (`identityOnly`) lernt nur den kontospezifischen Alias:
+Eine mitgebrachte automatische Kategorie wird dadurch **nicht** bestätigt.
+Der nächste Import erhält den Namen; seine Kategorie braucht weiterhin eine
+sichere Referenz oder eine eigene Nutzerbestätigung. Die Prüfliste zeigt dafür
+„Händlername bestätigt – Kategorie bitte noch bestätigen“. Automatisch
+zugeordnete Zwillinge erhalten keine menschliche Bestätigungsmarkierung.
+Diese Angaben bleiben beim JSON-/Excel-Export erhalten.
+
+Der Händlerindex fasst belegte öffentliche Identitäten beim Start zusammen.
+Mehrdeutige Alias-Postings werden kompakt als Konflikt gespeichert statt für
+jede Zeile erneut durchlaufen zu werden. Bestehende, belegbar gleichwertige
+Händler-IDs einschließlich ihrer privaten Logo-Zuordnung bleiben erhalten.
+Zusätzliche konkrete Referenzen ergänzen die lokale Liste; Adobe/Microsoft
+ohne eindeutigen Zweck bleiben ebenso offen wie Mehrzweck-Tankstellenshops.
+
 ```sh
 npm run benchmark:recognition -- --readonly --verify-unchanged
 ```
 
-Der Benchmark trennt automatische Abdeckung von tatsächlich bestätigter
+Der Benchmark (Protokoll v2) zeigt sichere Namen getrennt von vollständigen
+automatischen Name-/Kategorie-Zuordnungen und trennt Abdeckung von bestätigter
 Genauigkeit. Unbestätigte automatische Ergebnisse sind keine Trainingslabels.
 Ein 99%-Anspruch benötigt repräsentative, unabhängig bestätigte Händler- und
 Kategoriedaten; kleine Stichproben oder synthetische Varianten belegen ihn nicht.

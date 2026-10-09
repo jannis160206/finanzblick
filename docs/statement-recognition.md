@@ -27,24 +27,42 @@ successful recognition. Evaluation/configuration failures return 1.
 
 ## Protocol
 
+Report/evaluator version **2** separates high-confidence name recognition from
+complete automatic merchant+category decisions and learns confirmed names without
+requiring a category label. Version 1 and version 2 metrics are not comparable:
+rerun both baseline and upgraded cores with this same evaluator.
+
 - Deduplicate ledger/fixed-receipt booking copies by logical transaction ID.
   Conflicting human labels or source facts exclude the entire logical row and
   are reported. Receipt wrapper categories are not labels.
 - Category truth requires `manualCategory`, or `reviewed && categoryOverride`,
   and a non-`Prüfen` category. Automatic assignments, override alone, a lock alone,
   and `requires_manual_review=false` are not truth.
-- Merchant truth requires an explicit manual canonical alias without inherited
-  `merchantId`/`merchantMatch`. A category review does **not** confirm an automatic
-  merchant identity. These conservative criteria may miss genuine confirmations;
-  availability is reported rather than invented.
+- Merchant truth requires a specific canonical alias and either explicit human
+  `merchantNameConfirmed=true` or the conservative legacy fallback of an alias
+  with no confirmation marker and without `merchantId`/`merchantMatch`.
+  `merchantNameConfirmed=false` explicitly denies confirmation and never qualifies
+  for the legacy fallback. Explicit name confirmation remains valid
+  when inherited ID/matching fields remain. Only a manual name edit/confirmation
+  sets the marker; automatic recognition and category review do **not** confirm
+  an automatic merchant identity. The legacy fallback lacks a dedicated historical
+  provenance marker and may miss genuine confirmations; availability is reported
+  rather than invented. Automatically propagated twin names must retain matching
+  provenance without inheriting the human confirmation marker; an unannotated
+  historical alias cannot retrospectively distinguish manual from automatic origin.
 - Inputs are rebuilt from source fields only. Original `rawDescription`, when
   available, replaces potentially recovered display text; raw details, date/time,
   bank, amount and bank-origin category remain. Merchant identity, review/lock,
-  category, fixed-cost and planning choices are removed or neutralized. No source
-  text is reconstructed from a label. If historic display text was rewritten and
+  name-confirmation, category, fixed-cost and planning choices are removed or
+  neutralized. No source text is reconstructed from a label. If historic display
+  text was rewritten and
   the original was never retained, its source provenance cannot be verified.
 - Chronological training uses earlier **whole booking dates**, not random rows.
-  Only confirmed training categories/aliases teach rules; original account rules
+  Only confirmed training categories/aliases teach rules. A name-only label learns
+  an `identityOnly` rule with category `Prüfen` and no fixed-cost truth: it never
+  supplies a category label. Agreeing name/category confirmations for the same
+  source key can merge into a complete rule; contradicting names/categories block
+  that key rather than choosing the last label. Original account rules
   are always ignored, since their provenance may include holdout labels.
   Refunds do not teach spending rules; conflicting training choices abstain.
   No same-date/future choice trains a temporal holdout row.
@@ -65,18 +83,46 @@ successful recognition. Evaluation/configuration failures return 1.
 
 ## Reading results / comparing implementations
 
-`evaluateRecognitionBenchmark(state, index, { enrich?, holdoutFraction? })` returns
+`evaluateRecognitionBenchmark(state, index, { enrich?, holdoutFraction?, learnIdentityOnly? })` returns
 only aggregate counts. `aggregateRecognitionBenchmarks(results)` pools counts,
 not percentages. Run baseline and changed enrichers against the **same unchanged
-manually labeled snapshots, catalog, fraction and benchmark version**. Do not
-benchmark newly backfilled output as new ground truth. No benchmark runs modify
-those snapshots.
+manually labeled snapshots, fraction and benchmark version**. Keep the catalog
+constant when isolating pipeline effects; disclose deliberate product/catalog/
+training differences when comparing whole products. Do not benchmark newly
+backfilled output as new ground truth. No benchmark runs modify those snapshots.
+
+`learnIdentityOnly` defaults to `true`; `false` preserves a product's inability to
+learn rules from merchant-only labels while still learning confirmed categories
+and complete choices. It applies to both chronological and descriptor-group
+training and does not change label truth or scoring. Each report records the
+effective setting in `trainingPolicy.learnIdentityOnly`; pooled reports use
+`"mixed"` for differing policies or `"not-evaluated"` for no evaluated accounts.
+For the frozen `5135d86` baseline, pair its frozen enricher/catalog with
+`learnIdentityOnly:false`; compare the upgraded enricher/catalog using
+`learnIdentityOnly:true` against the same unchanged snapshot, fraction and v2
+evaluator. Explicitly disclose these differing product/training policies rather
+than passing new identity-only training to the old core and claiming it supported
+that capability. The operator CLI uses the default enabled policy.
+
+`merchantRecognitionCoverage` is high-confidence recognized names / eligible
+holdout rows. `merchantRecognized` and `merchantUnresolved` do not depend on the
+overall review flag: a source-only prediction with an alias and exact `alias` or
+`rule` matching annotation counts even when its category remains open. Complete
+non-reviewed custom predictions also count without a matching annotation.
+Reviewed unannotated/fuzzy guesses do not count. `merchantUnresolvedReasons`
+contains only observable aggregate distinctions (`missingAlias`, `untrustedAlias`);
+these sum to `merchantUnresolved`, not inferred pipeline failure reasons.
+Merchant precision scores recognized names against available human name labels,
+including category-open reviewed rows.
 
 Automatic coverage is complete safe merchant+category assignments / eligible
-holdout rows; abstentions count against coverage, not precision. Merchant/category
-precision have separate human-labeled denominators. Joint precision scores
+holdout rows; abstentions count against coverage, not precision. Category precision
+requires a complete safe merchant+category prediction and its own human category
+label, never an incomplete category-only decision. Joint precision scores
 complete automatic predictions with both labels; joint correctness divides
 correct automatic predictions by **all** jointly labeled rows, including reviews.
+Partial name recognition does not contribute to joint correctness, automatic
+coverage, or descriptor-group correctness and cannot establish the 99% target.
 `unlabeledAutomatic` warns that such predictions cannot establish correctness.
 Missing samples produce `null`, not 100%.
 

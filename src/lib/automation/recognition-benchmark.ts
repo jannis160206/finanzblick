@@ -1,5 +1,6 @@
 import { classify } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
+import { mergeConfirmedMerchantChoices } from "@/lib/import/merchant-choice";
 import {
   isSpecificMerchantKey,
   merchantAliasSourceKey,
@@ -16,6 +17,8 @@ import { createAccountMerchantResolver } from "./aliases";
 import { MerchantIndex, normalizeMerchantText } from "./merchants";
 import { enrichTransaction } from "./pipeline";
 
+export const RECOGNITION_BENCHMARK_VERSION = 2 as const;
+
 export interface BenchmarkRate {
   successes: number;
   samples: number;
@@ -30,10 +33,15 @@ export interface RecognitionMetrics {
   sourceDescriptorGroups: number;
   automatic: number;
   abstained: number;
+  merchantRecognized: number;
+  merchantUnresolved: number;
+  merchantUnresolvedReasons: { missingAlias: number; untrustedAlias: number };
   reviewRequested: number;
   unlabeledAutomatic: number;
   labels: { merchant: number; category: number; joint: number };
   automaticCoverage: BenchmarkRate;
+  /** High-confidence names / eligible rows, regardless of category review. */
+  merchantRecognitionCoverage: BenchmarkRate;
   merchantPrecision: BenchmarkRate;
   categoryPrecision: BenchmarkRate;
   jointPrecision: BenchmarkRate;
@@ -47,8 +55,11 @@ export interface RecognitionMetrics {
 }
 
 export interface RecognitionBenchmarkResult {
-  version: 1;
+  version: typeof RECOGNITION_BENCHMARK_VERSION;
   methodology: "source-only-human-labels-date-and-descriptor-holdout";
+  trainingPolicy: {
+    learnIdentityOnly: boolean | "mixed" | "not-evaluated";
+  };
   inventory: {
     copies: number;
     logicalTransactions: number;
@@ -83,6 +94,8 @@ export interface RecognitionBenchmarkResult {
 
 export interface RecognitionBenchmarkOptions {
   holdoutFraction?: number;
+  /** False reproduces a product that cannot learn from name-only human labels. */
+  learnIdentityOnly?: boolean;
   /** Injectable for comparing an unchanged labeled snapshot against another pipeline. */
   enrich?: typeof enrichTransaction;
 }
@@ -159,11 +172,13 @@ export function recognitionBenchmarkSource(row: Transaction): Transaction {
 
 function labels(row: Transaction) {
   // A reviewed category does not establish that an inherited automatic identity
-  // was manually chosen. A bare legacy alias is explicit manual identity evidence.
+  // was manually chosen. Explicit name confirmation and bare legacy aliases do.
   const merchant =
     row.merchantAlias &&
-    !row.merchantId &&
-    !row.merchantMatch &&
+    (row.merchantNameConfirmed === true ||
+      (row.merchantNameConfirmed === undefined &&
+        !row.merchantId &&
+        !row.merchantMatch)) &&
     isSpecificMerchantKey(`source|${row.merchantAlias}`)
       ? identityKey(row.merchantAlias)
       : undefined;
@@ -300,36 +315,32 @@ function collect(state: AppState) {
   return { inventory, samples };
 }
 
-function trainingResolver(state: AppState, samples: Sample[]) {
+function trainingResolver(
+  state: AppState,
+  samples: Sample[],
+  learnIdentityOnly: boolean,
+) {
   type Rule = NonNullable<AppState["merchantRules"]>[number];
   const rules = new Map<string, Rule | null>();
   for (const sample of samples) {
-    // Merchant-only labels cannot supply an unconfirmed category. Refund labels
-    // must not teach a refund category for the next ordinary outgoing purchase.
-    if (!sample.category || sample.source.amount > 0) continue;
+    // A confirmed name alone teaches only identity. Refund labels must not teach
+    // a refund category for the next ordinary outgoing purchase.
+    if (
+      (!sample.category && (!learnIdentityOnly || !sample.merchant)) ||
+      sample.source.amount > 0
+    )
+      continue;
     const key = sample.ruleKey;
     if (!isSpecificMerchantKey(key)) continue;
     const rule: Rule = {
       key,
-      category: sample.category,
+      category: sample.category ?? "Prüfen",
       ...(sample.merchant ? { merchantAlias: sample.merchant } : {}),
+      ...(!sample.category ? { identityOnly: true } : {}),
     };
     const previous = rules.get(key);
     if (previous === null) continue;
-    rules.set(
-      key,
-      previous &&
-        (previous.category !== rule.category ||
-          (previous.merchantAlias &&
-            rule.merchantAlias &&
-            previous.merchantAlias !== rule.merchantAlias))
-        ? null
-        : {
-            ...previous,
-            ...rule,
-            merchantAlias: rule.merchantAlias ?? previous?.merchantAlias,
-          },
-    );
+    rules.set(key, mergeConfirmedMerchantChoices(previous, rule));
   }
   const learned = [...rules.values()].filter(
     (rule): rule is Rule => rule !== null,
@@ -392,8 +403,10 @@ function evaluate(
   enrich: typeof enrichTransaction,
 ): RecognitionMetrics {
   let automatic = 0,
+    merchantRecognized = 0,
     reviewRequested = 0,
     unlabeledAutomatic = 0;
+  const merchantUnresolvedReasons = { missingAlias: 0, untrustedAlias: 0 };
   let merchantLabels = 0,
     categoryLabels = 0,
     jointLabels = 0;
@@ -413,9 +426,17 @@ function evaluate(
       resolve,
     );
     const safe = result.requires_manual_review === false;
-    const merchantAssigned = safe && !!result.merchantAlias;
-    const categoryAssigned = safe && result.category !== "Prüfen";
-    const complete = merchantAssigned && categoryAssigned;
+    const complete =
+      safe && !!result.merchantAlias && result.category !== "Prüfen";
+    const merchantAssigned =
+      !!result.merchantAlias &&
+      (result.merchantMatch === "alias" ||
+        result.merchantMatch === "rule" ||
+        complete);
+    const categoryAssigned = complete;
+    if (merchantAssigned) merchantRecognized++;
+    else if (!result.merchantAlias) merchantUnresolvedReasons.missingAlias++;
+    else merchantUnresolvedReasons.untrustedAlias++;
     if (complete) automatic++;
     if (result.requires_manual_review === true) reviewRequested++;
     if (complete && !(sample.merchant && sample.category)) unlabeledAutomatic++;
@@ -437,7 +458,7 @@ function evaluate(
     if (sample.merchant && sample.category) {
       jointLabels++;
       if (complete) jointAttempts++;
-      const right = !!(merchantRight && categoryRight);
+      const right = !!(complete && merchantRight && categoryRight);
       if (right) jointCorrect++;
       labeledGroups.set(
         sample.descriptor,
@@ -450,6 +471,9 @@ function evaluate(
     sourceDescriptorGroups: descriptors.size,
     automatic,
     abstained: samples.length - automatic,
+    merchantRecognized,
+    merchantUnresolved: samples.length - merchantRecognized,
+    merchantUnresolvedReasons,
     reviewRequested,
     unlabeledAutomatic,
     labels: {
@@ -458,6 +482,10 @@ function evaluate(
       joint: jointLabels,
     },
     automaticCoverage: benchmarkRate(automatic, samples.length),
+    merchantRecognitionCoverage: benchmarkRate(
+      merchantRecognized,
+      samples.length,
+    ),
     merchantPrecision: benchmarkRate(merchantCorrect, merchantAttempts),
     categoryPrecision: benchmarkRate(categoryCorrect, categoryAttempts),
     jointPrecision: benchmarkRate(jointCorrect, jointAttempts),
@@ -480,6 +508,7 @@ export function evaluateRecognitionBenchmark(
   if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1)
     throw new Error("Holdout fraction must be between zero and one.");
   const enrich = options.enrich ?? enrichTransaction;
+  const learnIdentityOnly = options.learnIdentityOnly ?? true;
   const { inventory, samples } = collect(state);
   // Keep an entire date together: future labels never train an earlier/same-day row.
   const days = [...new Set(samples.map((sample) => sample.source.date))];
@@ -495,7 +524,7 @@ export function evaluateRecognitionBenchmark(
   const holdout = samples.filter(
     (sample) => !trainingDays || sample.source.date >= cutoff,
   );
-  const trained = trainingResolver(state, training);
+  const trained = trainingResolver(state, training, learnIdentityOnly);
   const trainingDescriptors = new Set(
     training.map((sample) => sample.descriptor),
   );
@@ -517,8 +546,9 @@ export function evaluateRecognitionBenchmark(
     heldOutGroups.has(sample.descriptor),
   );
   return {
-    version: 1,
+    version: RECOGNITION_BENCHMARK_VERSION,
     methodology: "source-only-human-labels-date-and-descriptor-holdout",
+    trainingPolicy: { learnIdentityOnly },
     inventory,
     split: {
       training: training.length,
@@ -537,7 +567,7 @@ export function evaluateRecognitionBenchmark(
     descriptorGroupHoldout: evaluate(
       groupHoldout,
       index,
-      trainingResolver(state, groupTraining).resolve,
+      trainingResolver(state, groupTraining, learnIdentityOnly).resolve,
       enrich,
     ),
   };
@@ -550,6 +580,7 @@ function mergeMetrics(items: RecognitionMetrics[]): RecognitionMetrics {
     field: keyof Pick<
       RecognitionMetrics,
       | "automaticCoverage"
+      | "merchantRecognitionCoverage"
       | "merchantPrecision"
       | "categoryPrecision"
       | "jointPrecision"
@@ -567,6 +598,12 @@ function mergeMetrics(items: RecognitionMetrics[]): RecognitionMetrics {
     sourceDescriptorGroups: sum((item) => item.sourceDescriptorGroups),
     automatic: sum((item) => item.automatic),
     abstained: sum((item) => item.abstained),
+    merchantRecognized: sum((item) => item.merchantRecognized),
+    merchantUnresolved: sum((item) => item.merchantUnresolved),
+    merchantUnresolvedReasons: {
+      missingAlias: sum((item) => item.merchantUnresolvedReasons.missingAlias),
+      untrustedAlias: sum((item) => item.merchantUnresolvedReasons.untrustedAlias),
+    },
     reviewRequested: sum((item) => item.reviewRequested),
     unlabeledAutomatic: sum((item) => item.unlabeledAutomatic),
     labels: {
@@ -575,6 +612,7 @@ function mergeMetrics(items: RecognitionMetrics[]): RecognitionMetrics {
       joint: sum((item) => item.labels.joint),
     },
     automaticCoverage: rate("automaticCoverage"),
+    merchantRecognitionCoverage: rate("merchantRecognitionCoverage"),
     merchantPrecision: rate("merchantPrecision"),
     categoryPrecision: rate("categoryPrecision"),
     jointPrecision: rate("jointPrecision"),
@@ -642,8 +680,19 @@ export function aggregateRecognitionBenchmarks(
       split[key] += result.split[key];
   }
   return {
-    version: 1,
+    version: RECOGNITION_BENCHMARK_VERSION,
     methodology: "source-only-human-labels-date-and-descriptor-holdout",
+    trainingPolicy: {
+      learnIdentityOnly: !results.length
+        ? "not-evaluated"
+        : results.every(
+              (result) =>
+                result.trainingPolicy.learnIdentityOnly ===
+                results[0].trainingPolicy.learnIdentityOnly,
+            )
+          ? results[0].trainingPolicy.learnIdentityOnly
+          : "mixed",
+    },
     inventory,
     split,
     temporal: mergeMetrics(results.map((result) => result.temporal)),

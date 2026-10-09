@@ -7,6 +7,7 @@ import {
 } from "@/lib/import/merchant-rules";
 import type { AppState, Transaction } from "@/lib/types";
 import { normalizeMerchantDescriptor } from "./merchants";
+import { mergeConfirmedMerchantChoices } from "@/lib/import/merchant-choice";
 
 type Choice = NonNullable<AppState["merchantRules"]>[number];
 export type AccountMerchantMatch =
@@ -27,30 +28,10 @@ function addChoice(
   choices: Map<string, Choice | null>,
   key: string,
   rule: Choice,
-  normalized = false,
 ): void {
   const previous = choices.get(key);
   if (previous === null) return;
-  choices.set(
-    key,
-    rule.category === "Prüfen" ||
-      (previous &&
-        (previous.category !== rule.category ||
-          ((!normalized || (previous.merchantAlias && rule.merchantAlias)) &&
-            previous.merchantAlias !== rule.merchantAlias) ||
-          (normalized &&
-            previous.fixedCost !== undefined &&
-            rule.fixedCost !== undefined &&
-            previous.fixedCost !== rule.fixedCost)))
-      ? null
-      : normalized && previous
-        ? {
-            ...previous,
-            ...rule,
-            merchantAlias: rule.merchantAlias ?? previous.merchantAlias,
-          }
-        : rule,
-  );
+  choices.set(key, mergeConfirmedMerchantChoices(previous, rule));
 }
 
 // These rules live in the tenant snapshot, never in the global merchants table.
@@ -62,7 +43,7 @@ export function createAccountMerchantResolver(state: AppState) {
     if (!isSpecificMerchantKey(key)) continue;
     addChoice(choices, key, rule);
     const normalizedSource = normalizedKey(key);
-    if (normalizedSource) addChoice(normalized, normalizedSource, rule, true);
+    if (normalizedSource) addChoice(normalized, normalizedSource, rule);
   }
   return (row: Transaction): AccountMerchantMatch => {
     const source = { ...row, merchantAlias: undefined };

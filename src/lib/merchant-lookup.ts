@@ -1,11 +1,12 @@
 import { actualBookings, classify, knownMerchantName, merchantName } from "@/lib/calc";
 import { ambiguousMerchant, hasTerminalText, merchantText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
-import { isSpecificMerchantKey, merchantRuleKey } from "@/lib/import/merchant-rules";
+import { isSpecificMerchantKey, merchantRuleKey, rememberMerchants } from "@/lib/import/merchant-rules";
 import { bookingReviewReason } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
 import { merchantLookupQuerySchema, merchantLookupResultSchema, type MerchantLookupResult } from "@/lib/merchant-lookup-schema";
 import type { AppState, Transaction } from "@/lib/types";
 import { merchantAliasAssignment } from "@/lib/merchant-identity";
+import { isAutomationLocked } from "@/lib/automation/locks";
 
 const unknownMerchant = /h(?:ä|ae)ndler\s+unbekannt/i;
 type AliasBooking = Omit<Transaction, "amount"> & { amount: number | null };
@@ -60,12 +61,14 @@ export function confirmMerchantAlias(state: AppState, selected: Transaction, res
   const openIds = new Set((state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" ? [item.draft.id] : item.change.bookings.map((row) => row.id)));
   const matches = (row: AliasBooking) => row.id === selected.id ||
-    (canMatchTwins && row.merchantAlias === current.merchantAlias && !row.reviewed && merchantRuleKey(row) === key &&
+    (canMatchTwins && !isAutomationLocked(row) && row.merchantAlias === current.merchantAlias && !row.reviewed && merchantRuleKey(row) === key &&
       (openIds.has(row.id) || (row.amount !== null && !!bookingReviewReason(state, { ...row, amount: row.amount }))));
   const apply = <T extends AliasBooking>(row: T): T => matches(row)
-    ? { ...row, ...merchantAliasAssignment(row, alias) }
+    ? { ...row, ...merchantAliasAssignment(row, alias),
+      ...(row.id !== selected.id ? { merchantNameConfirmed: undefined, merchantMatch: "rule" as const,
+        requires_manual_review: true } : {}) }
     : row;
-  return {
+  const updated = {
     ...state,
     transactions: state.transactions.map(apply),
     ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((receipt) => {
@@ -78,4 +81,5 @@ export function confirmMerchantAlias(state: AppState, selected: Transaction, res
       ? { ...item, change: { ...item.change, bookings: item.change.bookings.map(apply) } }
       : { ...item, draft: apply(item.draft) }) } : {}),
   };
+  return rememberMerchants(updated, [{ ...current, ...merchantAliasAssignment(current, alias) }]);
 }

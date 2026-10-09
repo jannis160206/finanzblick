@@ -10,14 +10,17 @@ it("clears stale global identity and logos on a manual name change, not on categ
   };
   expect(merchantAliasAssignment(row, "Mein Laden")).toEqual({
     merchantAlias: "Mein Laden",
+    merchantNameConfirmed: true,
     merchantId: undefined,
     merchantLogo: false,
     merchantMatch: undefined,
   });
   expect(merchantAliasAssignment(row, "BILLA")).toEqual({
     merchantAlias: "BILLA",
+    merchantNameConfirmed: true,
   });
   expect(merchantAliasAssignment({}, "Mein Laden")).toEqual({
     merchantAlias: "Mein Laden",
+    merchantNameConfirmed: true,
   });
 });

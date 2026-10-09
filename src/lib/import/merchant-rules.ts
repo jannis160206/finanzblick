@@ -6,6 +6,7 @@ import { canonicalCategory } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
 import { normalizeAccount } from "@/lib/accounts";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
+import { mergeConfirmedMerchantChoices } from "./merchant-choice";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -49,10 +50,10 @@ export function merchantAliasSourceKey(row: Parameters<typeof merchantRuleKey>[0
   return merchantText(source.description) && isSpecificMerchantKey(key) ? key : undefined;
 }
 type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
-export type MerchantChoice = Pick<Transaction, "category" | "fixedCost" | "merchantAlias">;
+export type MerchantChoice = Pick<Transaction, "category" | "fixedCost" | "merchantAlias"> & { identityOnly?: boolean };
 
 export function isAutomaticMerchantAssignment(row: Transaction): boolean {
-  return !!(row.merchantId || row.merchantMatch) && !row.is_locked && !hasCategoryChoice(row);
+  return !!(row.merchantId || row.merchantMatch) && !row.merchantNameConfirmed && !row.is_locked && !hasCategoryChoice(row);
 }
 
 // Legacy worker imports could learn their own guesses. Keep stored rules, but
@@ -69,7 +70,7 @@ export function activeMerchantRules(state: AppState) {
   ]) {
     const keys = new Set([merchantRuleKey(row), merchantAliasSourceKey(row)].filter(key => key !== undefined));
     for (const key of keys) {
-      if (isAutomaticMerchantAssignment(row)) {
+      if (isAutomaticMerchantAssignment(row) || (row.merchantNameConfirmed && !hasCategoryChoice(row))) {
         const choices = automatic.get(key) ?? {
           categories: new Set<Transaction["category"]>(), assignments: new Set<string>(),
         };
@@ -80,6 +81,7 @@ export function activeMerchantRules(state: AppState) {
     }
   }
   return (state.merchantRules ?? []).filter(rule => {
+    if (rule.identityOnly) return true;
     const key = storedMerchantKey(rule.key);
     const choices = automatic.get(key);
     return confirmed.has(key) || !(rule.merchantAlias
@@ -93,15 +95,22 @@ function addChoice(choices: Map<string, MerchantChoice | null>, key: string, cho
   // Conflicting history is not a new decision. Keep it unresolved, independent
   // of statement order, until the user explicitly chooses this merchant again.
   if (previous === null) return;
-  choices.set(key, previous && (previous.category !== choice.category ||
-    (previous.merchantAlias && choice.merchantAlias && previous.merchantAlias !== choice.merchantAlias))
-    ? null : { ...previous, ...choice });
+  choices.set(key, mergeConfirmedMerchantChoices(previous ? { key, ...previous } : undefined, { key, ...choice }));
 }
 
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
   const choices = new Map<string, MerchantChoice | null>();
   for (const row of rows) {
     if (isAutomaticMerchantAssignment(row)) continue;
+    if (row.merchantNameConfirmed && row.merchantAlias &&
+      (row.category === "Prüfen" || !hasCategoryChoice(row))) {
+      const sourceKey = merchantAliasSourceKey(row);
+      if (sourceKey && row.amount < 0 && !classifyBooking(row).isTransfer && !payrollCategory(row))
+        addChoice(choices, sourceKey, {
+          merchantAlias: row.merchantAlias, category: "Prüfen", identityOnly: true,
+        });
+      continue;
+    }
     if ((!row.categoryOverride && !hasManualCategory(row)) || row.category === "Prüfen" || payrollCategory(row)) continue;
     const key = merchantRuleKey(row);
     if (
@@ -132,6 +141,7 @@ export function rememberMerchants(
     .map((rule) => ({ ...rule, key: storedMerchantKey(rule.key), category: canonicalCategory(rule.category) }))
     .filter((rule) => isSpecificMerchantKey(rule.key));
   const rules = new Map<string, typeof normalizedRules>();
+  const active = new Set(activeMerchantRules({ ...state, merchantRules: normalizedRules }));
   for (const rule of normalizedRules) {
     const group = rules.get(rule.key) ?? [];
     group.push(rule);
@@ -141,18 +151,29 @@ export function rememberMerchants(
   for (const [key, choice] of choices) {
     if (!choice) continue;
     const previous = rules.get(key) ?? [];
+    if (choice.identityOnly) {
+      let combined = { key, ...choice };
+      for (const rule of previous.filter(rule => active.has(rule))) {
+        const merged = mergeConfirmedMerchantChoices(rule, combined);
+        if (!merged) { combined = { key, ...choice }; break; }
+        combined = merged;
+      }
+      rules.set(key, [combined]);
+      continue;
+    }
     const fixedCosts = new Set(previous.map((rule) => rule.fixedCost).filter((value) => value !== undefined));
     const aliases = new Set(previous.map((rule) => rule.merchantAlias).filter((value) => value !== undefined));
     rules.set(key, [{ key, ...(fixedCosts.size === 1 ? { fixedCost: [...fixedCosts][0] } : {}),
       ...(aliases.size === 1 ? { merchantAlias: [...aliases][0] } : {}), ...choice }]);
   }
   const applyChoice = (row: Transaction): Transaction => {
-    if (row.is_locked) return row;
+    if (row.is_locked || row.merchantNameConfirmed) return row;
     if (hasCategoryChoice(row)) return row;
     const sourceKey = merchantAliasSourceKey(row);
     const sourceChoice = sourceKey ? choices.get(sourceKey) : undefined;
     const choice = sourceChoice?.merchantAlias ? sourceChoice : choices.get(merchantRuleKey(row));
     if (!choice || (choice.merchantAlias && (row.amount >= 0 || classify(row).isTransfer))) return row;
+    if (choice.identityOnly) return row;
     const updated = { ...row, category: choice.category, categoryOverride: true, includeInPlan: true,
       ...(choice.merchantAlias ? { merchantAlias: choice.merchantAlias } : {}) };
     const result = classify(updated);
@@ -184,17 +205,23 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
   const inferred = new Map<string, MerchantChoice | null>();
   for (const receipt of state.fixedReceipts ?? []) {
     if (receipt.booking && isAutomaticMerchantAssignment(receipt.booking)) continue;
+    if (receipt.booking?.merchantNameConfirmed && !hasCategoryChoice(receipt.booking)) continue;
     const key = receipt.merchantKey ? storedMerchantKey(receipt.merchantKey) : undefined;
     if (key && isSpecificMerchantKey(key))
       addChoice(inferred, key, { category: canonicalCategory(receipt.category) });
   }
   const rules = new Map(
-    [...remembered].map(([key, choice]) => [storedMerchantKey(key), choice] as const)
+    [...remembered].filter(([, choice]) => !choice?.identityOnly).map(([key, choice]) => [storedMerchantKey(key), choice] as const)
       .filter(([key]) => isSpecificMerchantKey(key)),
   );
   const explicit = new Map<string, MerchantChoice | null>();
+  const identities = new Map<string, MerchantChoice | null>();
   for (const rule of activeMerchantRules(state)) {
     const key = storedMerchantKey(rule.key);
+    if (rule.identityOnly) {
+      if (isSpecificMerchantKey(key)) addChoice(identities, key, rule);
+      continue;
+    }
     if (isSpecificMerchantKey(key)) addChoice(explicit, key, {
       category: canonicalCategory(rule.category),
       ...(rule.fixedCost !== undefined ? { fixedCost: rule.fixedCost } : {}),
@@ -204,8 +231,14 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
   for (const [key, choice] of explicit) rules.set(key, choice);
   return (source: Transaction): Transaction => {
     if (source.is_locked) return source;
-    const row = recoverMerchant(source);
+    if (source.merchantNameConfirmed) return source;
+    let row = recoverMerchant(source);
     if (hasCategoryChoice(row)) return row;
+    const identityKey = merchantAliasSourceKey(row) ?? merchantRuleKey(row);
+    const identity = identities.get(identityKey);
+    if (!rules.has(identityKey) && identity?.merchantAlias && row.amount < 0 && !classifyBooking(row).isTransfer)
+      row = { ...row, merchantAlias: identity.merchantAlias, merchantNameConfirmed: undefined,
+        merchantMatch: "rule", merchantId: undefined, merchantLogo: false, requires_manual_review: true };
     const detected = classifyBooking(row);
     if (payrollCategory(row) === detected.category) return { ...row, category: detected.category, includeInPlan: detected.includeInPlan };
     const sourceKey = merchantAliasSourceKey(row);

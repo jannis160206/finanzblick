@@ -26,8 +26,7 @@ export function merchantEvidence(
       !matches.every(
         (match) =>
           match.merchant &&
-          !match.requiresManualReview &&
-          match.method !== "fuzzy" &&
+          (match.method === "exact" || match.method === "regex") &&
           match.merchant.id === matches[0].merchant?.id,
       )
     )

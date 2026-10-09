@@ -243,7 +243,7 @@ const localMerchant = (
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: "Finanzblick: lokal gepflegte Händlerregeln",
-    updatedAt: Date.UTC(2026, 9, 9, 8, 0, 1),
+    updatedAt: Date.UTC(2026, 9, 9, 10, 22),
   });
 
 /** Curated offline identities, not account-specific learned category overrides. */
@@ -442,11 +442,83 @@ export const seedMerchants: Merchant[] = [
     ["Magenta Telekom", "T-Mobile Austria"],
     "Telefon & Internet",
   ),
+  localMerchant("at-adeg", "ADEG", ["ADEG Markt"], "Lebensmittel"),
+  localMerchant("at-mpreis", "MPREIS", ["M-Preis", "M Preis"], "Lebensmittel"),
+  localMerchant(
+    "at-sutterluety",
+    "Sutterlüty",
+    ["Sutterluety"],
+    "Lebensmittel",
+  ),
+  localMerchant(
+    "denns",
+    "denn's Biomarkt",
+    ["Denns Biomarkt", "Denns"],
+    "Lebensmittel",
+  ),
+  localMerchant("rewe", "REWE", ["REWE Markt"], "Lebensmittel"),
+  localMerchant("edeka", "EDEKA", ["EDEKA Markt"], "Lebensmittel"),
+  localMerchant("kaufland", "Kaufland", [], "Lebensmittel"),
+  localMerchant(
+    "at-stroeck",
+    "Ströck",
+    ["Stroeck", "Ströck Brot"],
+    "Cafés & Snacks",
+  ),
+  localMerchant("at-anker", "Ankerbrot", ["Anker Brot"], "Cafés & Snacks"),
+  localMerchant(
+    "at-der-mann",
+    "Der Mann",
+    ["Der Mann Bäckerei"],
+    "Cafés & Snacks",
+  ),
+  localMerchant("backwerk", "BackWerk", ["Back Werk"], "Cafés & Snacks"),
+  localMerchant("kfc", "KFC", ["Kentucky Fried Chicken"], "Restaurants"),
+  localMerchant("subway", "Subway", [], "Restaurants"),
+  localMerchant("pizza-hut", "Pizza Hut", ["PizzaHut"], "Restaurants"),
+  localMerchant("five-guys", "Five Guys", ["FiveGuys"], "Restaurants"),
+  localMerchant("vapiano", "Vapiano", [], "Restaurants"),
+  localMerchant("le-burger", "Le Burger", ["LeBurger"], "Restaurants"),
+  localMerchant("dazn", "DAZN", [], "Abonnements"),
+  localMerchant("sky-x", "Sky X", ["SkyX"], "Abonnements"),
+  localMerchant(
+    "paramount-plus",
+    "Paramount Plus",
+    ["Paramount+"],
+    "Abonnements",
+  ),
+  localMerchant("deezer", "Deezer", [], "Abonnements"),
+  localMerchant("tidal", "Tidal", [], "Abonnements"),
+  localMerchant("adobe", "Adobe", [], null),
+  localMerchant("microsoft", "Microsoft", [], null),
+  localMerchant(
+    "at-grawe",
+    "GRAWE",
+    ["Grazer Wechselseitige"],
+    "Versicherungen",
+  ),
+  localMerchant(
+    "at-wiener-staedtische",
+    "Wiener Städtische",
+    ["Wiener Staedtische"],
+    "Versicherungen",
+  ),
+  localMerchant(
+    "at-hdi",
+    "HDI Versicherung",
+    ["HDI Versicherungen"],
+    "Versicherungen",
+  ),
+  localMerchant("esso", "Esso", [], "Tanken", [], null, true),
+  localMerchant("bp", "BP", [], "Tanken", [], null, true),
+  localMerchant("jet", "JET", ["JET Tankstelle"], "Tanken", [], null, true),
+  localMerchant("avia", "AVIA", ["AVIA Tankstelle"], "Tanken", [], null, true),
 ];
 
 interface AliasEntry {
   text: string;
   merchants: Set<Merchant>;
+  ambiguous?: true;
 }
 
 function bigrams(text: string): Set<string> {
@@ -501,30 +573,8 @@ function resolved(
   matches: Set<Merchant>,
   method: MerchantMatch["method"],
 ): MerchantMatch {
-  const candidates = [...matches];
-  const first = candidates[0];
-  if (!first) return unresolved(method);
-  if (
-    candidates.length > 1 &&
-    !(
-      first.wikidataId &&
-      candidates.every(
-        (merchant) =>
-          merchant.wikidataId === first.wikidataId &&
-          merchant.region === first.region &&
-          normalizeMerchantText(merchant.canonicalName) ===
-            normalizeMerchantText(first.canonicalName) &&
-          merchant.defaultCategory === first.defaultCategory &&
-          merchant.requiresCategoryEvidence === first.requiresCategoryEvidence,
-      )
-    )
-  )
-    return unresolved(method);
-  const merchant = candidates.sort(
-    (left, right) =>
-      Number(right.source === "local") - Number(left.source === "local") ||
-      left.id.localeCompare(right.id),
-  )[0];
+  const merchant = matches.values().next().value;
+  if (!merchant || matches.size !== 1) return unresolved(method);
   return {
     merchant,
     requiresManualReview:
@@ -557,17 +607,56 @@ export class MerchantIndex {
   private readonly exact = new Map<string, AliasEntry>();
   private readonly regex: { merchant: Merchant; pattern: RegExp }[] = [];
   private readonly fuzzy = new Map<string, Set<AliasEntry> | null>();
+  private readonly identities = new Map<
+    string,
+    { original: Merchant; representative: Merchant }
+  >();
 
   constructor(merchants: Merchant[]) {
     if (merchants.length > 10_000)
       throw new RangeError("Merchant index supports at most 10,000 merchants.");
     const ids = new Set<string>();
-    for (const source of merchants) {
-      const merchant = merchantSchema.parse(source);
+    const definitions = merchants.map((source) => merchantSchema.parse(source));
+    const groups = new Map<
+      string,
+      { representative: Merchant; members: Merchant[] }
+    >();
+    for (const merchant of definitions) {
       if (ids.has(merchant.id))
         throw new Error(`Duplicate merchant ID: ${merchant.id}`);
       ids.add(merchant.id);
-      for (const name of [merchant.canonicalName, ...merchant.aliases]) {
+      const key = merchant.wikidataId
+        ? JSON.stringify([
+            merchant.wikidataId,
+            merchant.region,
+            normalizeMerchantText(merchant.canonicalName),
+            merchant.defaultCategory,
+            merchant.requiresCategoryEvidence,
+          ])
+        : JSON.stringify([merchant.id]);
+      const group = groups.get(key);
+      if (!group)
+        groups.set(key, { representative: merchant, members: [merchant] });
+      else {
+        group.members.push(merchant);
+        if (
+          (merchant.source === "local" &&
+            group.representative.source !== "local") ||
+          ((merchant.source === "local") ===
+            (group.representative.source === "local") &&
+            merchant.id.localeCompare(group.representative.id) < 0)
+        )
+          group.representative = merchant;
+      }
+    }
+    for (const { representative, members } of groups.values())
+      for (const original of members)
+        this.identities.set(original.id, { original, representative });
+    for (const source of definitions) {
+      const identity = this.identities.get(source.id);
+      if (!identity) throw new Error("Merchant identity was not indexed.");
+      const merchant = identity.representative;
+      for (const name of [source.canonicalName, ...source.aliases]) {
         const text = normalizeMerchantText(name);
         const entry = this.exact.get(text) ?? {
           text,
@@ -580,13 +669,17 @@ export class MerchantIndex {
             "Merchant index supports at most 40,000 aliases.",
           );
       }
-      for (const pattern of merchant.regexPatterns) {
+      for (const pattern of source.regexPatterns) {
         if (this.regex.length >= MAX_REGEX_PATTERNS)
           throw new RangeError("Too many merchant regex patterns.");
         this.regex.push({ merchant, pattern: new RegExp(pattern, "iu") });
       }
     }
     for (const entry of this.exact.values()) {
+      if (entry.merchants.size > 1) {
+        entry.ambiguous = true;
+        entry.merchants.clear();
+      }
       if (entry.text.length < 6) continue;
       for (const gram of bigrams(entry.text)) {
         const key = `${entry.text.length}:${gram}`;
@@ -599,7 +692,17 @@ export class MerchantIndex {
     }
   }
 
-  match(text: string): MerchantMatch {
+  private preserveIdentity(
+    result: MerchantMatch,
+    preferredId?: string,
+  ): MerchantMatch {
+    const identity = preferredId ? this.identities.get(preferredId) : undefined;
+    return identity && identity.representative === result.merchant
+      ? { ...result, merchant: identity.original }
+      : result;
+  }
+
+  match(text: string, preferredId?: string): MerchantMatch {
     if (text.length > MAX_INPUT) return unresolved();
     // Remove IDs before providers: stripping "Stripe" inside an ID must not
     // expose its remaining "BILLA" component as a merchant.
@@ -610,8 +713,9 @@ export class MerchantIndex {
     const phrases = windows(tokens);
     const exactMatches = new Set<Merchant>();
     for (const phrase of phrases) {
-      for (const merchant of this.exact.get(phrase)?.merchants ?? [])
-        exactMatches.add(merchant);
+      const entry = this.exact.get(phrase);
+      if (entry?.ambiguous) return unresolved("exact");
+      for (const merchant of entry?.merchants ?? []) exactMatches.add(merchant);
     }
     const regexMatches = new Set<Merchant>();
     for (const { merchant, pattern } of this.regex) {
@@ -630,7 +734,9 @@ export class MerchantIndex {
           ? this.exact.get(phrase)?.merchants.has(merchant)
           : false,
       );
-      return leading ? result : unresolved("exact");
+      return leading
+        ? this.preserveIdentity(result, preferredId)
+        : unresolved("exact");
     }
     if (regexMatches.size) {
       const result = resolved(regexMatches, "regex");
@@ -640,10 +746,10 @@ export class MerchantIndex {
             entry.merchant === result.merchant &&
             entry.pattern.exec(normalized)?.index === 0,
         )
-        ? result
+        ? this.preserveIdentity(result, preferredId)
         : unresolved("regex");
     }
-    return this.matchFuzzy(phrases);
+    return this.preserveIdentity(this.matchFuzzy(phrases), preferredId);
   }
 
   private matchFuzzy(phrases: string[]): MerchantMatch {
@@ -672,6 +778,7 @@ export class MerchantIndex {
           1 - 1 / Math.max(phrase.length, entry.text.length) >= 0.85 &&
           oneEditApart(phrase, entry.text)
         ) {
+          if (entry.ambiguous) return unresolved("fuzzy");
           for (const merchant of entry.merchants) matches.add(merchant);
         }
       }

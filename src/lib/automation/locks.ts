@@ -11,12 +11,14 @@ type Assignment = Partial<
     | "merchantAlias"
     | "merchantId"
     | "merchantMatch"
+    | "merchantNameConfirmed"
   >
 >;
 
 export function isAutomationLocked(row: Assignment): boolean {
   return (
     row.is_locked === true ||
+    row.merchantNameConfirmed === true ||
     hasCategoryChoice(row) ||
     (!!row.merchantAlias && !row.merchantId && !row.merchantMatch)
   );

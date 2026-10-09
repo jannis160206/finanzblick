@@ -265,6 +265,9 @@ export async function parseWorkbook(
           /^(ja|true|1)$/i.test(text(get("Händlerlogo vorhanden"))) ? true :
             /^(nein|false|0)$/i.test(text(get("Händlerlogo vorhanden"))) ? false : text(get("Händlerlogo vorhanden")) } : {}),
         ...(native && text(get("Händler-Treffertyp")) ? { merchantMatch: text(get("Händler-Treffertyp")) } : {}),
+        ...(native && text(get("Händlername bestätigt")) ? { merchantNameConfirmed:
+          /^(ja|true|1)$/i.test(text(get("Händlername bestätigt"))) ? true :
+            /^(nein|false|0)$/i.test(text(get("Händlername bestätigt"))) ? false : text(get("Händlername bestätigt")) } : {}),
         ...(native && text(get("Zuordnung gesperrt")) ? { is_locked:
           /^(ja|true|1)$/i.test(text(get("Zuordnung gesperrt"))) ? true :
             /^(nein|false|0)$/i.test(text(get("Zuordnung gesperrt"))) ? false : text(get("Zuordnung gesperrt")) } : {}),
@@ -691,6 +694,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Automatische Zuordnung unsicher",
     "Händlerlogo vorhanden",
     "Händler-Treffertyp",
+    "Händlername bestätigt",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -734,6 +738,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.requires_manual_review === undefined ? "" : row.requires_manual_review ? "Ja" : "Nein",
       row.merchantLogo === undefined ? "" : row.merchantLogo ? "Ja" : "Nein",
       row.merchantMatch ?? "",
+      row.merchantNameConfirmed === undefined ? "" : row.merchantNameConfirmed ? "Ja" : "Nein",
     ]);
   });
   for (const year of [2026, 2027]) {

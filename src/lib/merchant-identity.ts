@@ -10,6 +10,7 @@ type Identity = Partial<
 export function merchantAliasAssignment(row: Identity, merchantAlias: string) {
   return {
     merchantAlias,
+    merchantNameConfirmed: merchantAlias.trim() ? true : undefined,
     ...(merchantAlias !== row.merchantAlias &&
     (row.merchantId || row.merchantLogo || row.merchantMatch)
       ? { merchantId: undefined, merchantLogo: false, merchantMatch: undefined }

@@ -71,6 +71,7 @@ export type FixedDecision = { change: FixedChange; accept: boolean };
 function indexReviewRules(state: AppState) {
   const index = new Map<string, Set<string>>();
   for (const rule of state.merchantRules ?? []) {
+    if (rule.identityOnly) continue;
     const key = storedMerchantKey(rule.key);
     if (!isSpecificMerchantKey(key)) continue;
     const categories = index.get(key) ?? new Set<string>();
@@ -90,6 +91,8 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (isNamedTransfer(row)) return;
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
+  if (row.merchantNameConfirmed && row.amount < 0 && !result.isTransfer && !isIncome(result.category))
+    return "Händlername bestätigt – Kategorie bitte noch bestätigen.";
   if (row.requires_manual_review && !row.is_locked) return "Händlerzuordnung unsicher – bitte prüfen.";
   if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
@@ -110,7 +113,7 @@ export function openReviewCount(items: ReviewItem[]): number {
 
 export function repairMerchantBookings(state: AppState, candidates: Transaction[] = []): AppState {
   if (state.merchantRules) state = { ...state, merchantRules: state.merchantRules.map((rule) =>
-    isNamedTransfer({ description: rule.key.slice(rule.key.indexOf("|") + 1), merchantAlias: rule.merchantAlias })
+    !rule.identityOnly && isNamedTransfer({ description: rule.key.slice(rule.key.indexOf("|") + 1), merchantAlias: rule.merchantAlias })
       ? { ...rule, category: "Transfer", ...(rule.fixedCost !== undefined ? { fixedCost: false } : {}) } : rule) };
   const recovered = candidates.map(recoverMerchant).filter((row) => row.rawDescription && !unresolvedTerminal(row.description));
   // Rule inference, rule application and repair inspect the same immutable rows.
@@ -126,7 +129,7 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
   };
   let applyRule: ReturnType<typeof createMerchantRuleApplier> | undefined;
   const repair = (row: Transaction): Transaction => {
-    if (row.is_locked) return row;
+    if (row.is_locked || row.merchantNameConfirmed) return row;
     let updated = recoverMerchant(row);
     if (unresolvedTerminal(updated.description)) {
       const matches = recovered.filter((candidate) => sameTerminalBooking(row, candidate));

@@ -9,6 +9,7 @@ import { MerchantIndex } from "../src/lib/automation/merchants";
 import {
   aggregateRecognitionBenchmarks,
   evaluateRecognitionBenchmark,
+  RECOGNITION_BENCHMARK_VERSION,
   type RecognitionBenchmarkResult,
 } from "../src/lib/automation/recognition-benchmark";
 
@@ -121,7 +122,7 @@ function run() {
       aggregate.temporal.target99 !== "supported-on-labeled-holdout";
     console.log(
       JSON.stringify({
-        version: 1,
+        version: RECOGNITION_BENCHMARK_VERSION,
         accountCount: count,
         evaluatedAccounts: results.length,
         holdoutFraction: fraction,
@@ -148,7 +149,11 @@ try {
   run();
 } catch {
   console.log(
-    JSON.stringify({ version: 1, status: "failed", error: "benchmark-failed" }),
+    JSON.stringify({
+      version: RECOGNITION_BENCHMARK_VERSION,
+      status: "failed",
+      error: "benchmark-failed",
+    }),
   );
   process.exitCode = 1;
 }

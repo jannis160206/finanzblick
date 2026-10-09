@@ -65,6 +65,7 @@ it("shows a muted lookup icon only for uncertain debits, never known merchants o
 it("requires an explicit result and confirmation, then displays aliases without changing bank source fields", async () => {
   render(<Fixture />);
   const before = latest.transactions.slice(0, 2);
+  const selectedId = originalLookup().dataset.bookingId;
   fireEvent.click(originalLookup());
   const dialog = screen.getByRole("dialog", { name: "Name nachschlagen" });
   await within(dialog).findByRole("radio", { name: /Blumenatelier/ });
@@ -76,7 +77,12 @@ it("requires an explicit result and confirmation, then displays aliases without 
   expect(latest.transactions.slice(0, 2)).toEqual(before);
   fireEvent.click(confirm);
   expect(screen.queryByRole("dialog")).toBeNull();
-  expect(latest.transactions.slice(0, 2)).toEqual(before.map((row) => ({ ...row, merchantAlias: "Spielwarenladen" })));
+  expect(latest.transactions.slice(0, 2)).toEqual(before.map((row) => ({
+    ...row, merchantAlias: "Spielwarenladen",
+    ...(row.id === selectedId ? { merchantNameConfirmed: true } :
+      { merchantId: undefined, merchantLogo: false, merchantMatch: "rule", requires_manual_review: true }),
+  })));
+  expect(latest.transactions.filter(row => row.merchantNameConfirmed)).toHaveLength(1);
   expect(merchantRuleKey(latest.transactions[0])).toBe("raiffeisen|spielwarenladen");
   expect(within(screen.getByRole("table", { name: "Buchungen" })).getAllByText("Spielwarenladen")).toHaveLength(2);
   expect(screen.queryAllByRole("button", { name: /^Name nachschlagen:/ })).toHaveLength(0);

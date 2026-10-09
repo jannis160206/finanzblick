@@ -36,6 +36,48 @@ const booking = (description: string) =>
     includeInPlan: true,
   });
 
+it("preserves an existing equivalent public merchant ID and its licensed logo", () => {
+  const common = merchantSchema.parse({
+    id: "local-brand",
+    canonicalName: "Nordlicht",
+    defaultCategory: "Shopping",
+    aliases: [],
+    regexPatterns: [],
+    region: "AT",
+    source: "local",
+    updatedAt: 1,
+    wikidataId: "Q123",
+  });
+  const imported = {
+    ...common,
+    id: "osm-brand",
+    source: "osm" as const,
+    logo: {
+      file: `${"a".repeat(64)}.png`,
+      license: "CC-BY-4.0" as const,
+      attribution: "Test artist",
+      sourceUrl: "https://commons.wikimedia.org/wiki/File:Test.png",
+    },
+  };
+  const index = new MerchantIndex([common, imported]);
+  const original = {
+    ...booking("Nordlicht"),
+    merchantId: imported.id,
+    merchantAlias: "Nordlicht",
+    merchantLogo: true,
+    merchantMatch: "alias" as const,
+    category: "Shopping" as const,
+    requires_manual_review: false,
+  };
+  expect(enrichTransaction(original, index)).toMatchObject({
+    merchantId: imported.id,
+    merchantLogo: true,
+    merchantAlias: "Nordlicht",
+    category: "Shopping",
+    requires_manual_review: false,
+  });
+});
+
 it("assigns Müller, reviews unresolved providers/conflicts and does not guess on fuzzy hits", () => {
   expect(enrichTransaction(booking("Müller Filiale 47"), index)).toMatchObject({
     merchantAlias: "Müller",
