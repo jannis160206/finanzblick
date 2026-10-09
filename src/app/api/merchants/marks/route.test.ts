@@ -23,13 +23,13 @@ vi.mock("@/lib/automation/store", () => ({
     }
   },
 }));
-vi.mock("@/lib/automation/merchant-presentation", () => ({
-  merchantPresentations: mocks.presentations,
+vi.mock("@/lib/automation/merchant-logo-presentations", () => ({
+  accountMerchantPresentations: mocks.presentations,
 }));
 import { POST } from "./route";
 
 const url = "http://localhost/api/merchants/marks";
-const database = { path: "synthetic-private.sqlite" };
+const database = { path: "synthetic-private.sqlite", currentUser: vi.fn() };
 let network: ReturnType<typeof vi.fn<typeof fetch>>;
 function request(
   body: unknown = { merchantIds: ["at-example"] },
@@ -69,6 +69,7 @@ beforeEach(() => {
   mocks.authorize.mockResolvedValue(null);
   mocks.accountMode.mockReturnValue(true);
   mocks.runtime.mockResolvedValue({ database });
+  database.currentUser.mockReturnValue({ id: "synthetic-account" });
   mocks.presentations.mockImplementation(async (_store, input) => {
     const { merchantIds } = merchantMarksRequestSchema.parse(input);
     return [...new Set(merchantIds)].map((merchantId) => ({
@@ -146,6 +147,7 @@ describe("private batched merchant marks API", () => {
     expect(mocks.presentations).toHaveBeenCalledExactlyOnceWith(
       expect.any(Object),
       { merchantIds: ["at-example", "unknown"] },
+      "synthetic-account",
     );
   });
 
@@ -282,9 +284,20 @@ describe("private batched merchant marks API", () => {
     expect(await response.json()).toEqual({
       marks: [{ merchantId: "unknown", logo: null }],
     });
-    expect(mocks.presentations).toHaveBeenCalledWith(expect.any(Object), {
-      merchantIds: ["unknown", "unknown"],
-    });
+    expect(mocks.presentations).toHaveBeenCalledWith(
+      expect.any(Object),
+      {
+        merchantIds: ["unknown", "unknown"],
+      },
+      "synthetic-account",
+    );
+  });
+
+  it("never creates undefined-account grants when the authenticated session disappeared", async () => {
+    database.currentUser.mockReturnValue(null);
+    const response = await POST(request());
+    expect(response.status).toBe(401);
+    expect(mocks.presentations).not.toHaveBeenCalled();
   });
 
   it.each(["runtime", "store", "helper"])(

@@ -41,6 +41,7 @@ import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
+import { bankOperationReviewMessage } from "@/lib/bank-operation";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
 import { reconcileAmexImports, screenshotPendingBalance, type AmexReconciliation } from "./amex-reconciliation";
@@ -93,7 +94,8 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
   if (row.merchantNameConfirmed && row.amount < 0 && !result.isTransfer && !isIncome(result.category))
     return "Händlername bestätigt – Kategorie bitte noch bestätigen.";
-  if (row.requires_manual_review && !row.is_locked) return "Händlerzuordnung unsicher – bitte prüfen.";
+  if (row.requires_manual_review && !row.is_locked)
+    return bankOperationReviewMessage(row) ?? "Händlerzuordnung unsicher – bitte prüfen.";
   if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
   if (alwaysLunch(row.description) || isSharedHoliday(row) || row.holidayReimbursementFor || row.holidayRange) return;

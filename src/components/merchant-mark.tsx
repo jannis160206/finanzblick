@@ -71,7 +71,7 @@ function LocalMerchantLogo({
       aria-label={`Logo-Lizenz und Quellenangabe${alias ? `: ${alias}` : ""}`}
       className={cn(
         className,
-        "focus-visible:outline-2 focus-visible:outline-ring",
+        "bg-white focus-visible:outline-2 focus-visible:outline-ring",
       )}
     >
       {/* Authenticated local images must bypass the Next image optimizer. */}

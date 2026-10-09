@@ -525,18 +525,22 @@ it.each(["Transfer intern", "Transfer"] as const)(
   },
 );
 
-it("excludes bank transfers but not direct debits, and keeps transfer rows out of merchant review", () => {
+it("excludes bank transfers from merchant matching, but keeps their unknown purpose in review", () => {
   const row = {
     ...booking("SEPA Überweisung an BILLA"),
     sourceCategory: "Überweisung",
   };
-  expect(enrichTransaction(row, index)).toEqual(row);
+  expect(enrichTransaction(row, index)).toMatchObject({
+    category: "Prüfen", requires_manual_review: true, merchantLogo: false,
+  });
   const backfilled = backfillBatch(
     { ...blankTestState(), transactions: [row] },
     new Set([row.id]),
     index,
   );
-  expect(backfilled.reviewQueue).toEqual([]);
+  expect(backfilled.reviewQueue).toEqual([expect.objectContaining({
+    kind: "booking", draft: expect.objectContaining({ id: row.id, requires_manual_review: true }),
+  })]);
   expect(
     enrichTransaction(
       { ...booking("Müller"), sourceCategory: "SEPA Lastschrift" },

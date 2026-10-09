@@ -1,5 +1,6 @@
 import { classify } from "@/lib/calc";
 import type { Transaction } from "@/lib/types";
+import { bankOperation } from "@/lib/bank-operation";
 
 export function hasMerchantRefundEvidence(row: Transaction): boolean {
   return /\b(?:r(?:ü|ue|u)ck(?:erstattung|verguetung|vergütung)|erstattung|refund|retoure)\b/i.test(
@@ -13,6 +14,9 @@ export function hasMerchantRefundEvidence(row: Transaction): boolean {
 }
 
 export function isMerchantTransfer(row: Transaction): boolean {
+  const operation = bankOperation(row);
+  if (operation?.kind === "fee") return false;
+  if (operation?.kind === "internal-transfer" || operation?.kind === "external-transfer") return true;
   if (classify(row).isTransfer) return true;
   if (row.amount > 0 && hasMerchantRefundEvidence(row)) return false;
   return (

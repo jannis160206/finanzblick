@@ -95,6 +95,33 @@ Die neuen Flags/IDs bleiben auch in Excel-Sicherungen erhalten.
 Kontospezifische gelernte Regeln, Dublettenabgleich, Amex-Abgleich, Salden und
 Fixkosten-Rückfragen verwenden weiterhin die bestehende Importlogik.
 
+### Bankvorgänge und PayPal-Kurzformen
+
+Eindeutige Kontoführung, Karten-/Buchungsentgelte und Überweisungsgebühren werden
+lokal als `Bankgebühren` erkannt, Rücklastschriftgebühren separat. Dafür ist kein
+geratener Händler nötig. Das gilt auch für explizite Amex-Mitgliedsgebühren,
+PayPal/PP-Transaktionsgebühren und Geldautomatengebühren, nicht für eine bloße
+Bargeldbehebung. Gemischte Hauptbeträge inklusive Gebühren, widersprüchliche
+Händler und negierte Gebühren bleiben in der Prüfung. Die Erstattung einer Gebühr
+ist `Rückerstattungen`, kein Einkommen. Neue Vertragsbeträge brauchen weiterhin die
+bestehende Fixkostenprüfung; aus einer einzigen Gebühr wird keine Laufzeit geraten.
+
+Nur ausdrücklich eigene Konten bzw. PayPal-Guthabenaufladungen sind interne
+Umbuchungen. SEPA-/Echtzeitüberweisungen und Daueraufträge ohne bestätigten Zweck
+bleiben offen, statt als Spartransfer aus den Ausgaben zu verschwinden. Explizite
+Zweckangaben wie Vollkasko, Leasingrate oder Mietzahlung dürfen ihre bestehenden
+Kategorien setzen; mehrere Zwecke bleiben offen. Ein bestätigter kontospezifischer
+Zweck darf beim gleichen Text wiederverwendet werden.
+Transfertexte erhalten weiterhin kein Händlerlogo; gesperrte Entscheidungen
+bleiben unangetastet. Beschriftete Buchungsart-/Verwendungszweckfelder werden
+berücksichtigt, nicht beliebige Kontoinhaber- oder Jahresübersichtszeilen.
+
+`PP*HÄNDLER` und `PP / HÄNDLER` werden wie PayPal behandelt. Ein bloßes `PP`, eine
+Referenz-ID oder zwei unterschiedliche Händler genügt weiterhin nicht für eine
+automatische Zuordnung. Originaltexte und Beträge bleiben erhalten; es gibt keine
+Netzwerkaufrufe oder Datenbankabfragen pro Buchung. Diese Regeln starten keinen
+neuen historischen Nachlauf.
+
 ## Einmaliger Backfill
 
 Für lokale Konten:

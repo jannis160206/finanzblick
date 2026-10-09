@@ -136,4 +136,33 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (7, unixepoch() * 1000);
     `);
   }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 8").get()
+  ) {
+    db.exec(`
+      CREATE TABLE merchant_authorized_logos (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        merchant_id TEXT NOT NULL,
+        version TEXT NOT NULL CHECK(length(version) = 64),
+        canonical_name TEXT NOT NULL,
+        logo_json TEXT NOT NULL CHECK(json_valid(logo_json) AND length(logo_json) <= 16384),
+        is_current INTEGER NOT NULL CHECK(is_current IN (0, 1)),
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(user_id, merchant_id, version)
+      );
+      CREATE UNIQUE INDEX merchant_authorized_logo_current
+        ON merchant_authorized_logos(user_id, merchant_id) WHERE is_current = 1;
+      CREATE TABLE merchant_authorized_logo_imports (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        owner TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE merchant_authorized_logo_assets (
+        account_key TEXT NOT NULL CHECK(length(account_key) = 64),
+        file TEXT NOT NULL CHECK(length(file) = 68),
+        PRIMARY KEY(account_key, file)
+      );
+      INSERT INTO automation_migrations VALUES (8, unixepoch() * 1000);
+    `);
+  }
 }

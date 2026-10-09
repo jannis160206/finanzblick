@@ -81,6 +81,8 @@ it("requests only a licensed same-origin image and exposes its attribution link"
   });
   expect(attribution.getAttribute("target")).toBe("_blank");
   expect(attribution.getAttribute("rel")).toBe("noopener noreferrer");
+  expect(attribution.className).toContain("bg-white");
+  expect(attribution.className).not.toContain("bg-muted");
   expect(attribution.getAttribute("title")).toBe(
     "Lizenz/Herkunft: Möbel Müller",
   );
@@ -97,6 +99,7 @@ it.each([
     mark({ ...booking, merchantAlias: "Möbel Müller", ...metadata }),
   );
   expect(screen.getByText("MM")).toBeTruthy();
+  expect(screen.getByText("MM").className).toContain("bg-muted");
   expect(container.querySelector("img")).toBeNull();
 });
 

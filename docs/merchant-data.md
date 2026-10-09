@@ -246,3 +246,140 @@ Requests use only geographic coordinates, OSM reference identities, Wikidata
 entity IDs, and Commons file names—never financial data. Tests mock all network
 requests. Back up the database and private logo directory together; deleting
 the cache produces missing-logo responses, not live-network fallbacks.
+
+## Authorized private logos for one account
+
+When an operator has private usage rights, the separate authorized import accepts
+an explicit **existing account username** and a required human rights reference.
+A declaration such as `User confirmed private usage rights, 2026-10-09` is valid
+input: it is recorded as an **operator/user assertion**, not represented as an
+actual licence document or independently verified licence. Account grants never
+become public licences and never enter `merchants.logo_json`.
+
+```powershell
+# Explicit database path; this command does NOT load .env.local.
+npm run merchants:authorized-logos -- --database ".local-data\accounts.sqlite" --account "YOUR_USERNAME" --rights-reference "User confirmed private usage rights, 2026-10-09" --commons
+# Deliberate source refresh, or continuation after a returned cursor:
+npm run merchants:authorized-logos -- --database ".local-data\accounts.sqlite" --account "YOUR_USERNAME" --rights-reference "User confirmed private usage rights, 2026-10-09" --commons --refresh --batch-size 20
+# Use --after Q123 only with --commons to continue a capped/interrupted scan.
+```
+
+The scan uses only already-known public Wikidata identities, including legacy
+OSM brand IDs. It does not seed, rename or mutate merchants, aliases, categories,
+transactions, finance snapshots or sessions. Available shared publicly licensed
+images are reused for all accounts; previously imported private images are reused
+within the selected account. `--refresh` deliberately rechecks Commons.
+The operator declaration can authorize a file without an allowlisted public CC
+licence; source artist, credit, licence name/URL, usage terms and trademark
+advisories remain **separate public-source metadata**. Nontrademark restrictions,
+ambiguous P154 and unsafe images still skip. The explicit private permission
+does not depend on Commons' public licence type or upstream copyright labels.
+Upstream Logopedia/collection credit tags are retained as source-reported
+attribution, not visited, erased, or relabelled as a licence. A known P154 asset
+may be imported only from the allowlisted Commons resource/thumbnail under
+the account's declaration; normal shared/public imports still reject such
+unreviewed upstream provenance and retain their original public licence gate.
+There is no Google/brand-CDN/collection scraping, hotlink or invented artwork.
+Requests contain only public QIDs and their Commons file identifiers, never bank
+text, account IDs, usernames, rights references, amounts or financial metadata.
+
+The factual seed references in `merchant-identities.ts` extend the same merchant
+catalogue to verified transport, streaming, restaurant, retail and insurance
+brands. Identities are checked against Wikidata labels/descriptions
+(`wbgetentities`, `props=labels|descriptions`) and each entity's P154 response
+(`wbgetclaims`, `property=P154`). These references assert neither a public image
+licence nor a purchase purpose. Product identities such as Disney+, Steam,
+PlayStation, Lieferando and Uber Eats remain distinct from their parent companies.
+Uber Trip uses the Uber rideshare brand identity, not Uber Eats; fuel-station
+identities retain their explicit category-evidence requirement. Missing P154
+does not justify using an unrelated parent-company or similarly named logo.
+
+Each run visits at most 200 deduplicated public entities, in sequential batches
+of 1–20, with a ten-minute total deadline and the existing ten-second network/
+five-second raster deadlines. HTTP 429/503 permit at most two bounded retries;
+source failures fail visibly and leave prior grants intact. Progress supplies a
+completed batch cursor; `nextAfter` resumes a capped scan. Skips identify public
+QIDs/merchant IDs and reasons, including `No P154 logo`.
+
+Missing assets require **operator-supplied local files**, not fabricated logos.
+The documented current BIPA P154 gap can be filled this way; the scan report
+identifies further gaps. HOFER/Amazon collection credit labels no longer prevent
+authorized per-account Commons import when a safe, unambiguous P154 file exists.
+Place a JSON manifest beside the supplied files:
+
+```json
+{
+  "entries": [
+    {
+      "merchantId": "at-bipa",
+      "file": "bipa.png",
+      "attribution": "Rights holder attribution supplied by the operator",
+      "rightsReference": "Optional file-specific private rights reference"
+    }
+  ]
+}
+```
+
+```powershell
+npm run merchants:authorized-logos -- --database ".local-data\accounts.sqlite" --account "YOUR_USERNAME" --rights-reference "User confirmed private usage rights, 2026-10-09" --manifest ".local-data\provided-logos\manifest.json"
+```
+
+The manifest is bounded to 128 KiB / 200 distinct **known merchant IDs**.
+`attribution` is required; entry-specific `rightsReference` overrides the required
+command reference. Files must be relative PNG/JPEG/WebP paths under the manifest
+directory. Absolute paths, traversal, alternate streams, symlink/junction paths,
+local SVG and mismatched raster formats are rejected. Existing 2 MiB input,
+4-million-pixel, single-frame, 128×128 output and 256 KiB output-byte limits
+remain unchanged. Commons SVG is never read locally: only the allowlisted,
+provenance-matched server PNG thumbnail is downloaded (reported 128px thumbnail,
+bucket URL at most 512px, decoded raster at most 512px).
+For the authorized path only, an original PNG/JPEG exceeding 2 MiB or 4 million
+pixels can use Commons' already-returned PNG thumbnail instead. The thumbnail
+must report PNG / at most 128×128 presentation, use the exact original hash
+directories and filename-derived thumbnail path (converted JPEG uses `.jpg.png`
+or `.jpeg.png`), and decode to at most 512px per side. Actual download still
+cannot exceed 2 MiB, and output limits remain unchanged. The oversized original
+is never fetched. Missing, non-PNG or mismatched thumbnails skip explicitly;
+no URL/path is guessed or requested. Normal public and existing SVG limits stay
+unchanged.
+
+When Wikidata lists multiple current logo variants, private import can take
+`--logo-choices "<private JSON file>"`. The bounded file contains at most 200
+distinct known entities, for example:
+`[{"wikidataId":"Q649646","filename":"Valentino logo.svg"}]`.
+The exact filename must occur in the current nondeprecated P154 candidate set
+(preferred ranks take precedence). A choice never permits arbitrary Commons
+files, foreign URLs or guesses. Unknown/duplicate entities fail before requests;
+missing or deprecated variants skip visibly. Without a choice, ambiguous variants
+remain open. Actual SVGs are never downloaded; authorized oversized SVG originals
+also use only a provenance-matched, size-bounded server PNG thumbnail.
+
+Private content-hashed PNGs live in `merchant-authorized-logos/<account-hash>/`
+beside the database, never under a public web directory. One bounded, expiring
+operator-import lock per account prevents concurrent quota races; no extra
+worker/service is introduced. Limits include 1,024 files per account / 10,000
+private files overall, 2,000
+current/history metadata records per account and 10,000 overall. Repeated
+identical imports reuse the file and version, including at the metadata cap.
+Finite asset reservations also count partial/orphaned writes and deleted-account
+files against the storage quota; deleting metadata does not silently reset it.
+Keep the database and both logo directories together in private backups.
+
+Authenticated marks resolve that account's grants first, then existing shared
+public logos, without changing the frontend response contract. Logo and
+attribution endpoints derive the account from the session cookie, not request
+IDs/paths. New versions bind the account, merchant ID, exact canonical-name
+snapshot, content and permission/credit metadata. Explicit reimport after a
+canonical rename therefore creates a new current version even when image and
+rights are unchanged; further identical imports remain idempotent and reuse
+the same file. Old private PNGs and credits remain account-scoped in the history.
+Previously stored account/content/permission-only hashes remain valid for
+existing current marks and owner-only versioned image/attribution reads; reads
+never rewrite those rows or require a schema reset. No repeat import is needed
+for unchanged existing grants. To refresh a renamed local grant, repeat its
+original local manifest import (no network); renamed Commons grants can refresh
+their identity through the cached `--commons` path without downloading again.
+Another account cannot read private images, permission references or archived
+credits even with the exact merchant/version. Versioned images retain private
+immutable browser caching and `Vary: Cookie`; attribution remains private
+no-store plain text with an explicit declaration/not-document label.

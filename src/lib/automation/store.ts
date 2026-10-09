@@ -24,6 +24,15 @@ import {
 } from "./merchant-logo-metadata";
 import type { DatabaseSync } from "node:sqlite";
 import { merchantLogoVersion } from "./merchant-logo-version";
+import {
+  readAuthorizedLogoGrant,
+  readAuthorizedLogoCandidates,
+  saveAuthorizedLogoGrant,
+} from "./merchant-logo-grants";
+import {
+  logoAccountIdSchema,
+  type AuthorizedMerchantLogo,
+} from "./merchant-logo-grant-metadata";
 
 const rowSchema = automationJobSchema.extend({
   userId: z.string(),
@@ -88,6 +97,89 @@ function retainLogoAttribution(db: DatabaseSync, reference: Merchant): void {
 
 export class AutomationStore {
   constructor(readonly accounts: AccountDatabase) {}
+
+  authorizedLogo(userId: string, merchantId: string, version?: string) {
+    return readAuthorizedLogoGrant(this.accounts, userId, merchantId, version);
+  }
+
+  saveAuthorizedLogo(
+    userId: string,
+    merchantId: string,
+    logo: AuthorizedMerchantLogo,
+  ) {
+    const merchant = this.getMerchant(merchantId);
+    if (!merchant) throw new Error("Unknown public merchant ID");
+    return saveAuthorizedLogoGrant(
+      this.accounts,
+      userId,
+      merchantId,
+      merchant.canonicalName,
+      logo,
+    );
+  }
+
+  authorizedLogoCandidates(userId: string, ids: string[]) {
+    logoAccountIdSchema.parse(userId);
+    const { merchantIds } = merchantMarksRequestSchema.parse({
+      merchantIds: ids,
+    });
+    const requested = new Map(
+      [...new Set(merchantIds)].map((id) => [id, this.getMerchant(id)]),
+    );
+    const entities = [
+      ...new Set(
+        [...requested.values()].flatMap((merchant) =>
+          merchant?.wikidataId ? [merchant.wikidataId] : [],
+        ),
+      ),
+    ];
+    const current = readAuthorizedLogoCandidates(
+      this.accounts,
+      userId,
+      [...requested.keys()],
+      entities,
+    );
+    const references = current.flatMap((grant) => {
+      const merchant =
+        requested.get(grant.merchantId) ?? this.getMerchant(grant.merchantId);
+      return merchant &&
+        normalizeMerchantText(grant.canonicalName) ===
+          normalizeMerchantText(merchant.canonicalName) &&
+        (grant.logo.provenance.kind !== "commons" ||
+          grant.logo.provenance.wikidataId === merchant.wikidataId)
+        ? [{ merchant, grant }]
+        : [];
+    });
+    return new Map(
+      [...new Set(merchantIds)].map((id) => {
+        const merchant = requested.get(id);
+        const direct = references.filter(
+          (reference) =>
+            reference.merchant.id === id &&
+            (reference.grant.logo.provenance.kind !== "commons" ||
+              reference.grant.logo.provenance.wikidataId ===
+                merchant?.wikidataId),
+        );
+        const related = merchant?.wikidataId
+          ? references.filter(
+              (reference) =>
+                reference.merchant.id !== id &&
+                reference.grant.logo.provenance.kind === "commons" &&
+                reference.grant.logo.provenance.wikidataId ===
+                  merchant.wikidataId &&
+                reference.merchant.wikidataId === merchant.wikidataId &&
+                reference.merchant.region === merchant.region &&
+                normalizeMerchantText(reference.merchant.canonicalName) ===
+                  normalizeMerchantText(merchant.canonicalName),
+            )
+          : [];
+        return [
+          id,
+          [...direct, ...related].map((reference) => reference.grant),
+        ];
+      }),
+    );
+  }
 
   filePath(id: string): string {
     z.string().uuid().parse(id);

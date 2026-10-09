@@ -1,16 +1,20 @@
 import type { Transaction } from "@/lib/types";
 import { isRevolutMainAccount } from "@/lib/accounts";
 import { pocketKey } from "@/lib/goals";
+import { bankOperation } from "@/lib/bank-operation";
 
 type NamedBooking = Pick<Transaction, "description"> &
-  Partial<Pick<Transaction, "rawDescription" | "merchantAlias">>;
+  Partial<Pick<Transaction, "bank" | "rawDescription" | "merchantAlias" | "sourceCategory" | "rawDetails">> &
+  { amount?: number | null };
 
 export function isNamedTransfer(row: NamedBooking): boolean {
+  const operation = bankOperation(row);
+  if (operation?.kind === "fee" || operation?.kind === "ambiguous") return false;
   // Merchant text only: cardholder headers in OCR details are not transfer names.
   return [row.description, row.rawDescription, row.merchantAlias].some((value) => {
     const text = (value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
       .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    return /einzahlung|transfer/.test(text) ||
+    return (operation?.kind !== "external-transfer" && /einzahlung|transfer/.test(text)) ||
       /\b(?:jannis bru(?:e)?hl|bru(?:e)?hl jannis)\b/.test(text);
   });
 }

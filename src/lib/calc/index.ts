@@ -30,6 +30,7 @@ import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-o
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 import { amexFunding } from "@/lib/amex-balance";
 import { applyNamedTransfer, isNamedTransfer, revolutSavingsTransferAmount } from "@/lib/transfers";
+import { bankOperation, bankTransferPurpose } from "@/lib/bank-operation";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -156,7 +157,12 @@ export function classify(
     };
   }
   const sourceText = [description, transaction.rawDescription ?? transaction.description, ...(transaction.rawDetails ?? []), transaction.sourceCategory].filter(Boolean).join(" ");
-  const known = knownMerchantCategory(sourceText, amount) ?? amexMerchantCategory({ ...recovered, description, amount });
+  const operation = bankOperation(transaction);
+  const operationCategory = operation?.kind === "external-transfer"
+    ? (transaction.category === "Transfer" || transaction.category === "Transfer intern"
+      ? transaction.category : bankTransferPurpose(transaction) ?? operation.category)
+    : operation?.category;
+  const known = operationCategory ?? knownMerchantCategory(sourceText, amount) ?? amexMerchantCategory({ ...recovered, description, amount });
   const forcedLunch = alwaysLunch(description) && known !== "Prüfen";
   const sharedHoliday = isSharedHoliday(transaction);
   const reimbursement = !!transaction.holidayReimbursementFor;
@@ -179,7 +185,8 @@ export function classify(
   const isCurrencyExchange = /^revolut$/i.test(transaction.bank ?? "") &&
     /^umtausch$/i.test(sourceCategory) && /^umgetauscht (?:in|von) [a-z]{3}$/i.test(description);
   const isInternal =
-    /einzustecken|einstecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\/überweisung erhalten/i.test(
+   operation?.kind === "internal-transfer" ||
+   (!operation && (/einzustecken|einstecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\/überweisung erhalten/i.test(
       sourceText,
     ) ||
     (/^revolut$/i.test(transaction.bank ?? "") && /\bto jannis br(?:ü|ue)hl\b/i.test(description)) ||
@@ -187,10 +194,11 @@ export function classify(
     isCardSettlement ||
     isCurrencyExchange ||
     transaction.category === "Transfer intern" ||
-    /transfer intern/i.test(transaction.sourceCategory ?? "");
+    /transfer intern/i.test(transaction.sourceCategory ?? "")));
   const detectedTransfer = !forcedLunch && !sharedHoliday && !reimbursement && (isRoundUp || (isInternal && !isAmazon));
   let category: Category = transaction.category;
-  if (isAmazon) category = "Shopping";
+  if (operationCategory) category = operationCategory;
+  else if (isAmazon) category = "Shopping";
   else if (isRoundUp) category = "Transfer intern";
   else if (isInternal) category = "Transfer intern";
   else if (payroll) category = payroll;
@@ -210,7 +218,7 @@ export function classify(
   if (category === "Mittagessen" && !forcedLunch && !allowsLunch())
     category = groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen";
   if (/\btrafik\b/i.test(description)) category = "Shopping";
-  if (isAmazon) category = "Shopping";
+  if (isAmazon && !operation) category = "Shopping";
   if (isRoundUp) category = "Transfer intern";
   if (amount > 0 && specialIncome && !detectedTransfer)
     category = payroll ?? "Einkommen";
@@ -232,7 +240,8 @@ export function classify(
       (amount < 0 && isTravelMerchant(description)) || transaction.holidayRange)) category = "Urlaub";
   if (!transaction.categoryOverride && unresolvedTerminal(description) && !transaction.holidayRange && !detectedTransfer) category = "Prüfen";
   if (!transaction.categoryOverride && ambiguousMerchant(recovered) && !detectedTransfer) category = "Prüfen";
-  if (known === "Prüfen" && !transaction.categoryOverride && !detectedTransfer) category = "Prüfen";
+  if (known === "Prüfen" && !transaction.categoryOverride && !detectedTransfer &&
+    !(operation?.kind === "external-transfer" && payroll)) category = "Prüfen";
   if (amount > 0 && transaction.categoryOverride && transaction.category === "Rückerstattungen" &&
     !detectedTransfer && !reimbursement) category = "Rückerstattungen";
   // A partner transfer must not become a salary receipt before reconciliation.

@@ -1,13 +1,21 @@
-import { createHash } from "node:crypto";
-import { lstat, mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import sharp from "sharp";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   privateMerchantLogoSchema,
   type PrivateMerchantLogo,
 } from "./merchant-logo-metadata";
+import {
+  logoContentFile,
+  logoRasterMime,
+  normalizeLogoRaster,
+  readStoredLogoPng,
+  writeStoredLogoPng,
+} from "./merchant-logo-raster";
+import {
+  publicLogoRightsSchema,
+  type PublicLogoRights,
+} from "./merchant-logo-grant-metadata";
 export {
   privateMerchantLogoSchema,
   type PrivateMerchantLogo,
@@ -15,8 +23,12 @@ export {
 
 const MAX_DOWNLOAD = 2 * 1024 * 1024;
 const MAX_PIXELS = 4_000_000;
-const MAX_STORED = 256 * 1024;
-const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+export const commonsLogoFilenameSchema = z
+  .string()
+  .min(1)
+  .max(240)
+  .regex(/\.(?:png|jpe?g|webp|svg)$/i)
+  .refine((filename) => !/[/\\\x00-\x1f|#]/.test(filename));
 const licenses = {
   "CC0 1.0": {
     id: "CC0-1.0",
@@ -305,15 +317,64 @@ function commonsMediaUrl(
   return allowedRequestUrl(url.href).href;
 }
 
-export async function retrieveMerchantLogo(
+function provenanceMatchedCommonsPngThumbnail(
+  original: URL,
+  info: {
+    thumburl?: string;
+    thumbmime?: string;
+    thumbwidth?: number;
+    thumbheight?: number;
+  },
+  originalIsPng: boolean,
+): string | null {
+  if (
+    !info.thumburl ||
+    !info.thumbwidth ||
+    !info.thumbheight ||
+    info.thumbwidth > 128 ||
+    info.thumbheight > 128 ||
+    info.thumbmime !== "image/png"
+  )
+    return null;
+  const source = /^\/wikipedia\/commons\/([a-f0-9]\/[a-f0-9]{2}\/[^/]+)$/.exec(
+    original.pathname,
+  );
+  const thumbnail = allowedRequestUrl(
+    commonsMediaUrl(info.thumburl, "thumbnail"),
+  );
+  const width =
+    thumbnail && /\/(\d+)px-[^/]+\.png$/.exec(thumbnail.pathname)?.[1];
+  const filename = source?.[1].split("/").at(-1);
+  const expected =
+    source &&
+    width &&
+    filename &&
+    `/wikipedia/commons/thumb/${source[1]}/${width}px-${filename}${originalIsPng ? "" : ".png"}`;
+  if (!expected || thumbnail.pathname !== expected) return null;
+  return thumbnail.href;
+}
+
+type CommonsRasterResult =
+  | {
+      status: "downloaded";
+      png: Buffer;
+      sourceUrl: string;
+      attribution: string;
+      publicRights: PublicLogoRights;
+      publicLicense: PrivateMerchantLogo["license"] | null;
+    }
+  | { status: "skipped"; reason: string };
+
+async function retrieveCommonsRaster(
   wikidataId: string,
-  databasePath: string,
+  policy: "public-license" | "operator-private",
   options: {
     fetch?: typeof fetch;
     signal?: AbortSignal;
     retries?: number;
+    filename?: string;
   } = {},
-): Promise<MerchantLogoResult> {
+): Promise<CommonsRasterResult> {
   if (!/^Q[1-9]\d{0,11}$/.test(wikidataId))
     throw new Error("Invalid Wikidata entity ID");
   const entityUrl = new URL("https://www.wikidata.org/w/api.php");
@@ -333,7 +394,21 @@ export async function retrieveMerchantLogo(
     (claim) => claim.rank !== "deprecated",
   );
   const preferred = claims.filter((claim) => claim.rank === "preferred");
-  const selected = preferred.length ? preferred : claims;
+  const candidates = preferred.length ? preferred : claims;
+  const requestedFilename =
+    policy === "operator-private" && options.filename !== undefined
+      ? commonsLogoFilenameSchema.parse(options.filename)
+      : undefined;
+  const selected = requestedFilename
+    ? candidates.filter(
+        (claim) => claim.mainsnak.datavalue?.value === requestedFilename,
+      )
+    : candidates;
+  if (requestedFilename && selected.length === 0)
+    return {
+      status: "skipped",
+      reason: "Selected logo is not an active P154 candidate",
+    };
   if (selected.length !== 1)
     return {
       status: "skipped",
@@ -392,10 +467,17 @@ export async function retrieveMerchantLogo(
     fields.Copyrighted?.value === "False" &&
     fields.AttributionRequired?.value === "false" &&
     fields.UsageTerms?.value === "Public domain";
+  const publicLicense =
+    license &&
+    (canonicalLicenseUrl(fields.LicenseUrl?.value) === license.url ||
+      declaredPublicDomain)
+      ? license.id
+      : null;
   if (
-    !license ||
-    (canonicalLicenseUrl(fields.LicenseUrl?.value) !== license.url &&
-      !declaredPublicDomain)
+    policy === "public-license" &&
+    (!license ||
+      (canonicalLicenseUrl(fields.LicenseUrl?.value) !== license.url &&
+        !declaredPublicDomain))
   )
     return {
       status: "skipped",
@@ -410,6 +492,7 @@ export async function retrieveMerchantLogo(
   const artist = plainMetadata(fields.Artist?.value ?? "");
   const credit = plainMetadata(fields.Credit?.value ?? "");
   if (
+    policy === "public-license" &&
     /(?:logos\.fandom\.com|logopedia|logowik\.com|brandsoftheworld\.com|logos-world\.net|1000logos\.net|theslap\.com)/i.test(
       credit,
     )
@@ -418,15 +501,24 @@ export async function retrieveMerchantLogo(
       status: "skipped",
       reason: "Commons lists unreviewed upstream logo provenance",
     };
-  if (!artist || artist.length + credit.length > 1500)
+  if (
+    (policy === "public-license" && !artist) ||
+    artist.length + credit.length > 1500
+  )
     return {
       status: "skipped",
       reason: "Missing or oversized Commons attribution",
     };
+  const oversizedOriginal =
+    info.size > MAX_DOWNLOAD || info.width * info.height > MAX_PIXELS;
+  const authorizedRasterThumbnail =
+    policy === "operator-private" &&
+    oversizedOriginal &&
+    (["image/png", "image/jpeg"].includes(info.mime) ||
+      (/\.svg$/i.test(filename) && info.mime === "image/svg+xml"));
   if (
     info.size < 1 ||
-    info.size > MAX_DOWNLOAD ||
-    info.width * info.height > MAX_PIXELS ||
+    (oversizedOriginal && !authorizedRasterThumbnail) ||
     !(
       ["image/png", "image/jpeg", "image/webp"].includes(info.mime) ||
       (/\.svg$/i.test(filename) && info.mime === "image/svg+xml")
@@ -434,112 +526,116 @@ export async function retrieveMerchantLogo(
   )
     return { status: "skipped", reason: "Commons image exceeds raster limits" };
   let downloadUrl = commonsMediaUrl(info.url, "original");
+  const originalUrl = new URL(downloadUrl);
+  const originalName = originalUrl.pathname.split("/").at(-1);
+  if (
+    originalUrl.hostname !== "upload.wikimedia.org" ||
+    !/^\/wikipedia\/commons\/[a-f0-9]\/[a-f0-9]{2}\/[^/]+$/.test(
+      originalUrl.pathname,
+    ) ||
+    !originalName ||
+    decodeURIComponent(originalName) !== filename.replace(/ /g, "_")
+  )
+    return {
+      status: "skipped",
+      reason: "Commons original does not match requested P154 file",
+    };
   let downloadMime = info.mime;
-  if (/\.svg$/i.test(filename)) {
-    const original = allowedRequestUrl(downloadUrl);
-    const originalPath =
-      /^\/wikipedia\/commons\/([a-f0-9]\/[a-f0-9]{2}\/[^/]+)$/.exec(
-        original.pathname,
-      );
-    const thumbnail = info.thumburl
-      ? allowedRequestUrl(commonsMediaUrl(info.thumburl, "thumbnail"))
-      : null;
-    const renderedWidth =
-      thumbnail && /\/(\d+)px-[^/]+\.png$/.exec(thumbnail.pathname)?.[1];
-    const expected =
-      originalPath &&
-      renderedWidth &&
-      `/wikipedia/commons/thumb/${originalPath[1]}/${renderedWidth}px-${originalPath[1].split("/").at(-1)}.png`;
-    if (
-      info.mime !== "image/svg+xml" ||
-      !info.thumburl ||
-      !info.thumbwidth ||
-      !info.thumbheight ||
-      info.thumbmime !== "image/png" ||
-      info.thumbwidth > 128 ||
-      info.thumbheight > 128 ||
-      !expected ||
-      decodeURIComponent(original.pathname.split("/").at(-1)!) !==
-        filename.replace(/ /g, "_") ||
-      thumbnail?.pathname !== expected
-    ) {
+  const svg = /\.svg$/i.test(filename);
+  const downloadThumbnail = svg || authorizedRasterThumbnail;
+  if (downloadThumbnail) {
+    const thumbnail = provenanceMatchedCommonsPngThumbnail(
+      originalUrl,
+      info,
+      info.mime === "image/png",
+    );
+    if (!thumbnail || (svg && info.mime !== "image/svg+xml")) {
       return {
         status: "skipped",
-        reason: "No provenance-matched Commons PNG thumbnail for SVG",
+        reason: svg
+          ? "No provenance-matched Commons PNG thumbnail for SVG"
+          : "No provenance-matched Commons PNG thumbnail for oversized raster",
       };
     }
-    downloadUrl = thumbnail!.href;
+    downloadUrl = thumbnail;
     downloadMime = "image/png";
   }
   const bytes = await fetchMerchantBytes(downloadUrl, {
     ...options,
     maxBytes: MAX_DOWNLOAD,
   });
-  const signatureMatches =
-    (downloadMime === "image/png" &&
-      bytes.subarray(0, 8).equals(PNG_SIGNATURE)) ||
-    (downloadMime === "image/jpeg" &&
-      bytes.length >= 3 &&
-      bytes[0] === 0xff &&
-      bytes[1] === 0xd8 &&
-      bytes[2] === 0xff) ||
-    (downloadMime === "image/webp" &&
-      bytes.length >= 12 &&
-      bytes.toString("ascii", 0, 4) === "RIFF" &&
-      bytes.toString("ascii", 8, 12) === "WEBP");
-  if (!signatureMatches)
+  if (logoRasterMime(bytes) !== downloadMime)
     return {
       status: "skipped",
       reason: "Downloaded image does not match the licensed raster format",
     };
-  const image = sharp(bytes, {
-    limitInputPixels: MAX_PIXELS,
-    sequentialRead: true,
-    failOn: "warning",
-  }).timeout({ seconds: 5 });
-  let png: Buffer;
-  try {
-    const imageInfo = await image.metadata();
-    if (
-      !imageInfo.width ||
-      !imageInfo.height ||
-      imageInfo.width * imageInfo.height > MAX_PIXELS ||
-      !["png", "jpeg", "webp"].includes(imageInfo.format ?? "") ||
-      (imageInfo.pages ?? 1) !== 1 ||
-      (/\.svg$/i.test(filename) &&
-        (imageInfo.width > 512 || imageInfo.height > 512))
-    )
-      return {
-        status: "skipped",
-        reason: "Downloaded image is not a safe raster",
-      };
-    png = await image
-      .rotate()
-      .resize(128, 128, { fit: "inside", withoutEnlargement: true })
-      .png()
-      .toBuffer();
-  } catch (error) {
-    // Only decoder/transform failures are skips; network and filesystem errors propagate.
-    if (
-      !(error instanceof Error) ||
-      !/^(?:Input buffer (?:has corrupt header|contains unsupported image (?:format|type))|Image exceeds pixel limit|(?:png|jpeg|webp)load(?:_buffer)?:|Vips(?:Jpeg|Png|Webp):|timeout:)/i.test(
-        error.message,
-      )
-    )
-      throw error;
+  const png = await normalizeLogoRaster(bytes, {
+    mime: downloadMime,
+    commonsThumbnail: downloadThumbnail,
+  });
+  if (!png)
     return {
       status: "skipped",
       reason: "Raster decoding or normalization failed",
     };
-  }
-  if (png.length > MAX_STORED)
-    throw new Error("Normalized merchant logo exceeds storage limit");
-  const file = `${createHash("sha256").update(png).digest("hex")}.png`;
   const sourceUrl = `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(filename)}`;
+  const publicRights = publicLogoRightsSchema.safeParse({
+    license: publicLicense,
+    licenseName: plainMetadata(shortName ?? "") || null,
+    licenseUrl: plainMetadata(fields.LicenseUrl?.value ?? "") || null,
+    usageTerms: plainMetadata(fields.UsageTerms?.value ?? "") || null,
+    restrictions: restriction || null,
+    artist: artist || null,
+    credit: credit || null,
+  });
+  if (!publicRights.success)
+    return {
+      status: "skipped",
+      reason: "Commons rights metadata exceeds limits",
+    };
+  const attribution = `${artist || "Commons artist not specified"}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${publicLicense ?? "No verified public licence"}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; P154 reference: Wikidata ${wikidataId} (CC0-1.0)`;
+  if (
+    attribution.length > 2000 ||
+    !privateMerchantLogoSchema.shape.sourceUrl.safeParse(sourceUrl).success
+  )
+    return {
+      status: "skipped",
+      reason: "Commons attribution or source exceeds storage metadata limits",
+    };
+  return {
+    status: "downloaded",
+    png,
+    sourceUrl,
+    publicLicense,
+    publicRights: publicRights.data,
+    attribution,
+  };
+}
+
+/** This path returns raster/provenance only, never metadata accepted by global merchants. */
+export async function retrieveAuthorizedCommonsRaster(
+  wikidataId: string,
+  options: Parameters<typeof retrieveCommonsRaster>[2] = {},
+): Promise<CommonsRasterResult> {
+  return retrieveCommonsRaster(wikidataId, "operator-private", options);
+}
+
+export async function retrieveMerchantLogo(
+  wikidataId: string,
+  databasePath: string,
+  options: Parameters<typeof retrieveCommonsRaster>[2] = {},
+): Promise<MerchantLogoResult> {
+  const result = await retrieveCommonsRaster(
+    wikidataId,
+    "public-license",
+    options,
+  );
+  if (result.status === "skipped") return result;
+  const { png, sourceUrl, attribution, publicLicense } = result;
   const logoResult = privateMerchantLogoSchema.safeParse({
-    file,
-    license: license.id,
-    attribution: `${artist}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${license.id}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; P154 reference: Wikidata ${wikidataId} (CC0-1.0)`,
+    file: logoContentFile(png),
+    license: publicLicense,
+    attribution,
     sourceUrl,
   });
   if (!logoResult.success)
@@ -548,28 +644,7 @@ export async function retrieveMerchantLogo(
       reason: "Commons attribution or source exceeds storage metadata limits",
     };
   const logo = logoResult.data;
-  const directory = join(dirname(databasePath), "merchant-logos");
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  if ((await lstat(directory)).isSymbolicLink())
-    throw new Error("Merchant logo directory must not be a symlink");
-  const destination = join(directory, logo.file);
-  let handle;
-  try {
-    handle = await open(destination, "wx", 0o600);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    const existing = await readPrivateMerchantLogo(databasePath, logo);
-    if (!existing || !existing.equals(png))
-      throw new Error("Existing merchant logo does not match its content hash");
-  }
-  if (handle) {
-    try {
-      await handle.writeFile(png);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-  }
+  await writeStoredLogoPng(join(dirname(databasePath), "merchant-logos"), png);
   return { status: "downloaded", logo };
 }
 
@@ -579,60 +654,10 @@ export async function readPrivateMerchantLogo(
 ): Promise<Buffer | null> {
   const parsed = privateMerchantLogoSchema.safeParse(input);
   if (!parsed.success) return null;
-  const logo = parsed.data;
-  const directory = join(dirname(databasePath), "merchant-logos");
-  const file = join(directory, logo.file);
-  let data: Buffer;
-  try {
-    const directoryStat = await lstat(directory);
-    const stat = await lstat(file);
-    if (
-      directoryStat.isSymbolicLink() ||
-      !directoryStat.isDirectory() ||
-      stat.isSymbolicLink() ||
-      !stat.isFile() ||
-      stat.size < 24 ||
-      stat.size > MAX_STORED
-    )
-      return null;
-    const handle = await open(file, "r");
-    try {
-      const openedStat = await handle.stat();
-      if (!openedStat.isFile() || openedStat.size > MAX_STORED) return null;
-      // A concurrent file change must not turn a small cache read into an unbounded allocation.
-      const bounded = Buffer.alloc(MAX_STORED + 1);
-      let received = 0;
-      while (received < bounded.length) {
-        const chunk = await handle.read(
-          bounded,
-          received,
-          bounded.length - received,
-          received,
-        );
-        if (!chunk.bytesRead) break;
-        received += chunk.bytesRead;
-      }
-      data = bounded.subarray(0, received);
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
-  }
-  if (
-    data.length < 24 ||
-    data.length > MAX_STORED ||
-    !data.subarray(0, 8).equals(PNG_SIGNATURE) ||
-    data.toString("ascii", 12, 16) !== "IHDR" ||
-    data.readUInt32BE(16) < 1 ||
-    data.readUInt32BE(16) > 128 ||
-    data.readUInt32BE(20) < 1 ||
-    data.readUInt32BE(20) > 128 ||
-    `${createHash("sha256").update(data).digest("hex")}.png` !== logo.file
-  )
-    return null;
-  return data;
+  return readStoredLogoPng(
+    join(dirname(databasePath), "merchant-logos"),
+    parsed.data.file,
+  );
 }
 
 export async function merchantAttribution(
@@ -640,11 +665,13 @@ export async function merchantAttribution(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   // Keep Next/account runtime imports out of the operator-only CLI import path.
-  const [{ authorizeApi, isAccountMode }, { accountErrorResponse }] =
-    await Promise.all([
-      import("@/lib/server/auth"),
-      import("@/lib/server/http"),
-    ]);
+  const [
+    { authorizeApi, isAccountMode },
+    { accountErrorResponse, requestSessionToken },
+  ] = await Promise.all([
+    import("@/lib/server/auth"),
+    import("@/lib/server/http"),
+  ]);
   const denied = await authorizeApi(request);
   if (denied) return denied;
   const headers = {
@@ -653,6 +680,7 @@ export async function merchantAttribution(
     "X-Content-Type-Options": "nosniff",
     "Cross-Origin-Resource-Policy": "same-origin",
     "Referrer-Policy": "no-referrer",
+    Vary: "Cookie",
     "Content-Security-Policy":
       "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
   };
@@ -666,10 +694,46 @@ export async function merchantAttribution(
       import("@/lib/automation/store"),
     ]);
     const { database } = await getAccountRuntime();
+    const user = database.currentUser(requestSessionToken(request));
+    if (!user) return missing();
     const store = new AutomationStore(database);
     const merchant = store.getMerchant(id);
     const version = new URL(request.url).searchParams.get("v");
     if (version !== null && !/^[a-f0-9]{64}$/.test(version)) return missing();
+    const grant = /^[a-zA-Z0-9_-]{1,80}$/.test(id)
+      ? store.authorizedLogo(user.id, id, version ?? undefined)
+      : null;
+    if (grant) {
+      const logo = grant.logo;
+      const rights = logo.publicRights;
+      const lines = [
+        `Händler: ${grant.canonicalName}`,
+        `Logo-Berechtigung: Private Nutzung ausschließlich für dieses Konto`,
+        `Berechtigungsgrundlage: ${logo.permission}`,
+        `Rechte-Referenz (Betreiber-/Nutzererklärung; kein geprüfter Lizenznachweis): ${logo.rightsReference}`,
+        `Logo-Quellenangabe und Bearbeitung: ${logo.attribution}`,
+        `Logo-Originalquelle: ${
+          logo.provenance.kind === "commons"
+            ? logo.provenance.sourceUrl
+            : `Lokal bereitgestellt: ${logo.provenance.sourceLabel}`
+        }`,
+        `Öffentliche Logo-Lizenz: ${rights?.license ?? "Nicht verifiziert / nicht angegeben"}`,
+      ];
+      if (rights)
+        lines.push(
+          `Öffentliche Lizenzbezeichnung: ${rights.licenseName ?? "Nicht angegeben"}`,
+          `Öffentliche Lizenz-URL (Quellenmetadaten): ${rights.licenseUrl ?? "Nicht angegeben"}`,
+          `Öffentliche Nutzungsbedingungen: ${rights.usageTerms ?? "Nicht angegeben"}`,
+          `Öffentliche Einschränkungen: ${rights.restrictions ?? "Nicht angegeben"}`,
+          `Öffentliche Künstlerangabe: ${rights.artist ?? "Nicht angegeben"}`,
+          `Öffentliche Quellenangabe: ${rights.credit ?? "Nicht angegeben"}`,
+        );
+      lines.push(
+        "",
+        "Die private Rechteerklärung ist keine globale Freigabe und ersetzt keine öffentliche Lizenz.",
+      );
+      return new Response(`${lines.join("\n")}\n`, { headers });
+    }
     const archived =
       version !== null ? store.logoAttribution(id, version) : null;
     if ((version !== null && !archived) || (!merchant && !archived))

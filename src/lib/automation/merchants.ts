@@ -2,6 +2,7 @@ import { z } from "zod";
 import { categories } from "@/lib/categories";
 import { merchantText } from "@/lib/import/merchant-description";
 import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
+import { curatedMerchantIdentities } from "./merchant-identities";
 
 const MAX_INPUT = 1024;
 const MAX_NORMALIZED = 512;
@@ -87,6 +88,7 @@ export function normalizeMerchantText(text: string): string {
     )
     .replace(/\b(?:h(?:ä|ae)ndler|merchant)(?:[-\s]*name)?\s*:/gi, " ");
   const paymentModeFree = metadataFree
+    .replace(/\bpp(?=\s*[*\/])/gi, "PayPal")
     .trimStart()
     .replace(
       /^(?:(?:contactless(?:\s+card\s+payment)?|kontaktlos(?:e\s+(?:karten)?zahlung)?|karteneinsatz|(?:ec|debit|kredit)[ -]+kartenzahlung|ec[ -]+pos|nfc[ -]+zahlung)(?:\s*[:;|*]\s*|\s+))+/i,
@@ -243,14 +245,14 @@ const localMerchant = (
     canonicalName,
     aliases,
     regexPatterns,
-    wikidataId,
+    wikidataId: wikidataId ?? curatedMerchantIdentities[id] ?? null,
     requiresCategoryEvidence,
     defaultCategory,
     region: "AT",
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: "Finanzblick: lokal gepflegte Händlerregeln",
-    updatedAt: Date.UTC(2026, 9, 9, 14, 21),
+    updatedAt: Date.UTC(2026, 9, 9, 16, 20),
   });
 
 /** Curated offline identities, not account-specific learned category overrides. */

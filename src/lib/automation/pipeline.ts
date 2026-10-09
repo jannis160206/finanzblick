@@ -15,6 +15,7 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { knownMerchantCategory } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { merchantEvidence } from "./evidence";
+import { bankOperation, bankOperationReviewMessage, bankTransferPurpose } from "@/lib/bank-operation";
 export { isAutomationLocked } from "./locks";
 
 function qualifiedCompany(text: string, canonicalName: string): boolean {
@@ -33,7 +34,31 @@ export function enrichTransaction(
   resolveAccount?: ReturnType<typeof createAccountMerchantResolver>,
 ): Transaction {
   if (isAutomationLocked(row)) return { ...row, is_locked: true };
+  const operation = bankOperation(row);
   const classified = classify(row);
+  if (operation?.kind === "ambiguous")
+    return { ...row, requires_manual_review: true };
+  if (operation?.kind === "internal-transfer")
+    return transactionSchema.parse({
+      ...row, category: operation.category, includeInPlan: false, fixedCost: false,
+      merchantId: undefined, merchantAlias: undefined, merchantMatch: undefined,
+      merchantLogo: false, requires_manual_review: false,
+    });
+  if (operation?.kind === "external-transfer") {
+    if (classified.isTransfer || (row.amount > 0 && isIncomeCategory(classified.category))) return row;
+    const learned = resolveAccount?.(row);
+    const choice = learned?.kind === "matched" && !learned.normalized && !learned.choice.identityOnly &&
+      !(row.amount <= 0 && learned.choice.category === "Rückerstattungen")
+      ? learned.choice : undefined;
+    const category = choice?.category ?? bankTransferPurpose(row) ?? "Prüfen";
+    return transactionSchema.parse({
+      ...row, category,
+      ...(category !== "Prüfen" ? { categoryOverride: true } : {}),
+      ...(choice ? { fixedCost: choice.fixedCost ?? row.fixedCost } : {}),
+      merchantId: undefined, merchantAlias: undefined, merchantMatch: undefined,
+      merchantLogo: false, requires_manual_review: category === "Prüfen",
+    });
+  }
   if (isMerchantTransfer(row)) return row;
   const refund =
     row.amount > 0 &&
@@ -49,7 +74,10 @@ export function enrichTransaction(
     row.sourceCategory,
     ...(row.rawDetails ?? []),
   ].join(" ");
-  const known = knownMerchantCategory(sourceText, row.amount);
+  const known = knownMerchantCategory(
+    operation?.kind === "fee" ? sourceText.replace(/\batm[-\s]*fee\b/gi, "") : sourceText,
+    row.amount,
+  );
   const learned = resolveAccount?.(row);
   if (learned?.kind === "conflict")
     return { ...row, requires_manual_review: true };
@@ -100,7 +128,18 @@ export function enrichTransaction(
       row.fixedCost === undefined
         ? { fixedCost: choice.fixedCost }
         : {}),
-      requires_manual_review: !(choice.merchantAlias || merchant),
+      requires_manual_review: !(choice.merchantAlias || merchant || operation?.kind === "fee"),
+    });
+  }
+  if (operation?.kind === "fee") {
+    const identity = index.match(evidence.text);
+    if (known === "Prüfen" || identity.method !== "none" ||
+      (learned?.kind === "matched" && learned.choice.identityOnly))
+      return { ...row, requires_manual_review: true };
+    return transactionSchema.parse({
+      ...row, category: operation.category, categoryOverride: true,
+      merchantId: undefined, merchantAlias: undefined, merchantMatch: undefined,
+      merchantLogo: false, requires_manual_review: false,
     });
   }
   const confirmedName =
@@ -265,7 +304,7 @@ export function backfillBatch(
           {
             ...item,
             draft: row,
-            message: "Händlerzuordnung unsicher – bitte prüfen.",
+            message: bankOperationReviewMessage(row) ?? "Händlerzuordnung unsicher – bitte prüfen.",
           },
         ]
       : [];
@@ -277,7 +316,7 @@ export function backfillBatch(
       kind: "booking",
       id: row.id,
       draft: row,
-      message: "Händlerzuordnung unsicher – bitte prüfen.",
+      message: bankOperationReviewMessage(row) ?? "Händlerzuordnung unsicher – bitte prüfen.",
     });
   }
   return {

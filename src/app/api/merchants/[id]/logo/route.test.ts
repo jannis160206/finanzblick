@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   runtime: vi.fn(),
   getMerchant: vi.fn(),
   readLogo: vi.fn(),
+  authorizedLogo: vi.fn(),
+  currentUser: vi.fn(),
 }));
 vi.mock("@/lib/server/auth", () => ({
   authorizeApi: mocks.authorize,
@@ -14,6 +16,7 @@ vi.mock("@/lib/server/runtime", () => ({ getAccountRuntime: mocks.runtime }));
 vi.mock("@/lib/automation/store", () => ({
   AutomationStore: class {
     getMerchant = mocks.getMerchant;
+    authorizedLogo = mocks.authorizedLogo;
   },
 }));
 vi.mock("@/lib/automation/merchant-logo", () => ({
@@ -28,7 +31,10 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.authorize.mockResolvedValue(null);
   mocks.accountMode.mockReturnValue(true);
-  mocks.runtime.mockResolvedValue({ database: { path: "private.sqlite" } });
+  mocks.currentUser.mockReturnValue({ id: "synthetic-account" });
+  mocks.runtime.mockResolvedValue({
+    database: { path: "private.sqlite", currentUser: mocks.currentUser },
+  });
 });
 
 describe("private merchant logo route", () => {
