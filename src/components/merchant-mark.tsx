@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMerchantMarks } from "@/components/merchant-marks-provider";
 import type { classify } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
 import { isMerchantTransfer } from "@/lib/merchant-transfer";
@@ -11,6 +12,22 @@ type MarkClassification = Pick<
   ReturnType<typeof classify>,
   "category" | "isTransfer"
 >;
+
+export function shouldShowMerchantMark(
+  booking: Transaction,
+  classification: MarkClassification,
+) {
+  return !(
+    classification.isTransfer ||
+    isMerchantTransfer(booking) ||
+    ["Kontoüberweisung", "Interne Umbuchung"].includes(booking.category) ||
+    ["Kontoüberweisung", "Interne Umbuchung"].includes(
+      classification.category,
+    ) ||
+    (!booking.merchantAlias?.trim() &&
+      isIncomeCategory(classification.category))
+  );
+}
 
 function initials(alias: string) {
   const words = alias.match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -25,11 +42,13 @@ function initials(alias: string) {
 
 function LocalMerchantLogo({
   id,
+  version,
   alias,
   fallback,
   className,
 }: {
   id: string;
+  version?: string;
   alias?: string;
   fallback: string;
   className: string;
@@ -42,9 +61,10 @@ function LocalMerchantLogo({
       </span>
     );
   const path = `/api/merchants/${encodeURIComponent(id)}`;
+  const versionQuery = version ? `?v=${encodeURIComponent(version)}` : "";
   return (
     <a
-      href={`${path}/attribution`}
+      href={`${path}/attribution${versionQuery}`}
       target="_blank"
       rel="noopener noreferrer"
       title={`Lizenz/Herkunft${alias ? `: ${alias}` : ""}`}
@@ -57,7 +77,7 @@ function LocalMerchantLogo({
       {/* Authenticated local images must bypass the Next image optimizer. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={`${path}/logo`}
+        src={`${path}/logo${versionQuery}`}
         alt=""
         width={32}
         height={32}
@@ -79,27 +99,27 @@ export function MerchantMark({
   classification: MarkClassification;
   className?: string;
 }) {
+  const marks = useMerchantMarks();
   const alias = booking.merchantAlias?.trim();
-  if (
-    classification.isTransfer ||
-    isMerchantTransfer(booking) ||
-    ["Kontoüberweisung", "Interne Umbuchung"].includes(booking.category) ||
-    ["Kontoüberweisung", "Interne Umbuchung"].includes(
-      classification.category,
-    ) ||
-    (!alias && isIncomeCategory(classification.category))
-  )
-    return null;
+  if (!shouldShowMerchantMark(booking, classification)) return null;
 
   const fallback = alias ? initials(alias) : "?";
   const markClassName = cn(
     "inline-flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-xs font-semibold text-muted-foreground",
     className,
   );
-  return booking.merchantLogo === true && booking.merchantId ? (
+  const logo = booking.merchantId
+    ? marks !== null
+      ? marks.get(booking.merchantId)
+      : booking.merchantLogo === true
+        ? { merchantId: booking.merchantId, version: undefined }
+        : null
+    : null;
+  return logo ? (
     <LocalMerchantLogo
-      key={booking.merchantId}
-      id={booking.merchantId}
+      key={`${logo.merchantId}:${logo.version ?? ""}`}
+      id={logo.merchantId}
+      version={logo.version}
       alias={alias}
       fallback={fallback}
       className={markClassName}

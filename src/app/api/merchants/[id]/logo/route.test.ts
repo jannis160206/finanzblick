@@ -20,6 +20,7 @@ vi.mock("@/lib/automation/merchant-logo", () => ({
   readPrivateMerchantLogo: mocks.readLogo,
 }));
 import { GET } from "./route";
+import { merchantLogoVersion } from "@/lib/automation/merchant-logo-version";
 
 const request = new Request("http://localhost/api/merchants/test/logo");
 const context = (id = "test") => ({ params: Promise.resolve({ id }) });
@@ -31,6 +32,33 @@ beforeEach(() => {
 });
 
 describe("private merchant logo route", () => {
+  it("caches only the matching image-and-attribution version privately", async () => {
+    const logo = {
+      file: `${"a".repeat(64)}.png`,
+      license: "CC0-1.0" as const,
+      attribution: "Artist v1",
+      sourceUrl: "https://commons.wikimedia.org/wiki/File:Example.png",
+    };
+    mocks.getMerchant.mockReturnValue({ logo });
+    mocks.readLogo.mockResolvedValue(Buffer.from([137, 80, 78, 71]));
+    const version = merchantLogoVersion(logo);
+    const image = new Request(`${request.url}?v=${version}`);
+    const response = await GET(image, context());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe(
+      "private, max-age=86400, immutable",
+    );
+    expect(response.headers.get("Vary")).toBe("Cookie");
+    mocks.getMerchant.mockReturnValue({
+      logo: { ...logo, attribution: "Artist v2" },
+    });
+    mocks.readLogo.mockClear();
+    expect((await GET(image, context())).status).toBe(404);
+    expect(mocks.readLogo).not.toHaveBeenCalled();
+    expect(
+      (await GET(new Request(`${request.url}?v=invalid`), context())).status,
+    ).toBe(404);
+  });
   it("denies unauthenticated users before any store or file access", async () => {
     mocks.authorize.mockResolvedValue(
       new Response("Please sign in", { status: 401 }),

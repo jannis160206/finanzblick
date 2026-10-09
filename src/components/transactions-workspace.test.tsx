@@ -114,6 +114,8 @@ it.each([false, true])(
       removeEventListener: vi.fn(),
     }));
     const initial = fixture();
+    const fetch = vi.fn();
+    vi.stubGlobal("fetch", fetch);
     initial.transactions[0].merchantId = "muller/at";
     initial.transactions[0].merchantLogo = true;
     initial.transactions.push(
@@ -166,12 +168,9 @@ it.each([false, true])(
       expect.stringContaining("Lohnzahlung"),
     ]);
     const description = within(rows[0] as HTMLElement).getByText("Möbel Müller");
-    const logoMark = description.previousElementSibling!;
-    const image = logoMark.querySelector("img")!;
-    expect(logoMark.className).toContain("size-8");
-    expect(image.getAttribute("src")).toBe("/api/merchants/muller%2Fat/logo");
-    expect(image.width).toBe(32);
-    expect(image.height).toBe(32);
+    const merchantMark = description.previousElementSibling!;
+    expect(merchantMark.className).toContain("size-8");
+    expect(merchantMark.textContent).toBe("MM");
     expect(description.className).toContain("md:truncate");
     expect(description.className).toContain("break-words");
     const unknown = within(rows[1] as HTMLElement).getByText("BILLA");
@@ -186,10 +185,8 @@ it.each([false, true])(
       within(rows[4] as HTMLElement).getByText("Lohnzahlung")
         .previousElementSibling,
     ).toBeNull();
-    expect(ledger.querySelectorAll("img")).toHaveLength(1);
-    fireEvent.error(image);
-    expect(description.previousElementSibling?.textContent).toBe("MM");
     expect(ledger.querySelector("img")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
     expect(view.read()).toBe(initial);
     expect(view.update).not.toHaveBeenCalled();
   },

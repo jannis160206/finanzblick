@@ -12,8 +12,18 @@ import {
   MAX_UPLOAD_BYTES,
   type AutomationJob,
 } from "./schema";
-import { merchantSchema, type Merchant } from "./merchants";
+import {
+  merchantSchema,
+  normalizeMerchantText,
+  type Merchant,
+} from "./merchants";
+import { merchantMarksRequestSchema } from "./merchant-presentation-schema";
+import {
+  privateMerchantLogoSchema,
+  type PrivateMerchantLogo,
+} from "./merchant-logo-metadata";
 import type { DatabaseSync } from "node:sqlite";
+import { merchantLogoVersion } from "./merchant-logo-version";
 
 const rowSchema = automationJobSchema.extend({
   userId: z.string(),
@@ -48,6 +58,32 @@ export function readMerchantDefinitions(db: DatabaseSync): Merchant[] {
     .prepare(`SELECT ${merchantColumns} FROM merchants`)
     .all()
     .map(merchantFromRow);
+}
+
+function retainLogoAttribution(db: DatabaseSync, reference: Merchant): void {
+  if (!reference.logo) return;
+  const version = merchantLogoVersion(reference.logo);
+  const existing = db
+    .prepare(
+      "SELECT 1 FROM merchant_logo_attributions WHERE merchant_id = ? AND version = ?",
+    )
+    .get(reference.id, version);
+  if (
+    !existing &&
+    Number(
+      db.prepare("SELECT count(*) AS n FROM merchant_logo_attributions").get()
+        ?.n,
+    ) >= 10_000
+  )
+    throw new RangeError("Logo attribution archive limit reached.");
+  db.prepare(
+    `INSERT OR IGNORE INTO merchant_logo_attributions VALUES (?, ?, ?, ?)`,
+  ).run(
+    reference.id,
+    version,
+    reference.canonicalName,
+    JSON.stringify(reference.logo),
+  );
 }
 
 export class AutomationStore {
@@ -483,7 +519,10 @@ export class AutomationStore {
     });
   }
 
-  upsertMerchants(merchants: Merchant[]): void {
+  upsertMerchants(
+    merchants: Merchant[],
+    options: { replaceLogos?: boolean } = {},
+  ): void {
     const validated = merchants.map((merchant) =>
       merchantSchema.parse(merchant),
     );
@@ -497,10 +536,20 @@ export class AutomationStore {
         default_category = excluded.default_category, region = excluded.region,
         source = excluded.source, updated_at = excluded.updated_at,
         city = excluded.city, license = excluded.license,
-        attribution = excluded.attribution, logo_json = excluded.logo_json,
+        attribution = excluded.attribution, logo_json = CASE
+          WHEN ? OR excluded.logo_json IS NOT NULL THEN excluded.logo_json
+          WHEN merchants.canonical_name = excluded.canonical_name
+            AND merchants.region = excluded.region
+            AND merchants.wikidata_id IS excluded.wikidata_id THEN merchants.logo_json
+          ELSE NULL END,
         wikidata_id = excluded.wikidata_id, requires_category_evidence = excluded.requires_category_evidence
         WHERE excluded.updated_at > merchants.updated_at`);
-      for (const merchant of validated)
+      for (const merchant of validated) {
+        const previous = db
+          .prepare(`SELECT ${merchantColumns} FROM merchants WHERE id = ?`)
+          .get(merchant.id);
+        if (previous && Number(previous.updatedAt) < merchant.updatedAt)
+          retainLogoAttribution(db, merchantFromRow(previous));
         statement.run(
           merchant.id,
           merchant.canonicalName,
@@ -516,7 +565,9 @@ export class AutomationStore {
           merchant.logo ? JSON.stringify(merchant.logo) : null,
           merchant.wikidataId,
           merchant.requiresCategoryEvidence ? 1 : 0,
+          options.replaceLogos ? 1 : 0,
         );
+      }
     });
   }
 
@@ -530,6 +581,138 @@ export class AutomationStore {
         .prepare(`SELECT ${merchantColumns} FROM merchants WHERE id = ?`)
         .get(id);
       return row ? merchantFromRow(row) : null;
+    });
+  }
+
+  updateMerchantLogo(
+    reference: Merchant,
+    logo: PrivateMerchantLogo | null,
+  ): boolean {
+    const expected = merchantSchema.parse(reference);
+    const validated =
+      logo === null ? null : privateMerchantLogoSchema.parse(logo);
+    const updatedAt = z
+      .number()
+      .int()
+      .nonnegative()
+      .max(Number.MAX_SAFE_INTEGER)
+      .parse(Math.max(Date.now(), expected.updatedAt + 1));
+    return this.accounts.transaction((db) => {
+      const current = db
+        .prepare(`SELECT ${merchantColumns} FROM merchants WHERE id = ?`)
+        .get(expected.id);
+      if (!current || current.updatedAt !== expected.updatedAt) return false;
+      retainLogoAttribution(db, merchantFromRow(current));
+      return (
+        db
+          .prepare(
+            `UPDATE merchants SET logo_json = ?,
+      updated_at = ?, wikidata_id = ? WHERE id = ? AND updated_at = ?`,
+          )
+          .run(
+            validated ? JSON.stringify(validated) : null,
+            updatedAt,
+            expected.wikidataId,
+            expected.id,
+            expected.updatedAt,
+          ).changes === 1
+      );
+    });
+  }
+
+  logoAttribution(
+    id: string,
+    version: string,
+  ): { canonicalName: string; logo: PrivateMerchantLogo } | null {
+    z.string()
+      .regex(/^[a-f0-9]{64}$/)
+      .parse(version);
+    return this.accounts.read((db) => {
+      const current = db
+        .prepare(`SELECT ${merchantColumns} FROM merchants WHERE id = ?`)
+        .get(id);
+      if (current) {
+        const merchant = merchantFromRow(current);
+        if (merchant.logo && merchantLogoVersion(merchant.logo) === version)
+          return { canonicalName: merchant.canonicalName, logo: merchant.logo };
+      }
+      const archived = db
+        .prepare(
+          `SELECT canonical_name,logo_json FROM merchant_logo_attributions
+        WHERE merchant_id = ? AND version = ?`,
+        )
+        .get(id, version);
+      return archived
+        ? {
+            canonicalName: String(archived.canonical_name),
+            logo: privateMerchantLogoSchema.parse(
+              JSON.parse(String(archived.logo_json)),
+            ),
+          }
+        : null;
+    });
+  }
+
+  logoCandidates(ids: string[]): Map<string, Merchant[]> {
+    const { merchantIds } = merchantMarksRequestSchema.parse({
+      merchantIds: ids,
+    });
+    return this.accounts.read((db) => {
+      const unique = [...new Set(merchantIds)];
+      if (!unique.length) return new Map();
+      const requested = db
+        .prepare(
+          `SELECT ${merchantColumns} FROM merchants
+        WHERE id IN (${unique.map(() => "?").join(",")})`,
+        )
+        .all(...unique)
+        .map(merchantFromRow);
+      const byId = new Map(
+        requested.map((merchant) => [merchant.id, merchant]),
+      );
+      const entities = [
+        ...new Set(
+          requested.flatMap((merchant) =>
+            merchant.wikidataId ? [merchant.wikidataId] : [],
+          ),
+        ),
+      ];
+      const related = entities.length
+        ? db
+            .prepare(
+              `SELECT ${merchantColumns} FROM merchants
+        WHERE (wikidata_id IN (${entities.map(() => "?").join(",")}) OR
+          (wikidata_id IS NULL AND source = 'osm' AND (${entities.map(() => "id LIKE ?").join(" OR ")})))
+        AND logo_json IS NOT NULL ORDER BY updated_at DESC, id LIMIT 1001`,
+            )
+            .all(
+              ...entities,
+              ...entities.map((entity) => `osm-brand-${entity}-%`),
+            )
+            .map(merchantFromRow)
+        : [];
+      if (related.length > 1000)
+        throw new RangeError("Merchant logo reference limit exceeded.");
+      return new Map(
+        unique.map((id) => {
+          const merchant = byId.get(id);
+          const matches = merchant
+            ? [
+                ...(merchant.logo ? [merchant] : []),
+                ...related.filter(
+                  (candidate) =>
+                    candidate.id !== id &&
+                    merchant.wikidataId &&
+                    candidate.wikidataId === merchant.wikidataId &&
+                    candidate.region === merchant.region &&
+                    normalizeMerchantText(candidate.canonicalName) ===
+                      normalizeMerchantText(merchant.canonicalName),
+                ),
+              ]
+            : [];
+          return [id, matches];
+        }),
+      );
     });
   }
 }

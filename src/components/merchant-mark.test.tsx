@@ -2,11 +2,13 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MerchantMark } from "@/components/merchant-mark";
+import * as merchantMarks from "@/components/merchant-marks-provider";
 import { classify } from "@/lib/calc";
 import { transactionSchema, type Transaction } from "@/lib/types";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -119,6 +121,88 @@ it("recovers from a missing image and tries a new merchant ID without retaining 
   expect(screen.queryByText("MM")).toBeNull();
   fireEvent.error(container.querySelector("img")!);
   expect(screen.getByText("MA")).toBeTruthy();
+});
+
+it("uses current licensed metadata even when the historical logo flag is false", () => {
+  const version = "a".repeat(64);
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+    new Map([["muller", { merchantId: "muller-licensed", version }]]),
+  );
+  const { container } = render(
+    mark({
+      ...booking,
+      merchantAlias: "Möbel Müller",
+      merchantId: "muller",
+      merchantLogo: false,
+    }),
+  );
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/muller-licensed/logo?v=${version}`,
+  );
+  expect(screen.getByRole("link").getAttribute("href")).toBe(
+    `/api/merchants/muller-licensed/attribution?v=${version}`,
+  );
+});
+
+it.each([new Map(), new Map([["muller", null]])])(
+  "does not trust a stale true flag when current metadata has no licensed logo",
+  (metadata) => {
+    vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(metadata);
+    const { container } = render(
+      mark({
+        ...booking,
+        merchantAlias: "Möbel Müller",
+        merchantId: "muller",
+        merchantLogo: true,
+      }),
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("MM")).toBeTruthy();
+  },
+);
+
+it("clears image failure when a new version of the same licensed asset is available", () => {
+  const version = "a".repeat(64);
+  const metadata = vi
+    .spyOn(merchantMarks, "useMerchantMarks")
+    .mockReturnValue(new Map([["muller", { merchantId: "muller", version }]]));
+  const row = {
+    ...booking,
+    merchantAlias: "Möbel Müller",
+    merchantId: "muller",
+    merchantLogo: false,
+  };
+  const { container, rerender } = render(mark(row));
+  expect(screen.getByRole("link").getAttribute("href")).toBe(
+    `/api/merchants/muller/attribution?v=${version}`,
+  );
+  fireEvent.error(container.querySelector("img")!);
+  expect(screen.getByText("MM")).toBeTruthy();
+  rerender(mark(row));
+  expect(container.querySelector("img")).toBeNull();
+  const nextVersion = "b".repeat(64);
+  metadata.mockReturnValue(
+    new Map([["muller", { merchantId: "muller", version: nextVersion }]]),
+  );
+  rerender(mark(row));
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/muller/logo?v=${nextVersion}`,
+  );
+  expect(screen.getByRole("link").getAttribute("href")).toBe(
+    `/api/merchants/muller/attribution?v=${nextVersion}`,
+  );
+  expect(screen.queryByText("MM")).toBeNull();
+});
+
+it("does not reattach a logo to a manually corrected name with no merchant ID", () => {
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+    new Map([["muller", { merchantId: "muller", version: "a".repeat(64) }]]),
+  );
+  const { container } = render(
+    mark({ ...booking, merchantAlias: "Mein Händler", merchantLogo: true }),
+  );
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByText("MH")).toBeTruthy();
 });
 
 it("uses a neutral fallback for a missing logo with no canonical alias", () => {

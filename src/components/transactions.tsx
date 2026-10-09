@@ -26,6 +26,8 @@ import { useFinance } from "@/components/finance-provider";
 import { EmptyState, PageHeading } from "@/components/finance-ui";
 import { StatementImport } from "@/components/statement-import";
 import { MerchantLookupDialog } from "@/components/merchant-lookup-dialog";
+import { shouldShowMerchantMark } from "@/components/merchant-mark";
+import { MerchantMarksProvider } from "@/components/merchant-marks-provider";
 import {
   TransactionActions,
   type LedgerAction,
@@ -408,6 +410,13 @@ const TransactionLedger = memo(function TransactionLedger({
     initialState: { pagination: { pageSize: 25 } },
     getRowId: (row) => row.id,
   });
+  const displayedRows = table.getRowModel().rows;
+  const merchantIds = displayedRows.flatMap(({ original }) =>
+    original.merchantId &&
+    shouldShowMerchantMark(original, classifications.get(original)!)
+      ? [original.merchantId]
+      : [],
+  );
   function exportView() {
     const rows = table
       .getPrePaginationRowModel()
@@ -485,94 +494,98 @@ const TransactionLedger = memo(function TransactionLedger({
             </Button>
           </div>
         )}
-        {mobile ? (
-          <>
-            <MobileLedgerControls table={table} disabled={!!storageError} />
-            <MobileTransactionList rows={table.getRowModel().rows} />
-          </>
-        ) : (
-          <div className="hidden overflow-x-auto md:block">
-            <table className="data-table w-full" aria-label="Buchungen">
-              <thead>
-                {table.getHeaderGroups().map((group) => (
-                  <tr key={group.id}>
-                    {group.headers.map((header) => (
-                      <th
-                        key={header.id}
-                        className={cn(
-                          header.column.id === "selection" &&
-                            "w-12 !px-1 !py-1",
-                          (header.column.id === "amount" ||
-                            header.column.id === "actions") &&
-                            "text-right",
-                        )}
-                        aria-sort={
-                          header.column.getIsSorted() === "asc"
-                            ? "ascending"
-                            : header.column.getIsSorted() === "desc"
-                              ? "descending"
-                              : undefined
-                        }
-                      >
-                        {header.column.getCanSort() ? (
-                          <button
-                            className={cn(
-                              "flex min-h-8 items-center gap-1.5 whitespace-nowrap hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
-                              header.column.id === "amount" && "ml-auto",
-                            )}
-                            onClick={header.column.getToggleSortingHandler()}
-                          >
-                            {flexRender(
+        <MerchantMarksProvider merchantIds={merchantIds}>
+          {mobile ? (
+            <>
+              <MobileLedgerControls table={table} disabled={!!storageError} />
+              <MobileTransactionList rows={displayedRows} />
+            </>
+          ) : (
+            <div className="hidden overflow-x-auto md:block">
+              <table className="data-table w-full" aria-label="Buchungen">
+                <thead>
+                  {table.getHeaderGroups().map((group) => (
+                    <tr key={group.id}>
+                      {group.headers.map((header) => (
+                        <th
+                          key={header.id}
+                          className={cn(
+                            header.column.id === "selection" &&
+                              "w-12 !px-1 !py-1",
+                            (header.column.id === "amount" ||
+                              header.column.id === "actions") &&
+                              "text-right",
+                          )}
+                          aria-sort={
+                            header.column.getIsSorted() === "asc"
+                              ? "ascending"
+                              : header.column.getIsSorted() === "desc"
+                                ? "descending"
+                                : undefined
+                          }
+                        >
+                          {header.column.getCanSort() ? (
+                            <button
+                              className={cn(
+                                "flex min-h-8 items-center gap-1.5 whitespace-nowrap hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+                                header.column.id === "amount" && "ml-auto",
+                              )}
+                              onClick={header.column.getToggleSortingHandler()}
+                            >
+                              {flexRender(
+                                header.column.columnDef.header,
+                                header.getContext(),
+                              )}
+                              <ArrowDownUp
+                                className={cn(
+                                  "size-3",
+                                  header.column.getIsSorted()
+                                    ? "text-primary"
+                                    : "opacity-40",
+                                )}
+                              />
+                            </button>
+                          ) : (
+                            flexRender(
                               header.column.columnDef.header,
                               header.getContext(),
-                            )}
-                            <ArrowDownUp
-                              className={cn(
-                                "size-3",
-                                header.column.getIsSorted()
-                                  ? "text-primary"
-                                  : "opacity-40",
-                              )}
-                            />
-                          </button>
-                        ) : (
-                          flexRender(
-                            header.column.columnDef.header,
-                            header.getContext(),
-                          )
-                        )}
-                      </th>
-                    ))}
-                  </tr>
-                ))}
-              </thead>
-              <tbody>
-                {table.getRowModel().rows.map((row) => (
-                  <tr
-                    key={row.id}
-                    className={row.getIsSelected() ? "bg-primary/5" : undefined}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <td
-                        key={cell.id}
-                        className={
-                          cell.column.id === "selection"
-                            ? "!px-1 !py-1"
-                            : undefined
-                        }
-                      >
-                        {flexRender(
-                          cell.column.columnDef.cell,
-                          cell.getContext(),
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                            )
+                          )}
+                        </th>
+                      ))}
+                    </tr>
+                  ))}
+                </thead>
+                <tbody>
+                  {displayedRows.map((row) => (
+                    <tr
+                      key={row.id}
+                      className={
+                        row.getIsSelected() ? "bg-primary/5" : undefined
+                      }
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td
+                          key={cell.id}
+                          className={
+                            cell.column.id === "selection"
+                              ? "!px-1 !py-1"
+                              : undefined
+                          }
+                        >
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </MerchantMarksProvider>
         {!data.length && (
           <EmptyState
             title="Keine Umsätze gefunden"

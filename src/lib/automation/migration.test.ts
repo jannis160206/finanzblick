@@ -65,7 +65,14 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
     expect(
       db.prepare("SELECT count(*) AS count FROM automation_migrations").get()
         ?.count,
-    ).toBe(4);
+    ).toBe(6);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'merchants_logo_entity'",
+        )
+        .get(),
+    ).toMatchObject({ name: "merchants_logo_entity" });
   } finally {
     db.close();
   }

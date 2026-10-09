@@ -173,6 +173,14 @@ oder privat gespeicherte, lizenzierte Logos. Unbekannte Namen erhalten ein neutr
 Fragezeichen, keine vermuteten Markeninitialen. Siehe [Händlerdaten](merchant-data.md)
 für offenen Datenimport, Herkunft und Logo-Lizenzen.
 
+Die Umsatzliste fragt aktuelle, privat gespeicherte Logos gesammelt für sichtbare
+Händler-IDs ab. Damit erhalten auch alte Umsätze ein inzwischen verfügbares Logo,
+ohne ihre Kategorie, manuelle Sperre oder den einmaligen Nachlauf zu verändern.
+Nach dem normalen Home-Deployment lassen sich Logos unabhängig von einem
+Geografieimport mit `npm run merchants:import -- --logos-only --limit 20` laden.
+Der Worker selbst lädt weiterhin keine Bilder oder externen Finanzdaten;
+Details und gezielte Aktualisierung stehen in [Händlerdaten](merchant-data.md).
+
 Automatische Index-Treffer sind keine Nutzerbestätigung und lernen deshalb keine
 neuen Kontoregeln. Alte Regeln, die ausschließlich durch passende automatische
 Worker-Zuordnungen belegt sind, bleiben gespeichert, werden aber nicht als manuelle

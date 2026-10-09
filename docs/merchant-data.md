@@ -15,7 +15,7 @@ npm run merchants:import -- --bbox 48.18,16.33,48.22,16.39
 npm run merchants:import -- --bbox 48.18,16.33,48.22,16.39 --logos
 ```
 
-`--bbox` is required: **south,west,north,east**, decimal degrees, comma-separated.
+For geography, `--bbox` is required: **south,west,north,east**, decimal degrees, comma-separated.
 There is no all-Austria download. Each side is at most 1 degree, the area at most
 0.25 square degrees, and coordinates must lie within Austria's outer envelope.
 The Overpass query additionally intersects the bbox with the administrative
@@ -41,8 +41,25 @@ unknown or contradictory types yield `null`, not a guessed category. OSM
 addresses may supply a city; a chain spanning cities has no single city.
 The optional `wikidataId` persists that brand identity evidence. Older
 `osm-brand-Q…-hash` rows retain the same evidence through their importer-generated
-ID. Curated BIPA is independently linked to
-<https://www.wikidata.org/wiki/Q864933> (public CC0 identity data, no image rights).
+ID. Curated brands are independently linked to public Wikidata identities
+(CC0 facts, **not image rights**). Verified on 2026-10-09:
+
+| Reference | Entity |
+| --- | --- |
+| BILLA | [Q537781](https://www.wikidata.org/wiki/Q537781) |
+| PENNY | [Q284688](https://www.wikidata.org/wiki/Q284688) |
+| Mueller drugstores | [Q1958759](https://www.wikidata.org/wiki/Q1958759) |
+| SPAR international brand | [Q610492](https://www.wikidata.org/wiki/Q610492) |
+| HOFER Austria | [Q15815751](https://www.wikidata.org/wiki/Q15815751) |
+| Lidl | [Q151954](https://www.wikidata.org/wiki/Q151954) |
+| dm-drogerie markt | [Q266572](https://www.wikidata.org/wiki/Q266572) |
+| BIPA | [Q864933](https://www.wikidata.org/wiki/Q864933) |
+| IKEA | [Q54078](https://www.wikidata.org/wiki/Q54078) |
+| Austrian Federal Railways | [Q83822](https://www.wikidata.org/wiki/Q83822) |
+| Amazon | [Q3884](https://www.wikidata.org/wiki/Q3884) |
+| Spotify | [Q689141](https://www.wikidata.org/wiki/Q689141) |
+| Netflix | [Q907311](https://www.wikidata.org/wiki/Q907311) |
+
 The matcher resolves duplicate records only when entity, canonical name, region
 and default category/purpose requirements agree. Same names without this evidence remain collisions;
 different categories and sub-brand names remain open. No source attribution is
@@ -77,17 +94,31 @@ Wikidata P154 is CC0 reference data, but **does not license the image**.
 
 `--logos` examines at most 20 distinct, unambiguously associated Wikidata
 entities per run (at most three additional requests per entity; 61 total
-requests including Overpass). Requests are sequential, with a 10-second
+requests including Overpass, before opt-in bounded retries). Requests are sequential, with a 10-second
 per-request and 180-second total network deadline; raster processing has a
 five-second timeout. Preferred P154 is accepted only if unique; otherwise the
-logo is explicitly skipped. Only original PNG, JPEG, and WebP files are
-accepted. SVG, animations, large images, missing metadata, unsupported licenses,
-and listed usage restrictions are rejected/reported. This intentionally means
+logo is explicitly skipped. Original PNG, JPEG, and WebP files are accepted.
+SVG is **never downloaded or executed locally**: the importer requests a Commons
+PNG thumbnail and checks its host, hash-directory path and filename against the
+licensed original. Current Commons uses `thumb.wikimedia.org` and bucketed raster
+sizes (e.g. a 250px URL for 128px presentation); actual PNG dimensions are checked
+and limited to 512px before normalizing to 128px. Animations, large images, missing
+metadata, unsupported licenses and nontrademark usage restrictions are rejected.
+This intentionally means
 many brands have **no logo**.
 
 Commons must explicitly provide matching license name and HTTPS license URL for
 CC0 1.0, Public Domain Mark 1.0, CC BY 4.0, or CC BY-SA 4.0, and an attributable
-artist. No fair-use, unknown, or inferred license is accepted. Commons metadata
+artist. A missing public-domain license URL is accepted **only** when Commons
+affirmatively declares all of `License=pd`, `LicenseShortName=Public domain`,
+`UsageTerms=Public domain`, `Copyrighted=False`, and `AttributionRequired=false`.
+No URL is invented. A sole `trademarked`/`trademark` advisory is retained in
+attribution, not treated as a copyright prohibition. Additional restrictions,
+fair-use and inferred licenses remain rejected. Known unresolved upstream
+provenance (`logos.fandom.com`, `theslap.com` in source credit) is skipped; the
+importer does not visit those sites. BIPA currently lacks P154; current HOFER and
+Amazon files have unresolved provenance. They therefore retain initials.
+Commons metadata
 is not a guarantee that trademark or other non-copyright rights are cleared;
 operators must review suitability. Attribution records retain artist, credit,
 Commons source, license, the resizing modification, and the Wikidata P154
@@ -95,7 +126,10 @@ entity reference with its separate `CC0-1.0` data license.
 
 Only fixed HTTPS hosts/paths are allowed: `www.wikidata.org/w/api.php`,
 `commons.wikimedia.org/w/api.php`, and original-file paths on
-`upload.wikimedia.org/wikipedia/commons/`. Redirects are forbidden.
+`upload.wikimedia.org/wikipedia/commons/`, plus bounded, provenance-matched PNG
+thumbnail paths on `upload.wikimedia.org`/`thumb.wikimedia.org`. Only the exact
+three Commons `utm_*` metadata tags are stripped; other media query parameters
+are rejected. Redirects are forbidden.
 There are no Google, brand-CDN, generic logo-collection, bank, or cloud-LLM
 requests and no arbitrary operator-supplied download URLs.
 
@@ -122,8 +156,53 @@ uses a restrictive CSP and no-referrer policy. Response headers alone are not
 a visible attribution notice. Non-account
 development mode has no server reference database and returns 404.
 Geography-only refreshes keep previously cached licensed logos.
+Seed refreshes also retain valid logos for the unchanged identity; a changed
+name, region or entity does not inherit the old image.
 An explicit `--logos` refresh does not retain an older logo when its current
 Wikidata/Commons association or licensing check is skipped.
+
+### Logo-only refresh and transaction marks
+
+```powershell
+# No Overpass request; uses only public entities already in merchants.
+npm run merchants:import -- --logos-only --limit 20
+# Target a bounded selection, avoiding starvation behind repeated absent logos.
+npm run merchants:import -- --logos-only --entities Q689141,Q907311
+# Deliberately recheck current source/license, including cached logos:
+npm run merchants:import -- --logos-only --entities Q537781,Q284688 --refresh
+```
+
+The limit is 1-20 **network entity lookups** per invocation; cache reuse is free.
+Lookups remain sequential. Logo-only requests permit at most two retries for
+HTTP 429/503, honor numeric Retry-After up to five seconds, and stop explicitly
+when the source asks for a later retry. The total deadline remains 180 seconds.
+An unchanged cache is idempotent. Network/storage failures fail visibly and do
+not clear existing logo metadata; an explicit refresh with a definite license/
+association rejection clears it. Writes change only logo metadata, entity
+evidence and its timestamp, using an optimistic revision guard. They never
+rewrite financial snapshots, categories, aliases, locks or backfill cursors.
+
+The transaction list batches **visible known IDs**, not bank text, to authenticated
+`POST /api/merchants/marks` (100 IDs / 16 KiB). It performs bounded local queries
+and file integrity checks, not remote downloads or per-transaction matching.
+Proven same-entity/name/region references can supply an image with that asset's
+own attribution. Same names without entity proof cannot. The account-scoped
+client cache is bounded to 500 entries and is reset/aborted on account changes;
+there is no polling. An old `merchantLogo=false` flag cannot hide a newly imported
+logo, and no transaction backfill is needed for image updates.
+
+Desktop and mobile keep the same 32px cell. Missing/unlicensed images fall back
+to canonical initials; transfers have no mark. Manually renamed rows that cleared
+their global ID never reacquire a logo by guessing their name. A changed image
+version resets failed-image state. Versions hash both the PNG reference and its
+full validated license/source/credits, so a credit-only change also gets a new
+version. Attribution links carry the same version. Old attribution is archived
+atomically in `merchant_logo_attributions` (at most 10,000 immutable records,
+no financial data); this is a credit history, not another matching catalogue.
+It remains available even for an old image still visible in an open tab.
+Verified `?v=<sha256>` assets use private,
+one-day immutable browser caching with `Vary: Cookie`; wrong versions return 404.
+Unversioned URLs remain no-store. No image is hotlinked.
 
 The CLI prints an explicit JSON report including each skipped merchant/logo and
 `skippedCount`, `logoDownloadedCount`, and `logoSkippedCount` per-merchant totals.

@@ -104,4 +104,26 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (4, unixepoch() * 1000);
     `);
   }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 5").get()
+  ) {
+    db.exec(`
+      CREATE INDEX merchants_logo_entity ON merchants(wikidata_id) WHERE logo_json IS NOT NULL;
+      INSERT INTO automation_migrations VALUES (5, unixepoch() * 1000);
+    `);
+  }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 6").get()
+  ) {
+    db.exec(`
+      CREATE TABLE merchant_logo_attributions (
+        merchant_id TEXT NOT NULL,
+        version TEXT NOT NULL,
+        canonical_name TEXT NOT NULL,
+        logo_json TEXT NOT NULL CHECK(json_valid(logo_json)),
+        PRIMARY KEY(merchant_id, version)
+      );
+      INSERT INTO automation_migrations VALUES (6, unixepoch() * 1000);
+    `);
+  }
 }

@@ -143,6 +143,113 @@ describe("fixed, bounded merchant data network", () => {
   });
 });
 
+describe("Commons-generated raster logos", () => {
+  const svgMetadata = () =>
+    commons({
+      url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Example_logo.svg",
+      mime: "image/svg+xml",
+      thumburl:
+        "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Example_logo.svg/250px-Example_logo.svg.png",
+      thumbmime: "image/png",
+      thumbwidth: 128,
+      thumbheight: 64,
+    });
+  it("downloads a provenance-matched Commons PNG, never the source SVG", async () => {
+    const request = network([
+      Response.json(entity([claim("Example logo.svg")])),
+      Response.json(svgMetadata()),
+      new Response(new Uint8Array(await png())),
+    ]);
+    const result = await retrieveMerchantLogo("Q123", await privateDatabase(), {
+      fetch: request,
+    });
+    expect(result.status).toBe("downloaded");
+    expect(String(request.mock.calls[2][0])).toContain("thumb.wikimedia.org");
+    expect(String(request.mock.calls[2][0])).toMatch(/\.svg\.png$/);
+    expect(
+      request.mock.calls
+        .map((call) => String(call[0]))
+        .filter((url) => url.endsWith(".svg")),
+    ).toEqual([]);
+  });
+  it.each([
+    { thumburl: undefined },
+    { thumbmime: "image/svg+xml" },
+    { thumbwidth: 129 },
+    {
+      thumburl:
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Other.svg/128px-Other.svg.png",
+    },
+    {
+      thumburl:
+        "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Example_logo.svg/128px-Example_logo.svg.png",
+    },
+  ])(
+    "rejects incomplete or mismatched thumbnail provenance %#",
+    async (overrides) => {
+      const metadata = svgMetadata();
+      Object.assign(metadata.query.pages["7"].imageinfo[0], overrides);
+      const request = network([
+        Response.json(entity([claim("Example logo.svg")])),
+        Response.json(metadata),
+      ]);
+      expect(
+        await retrieveMerchantLogo("Q123", await privateDatabase(), {
+          fetch: request,
+        }),
+      ).toMatchObject({ status: "skipped" });
+      expect(request).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("accepts only affirmative public-domain declarations when no license URL exists", async () => {
+    const declaration = {
+      Artist: { value: "Example creator" },
+      LicenseShortName: { value: "Public domain" },
+      License: { value: "pd" },
+      Copyrighted: { value: "False" },
+      AttributionRequired: { value: "false" },
+      UsageTerms: { value: "Public domain" },
+      Restrictions: { value: "trademarked" },
+    };
+    const request = network([
+      Response.json(entity()),
+      Response.json(commons({ extmetadata: declaration })),
+      new Response(new Uint8Array(await png())),
+    ]);
+    const result = await retrieveMerchantLogo("Q123", await privateDatabase(), {
+      fetch: request,
+    });
+    expect(result).toMatchObject({
+      status: "downloaded",
+      logo: {
+        license: "Public-domain",
+        attribution: expect.stringContaining("trademark rights may apply"),
+      },
+    });
+    for (const overrides of [
+      { Copyrighted: { value: "True" } },
+      { License: { value: "fairuse" } },
+      { AttributionRequired: { value: "true" } },
+      { UsageTerms: { value: "" } },
+      { LicenseUrl: { value: "https://evil.example" } },
+      { Restrictions: { value: "trademarked, noncommercial" } },
+    ]) {
+      const denied = network([
+        Response.json(entity()),
+        Response.json(
+          commons({ extmetadata: { ...declaration, ...overrides } }),
+        ),
+      ]);
+      expect(
+        await retrieveMerchantLogo("Q123", await privateDatabase(), {
+          fetch: denied,
+        }),
+      ).toMatchObject({ status: "skipped" });
+      expect(denied).toHaveBeenCalledTimes(2);
+    }
+  });
+});
+
 describe("explicit Commons license gate and private PNG cache", () => {
   it("downloads only after checking licensing, normalizes and idempotently caches content", async () => {
     const databasePath = await privateDatabase();
@@ -236,12 +343,11 @@ describe("explicit Commons license gate and private PNG cache", () => {
     },
   );
 
-  it("reports no logo, ambiguity, SVG or malformed P154 without file requests", async () => {
+  it("reports no logo, ambiguity or malformed P154 without file requests", async () => {
     const databasePath = await privateDatabase();
     for (const claims of [
       [],
       [claim(), claim("Other.png")],
-      [claim("Logo.svg")],
       [claim("../../path.png")],
       [claim("Logo.png", "deprecated")],
     ]) {
@@ -280,7 +386,7 @@ describe("explicit Commons license gate and private PNG cache", () => {
         LicenseUrl: undefined,
       },
       { ...original, LicenseUrl: { value: "https://evil.example/license" } },
-      { ...original, Restrictions: { value: "trademarked" } },
+      { ...original, Restrictions: { value: "personality rights" } },
       { ...original, Artist: { value: "" } },
     ]) {
       const request = network([
@@ -290,6 +396,7 @@ describe("explicit Commons license gate and private PNG cache", () => {
       const result = await retrieveMerchantLogo("Q123", databasePath, {
         fetch: request,
       });
+
       expect(result).toMatchObject({
         status: "skipped",
         reason: expect.any(String),

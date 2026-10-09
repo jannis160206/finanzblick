@@ -2,9 +2,16 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, open } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import sharp from "sharp";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
-import { privateMerchantLogoSchema, type PrivateMerchantLogo } from "./merchant-logo-metadata";
-export { privateMerchantLogoSchema, type PrivateMerchantLogo } from "./merchant-logo-metadata";
+import {
+  privateMerchantLogoSchema,
+  type PrivateMerchantLogo,
+} from "./merchant-logo-metadata";
+export {
+  privateMerchantLogoSchema,
+  type PrivateMerchantLogo,
+} from "./merchant-logo-metadata";
 
 const MAX_DOWNLOAD = 2 * 1024 * 1024;
 const MAX_PIXELS = 4_000_000;
@@ -54,13 +61,21 @@ function allowedRequestUrl(value: string): URL {
     return fixedUrl(value, "commons.wikimedia.org", "/w/api.php");
   if (
     url.protocol !== "https:" ||
-    url.hostname !== "upload.wikimedia.org" ||
+    !["upload.wikimedia.org", "thumb.wikimedia.org"].includes(url.hostname) ||
     url.port ||
     url.username ||
     url.password ||
     url.hash ||
     url.search ||
-    !/^\/wikipedia\/commons\/[a-f0-9]\/[a-f0-9]{2}\/[^/]+$/.test(url.pathname)
+    !(
+      (url.hostname === "upload.wikimedia.org" &&
+        /^\/wikipedia\/commons\/[a-f0-9]\/[a-f0-9]{2}\/[^/]+$/.test(
+          url.pathname,
+        )) ||
+      /^\/wikipedia\/commons\/thumb\/[a-f0-9]\/[a-f0-9]{2}\/[^/]+\/(?:[1-9]\d{0,1}|[1-4]\d{2}|50\d|51[0-2])px-[^/]+\.png$/.test(
+        url.pathname,
+      )
+    )
   )
     throw new Error("Disallowed merchant data URL");
   return url;
@@ -75,6 +90,7 @@ export async function fetchMerchantBytes(
     signal?: AbortSignal;
     fetch?: typeof fetch;
     body?: string;
+    retries?: number;
   },
 ): Promise<Buffer> {
   const target = allowedRequestUrl(url);
@@ -89,19 +105,41 @@ export async function fetchMerchantBytes(
     ? AbortSignal.any([options.signal, timeout])
     : timeout;
   signal.throwIfAborted();
-  const response = await (options.fetch ?? fetch)(target, {
-    method: options.body === undefined ? "GET" : "POST",
-    body: options.body,
-    headers: {
-      "User-Agent": "Finanzblick-local-merchant-import/1.0",
-      ...(options.body === undefined
-        ? {}
-        : { "Content-Type": "application/x-www-form-urlencoded" }),
-    },
-    redirect: "error",
-    credentials: "omit",
-    signal,
-  });
+  const retries = z
+    .number()
+    .int()
+    .min(0)
+    .max(2)
+    .parse(options.retries ?? 0);
+  let response: Response;
+  for (let attempt = 0; ; attempt++) {
+    response = await (options.fetch ?? fetch)(target, {
+      method: options.body === undefined ? "GET" : "POST",
+      body: options.body,
+      headers: {
+        "User-Agent":
+          "Finanzblick-local-merchant-import/2.0 (+https://github.com/jannis160206/finanzblick)",
+        ...(options.body === undefined
+          ? {}
+          : { "Content-Type": "application/x-www-form-urlencoded" }),
+      },
+      redirect: "error",
+      credentials: "omit",
+      signal,
+    });
+    if (![429, 503].includes(response.status) || attempt >= retries) break;
+    await response.body?.cancel();
+    const retryAfter = response.headers.get("retry-after");
+    const seconds =
+      retryAfter && /^\d+$/.test(retryAfter)
+        ? Number(retryAfter)
+        : 2 ** attempt;
+    if (seconds > 5)
+      throw new Error(
+        `Merchant source requires a later retry: HTTP ${response.status}`,
+      );
+    await delay(Math.max(1, seconds) * 1000, undefined, { signal });
+  }
   if (!response.ok) {
     await response.body?.cancel();
     throw new Error(`Merchant data request failed: HTTP ${response.status}`);
@@ -197,6 +235,10 @@ const metadataSchema = z.object({
               width: z.number().int().positive(),
               height: z.number().int().positive(),
               mime: z.string().max(100),
+              thumburl: z.string().url().max(2000).optional(),
+              thumbmime: z.string().max(100).optional(),
+              thumbwidth: z.number().int().positive().optional(),
+              thumbheight: z.number().int().positive().optional(),
               extmetadata: z.record(
                 z.string(),
                 z.object({ value: z.string().max(16_000) }),
@@ -230,10 +272,32 @@ function plainMetadata(value: string): string {
     .trim();
 }
 
+function commonsMediaUrl(
+  value: string,
+  kind: "original" | "thumbnail",
+): string {
+  const url = new URL(value);
+  if (url.search) {
+    if (
+      url.searchParams.size !== 3 ||
+      url.searchParams.get("utm_source") !== "commons.wikimedia.org" ||
+      url.searchParams.get("utm_campaign") !== "imageinfo" ||
+      url.searchParams.get("utm_content") !== kind
+    )
+      throw new Error("Disallowed Commons media query");
+    url.search = "";
+  }
+  return allowedRequestUrl(url.href).href;
+}
+
 export async function retrieveMerchantLogo(
   wikidataId: string,
   databasePath: string,
-  options: { fetch?: typeof fetch; signal?: AbortSignal } = {},
+  options: {
+    fetch?: typeof fetch;
+    signal?: AbortSignal;
+    retries?: number;
+  } = {},
 ): Promise<MerchantLogoResult> {
   if (!/^Q[1-9]\d{0,11}$/.test(wikidataId))
     throw new Error("Invalid Wikidata entity ID");
@@ -272,18 +336,23 @@ export async function retrieveMerchantLogo(
     typeof filename !== "string" ||
     filename.length > 240 ||
     /[/\\\x00-\x1f|#]/.test(filename) ||
-    !/\.(?:png|jpe?g|webp)$/i.test(filename)
+    !/\.(?:png|jpe?g|webp|svg)$/i.test(filename)
   )
     return {
       status: "skipped",
-      reason: "P154 is not a supported, unambiguous raster filename",
+      reason: "P154 is not a supported, unambiguous image filename",
     };
   const commonsUrl = new URL("https://commons.wikimedia.org/w/api.php");
   commonsUrl.search = new URLSearchParams({
     action: "query",
     titles: `File:${filename}`,
     prop: "imageinfo",
-    iiprop: "url|size|mime|extmetadata",
+    iiprop: "url|size|mime|thumbmime|extmetadata",
+    iiextmetadatafilter:
+      "LicenseShortName|LicenseUrl|License|UsageTerms|Copyrighted|AttributionRequired|Artist|Credit|Restrictions",
+    iiextmetadatalanguage: "en",
+    iiurlwidth: "128",
+    iiurlheight: "128",
     format: "json",
   }).toString();
   const metadata = metadataSchema.parse(
@@ -305,15 +374,34 @@ export async function retrieveMerchantLogo(
     shortName && Object.hasOwn(licenses, shortName)
       ? licenses[shortName as keyof typeof licenses]
       : undefined;
-  if (!license || fields.LicenseUrl?.value !== license.url)
+  const declaredPublicDomain =
+    shortName === "Public domain" &&
+    !fields.LicenseUrl?.value &&
+    fields.License?.value === "pd" &&
+    fields.Copyrighted?.value === "False" &&
+    fields.AttributionRequired?.value === "false" &&
+    fields.UsageTerms?.value === "Public domain";
+  if (
+    !license ||
+    (fields.LicenseUrl?.value !== license.url && !declaredPublicDomain)
+  )
     return {
       status: "skipped",
       reason: "Commons licensing is absent or not explicitly allowlisted",
     };
-  if (plainMetadata(fields.Restrictions?.value ?? ""))
+  const restriction = plainMetadata(
+    fields.Restrictions?.value ?? "",
+  ).toLowerCase();
+  const trademark = ["trademark", "trademarked"].includes(restriction);
+  if (restriction && !trademark)
     return { status: "skipped", reason: "Commons lists usage restrictions" };
   const artist = plainMetadata(fields.Artist?.value ?? "");
   const credit = plainMetadata(fields.Credit?.value ?? "");
+  if (/(?:logos\.fandom\.com|theslap\.com)/i.test(credit))
+    return {
+      status: "skipped",
+      reason: "Commons lists unreviewed upstream logo provenance",
+    };
   if (!artist || artist.length + credit.length > 1500)
     return {
       status: "skipped",
@@ -323,21 +411,63 @@ export async function retrieveMerchantLogo(
     info.size < 1 ||
     info.size > MAX_DOWNLOAD ||
     info.width * info.height > MAX_PIXELS ||
-    !["image/png", "image/jpeg", "image/webp"].includes(info.mime)
+    !(
+      ["image/png", "image/jpeg", "image/webp"].includes(info.mime) ||
+      (/\.svg$/i.test(filename) && info.mime === "image/svg+xml")
+    )
   )
     return { status: "skipped", reason: "Commons image exceeds raster limits" };
-  const bytes = await fetchMerchantBytes(info.url, {
+  let downloadUrl = commonsMediaUrl(info.url, "original");
+  let downloadMime = info.mime;
+  if (/\.svg$/i.test(filename)) {
+    const original = allowedRequestUrl(downloadUrl);
+    const originalPath =
+      /^\/wikipedia\/commons\/([a-f0-9]\/[a-f0-9]{2}\/[^/]+)$/.exec(
+        original.pathname,
+      );
+    const thumbnail = info.thumburl
+      ? allowedRequestUrl(commonsMediaUrl(info.thumburl, "thumbnail"))
+      : null;
+    const renderedWidth =
+      thumbnail && /\/(\d+)px-[^/]+\.png$/.exec(thumbnail.pathname)?.[1];
+    const expected =
+      originalPath &&
+      renderedWidth &&
+      `/wikipedia/commons/thumb/${originalPath[1]}/${renderedWidth}px-${originalPath[1].split("/").at(-1)}.png`;
+    if (
+      info.mime !== "image/svg+xml" ||
+      !info.thumburl ||
+      !info.thumbwidth ||
+      !info.thumbheight ||
+      info.thumbmime !== "image/png" ||
+      info.thumbwidth > 128 ||
+      info.thumbheight > 128 ||
+      !expected ||
+      decodeURIComponent(original.pathname.split("/").at(-1)!) !==
+        filename.replace(/ /g, "_") ||
+      thumbnail?.pathname !== expected
+    ) {
+      return {
+        status: "skipped",
+        reason: "No provenance-matched Commons PNG thumbnail for SVG",
+      };
+    }
+    downloadUrl = thumbnail!.href;
+    downloadMime = "image/png";
+  }
+  const bytes = await fetchMerchantBytes(downloadUrl, {
     ...options,
     maxBytes: MAX_DOWNLOAD,
   });
   const signatureMatches =
-    (info.mime === "image/png" && bytes.subarray(0, 8).equals(PNG_SIGNATURE)) ||
-    (info.mime === "image/jpeg" &&
+    (downloadMime === "image/png" &&
+      bytes.subarray(0, 8).equals(PNG_SIGNATURE)) ||
+    (downloadMime === "image/jpeg" &&
       bytes.length >= 3 &&
       bytes[0] === 0xff &&
       bytes[1] === 0xd8 &&
       bytes[2] === 0xff) ||
-    (info.mime === "image/webp" &&
+    (downloadMime === "image/webp" &&
       bytes.length >= 12 &&
       bytes.toString("ascii", 0, 4) === "RIFF" &&
       bytes.toString("ascii", 8, 12) === "WEBP");
@@ -359,7 +489,9 @@ export async function retrieveMerchantLogo(
       !imageInfo.height ||
       imageInfo.width * imageInfo.height > MAX_PIXELS ||
       !["png", "jpeg", "webp"].includes(imageInfo.format ?? "") ||
-      (imageInfo.pages ?? 1) !== 1
+      (imageInfo.pages ?? 1) !== 1 ||
+      (/\.svg$/i.test(filename) &&
+        (imageInfo.width > 512 || imageInfo.height > 512))
     )
       return {
         status: "skipped",
@@ -391,7 +523,7 @@ export async function retrieveMerchantLogo(
   const logoResult = privateMerchantLogoSchema.safeParse({
     file,
     license: license.id,
-    attribution: `${artist}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${license.id}; resized to PNG; P154 reference: Wikidata ${wikidataId} (CC0-1.0)`,
+    attribution: `${artist}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${license.id}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; P154 reference: Wikidata ${wikidataId} (CC0-1.0)`,
     sourceUrl,
   });
   if (!logoResult.success)
@@ -518,16 +650,23 @@ export async function merchantAttribution(
       import("@/lib/automation/store"),
     ]);
     const { database } = await getAccountRuntime();
-    const merchant = new AutomationStore(database).getMerchant(id);
-    if (!merchant) return missing();
+    const store = new AutomationStore(database);
+    const merchant = store.getMerchant(id);
+    const version = new URL(request.url).searchParams.get("v");
+    if (version !== null && !/^[a-f0-9]{64}$/.test(version)) return missing();
+    const archived =
+      version !== null ? store.logoAttribution(id, version) : null;
+    if ((version !== null && !archived) || (!merchant && !archived))
+      return missing();
+    const logoMetadata = version !== null ? archived?.logo : merchant?.logo;
     const lines = [
-      `Händler: ${merchant.canonicalName}`,
-      `Datenquelle: ${merchant.source}`,
-      `Datenlizenz: ${merchant.license ?? "Nicht angegeben"}`,
-      `Daten-Quellenangabe: ${merchant.attribution ?? "Nicht angegeben"}`,
+      `Händler: ${archived?.canonicalName ?? merchant?.canonicalName}`,
+      `Datenquelle: ${merchant?.source ?? "Archivierte Logo-Version"}`,
+      `Datenlizenz: ${merchant?.license ?? "Nicht angegeben"}`,
+      `Daten-Quellenangabe: ${merchant?.attribution ?? "Nicht angegeben"}`,
     ];
-    if (merchant.logo) {
-      const parsed = privateMerchantLogoSchema.safeParse(merchant.logo);
+    if (logoMetadata) {
+      const parsed = privateMerchantLogoSchema.safeParse(logoMetadata);
       if (!parsed.success) return missing();
       const logo = parsed.data;
       lines.push(

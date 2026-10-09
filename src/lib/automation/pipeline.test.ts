@@ -196,6 +196,7 @@ it("does not learn or infer automatic global matches as confirmed aliases", () =
       ...seedMerchants[0],
       id: "second-billa",
       canonicalName: "BILLA",
+      wikidataId: null,
       aliases: [],
       regexPatterns: [],
     },

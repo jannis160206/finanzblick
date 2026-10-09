@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   accountMode: vi.fn(),
   runtime: vi.fn(),
   getMerchant: vi.fn(),
+  archived: vi.fn(),
 }));
 vi.mock("@/lib/server/auth", () => ({
   authorizeApi: mocks.authorize,
@@ -13,6 +14,7 @@ vi.mock("@/lib/server/runtime", () => ({ getAccountRuntime: mocks.runtime }));
 vi.mock("@/lib/automation/store", () => ({
   AutomationStore: class {
     getMerchant = mocks.getMerchant;
+    logoAttribution = mocks.archived;
   },
 }));
 import { GET } from "./route";
@@ -41,6 +43,35 @@ beforeEach(() => {
 });
 
 describe("visible private logo attribution", () => {
+  it("shows the exact archived image credits after refresh or removal, not the current version", async () => {
+    const version = "a".repeat(64);
+    const logo = {
+      ...merchant.logo,
+      attribution: "Original artist; original version",
+    };
+    mocks.getMerchant.mockReturnValue({
+      ...merchant,
+      canonicalName: "Renamed brand",
+      logo: null,
+    });
+    mocks.archived.mockReturnValue({ canonicalName: "Original brand", logo });
+    const response = await GET(
+      new Request(`${request.url}?v=${version}`),
+      context(),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.archived).toHaveBeenCalledWith("test", version);
+    expect(await response.text()).toContain(
+      "Original artist; original version",
+    );
+    mocks.archived.mockReturnValue(null);
+    expect(
+      (await GET(new Request(`${request.url}?v=${version}`), context())).status,
+    ).toBe(404);
+    expect(
+      (await GET(new Request(`${request.url}?v=bad`), context())).status,
+    ).toBe(404);
+  });
   it("requires authorization before accessing metadata", async () => {
     mocks.authorize.mockResolvedValue(
       new Response("Please sign in", { status: 401 }),
