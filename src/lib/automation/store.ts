@@ -23,6 +23,33 @@ export type ClaimedJob = z.infer<typeof rowSchema>;
 const columns = `id, kind, name, status, progress, attempts, cursor, total, error,
   updated_at AS updatedAt, user_id AS userId, bytes`;
 
+const merchantColumns = `id, canonical_name AS canonicalName, aliases_json, regex_json,
+  default_category AS defaultCategory, region, source, updated_at AS updatedAt,
+  city, license, attribution, logo_json, wikidata_id AS wikidataId,
+  requires_category_evidence AS requiresCategoryEvidence`;
+
+function merchantFromRow(row: Record<string, unknown>): Merchant {
+  const legacyBrand =
+    row.source === "osm" && typeof row.id === "string"
+      ? /^osm-brand-(Q[1-9]\d{0,13})-[a-f0-9]{16}$/.exec(row.id)?.[1]
+      : undefined;
+  return merchantSchema.parse({
+    ...row,
+    wikidataId: row.wikidataId ?? legacyBrand ?? null,
+    requiresCategoryEvidence: row.requiresCategoryEvidence === 1,
+    aliases: JSON.parse(String(row.aliases_json)),
+    regexPatterns: JSON.parse(String(row.regex_json)),
+    logo: row.logo_json === null ? null : JSON.parse(String(row.logo_json)),
+  });
+}
+
+export function readMerchantDefinitions(db: DatabaseSync): Merchant[] {
+  return db
+    .prepare(`SELECT ${merchantColumns} FROM merchants`)
+    .all()
+    .map(merchantFromRow);
+}
+
 export class AutomationStore {
   constructor(readonly accounts: AccountDatabase) {}
 
@@ -149,9 +176,16 @@ export class AutomationStore {
       if (
         previous &&
         (options.rerun || options.onceVersion) &&
-        db.prepare("SELECT job_id FROM automation_backfill_passes WHERE job_id = ?").get(previous.id)
+        db
+          .prepare(
+            "SELECT job_id FROM automation_backfill_passes WHERE job_id = ?",
+          )
+          .get(previous.id)
       )
-        throw new AccountError(409, "Ein versionierter Nachlauf darf nicht zurückgesetzt werden.");
+        throw new AccountError(
+          409,
+          "Ein versionierter Nachlauf darf nicht zurückgesetzt werden.",
+        );
       if (
         previous &&
         ((!options.rerun && !options.onceVersion) ||
@@ -456,14 +490,15 @@ export class AutomationStore {
     this.accounts.transaction((db) => {
       const statement = db.prepare(`INSERT INTO merchants
         (id, canonical_name, aliases_json, regex_json, default_category, region, source,
-         updated_at, city, license, attribution, logo_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        updated_at, city, license, attribution, logo_json, wikidata_id, requires_category_evidence)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET canonical_name = excluded.canonical_name,
         aliases_json = excluded.aliases_json, regex_json = excluded.regex_json,
         default_category = excluded.default_category, region = excluded.region,
         source = excluded.source, updated_at = excluded.updated_at,
         city = excluded.city, license = excluded.license,
-        attribution = excluded.attribution, logo_json = excluded.logo_json
+        attribution = excluded.attribution, logo_json = excluded.logo_json,
+        wikidata_id = excluded.wikidata_id, requires_category_evidence = excluded.requires_category_evidence
         WHERE excluded.updated_at > merchants.updated_at`);
       for (const merchant of validated)
         statement.run(
@@ -479,49 +514,22 @@ export class AutomationStore {
           merchant.license,
           merchant.attribution,
           merchant.logo ? JSON.stringify(merchant.logo) : null,
+          merchant.wikidataId,
+          merchant.requiresCategoryEvidence ? 1 : 0,
         );
     });
   }
 
   loadMerchants(): Merchant[] {
-    return this.accounts.read((db) =>
-      db
-        .prepare(
-          `SELECT id, canonical_name AS canonicalName,
-      aliases_json, regex_json, default_category AS defaultCategory, region, source,
-      updated_at AS updatedAt, city, license, attribution, logo_json FROM merchants`,
-        )
-        .all()
-        .map((row) =>
-          merchantSchema.parse({
-            ...row,
-            aliases: JSON.parse(String(row.aliases_json)),
-            regexPatterns: JSON.parse(String(row.regex_json)),
-            logo:
-              row.logo_json === null ? null : JSON.parse(String(row.logo_json)),
-          }),
-        ),
-    );
+    return this.accounts.read(readMerchantDefinitions);
   }
 
   getMerchant(id: string): Merchant | null {
     return this.accounts.read((db) => {
       const row = db
-        .prepare(
-          `SELECT id, canonical_name AS canonicalName, aliases_json, regex_json,
-        default_category AS defaultCategory, region, source, updated_at AS updatedAt,
-        city, license, attribution, logo_json FROM merchants WHERE id = ?`,
-        )
+        .prepare(`SELECT ${merchantColumns} FROM merchants WHERE id = ?`)
         .get(id);
-      return row
-        ? merchantSchema.parse({
-            ...row,
-            aliases: JSON.parse(String(row.aliases_json)),
-            regexPatterns: JSON.parse(String(row.regex_json)),
-            logo:
-              row.logo_json === null ? null : JSON.parse(String(row.logo_json)),
-          })
-        : null;
+      return row ? merchantFromRow(row) : null;
     });
   }
 }

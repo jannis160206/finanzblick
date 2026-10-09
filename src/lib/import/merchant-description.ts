@@ -30,9 +30,10 @@ export function merchantText(text: string): string {
     .replace(/\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[./]\d{1,2}[./](?:\d{2,4}\b)?/g, " ")
     .replace(/\b\d{1,2}:\d{2}(?::\d{2}(?:[.:]\d{3})?)?\b/g, " ")
     .replace(/(?:^|\s)[+\-]?\d[\d.]*,\d{2}(?=\s|$)|\b\d+\.\d{2}\b/g, " ")
-    .replace(/\b(?:EUR|USD|CHF|Uhr|AT|DE)\b/g, " ")
+    .replace(/(?<![\p{L}\p{N}]\.)\b(?:EUR|USD|CHF|Uhr|AT|DE)\b/gu, " ")
     .replace(/^[\s:;,/|\-]+|[\s:;,/|\-]+$/g, ""));
-  if (!/[\p{L}]{2}/u.test(value) || /^(?:[A-Z]{2}\d{2}[\dA-Z\s]+|(?:EUR|USD|CHF)|[\d\s:./-]+)$/i.test(value) ||
+  const letters = value.match(/\p{L}/gu)?.length ?? 0;
+  if (!(letters >= 2 || /^[\p{L}]\d$|^\d[\p{L}]$/u.test(value)) || /^(?:[DK]\d|[A-Z]{2}\d{2}[\dA-Z\s]+|(?:EUR|USD|CHF)|[\d\s:./-]+)$/i.test(value) ||
     /^(?:kartenfolge|referenz|iban|bic|saldo|guthaben|buchungsdatum|valuta|verwendungszweck|details)\b/i.test(value)) return "";
   return value;
 }
@@ -42,12 +43,17 @@ export function unresolvedTerminal(text: string): boolean {
 }
 
 const recoverable = (row: MerchantSource) => hasTerminalText(row.description) || purpose.test(row.description) || reference.test(row.description) || labeledMerchant.test(row.description);
-function merchantCandidates(row: MerchantSource): string[] {
+export function namedMerchantTexts(row: MerchantSource): string[] {
+  return [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""]
+    .flatMap(text => [...text.matchAll(namedMerchant)].map(match => merchantText(match[1])))
+    .filter(Boolean);
+}
+export function merchantCandidates(row: MerchantSource): string[] {
   const sources = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""];
   const extract = (pattern: RegExp) => sources.map((text) => pattern.exec(text)?.[1])
     .filter((text): text is string => !!text).map(merchantText).filter(Boolean);
   // Explicit merchant fields outrank purpose/reference text, which may be only payment metadata.
-  const named = sources.flatMap((text) => [...text.matchAll(namedMerchant)].map((match) => merchantText(match[1]))).filter(Boolean);
+  const named = namedMerchantTexts(row);
   const purposes = extract(purpose);
   const references = extract(reference);
   const candidates = named.length ? named : purposes.length ? purposes : references.length ? references : sources.map(merchantText).filter(Boolean);

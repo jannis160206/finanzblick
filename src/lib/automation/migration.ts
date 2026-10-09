@@ -86,4 +86,22 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (2, unixepoch() * 1000);
     `);
   }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 3").get()
+  ) {
+    db.exec(`
+      ALTER TABLE merchants ADD COLUMN wikidata_id TEXT;
+      INSERT INTO automation_migrations VALUES (3, unixepoch() * 1000);
+    `);
+  }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 4").get()
+  ) {
+    db.exec(`
+      ALTER TABLE merchants ADD COLUMN requires_category_evidence INTEGER NOT NULL DEFAULT 0
+        CHECK(requires_category_evidence IN (0, 1));
+      UPDATE merchants SET requires_category_evidence = 1 WHERE default_category = 'Tanken';
+      INSERT INTO automation_migrations VALUES (4, unixepoch() * 1000);
+    `);
+  }
 }

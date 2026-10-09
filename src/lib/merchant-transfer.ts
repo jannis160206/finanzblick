@@ -1,15 +1,20 @@
 import { classify } from "@/lib/calc";
 import type { Transaction } from "@/lib/types";
 
+export function hasMerchantRefundEvidence(row: Transaction): boolean {
+  return /\b(?:r(?:ü|ue|u)ck(?:erstattung|verguetung|vergütung)|erstattung|refund|retoure)\b/i.test(
+    [
+      row.description,
+      row.rawDescription,
+      row.sourceCategory,
+      ...(row.rawDetails ?? []),
+    ].join(" "),
+  );
+}
+
 export function isMerchantTransfer(row: Transaction): boolean {
   if (classify(row).isTransfer) return true;
-  if (
-    row.amount > 0 &&
-    /\b(?:r[üu]ckerstattung|erstattung|refund|retoure|gutschrift)\b/i.test(
-      row.description,
-    )
-  )
-    return false;
+  if (row.amount > 0 && hasMerchantRefundEvidence(row)) return false;
   return (
     /\b(?:konto(?:[uü]|ue)berweisung|sepa[-\s]*(?:[uü]|ue)berweisung|bank[-\s]*transfer|(?:[uü]|ue)berweisung\s+(?:an|von))\b/i.test(
       `${row.description} ${row.rawDescription ?? ""} ${row.sourceCategory ?? ""}`,

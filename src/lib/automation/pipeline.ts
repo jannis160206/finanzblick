@@ -4,13 +4,27 @@ import {
   type AppState,
   type Transaction,
 } from "@/lib/types";
-import { MerchantIndex } from "./merchants";
+import { MerchantIndex, normalizeMerchantDescriptor } from "./merchants";
 import { isAutomationLocked } from "./locks";
 import { createAccountMerchantResolver } from "./aliases";
-import { isMerchantTransfer } from "@/lib/merchant-transfer";
+import {
+  hasMerchantRefundEvidence,
+  isMerchantTransfer,
+} from "@/lib/merchant-transfer";
 import { isIncomeCategory } from "@/lib/fixed";
-import { ambiguousMerchant } from "@/lib/import/merchant-description";
+import { knownMerchantCategory } from "@/lib/categories";
+import { merchantEvidence } from "./evidence";
 export { isAutomationLocked } from "./locks";
+
+function qualifiedCompany(text: string, canonicalName: string): boolean {
+  return (
+    /\b(?:steuerberatung|rechtsanwalt|kanzlei|immobilien|transporte|und partner)\b/i.test(
+      text,
+    ) &&
+    normalizeMerchantDescriptor(text) !==
+      normalizeMerchantDescriptor(canonicalName)
+  );
+}
 
 export function enrichTransaction(
   row: Transaction,
@@ -22,29 +36,61 @@ export function enrichTransaction(
   if (isMerchantTransfer(row)) return row;
   const refund =
     row.amount > 0 &&
-    (!isIncomeCategory(classified.category) ||
-      /\b(?:r[üu]ckerstattung|erstattung|refund|retoure|gutschrift)\b/i.test(
-        row.description,
-      ));
+    (!isIncomeCategory(classified.category) || hasMerchantRefundEvidence(row));
   if (row.amount > 0 && !refund) return row;
-  if (ambiguousMerchant(row))
+  const evidence = merchantEvidence(row, index);
+  if (evidence.kind === "conflict")
     return { ...row, requires_manual_review: true };
+  const known = knownMerchantCategory(
+    [
+      evidence.text,
+      row.description,
+      row.rawDescription,
+      row.sourceCategory,
+      ...(row.rawDetails ?? []),
+    ].join(" "),
+    row.amount,
+  );
   const learned = resolveAccount?.(row);
   if (learned?.kind === "conflict")
     return { ...row, requires_manual_review: true };
   if (learned?.kind === "matched") {
     const { choice } = learned;
-    const identity = choice.merchantAlias
-      ? index.match(choice.merchantAlias)
-      : undefined;
+    if (!refund && choice.category === "Rückerstattungen")
+      return { ...row, requires_manual_review: true };
+    if (learned.normalized && known === "Prüfen")
+      return { ...row, requires_manual_review: true };
+    const identity = index.match(choice.merchantAlias ?? evidence.text);
     const merchant =
-      identity && !identity.requiresManualReview && identity.method !== "fuzzy"
+      identity.merchant &&
+      identity.method !== "fuzzy" &&
+      !qualifiedCompany(
+        choice.merchantAlias ?? evidence.text,
+        identity.merchant.canonicalName,
+      )
         ? identity.merchant
         : undefined;
+    if (
+      learned.normalized &&
+      !refund &&
+      classified.category !== choice.category &&
+      ((merchant?.defaultCategory &&
+        merchant.defaultCategory !== choice.category) ||
+        [
+          "Mittagessen",
+          "Urlaub",
+          "Geschenke & Spenden",
+          "Rückerstattungen",
+        ].includes(choice.category))
+    )
+      return { ...row, requires_manual_review: true };
     return transactionSchema.parse({
       ...row,
-      ...(choice.merchantAlias
-        ? { merchantAlias: choice.merchantAlias, merchantId: merchant?.id }
+      ...(choice.merchantAlias || merchant
+        ? {
+            merchantAlias: choice.merchantAlias ?? merchant?.canonicalName,
+            merchantId: merchant?.id,
+          }
         : {}),
       merchantLogo: !!merchant?.logo,
       merchantMatch: "rule",
@@ -55,18 +101,17 @@ export function enrichTransaction(
       row.fixedCost === undefined
         ? { fixedCost: choice.fixedCost }
         : {}),
-      requires_manual_review: false,
+      requires_manual_review: !(choice.merchantAlias || merchant),
     });
   }
-  const match = index.match(row.description);
+  const match = index.match(evidence.text);
   if (
     !match.merchant ||
-    match.requiresManualReview ||
-    match.method === "fuzzy" ||
-    match.merchant.defaultCategory === null
+    (match.method !== "exact" && match.method !== "regex")
   ) {
     return { ...row, requires_manual_review: true };
   }
+  if (known === "Prüfen") return { ...row, requires_manual_review: true };
   // A new index must not replace a previously safe, different identity.
   if (
     row.merchantId &&
@@ -77,16 +122,67 @@ export function enrichTransaction(
   // Existing safe assignments and contextual rules (e.g. lunch time) keep precedence.
   const contextual = classify({
     ...row,
+    description: evidence.text,
     category: "Prüfen",
     categoryOverride: false,
   }).category;
+  const defaultCategory = match.merchant.defaultCategory;
+  const canonicalName = match.merchant.canonicalName;
+  const broadCompatible =
+    defaultCategory !== null &&
+    ((contextual === "Mobilität" &&
+      ["Tanken", "Öffentliche Verkehrsmittel", "Parken & Maut"].includes(
+        defaultCategory,
+      )) ||
+      (contextual === "Wohnen & Haushalt" &&
+        ["Möbel & Einrichtung", "Miete", "Energie & Nebenkosten"].includes(
+          defaultCategory,
+        )));
+  const specialContext =
+    contextual === "Mittagessen" || contextual === "Urlaub";
+  if (
+    [evidence.text, row.description, row.rawDescription ?? ""].some((text) =>
+      qualifiedCompany(text, canonicalName),
+    )
+  )
+    return { ...row, requires_manual_review: true };
+  const mccValues = (row.rawDetails ?? []).flatMap((detail) => {
+    const field = /^(?:mcc|merchant\s*category\s*code)\s*[:=]?\s*(.*)$/i.exec(
+      detail.trim(),
+    );
+    return field ? [field[1].trim()] : [];
+  });
+  const fuelEvidence =
+    mccValues.length > 0 && mccValues.every((code) => code === "5542");
+  if (
+    !refund &&
+    (match.merchant.defaultCategory === null ||
+      (match.merchant.requiresCategoryEvidence &&
+        !(match.merchant.defaultCategory === "Tanken" && fuelEvidence)))
+  )
+    return transactionSchema.parse({
+      ...row,
+      merchantId: match.merchant.id,
+      merchantAlias: match.merchant.canonicalName,
+      merchantLogo: !!match.merchant.logo,
+      merchantMatch: match.method === "regex" ? "rule" : "alias",
+      requires_manual_review: true,
+    });
+  if (
+    !refund &&
+    contextual !== "Prüfen" &&
+    contextual !== match.merchant.defaultCategory &&
+    !broadCompatible &&
+    !specialContext
+  )
+    return { ...row, requires_manual_review: true };
   const category = refund
     ? "Rückerstattungen"
     : row.merchantId === match.merchant.id &&
         row.requires_manual_review === false &&
         row.category !== "Prüfen"
       ? row.category
-      : contextual !== "Prüfen"
+      : specialContext
         ? contextual
         : match.merchant.defaultCategory;
   return transactionSchema.parse({
@@ -118,7 +214,13 @@ export function backfillBatch(
   const fixedReceipts = state.fixedReceipts?.map((item) => {
     if (!item.booking || !ids.has(item.booking.id)) return item;
     const booking = update(item.booking);
-    return { ...item, booking, category: booking.category };
+    return {
+      ...item,
+      booking,
+      category: isAutomationLocked(item.booking)
+        ? item.category
+        : booking.category,
+    };
   });
   const needsReview = (row: Transaction) =>
     (!isMerchantTransfer(row) && row.category === "Prüfen") ||
@@ -171,6 +273,18 @@ export function retainLockedAssignments(
       .filter(isAutomationLocked)
       .map((row) => [row.id, row]),
   );
+  const receiptCategories = new Map(
+    (previous.fixedReceipts ?? []).flatMap((item) =>
+      item.booking && locked.has(item.booking.id)
+        ? [
+            [
+              JSON.stringify([item.key, item.booking.id]),
+              item.category,
+            ] as const,
+          ]
+        : [],
+    ),
+  );
   const restore = (row: Transaction): Transaction => {
     const original = locked.get(row.id);
     if (!original) return row;
@@ -202,7 +316,11 @@ export function retainLockedAssignments(
                   ...item,
                   booking: restore(item.booking),
                   category:
-                    locked.get(item.booking.id)?.category ?? item.category,
+                    receiptCategories.get(
+                      JSON.stringify([item.key, item.booking.id]),
+                    ) ??
+                    locked.get(item.booking.id)?.category ??
+                    item.category,
                 }
               : item,
           ),

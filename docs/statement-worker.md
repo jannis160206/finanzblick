@@ -155,8 +155,9 @@ Ein bereits versionierter Job ist auch vor einem späteren Aufruf nur mit
 Der Worker verwendet weiterhin einen einzigen Prozess und einen Händlerindex pro
 Start. Vor dem Vergleich entfernt er POS-/Terminal-IDs, Uhrzeit, IBAN und Referenzen.
 Exakte Aliase oder vertrauenswürdige lokale Regexregeln dürfen Namen und Kategorie
-setzen. Fuzzy, fehlende Kategorie, mehrere globale Treffer oder widersprüchliche
-Kontoregeln verändern bestehende Zuordnungen nicht und bleiben in der Prüfliste.
+setzen. Bei eindeutigem Namen, aber fehlender Kategorie/Zwecknachweis kann nur der
+Name gesetzt werden; die Kategorie bleibt in der Prüfung. Fuzzy, mehrere globale
+Treffer oder widersprüchliche Kontoregeln verändern bestehende Zuordnungen nicht.
 Eine schon sichere, andere Händler-ID wird nicht automatisch ausgetauscht.
 Manuelle/ausdrücklich bestätigte Zuordnungen bleiben gesperrt. Sichere bestehende
 Kontextkategorien (z. B. Mittagessen) werden nicht durch einen allgemeinen
@@ -177,6 +178,33 @@ neuen Kontoregeln. Alte Regeln, die ausschließlich durch passende automatische
 Worker-Zuordnungen belegt sind, bleiben gespeichert, werden aber nicht als manuelle
 Bestätigung verwendet. Widersprüchliche Händlerfelder im Originalauszug bleiben
 ebenfalls offen; ein einzelner Treffer im verkürzten Buchungstext reicht nicht.
+
+### Erkennungsqualität
+
+Die lokale Referenz umfasst weitere eindeutig benannte Händler, nicht generische
+Wörter wie „Shop“ oder „Restaurant“. Apple-Buchungen ohne eindeutigen Zweck
+bleiben offen. Amazon/Marktplätze und Tankstellenshops sind mehrdeutig: Ein sicherer
+Name allein rechtfertigt keine Produktkategorie. `requiresCategoryEvidence` in
+der Händlertabelle verlangt eine bestätigte Kontoregel oder konkreten Zwecknachweis.
+Bei Tankstellen akzeptiert der Worker ein ausdrücklich beschriftetes,
+widerspruchsfreies `MCC: 5542`-Feld (Zahlung direkt an der Zapfsäule), nicht 5541
+oder eine Referenznummer. Erstattungen bleiben Rückerstattungen.
+Händlerfelder des Auszugs werden zusätzlich zum Buchungstext
+ausgewertet; widersprüchliche Namen und Kategorien werden nicht geraten.
+Bestätigte kontospezifische Namen können wechselnde POS-/Referenzmetadaten
+überstehen. Dabei bleiben normalisierte Regelkollisionen und abweichende
+Sonderzwecke wie Urlaub, Geschenke oder Mittagessen in der Prüfung.
+
+```sh
+npm run benchmark:recognition -- --readonly --verify-unchanged
+```
+
+Der Benchmark trennt automatische Abdeckung von tatsächlich bestätigter
+Genauigkeit. Unbestätigte automatische Ergebnisse sind keine Trainingslabels.
+Ein 99%-Anspruch benötigt repräsentative, unabhängig bestätigte Händler- und
+Kategoriedaten; kleine Stichproben oder synthetische Varianten belegen ihn nicht.
+`--require-target` meldet ein nicht belegtes Ziel mit Exit-Code 2.
+Siehe [Messprotokoll](statement-recognition.md).
 
 ### Deployment zu Hause
 

@@ -13,8 +13,15 @@ import { createAccountMerchantResolver } from "./aliases";
 import { assignTransactions } from "@/lib/transaction-tools";
 import { classify } from "@/lib/calc";
 import { merchantRuleKey } from "@/lib/import/merchant-rules";
-import { applyMerchantRules, rememberMerchants } from "@/lib/import/merchant-rules";
-import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "@/lib/import/review";
+import {
+  applyMerchantRules,
+  rememberMerchants,
+} from "@/lib/import/merchant-rules";
+import {
+  commitStatementImport,
+  prepareStatementImport,
+  queueLedgerReview,
+} from "@/lib/import/review";
 
 const index = new MerchantIndex(seedMerchants);
 const booking = (description: string) =>
@@ -143,29 +150,285 @@ it("does not learn or infer automatic global matches as confirmed aliases", () =
   expect(rememberMerchants(state, [row]).merchantRules ?? []).toEqual([]);
   const collision = new MerchantIndex([
     ...seedMerchants,
-    { ...seedMerchants[0], id: "second-billa", canonicalName: "BILLA", aliases: [], regexPatterns: [] },
+    {
+      ...seedMerchants[0],
+      id: "second-billa",
+      canonicalName: "BILLA",
+      aliases: [],
+      regexPatterns: [],
+    },
   ]);
-  const future = enrichTransaction({ ...booking("BILLA"), id: "future", date: "2026-10-09" }, collision,
-    createAccountMerchantResolver(state));
+  const future = enrichTransaction(
+    { ...booking("BILLA"), id: "future", date: "2026-10-09" },
+    collision,
+    createAccountMerchantResolver(state),
+  );
   expect(future.requires_manual_review).toBe(true);
-  const prepared = prepareStatementImport([{ file: "test.csv", source: "Amex", rows: [future], skipped: 0, issues: [] }], state);
-  const committed = queueLedgerReview(commitStatementImport(state, prepared.automatic, [], prepared.metadata).state);
-  expect(committed.reviewQueue?.some(item => item.id === future.id)).toBe(true);
-  expect(applyMerchantRules(state, [booking("BILLA")])[0].categoryOverride).not.toBe(true);
-  const legacy = { ...state, merchantRules: [{ key: merchantRuleKey(booking("BILLA")), category: row.category, merchantAlias: "BILLA" }] };
-  expect(enrichTransaction({ ...booking("BILLA"), id: "future" }, collision,
-    createAccountMerchantResolver(legacy)).requires_manual_review).toBe(true);
-  expect(applyMerchantRules(legacy, [booking("BILLA")])[0].merchantAlias).toBeUndefined();
+  const prepared = prepareStatementImport(
+    [
+      {
+        file: "test.csv",
+        source: "Amex",
+        rows: [future],
+        skipped: 0,
+        issues: [],
+      },
+    ],
+    state,
+  );
+  const committed = queueLedgerReview(
+    commitStatementImport(state, prepared.automatic, [], prepared.metadata)
+      .state,
+  );
+  expect(committed.reviewQueue?.some((item) => item.id === future.id)).toBe(
+    true,
+  );
+  expect(
+    applyMerchantRules(state, [booking("BILLA")])[0].categoryOverride,
+  ).not.toBe(true);
+  const legacy = {
+    ...state,
+    merchantRules: [
+      {
+        key: merchantRuleKey(booking("BILLA")),
+        category: row.category,
+        merchantAlias: "BILLA",
+      },
+    ],
+  };
+  expect(
+    enrichTransaction(
+      { ...booking("BILLA"), id: "future" },
+      collision,
+      createAccountMerchantResolver(legacy),
+    ).requires_manual_review,
+  ).toBe(true);
+  expect(
+    applyMerchantRules(legacy, [booking("BILLA")])[0].merchantAlias,
+  ).toBeUndefined();
 });
 
 it("does not override contradictory merchant fields with an exact description match", () => {
-  const row = { ...booking("POS BILLA"), rawDetails: ["Händler Name: BILLA", "Merchant Name: PENNY"] };
+  const row = {
+    ...booking("POS BILLA"),
+    rawDetails: ["Händler Name: BILLA", "Merchant Name: PENNY"],
+  };
   const enriched = enrichTransaction(row, index);
   expect(enriched).toEqual({ ...row, requires_manual_review: true });
   const state = blankTestState();
-  const prepared = prepareStatementImport([{ file: "test.csv", source: "Raiffeisen", rows: [enriched], skipped: 0, issues: [] }], state);
+  const prepared = prepareStatementImport(
+    [
+      {
+        file: "test.csv",
+        source: "Raiffeisen",
+        rows: [enriched],
+        skipped: 0,
+        issues: [],
+      },
+    ],
+    state,
+  );
   expect(prepared.automatic).toHaveLength(0);
   expect(prepared.metadata.reviewQueue).toHaveLength(1);
+});
+
+it("does not hide contradictory category evidence behind an explicit merchant field", () => {
+  const row = {
+    ...booking("BILLA KINO"),
+    rawDescription: "BILLA KINO",
+    rawDetails: ["Merchant Name: BILLA"],
+  };
+  expect(enrichTransaction(row, index)).toEqual({
+    ...row,
+    requires_manual_review: true,
+  });
+  const learnedRow = {
+    ...booking("BILLA KINO Ref: NEW999"),
+    rawDetails: ["Merchant Name: BILLA"],
+  };
+  const resolver = createAccountMerchantResolver({
+    ...blankTestState(),
+    merchantRules: [
+      {
+        key: merchantRuleKey(booking("BILLA KINO Ref: OLD123")),
+        merchantAlias: "BILLA",
+        category: "Lebensmittel",
+      },
+    ],
+  });
+  expect(
+    enrichTransaction(learnedRow, index, resolver).requires_manual_review,
+  ).toBe(true);
+  expect(
+    enrichTransaction({ ...booking("BILLA"), sourceCategory: "Kino" }, index)
+      .requires_manual_review,
+  ).toBe(true);
+  const normalized = createAccountMerchantResolver({
+    ...blankTestState(),
+    merchantRules: [
+      {
+        key: merchantRuleKey(booking("BILLA Ref: OLD123")),
+        merchantAlias: "BILLA",
+        category: "Lebensmittel",
+      },
+    ],
+  });
+  expect(
+    enrichTransaction(
+      { ...booking("BILLA Ref: NEW999"), sourceCategory: "Kino" },
+      index,
+      normalized,
+    ).requires_manual_review,
+  ).toBe(true);
+  for (const description of [
+    "Netflix & Partner Steuerberatung",
+    "AMZN Immobilien",
+  ])
+    expect(
+      enrichTransaction(
+        {
+          ...booking(description),
+          rawDetails: [
+            `Merchant Name: ${description.startsWith("Netflix") ? "Netflix" : "AMZN"}`,
+          ],
+        },
+        index,
+      ).merchantAlias,
+    ).toBeUndefined();
+});
+
+it.each(["AMZN Mktp", "Shell Villach", "OMV Filiale 47", "Apple.com/bill"])(
+  "recognizes %s without guessing the purchase category",
+  (description) => {
+    const result = enrichTransaction(booking(description), index);
+    expect(result).toMatchObject({
+      category: "Prüfen",
+      merchantMatch: "alias",
+      requires_manual_review: true,
+    });
+    expect(result.merchantId).toBeTruthy();
+    expect(result.merchantAlias).toBeTruthy();
+    expect(result.categoryOverride).not.toBe(true);
+  },
+);
+
+it("uses a dedicated fuel-pump MCC but not a station/shop MCC or an unrelated reference", () => {
+  const original = booking("Shell Villach");
+  expect(
+    enrichTransaction({ ...original, rawDetails: ["MCC: 5542"] }, index),
+  ).toMatchObject({ category: "Tanken", requires_manual_review: false });
+  for (const detail of [
+    "MCC: 5541",
+    "Referenz: MCC 5542",
+    "5542",
+    "MCC: 554299",
+  ])
+    expect(
+      enrichTransaction({ ...original, rawDetails: [detail] }, index)
+        .requires_manual_review,
+    ).toBe(true);
+  for (const other of ["MCC: 5812", "MCC: unknown", "MCC: 5541"])
+    expect(
+      enrichTransaction(
+        { ...original, rawDetails: ["MCC: 5542", other] },
+        index,
+      ).requires_manual_review,
+    ).toBe(true);
+  expect(
+    enrichTransaction(
+      {
+        ...original,
+        rawDetails: ["MCC: 5542", "Merchant Category Code: 5542"],
+      },
+      index,
+    ).requires_manual_review,
+  ).toBe(false);
+});
+
+it("lets an explicit confirmed marketplace choice resolve purchase-purpose uncertainty", () => {
+  const original = booking("AMZN Mktp");
+  const resolver = createAccountMerchantResolver({
+    ...blankTestState(),
+    merchantRules: [
+      {
+        key: merchantRuleKey(original),
+        merchantAlias: "Amazon",
+        category: "Möbel & Einrichtung",
+      },
+    ],
+  });
+  expect(enrichTransaction(original, index, resolver)).toMatchObject({
+    merchantAlias: "Amazon",
+    category: "Möbel & Einrichtung",
+    requires_manual_review: false,
+  });
+});
+
+it("does not mistake a generic salary credit from a known merchant for a refund", () => {
+  const original = { ...booking("Gutschrift Gehalt BILLA"), amount: 2000 };
+  expect(enrichTransaction(original, index)).toEqual(original);
+  expect(
+    enrichTransaction(
+      { ...booking("Rueckerstattung AMZN Mktp"), amount: 42 },
+      index,
+    ),
+  ).toMatchObject({
+    merchantAlias: "Amazon",
+    category: "Rückerstattungen",
+    requires_manual_review: false,
+  });
+});
+
+it("does not apply a confirmed refund category to the next outgoing purchase", () => {
+  const row = booking("BILLA");
+  const resolver = createAccountMerchantResolver({
+    ...blankTestState(),
+    merchantRules: [
+      {
+        key: merchantRuleKey(row),
+        merchantAlias: "BILLA",
+        category: "Rückerstattungen",
+      },
+    ],
+  });
+  expect(enrichTransaction(row, index, resolver)).toMatchObject({
+    category: "Prüfen",
+    requires_manual_review: true,
+  });
+});
+
+it("keeps a locked receipt's wrapper category independent of the protected booking", () => {
+  const original = {
+    ...booking("BILLA"),
+    category: "Shopping" as const,
+    manualCategory: true,
+    is_locked: true,
+  };
+  const input = {
+    ...blankTestState(),
+    transactions: [],
+    fixedReceipts: [
+      {
+        key: "receipt",
+        date: original.date,
+        amount: original.amount,
+        category: "Möbel & Einrichtung" as const,
+        booking: original,
+      },
+    ],
+  };
+  expect(
+    backfillBatch(input, new Set([original.id]), index).fixedReceipts?.[0],
+  ).toEqual(input.fixedReceipts[0]);
+  const changed = {
+    ...input,
+    fixedReceipts: [
+      { ...input.fixedReceipts[0], category: "Shopping" as const },
+    ],
+  };
+  expect(retainLockedAssignments(input, changed).fixedReceipts?.[0]).toEqual(
+    input.fixedReceipts[0],
+  );
 });
 
 it("does not let a global match override conflicting account aliases", () => {

@@ -91,6 +91,7 @@ export function normalizeMerchantText(text: string): string {
     .replace(/ö/g, "oe")
     .replace(/ü/g, "ue")
     .replace(/ß/g, "ss")
+    .replace(/(\p{L})\+(?=\s|$)/gu, "$1 plus")
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
     .replace(/\b([a-z]{3,})\d{2,}\b/g, "$1")
@@ -170,7 +171,8 @@ const nameSchema = z
   .refine((name) => {
     const normalized = normalizeMerchantText(name);
     return (
-      /\p{L}{2}/u.test(normalized) &&
+      ((normalized.match(/\p{L}/gu)?.length ?? 0) >= 2 ||
+        /^[\p{L}]\d$|^\d[\p{L}]$/u.test(normalized)) &&
       normalized.split(" ").length <= MAX_ALIAS_TOKENS &&
       !providers.test(name)
     );
@@ -191,6 +193,12 @@ export const merchantSchema = z
     defaultCategory: z.enum(categories).nullable(),
     region: z.string().trim().min(2).max(20),
     source: z.string().trim().min(1).max(80),
+    wikidataId: z
+      .string()
+      .regex(/^Q[1-9]\d{0,13}$/)
+      .nullable()
+      .default(null),
+    requiresCategoryEvidence: z.boolean().default(false),
     city: z.string().trim().min(1).max(150).nullable().default(null),
     license: z.string().trim().min(1).max(200).nullable().default(null),
     attribution: z.string().trim().min(1).max(2000).nullable().default(null),
@@ -220,18 +228,22 @@ const localMerchant = (
   aliases: string[],
   defaultCategory: Merchant["defaultCategory"],
   regexPatterns: string[] = [],
+  wikidataId: string | null = null,
+  requiresCategoryEvidence = false,
 ): Merchant =>
   merchantSchema.parse({
     id,
     canonicalName,
     aliases,
     regexPatterns,
+    wikidataId,
+    requiresCategoryEvidence,
     defaultCategory,
     region: "AT",
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: "Finanzblick: lokal gepflegte Händlerregeln",
-    updatedAt: Date.UTC(2026, 9, 8, 17),
+    updatedAt: Date.UTC(2026, 9, 9, 8, 0, 1),
   });
 
 /** Curated offline identities, not account-specific learned category overrides. */
@@ -269,7 +281,14 @@ export const seedMerchants: Merchant[] = [
     ["dm-drogerie", "dm Drogerie Markt"],
     "Drogerie",
   ),
-  localMerchant("at-bipa", "BIPA", ["Bipa Parfumerien"], "Drogerie"),
+  localMerchant(
+    "at-bipa",
+    "BIPA",
+    ["Bipa Parfumerien"],
+    "Drogerie",
+    [],
+    "Q864933",
+  ),
   localMerchant("at-ikea", "IKEA", ["Ikea Österreich"], "Möbel & Einrichtung"),
   localMerchant(
     "at-oebb",
@@ -278,11 +297,151 @@ export const seedMerchants: Merchant[] = [
     "Öffentliche Verkehrsmittel",
   ),
   localMerchant("at-westbahn", "WESTbahn", [], "Öffentliche Verkehrsmittel"),
-  localMerchant("at-omv", "OMV", ["OMV Tankstelle"], "Tanken"),
-  localMerchant("at-shell", "Shell", ["Shell Tankstelle"], "Tanken"),
+  localMerchant("at-omv", "OMV", ["OMV Tankstelle"], "Tanken", [], null, true),
+  localMerchant(
+    "at-shell",
+    "Shell",
+    ["Shell Tankstelle"],
+    "Tanken",
+    [],
+    null,
+    true,
+  ),
   localMerchant("at-thalia", "Thalia", ["Thalia Buchhandlung"], "Bildung"),
   localMerchant("at-fressnapf", "Fressnapf", [], "Haustiere"),
   localMerchant("at-martin-auer", "Martin Auer", [], "Cafés & Snacks"),
+  localMerchant(
+    "amazon",
+    "Amazon",
+    ["AMZN", "AMZN Mktp", "AMZNMktp", "Amazon EU", "Amazon Marketplace"],
+    "Shopping",
+    [],
+    null,
+    true,
+  ),
+  localMerchant("spotify", "Spotify", ["Spotify AB"], "Abonnements"),
+  localMerchant(
+    "netflix",
+    "Netflix",
+    ["Netflix.com", "Netflix International"],
+    "Abonnements",
+  ),
+  localMerchant(
+    "disney-plus",
+    "Disney Plus",
+    ["Disney+", "Disneyplus"],
+    "Abonnements",
+  ),
+  localMerchant(
+    "youtube-premium",
+    "YouTube Premium",
+    ["YouTubePremium"],
+    "Abonnements",
+  ),
+  localMerchant("nordvpn", "NordVPN", ["NordVPN.com"], "Abonnements"),
+  localMerchant("chatgpt", "ChatGPT", ["OpenAI ChatGPT"], "Abonnements"),
+  localMerchant(
+    "apple",
+    "Apple",
+    ["Apple.com/bill", "iTunes", "App Store"],
+    null,
+  ),
+  localMerchant(
+    "mcdonalds",
+    "McDonald's",
+    ["McDonalds", "Mc Donalds", "McD"],
+    "Restaurants",
+  ),
+  localMerchant("burger-king", "Burger King", ["BurgerKing"], "Restaurants"),
+  localMerchant(
+    "starbucks",
+    "Starbucks",
+    ["Starbucks Coffee"],
+    "Cafés & Snacks",
+  ),
+  localMerchant("wolt", "Wolt", [], "Lieferdienste"),
+  localMerchant("foodora", "foodora", [], "Lieferdienste"),
+  localMerchant("lieferando", "Lieferando", ["Lieferando.at"], "Lieferdienste"),
+  localMerchant("uber-eats", "Uber Eats", ["UberEats"], "Lieferdienste"),
+  localMerchant(
+    "uber-trips",
+    "Uber Trip",
+    ["UberTrip", "Uber Trips"],
+    "Mobilität",
+  ),
+  localMerchant("booking", "Booking.com", ["BookingCom"], "Urlaub"),
+  localMerchant("airbnb", "Airbnb", [], "Urlaub"),
+  localMerchant("ryanair", "Ryanair", [], "Urlaub"),
+  localMerchant(
+    "austrian-airlines",
+    "Austrian Airlines",
+    ["AustrianAirlines"],
+    "Urlaub",
+  ),
+  localMerchant("eurowings", "Eurowings", [], "Urlaub"),
+  localMerchant("wizz-air", "Wizz Air", ["WizzAir"], "Urlaub"),
+  localMerchant("flixbus", "FlixBus", [], "Öffentliche Verkehrsmittel"),
+  localMerchant("cineplexx", "Cineplexx", [], "Entertainment"),
+  localMerchant("cinemaxx", "CineMaxx", [], "Entertainment"),
+  localMerchant(
+    "steam",
+    "Steam",
+    ["SteamGames", "SteamPowered", "SteamPowered.com"],
+    "Entertainment",
+  ),
+  localMerchant(
+    "playstation",
+    "PlayStation",
+    ["PlayStation Network", "Sony PlayStation"],
+    "Entertainment",
+  ),
+  localMerchant("nintendo", "Nintendo", ["Nintendo eShop"], "Entertainment"),
+  localMerchant("decathlon", "Decathlon", [], "Sport & Fitness"),
+  localMerchant("intersport", "Intersport", [], "Sport & Fitness"),
+  localMerchant("fitinn", "Fitinn", [], "Sport & Fitness"),
+  localMerchant("mcfit", "McFit", [], "Sport & Fitness"),
+  localMerchant("zooplus", "Zooplus", [], "Haustiere"),
+  localMerchant("zalando", "Zalando", [], "Shopping"),
+  localMerchant("hm", "H&M", ["Hennes & Mauritz", "HM.com"], "Shopping"),
+  localMerchant("ca", "C&A", [], "Shopping"),
+  localMerchant("deichmann", "Deichmann", [], "Shopping"),
+  localMerchant("mediamarkt", "MediaMarkt", ["Media Markt"], "Shopping"),
+  localMerchant("moemax", "Mömax", ["Moemax"], "Möbel & Einrichtung"),
+  localMerchant("xxxlutz", "XXXLutz", [], "Möbel & Einrichtung"),
+  localMerchant("obi", "OBI", [], "Wohnen & Haushalt"),
+  localMerchant("bauhaus", "Bauhaus", [], "Wohnen & Haushalt"),
+  localMerchant("hornbach", "Hornbach", [], "Wohnen & Haushalt"),
+  localMerchant(
+    "at-post",
+    "Österreichische Post",
+    ["Oesterreichische Post", "Post.at"],
+    "Porto & Versand",
+  ),
+  localMerchant("dhl", "DHL", ["DHL Express"], "Porto & Versand"),
+  localMerchant("dpd", "DPD", [], "Porto & Versand"),
+  localMerchant("gls", "GLS", [], "Porto & Versand"),
+  localMerchant("ups", "UPS", [], "Porto & Versand"),
+  localMerchant("allianz", "Allianz", [], "Versicherungen"),
+  localMerchant("uniqa", "UNIQA", [], "Versicherungen"),
+  localMerchant("generali", "Generali", [], "Versicherungen"),
+  localMerchant(
+    "at-a1",
+    "A1 Telekom",
+    ["A1", "A1 Telekom Austria"],
+    "Telefon & Internet",
+  ),
+  localMerchant(
+    "at-drei",
+    "Drei",
+    ["Hutchison Drei", "Hutchison Drei Austria"],
+    "Telefon & Internet",
+  ),
+  localMerchant(
+    "at-magenta",
+    "Magenta",
+    ["Magenta Telekom", "T-Mobile Austria"],
+    "Telefon & Internet",
+  ),
 ];
 
 interface AliasEntry {
@@ -338,19 +497,56 @@ function oneEditApart(left: string, right: string): boolean {
 const unresolved = (
   method: MerchantMatch["method"] = "none",
 ): MerchantMatch => ({ requiresManualReview: true, method });
-const resolved = (
+function resolved(
   matches: Set<Merchant>,
   method: MerchantMatch["method"],
-): MerchantMatch =>
-  matches.size === 1
-    ? {
-        merchant: matches.values().next().value,
-        requiresManualReview:
-          method === "fuzzy" ||
-          matches.values().next().value?.defaultCategory === null,
-        method,
-      }
-    : unresolved(method);
+): MerchantMatch {
+  const candidates = [...matches];
+  const first = candidates[0];
+  if (!first) return unresolved(method);
+  if (
+    candidates.length > 1 &&
+    !(
+      first.wikidataId &&
+      candidates.every(
+        (merchant) =>
+          merchant.wikidataId === first.wikidataId &&
+          merchant.region === first.region &&
+          normalizeMerchantText(merchant.canonicalName) ===
+            normalizeMerchantText(first.canonicalName) &&
+          merchant.defaultCategory === first.defaultCategory &&
+          merchant.requiresCategoryEvidence === first.requiresCategoryEvidence,
+      )
+    )
+  )
+    return unresolved(method);
+  const merchant = candidates.sort(
+    (left, right) =>
+      Number(right.source === "local") - Number(left.source === "local") ||
+      left.id.localeCompare(right.id),
+  )[0];
+  return {
+    merchant,
+    requiresManualReview:
+      method === "fuzzy" || merchant.defaultCategory === null,
+    method,
+  };
+}
+
+export function normalizeMerchantDescriptor(text: string): string {
+  return normalizeMerchantText(text)
+    .replace(
+      /\bpay\s*pal(?:\s+europe)?(?:\s+s\s+a\s+r\s+l(?:\s+et\s+cie)?(?:\s+s\s+c\s+a)?)?/gi,
+      " ",
+    )
+    .replace(new RegExp(providers.source, "gi"), " ")
+    .replace(
+      /^(?:(?:lastschrift|purchase|card payment|payment|bezahlung|bezahlt bei|einkauf bei)\s+)+/i,
+      "",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /**
  * Snapshot index: construct again after database changes. Regex and fuzzy work
@@ -407,14 +603,7 @@ export class MerchantIndex {
     if (text.length > MAX_INPUT) return unresolved();
     // Remove IDs before providers: stripping "Stripe" inside an ID must not
     // expose its remaining "BILLA" component as a merchant.
-    const normalized = normalizeMerchantText(text)
-      .replace(
-        /\bpay\s*pal(?:\s+europe)?(?:\s+s\s+a\s+r\s+l(?:\s+et\s+cie)?(?:\s+s\s+c\s+a)?)?/gi,
-        " ",
-      )
-      .replace(new RegExp(providers.source, "gi"), " ")
-      .replace(/\s+/g, " ")
-      .trim();
+    const normalized = normalizeMerchantDescriptor(text);
     if (!normalized) return unresolved();
     const tokens = normalized.split(" ");
     if (tokens.length > MAX_TOKENS) return unresolved();
@@ -429,9 +618,31 @@ export class MerchantIndex {
       if (pattern.test(normalized)) regexMatches.add(merchant);
     }
     // Check regex conflicts even when an exact alias exists.
-    if (exactMatches.size)
-      return resolved(new Set([...exactMatches, ...regexMatches]), "exact");
-    if (regexMatches.size) return resolved(regexMatches, "regex");
+    if (exactMatches.size) {
+      const result = resolved(
+        new Set([...exactMatches, ...regexMatches]),
+        "exact",
+      );
+      if (!result.merchant) return result;
+      const merchant = result.merchant;
+      const leading = phrases.some((phrase) =>
+        normalized.startsWith(`${phrase} `) || normalized === phrase
+          ? this.exact.get(phrase)?.merchants.has(merchant)
+          : false,
+      );
+      return leading ? result : unresolved("exact");
+    }
+    if (regexMatches.size) {
+      const result = resolved(regexMatches, "regex");
+      return !result.merchant ||
+        this.regex.some(
+          (entry) =>
+            entry.merchant === result.merchant &&
+            entry.pattern.exec(normalized)?.index === 0,
+        )
+        ? result
+        : unresolved("regex");
+    }
     return this.matchFuzzy(phrases);
   }
 

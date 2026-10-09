@@ -39,6 +39,18 @@ chain's outlets. Differently named sub-brands remain distinct. Ambiguous names
 remain collisions for manual review. Category mapping is deliberately small:
 unknown or contradictory types yield `null`, not a guessed category. OSM
 addresses may supply a city; a chain spanning cities has no single city.
+The optional `wikidataId` persists that brand identity evidence. Older
+`osm-brand-Q…-hash` rows retain the same evidence through their importer-generated
+ID. Curated BIPA is independently linked to
+<https://www.wikidata.org/wiki/Q864933> (public CC0 identity data, no image rights).
+The matcher resolves duplicate records only when entity, canonical name, region
+and default category/purpose requirements agree. Same names without this evidence remain collisions;
+different categories and sub-brand names remain open. No source attribution is
+deleted, and existing canonical IDs remain stable.
+`requiresCategoryEvidence` distinguishes a reference's usual business category
+from evidence of the actual purchase purpose. Marketplace/fuel references can
+identify a merchant without automatically categorizing a multipurpose purchase.
+Existing and newly imported fuel references require that extra evidence.
 Explicit OSM `alt_name`, `short_name`, and `official_name` values become bounded
 aliases; invalid/excess alternatives are counted in `aliasSkippedCount`.
 

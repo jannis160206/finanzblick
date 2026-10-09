@@ -43,6 +43,17 @@ describe("bounded Austrian operator import", () => {
       expect(() => parseMerchantBbox(invalid)).toThrow();
   });
 
+  it("requires purchase-purpose evidence for fuel references rather than guessing at station shops", () => {
+    const parsed = parseOsmMerchants(
+      payload([element(7, { name: "Test Tankstelle", amenity: "fuel" })]),
+      10,
+    );
+    expect(parsed.merchants[0]).toMatchObject({
+      defaultCategory: "Tanken",
+      requiresCategoryEvidence: true,
+    });
+  });
+
   it("intersects each shop/amenity/tourism selection with the AT area and bbox", () => {
     const query = merchantOverpassQuery(bbox);
     expect(query).toContain('area["ISO3166-1"="AT"]["admin_level"="2"]');
@@ -171,15 +182,26 @@ describe("bounded Austrian operator import", () => {
 
 describe("conservative OSM identities and categories", () => {
   it("indexes explicit alternative names and reports unsafe alternatives", () => {
-    const { merchants, report } = parseOsmMerchants(payload([element(1, {
-      name: "Nordlicht Laden", shop: "supermarket",
-      alt_name: "Nordlicht Markt; PayPal; Nordlicht Markt",
-      short_name: "Nordlicht", official_name: "Nordlicht Laden",
-    })]), 1);
+    const { merchants, report } = parseOsmMerchants(
+      payload([
+        element(1, {
+          name: "Nordlicht Laden",
+          shop: "supermarket",
+          alt_name: "Nordlicht Markt; PayPal; Nordlicht Markt",
+          short_name: "Nordlicht",
+          official_name: "Nordlicht Laden",
+        }),
+      ]),
+      1,
+    );
     expect(merchants[0].aliases).toEqual(["Nordlicht Markt", "Nordlicht"]);
     expect(report.aliasSkippedCount).toBe(1);
-    expect(new MerchantIndex(merchants).match("POS Nordlicht Markt 1234")).toMatchObject({
-      method: "exact", merchant: { id: "osm-node-1" }, requiresManualReview: false,
+    expect(
+      new MerchantIndex(merchants).match("POS Nordlicht Markt 1234"),
+    ).toMatchObject({
+      method: "exact",
+      merchant: { id: "osm-node-1" },
+      requiresManualReview: false,
     });
   });
 

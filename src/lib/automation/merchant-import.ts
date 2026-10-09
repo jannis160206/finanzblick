@@ -200,23 +200,31 @@ export function parseOsmMerchants(
           .slice(0, 16)}`
       : `osm-${element.type}-${element.id}`;
     const city = tags["addr:city"]?.trim() || null;
-    const aliasCandidates = [...new Set(
-      [tags.alt_name, tags.short_name, tags.official_name]
-        .flatMap(value => value?.split(";") ?? []).map(value => value.trim())
-        .filter(value => value && value !== canonicalName),
-    )];
-    const validAliases = aliasCandidates.filter(value => merchantSchema.shape.aliases.element.safeParse(value).success);
+    const aliasCandidates = [
+      ...new Set(
+        [tags.alt_name, tags.short_name, tags.official_name]
+          .flatMap((value) => value?.split(";") ?? [])
+          .map((value) => value.trim())
+          .filter((value) => value && value !== canonicalName),
+      ),
+    ];
+    const validAliases = aliasCandidates.filter(
+      (value) => merchantSchema.shape.aliases.element.safeParse(value).success,
+    );
     const aliases = validAliases.slice(0, 32);
     report.aliasSkippedCount += aliasCandidates.length - aliases.length;
+    const defaultCategory = osmMerchantCategory(tags);
     const parsed = merchantSchema.safeParse({
       id,
       canonicalName,
       aliases,
       regexPatterns: [],
-      defaultCategory: osmMerchantCategory(tags),
+      defaultCategory,
+      requiresCategoryEvidence: defaultCategory === "Tanken",
       region: "AT",
       city,
       source: "osm",
+      wikidataId: brandEvidence ? brandId : null,
       license: "ODbL-1.0",
       attribution:
         "© OpenStreetMap contributors; https://www.openstreetmap.org/copyright",
@@ -232,9 +240,13 @@ export function parseOsmMerchants(
     }
     const previous = merchants.get(id);
     if (previous) {
-      const merged = [...new Set([...previous.aliases, ...parsed.data.aliases])];
+      const merged = [
+        ...new Set([...previous.aliases, ...parsed.data.aliases]),
+      ];
       report.aliasSkippedCount += Math.max(0, merged.length - 32);
       previous.aliases = merged.slice(0, 32);
+      previous.requiresCategoryEvidence ||=
+        parsed.data.requiresCategoryEvidence;
       if (previous.defaultCategory !== parsed.data.defaultCategory)
         previous.defaultCategory = null;
       if (previous.city !== parsed.data.city) previous.city = null;

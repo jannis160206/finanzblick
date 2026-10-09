@@ -17,6 +17,8 @@ const merchant = (overrides: Partial<Merchant> = {}): Merchant => ({
   defaultCategory: "Shopping",
   region: "AT",
   source: "local",
+  wikidataId: null,
+  requiresCategoryEvidence: false,
   city: null,
   license: null,
   attribution: null,
@@ -32,13 +34,28 @@ const expectMerchant = (text: string, id: string, method = "exact") => {
 };
 
 describe("merchant schema and local seeds", () => {
+  it("does not discard stricter purpose requirements while resolving duplicate public identities", () => {
+    const common = merchant({
+      canonicalName: "Test Merchant",
+      wikidataId: "Q123",
+    });
+    const index = new MerchantIndex([
+      common,
+      { ...common, id: "strict", requiresCategoryEvidence: true },
+    ]);
+    expect(index.match("Test Merchant")).toMatchObject({
+      requiresManualReview: true,
+    });
+    expect(index.match("Test Merchant").merchant).toBeUndefined();
+  });
   it("validates the curated AT database against current purpose categories", () => {
     expect(new Set(seedMerchants.map((item) => item.id)).size).toBe(
       seedMerchants.length,
     );
     for (const item of seedMerchants) {
       expect(merchantSchema.parse(item)).toEqual(item);
-      expect(categories).toContain(item.defaultCategory);
+      if (item.defaultCategory !== null)
+        expect(categories).toContain(item.defaultCategory);
       expect(item.region).toBe("AT");
       expect(item.source).toBe("local");
     }
@@ -55,6 +72,9 @@ describe("merchant schema and local seeds", () => {
       { canonicalName: "PayPal" },
       { aliases: ["Klarna"] },
       { aliases: ["12345"] },
+      { aliases: ["D1"] },
+      { aliases: ["K2"] },
+      { aliases: [".AT"] },
     ])
       expect(merchantSchema.safeParse({ ...merchant(), ...item }).success).toBe(
         false,
@@ -63,15 +83,21 @@ describe("merchant schema and local seeds", () => {
 
   it("rejects logos with unknown rights or non-Commons attribution sources at the storage boundary", () => {
     const logo = {
-      file: `${"a".repeat(64)}.png`, license: "CC-BY-4.0", attribution: "Test artist",
+      file: `${"a".repeat(64)}.png`,
+      license: "CC-BY-4.0",
+      attribution: "Test artist",
       sourceUrl: "https://commons.wikimedia.org/wiki/File:Test.png",
     };
-    expect(merchantSchema.safeParse({ ...merchant(), logo }).success).toBe(true);
+    expect(merchantSchema.safeParse({ ...merchant(), logo }).success).toBe(
+      true,
+    );
     for (const invalid of [
       { ...logo, license: "All rights reserved" },
       { ...logo, sourceUrl: "https://example.com/logo.png" },
     ])
-      expect(merchantSchema.safeParse({ ...merchant(), logo: invalid }).success).toBe(false);
+      expect(
+        merchantSchema.safeParse({ ...merchant(), logo: invalid }).success,
+      ).toBe(false);
   });
 
   it.each([
@@ -159,6 +185,64 @@ describe("merchant text normalization", () => {
 });
 
 describe("indexed merchant matching", () => {
+  it.each([
+    ["POS H&M Filiale 1234 Wien", "hm"],
+    ["POS C&A Terminal 9876", "ca"],
+    ["Lastschrift A1 Telekom Austria", "at-a1"],
+    ["POS A1 Terminal 1234", "at-a1"],
+    ["PayPal*AMZN Mktp 38734", "amazon"],
+    ["Card Payment SPOTIFY AB", "spotify"],
+    ["DISNEY+ WIEN", "disney-plus"],
+    ["UBER *TRIP", "uber-trips"],
+    ["UBER *EATS", "uber-eats"],
+    ["McDonalds Graz", "mcdonalds"],
+    ["POST.AT", "at-post"],
+  ])("recognizes unambiguous concrete catalog aliases: %s", (text, id) => {
+    expectMerchant(text, id);
+  });
+
+  it("does not identify a known brand mentioned inside another merchant's name", () => {
+    expect(index.match("Unknown shop near BILLA")).toMatchObject({
+      requiresManualReview: true,
+    });
+    expect(index.match("Corporate cafe Mueller")).toMatchObject({
+      requiresManualReview: true,
+    });
+    expect(index.match("APPLE.COM/BILL")).toMatchObject({
+      method: "exact",
+      requiresManualReview: true,
+    });
+  });
+
+  it("coalesces only independently verified same-brand identities with agreeing categories", () => {
+    const bipa = seedMerchants.find((item) => item.id === "at-bipa");
+    if (!bipa) throw new Error("BIPA seed is missing");
+    const imported = merchant({
+      id: "osm-bipa",
+      source: "osm",
+      canonicalName: "Bipa",
+      defaultCategory: "Drogerie",
+      wikidataId: "Q864933",
+    });
+    for (const order of [
+      [bipa, imported],
+      [imported, bipa],
+    ])
+      expect(new MerchantIndex(order).match("BIPA Wien")).toMatchObject({
+        merchant: { id: "at-bipa" },
+        requiresManualReview: false,
+      });
+    for (const variant of [
+      { ...imported, wikidataId: null },
+      { ...imported, wikidataId: "Q123" },
+      { ...imported, defaultCategory: "Restaurants" as const },
+      { ...imported, canonicalName: "BIPA Shop", aliases: ["BIPA"] },
+    ])
+      expect(
+        new MerchantIndex([bipa, variant]).match("BIPA Wien"),
+      ).toMatchObject({ requiresManualReview: true });
+  });
+
   it.each([
     ["BILLA", "at-billa"],
     ["POS BILLA Filiale 001234 WIEN AT 08.10.2026 12:42", "at-billa"],

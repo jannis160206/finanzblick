@@ -15,6 +15,7 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
         source TEXT NOT NULL, updated_at INTEGER NOT NULL
       );
       INSERT INTO merchants VALUES ('at-billa', 'BILLA', '["Billa Plus"]', '[]', 'Lebensmittel', 'AT', 'local', 1);
+      INSERT INTO merchants VALUES ('fuel', 'Test Tankstelle', '[]', '[]', 'Tanken', 'AT', 'osm', 1);
       BEGIN IMMEDIATE;
     `);
     migrateAutomation(db);
@@ -22,7 +23,7 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
     expect(
       db
         .prepare(
-          "SELECT canonical_name, default_category, aliases_json, license, logo_json FROM merchants",
+          "SELECT canonical_name, default_category, aliases_json, license, logo_json FROM merchants WHERE id = 'at-billa'",
         )
         .get(),
     ).toEqual({
@@ -45,11 +46,26 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
     db.exec("COMMIT");
     expect(
       db.prepare("SELECT count(*) AS count FROM merchants").get()?.count,
-    ).toBe(2);
+    ).toBe(3);
+    expect(
+      db
+        .prepare(
+          "SELECT requires_category_evidence FROM merchants WHERE id = 'fuel'",
+        )
+        .get()?.requires_category_evidence,
+    ).toBe(1);
+    expect(
+      db
+        .prepare("SELECT wikidata_id FROM merchants WHERE id = 'at-billa'")
+        .get()?.wikidata_id,
+    ).toBeNull();
+    expect(() =>
+      db.exec("UPDATE merchants SET requires_category_evidence = 2"),
+    ).toThrow();
     expect(
       db.prepare("SELECT count(*) AS count FROM automation_migrations").get()
         ?.count,
-    ).toBe(2);
+    ).toBe(4);
   } finally {
     db.close();
   }
