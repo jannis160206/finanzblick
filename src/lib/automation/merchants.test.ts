@@ -33,7 +33,47 @@ const expectMerchant = (text: string, id: string, method = "exact") => {
   expect(result.method).toBe(method);
 };
 
+describe("explicit card entry metadata", () => {
+  it.each([
+    ["CONTACTLESS BILLA FILIALE 0042", "at-billa"],
+    ["Kontaktlose Zahlung PENNY Terminal 17", "at-penny"],
+    ["EC-Kartenzahlung Müller 08.10.2026", "at-mueller"],
+    ["Karteneinsatz: IKEA", "at-ikea"],
+    ["NFC-Zahlung SPAR", "at-spar"],
+    ["MCC: 5411 Kontaktlos BILLA", "at-billa"],
+    ["CONTACTLESS PayPal * Spotify", "spotify"],
+  ])("matches %s without fuzzy guessing", (text, id) =>
+    expectMerchant(text, id),
+  );
+  it.each([
+    "CONTACTLESS BILLA PENNY",
+    "Kontaktlos Muelller",
+    "Kontaktlos ID: STRIPEBILLA47110810",
+    "CONTACTLESSUnknown BILLA",
+    "MCC BILLA",
+  ])(
+    "does not hide conflicting, fuzzy, reference-only or unlabelled input: %s",
+    (text) => {
+      const result = index.match(text);
+      expect(result.requiresManualReview).toBe(true);
+    },
+  );
+});
+
 describe("merchant schema and local seeds", () => {
+  it("uses independently verified retailer/region identities without merging furniture sub-brands or the Bauhaus school", () => {
+    const seeds = new Map(seedMerchants.map((item) => [item.id, item]));
+    expect(seeds.get("bauhaus")?.wikidataId).toBe("Q672043");
+    expect(seeds.get("at-a1")?.wikidataId).toBe("Q279847");
+    expect(seeds.get("at-drei")?.wikidataId).toBe("Q28956333");
+    expect(seeds.get("at-magenta")?.wikidataId).toBe("Q63537385");
+    expect(seeds.get("xxxlutz")?.wikidataId).not.toBe(
+      seeds.get("moemax")?.wikidataId,
+    );
+    expect(index.match("InterBAUHAUS AG").merchant?.id).toBe("bauhaus");
+    expect(index.match("XXXLutz Mömax").merchant).toBeUndefined();
+    expect(seeds.get("xxxlutz")?.aliases).not.toContain("Mömax");
+  });
   it("indexes verified shared aliases once and preserves an existing public identity on request", () => {
     const local = merchant({
       id: "local-identity",

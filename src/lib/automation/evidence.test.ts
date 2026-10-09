@@ -19,6 +19,33 @@ const row = (description: string, rawDetails?: string[]) =>
   });
 
 describe("bounded authoritative merchant evidence", () => {
+  it("uses explicit entry modes without hiding merchant or category contradictions", () => {
+    const source = row("CONTACTLESS BILLA FILIALE 17");
+    expect(enrichTransaction(source, index)).toMatchObject({
+      merchantAlias: "BILLA",
+      category: "Lebensmittel",
+      requires_manual_review: false,
+      description: source.description,
+    });
+    for (const source of [
+      row("CONTACTLESS BILLA", ["Merchant Name: PENNY"]),
+      row("Kontaktlos BILLA PENNY"),
+      row("EC-Kartenzahlung Müller Apotheke"),
+      row("MCC: 5411 Kontaktlos BILLA KINO"),
+      row("Kontaktlos Muelller"),
+    ]) {
+      expect(enrichTransaction(source, index)).toMatchObject({
+        category: "Prüfen",
+        requires_manual_review: true,
+      });
+    }
+    expect(
+      enrichTransaction(
+        { ...source, is_locked: true, category: "Shopping" },
+        index,
+      ),
+    ).toEqual({ ...source, is_locked: true, category: "Shopping" });
+  });
   it("recognizes matching named variants even while their purchase category is unknown", () => {
     expect(
       enrichTransaction(

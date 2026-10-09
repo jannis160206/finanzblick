@@ -154,12 +154,13 @@ describe("bounded Austrian operator import", () => {
       expect(target.hostname).toBe("www.wikidata.org");
       expect([...target.searchParams.keys()]).toEqual([
         "action",
-        "ids",
-        "props",
+        "entity",
+        "property",
         "format",
       ]);
-      const id = target.searchParams.get("ids")!;
-      return json({ entities: { [id]: { claims: {} } } });
+      expect(target.searchParams.get("property")).toBe("P154");
+      expect(target.searchParams.get("entity")).toMatch(/^Q\d+$/);
+      return json({ claims: {} });
     });
     const result = await importOsmMerchants({
       bbox,

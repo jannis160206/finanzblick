@@ -170,6 +170,10 @@ bleiben geschützt.
 
 Der Worker verwendet weiterhin einen einzigen Prozess und einen Händlerindex pro
 Start. Vor dem Vergleich entfernt er POS-/Terminal-IDs, Uhrzeit, IBAN und Referenzen.
+Eindeutige führende Kontaktlos-/EC-Kartenmodusangaben und ausdrücklich beschriftete
+`MCC: 5411`-Metadaten stören den Händler-Lookup nicht mehr. Sie sind selbst keine
+Kaufkategorie; ursprüngliche Buchungstexte und widersprüchliche Quellen bleiben
+unverändert erhalten. Fuzzy- und Mehrfachtreffer werden weiterhin nicht geraten.
 Exakte Aliase oder vertrauenswürdige lokale Regexregeln dürfen Namen und Kategorie
 setzen. Bei eindeutigem Namen, aber fehlender Kategorie/Zwecknachweis kann nur der
 Name gesetzt werden; die Kategorie bleibt in der Prüfung. Fuzzy, mehrere globale

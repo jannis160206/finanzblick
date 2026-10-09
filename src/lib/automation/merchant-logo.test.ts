@@ -39,7 +39,7 @@ const claim = (name = filename, rank = "normal") => ({
   },
 });
 const entity = (claims = [claim()]) => ({
-  entities: { Q123: { claims: { P154: claims } } },
+  claims: { P154: claims },
 });
 const imageinfo = (overrides = {}) => ({
   url: upload,
@@ -251,6 +251,78 @@ describe("Commons-generated raster logos", () => {
 });
 
 describe("explicit Commons license gate and private PNG cache", () => {
+  it("accepts only documented canonical-equivalent CC0 URLs, never a guessed or missing license", async () => {
+    const original = imageinfo().extmetadata;
+    const declaration = {
+      ...original,
+      LicenseShortName: { value: "CC0" },
+      LicenseUrl: {
+        value: "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+      },
+    };
+    const request = network([
+      Response.json(entity()),
+      Response.json(commons({ extmetadata: declaration })),
+      new Response(new Uint8Array(await png())),
+    ]);
+    expect(
+      await retrieveMerchantLogo("Q123", await privateDatabase(), {
+        fetch: request,
+      }),
+    ).toMatchObject({ status: "downloaded", logo: { license: "CC0-1.0" } });
+    for (const url of [
+      "",
+      "not a URL",
+      "https://creativecommons.org.evil.example/publicdomain/zero/1.0/",
+      "https://creativecommons.org/publicdomain/zero/1.0/?permission=private",
+      "https://creativecommons.org/licenses/by-nc/4.0/",
+    ]) {
+      const denied = network([
+        Response.json(entity()),
+        Response.json(
+          commons({
+            extmetadata: { ...declaration, LicenseUrl: { value: url } },
+          }),
+        ),
+      ]);
+      expect(
+        await retrieveMerchantLogo("Q123", await privateDatabase(), {
+          fetch: denied,
+        }),
+      ).toMatchObject({ status: "skipped" });
+      expect(denied).toHaveBeenCalledTimes(2);
+    }
+  });
+  it.each([
+    "logos.fandom.com",
+    "Logopedia",
+    "logowik.com",
+    "brandsoftheworld.com",
+  ])(
+    "does not proxy unresolved collection-origin artwork through Commons: %s",
+    async (source) => {
+      const request = network([
+        Response.json(entity()),
+        Response.json(
+          commons({
+            extmetadata: {
+              ...imageinfo().extmetadata,
+              Credit: { value: source },
+            },
+          }),
+        ),
+      ]);
+      expect(
+        await retrieveMerchantLogo("Q123", await privateDatabase(), {
+          fetch: request,
+        }),
+      ).toMatchObject({
+        status: "skipped",
+        reason: expect.stringContaining("provenance"),
+      });
+      expect(request).toHaveBeenCalledTimes(2);
+    },
+  );
   it("downloads only after checking licensing, normalizes and idempotently caches content", async () => {
     const databasePath = await privateDatabase();
     const image = await png();
@@ -267,6 +339,11 @@ describe("explicit Commons license gate and private PNG cache", () => {
       expect(new URL(String(request.mock.calls[0][0])).hostname).toBe(
         "www.wikidata.org",
       );
+      const entityRequest = new URL(String(request.mock.calls[0][0]));
+      expect(entityRequest.searchParams.get("action")).toBe("wbgetclaims");
+      expect(entityRequest.searchParams.get("property")).toBe("P154");
+      expect(entityRequest.searchParams.get("entity")).toBe("Q123");
+      expect(entityRequest.searchParams.has("props")).toBe(false);
       expect(new URL(String(request.mock.calls[1][0])).hostname).toBe(
         "commons.wikimedia.org",
       );

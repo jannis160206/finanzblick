@@ -62,6 +62,7 @@ export function normalizeMerchantText(text: string): string {
     .normalize("NFKC")
     .replace(iban, " ")
     .replace(/\biban\s*:?\s*[A-Z]{2}\s*\d{2}[A-Z0-9]*/gi, " ")
+    .replace(/\bmcc\s*[:=]\s*\d{4}\b/gi, " ")
     .replace(/\bbic\s*:?\s*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/gi, " ")
     .replace(
       /\b(?:terminal|kartenterminal|kartenfolge)[-\s]*(?:id|nr|nummer)?\.?\s*[:=#]?\s*(?=[A-Z0-9*-]*\d)[A-Z0-9*-]+\b/gi,
@@ -85,7 +86,13 @@ export function normalizeMerchantText(text: string): string {
       " ",
     )
     .replace(/\b(?:h(?:ä|ae)ndler|merchant)(?:[-\s]*name)?\s*:/gi, " ");
-  const value = merchantText(metadataFree)
+  const paymentModeFree = metadataFree
+    .trimStart()
+    .replace(
+      /^(?:(?:contactless(?:\s+card\s+payment)?|kontaktlos(?:e\s+(?:karten)?zahlung)?|karteneinsatz|(?:ec|debit|kredit)[ -]+kartenzahlung|ec[ -]+pos|nfc[ -]+zahlung)(?:\s*[:;|*]\s*|\s+))+/i,
+      "",
+    );
+  const value = merchantText(paymentModeFree)
     .toLocaleLowerCase("de-AT")
     .replace(/ä/g, "ae")
     .replace(/ö/g, "oe")
@@ -243,7 +250,7 @@ const localMerchant = (
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: "Finanzblick: lokal gepflegte Händlerregeln",
-    updatedAt: Date.UTC(2026, 9, 9, 14, 20),
+    updatedAt: Date.UTC(2026, 9, 9, 14, 21),
   });
 
 /** Curated offline identities, not account-specific learned category overrides. */
@@ -339,8 +346,22 @@ export const seedMerchants: Merchant[] = [
     null,
     true,
   ),
-  localMerchant("at-thalia", "Thalia", ["Thalia Buchhandlung"], "Bildung"),
-  localMerchant("at-fressnapf", "Fressnapf", [], "Haustiere"),
+  localMerchant(
+    "at-thalia",
+    "Thalia",
+    ["Thalia Buchhandlung", "Thalia Bücher", "Thalia Bücher GmbH", "Thalia.at"],
+    "Bildung",
+    [],
+    "Q2408854",
+  ),
+  localMerchant(
+    "at-fressnapf",
+    "Fressnapf",
+    ["Fressnapf GmbH", "Fressnapf Tiernahrungs GmbH", "Freßnapf"],
+    "Haustiere",
+    [],
+    "Q875796",
+  ),
   localMerchant("at-martin-auer", "Martin Auer", [], "Cafés & Snacks"),
   localMerchant(
     "amazon",
@@ -392,8 +413,17 @@ export const seedMerchants: Merchant[] = [
     "McDonald's",
     ["McDonalds", "Mc Donalds", "McD"],
     "Restaurants",
+    [],
+    "Q38076",
   ),
-  localMerchant("burger-king", "Burger King", ["BurgerKing"], "Restaurants"),
+  localMerchant(
+    "burger-king",
+    "Burger King",
+    ["BurgerKing", "Burger King Corporation"],
+    "Restaurants",
+    [],
+    "Q177054",
+  ),
   localMerchant(
     "starbucks",
     "Starbucks",
@@ -443,15 +473,64 @@ export const seedMerchants: Merchant[] = [
   localMerchant("mcfit", "McFit", [], "Sport & Fitness"),
   localMerchant("zooplus", "Zooplus", [], "Haustiere"),
   localMerchant("zalando", "Zalando", [], "Shopping"),
-  localMerchant("hm", "H&M", ["Hennes & Mauritz", "HM.com"], "Shopping"),
-  localMerchant("ca", "C&A", [], "Shopping"),
+  localMerchant(
+    "hm",
+    "H&M",
+    ["Hennes & Mauritz", "HM.com"],
+    "Shopping",
+    [],
+    "Q188326",
+  ),
+  localMerchant("ca", "C&A", ["C&A Mode"], "Shopping", [], "Q701338"),
   localMerchant("deichmann", "Deichmann", [], "Shopping"),
-  localMerchant("mediamarkt", "MediaMarkt", ["Media Markt"], "Shopping"),
-  localMerchant("moemax", "Mömax", ["Moemax"], "Möbel & Einrichtung"),
-  localMerchant("xxxlutz", "XXXLutz", [], "Möbel & Einrichtung"),
-  localMerchant("obi", "OBI", [], "Wohnen & Haushalt"),
-  localMerchant("bauhaus", "Bauhaus", [], "Wohnen & Haushalt"),
-  localMerchant("hornbach", "Hornbach", [], "Wohnen & Haushalt"),
+  localMerchant(
+    "mediamarkt",
+    "MediaMarkt",
+    ["Media Markt"],
+    "Shopping",
+    [],
+    "Q2381223",
+  ),
+  localMerchant(
+    "moemax",
+    "Mömax",
+    ["Moemax"],
+    "Möbel & Einrichtung",
+    [],
+    "Q56388481",
+  ),
+  localMerchant(
+    "xxxlutz",
+    "XXXLutz",
+    [],
+    "Möbel & Einrichtung",
+    [],
+    "Q70339467",
+  ),
+  localMerchant(
+    "obi",
+    "OBI",
+    ["OBI Baumarkt", "OBI Markt"],
+    "Wohnen & Haushalt",
+    [],
+    "Q300518",
+  ),
+  localMerchant(
+    "bauhaus",
+    "Bauhaus",
+    ["Bauhaus AG", "InterBAUHAUS AG"],
+    "Wohnen & Haushalt",
+    [],
+    "Q672043",
+  ),
+  localMerchant(
+    "hornbach",
+    "Hornbach",
+    ["Hornbach-Baumarkt"],
+    "Wohnen & Haushalt",
+    [],
+    "Q685926",
+  ),
   localMerchant(
     "at-post",
     "Österreichische Post",
@@ -468,20 +547,31 @@ export const seedMerchants: Merchant[] = [
   localMerchant(
     "at-a1",
     "A1 Telekom",
-    ["A1", "A1 Telekom Austria"],
+    ["A1", "A1 Telekom Austria", "A1 Austria"],
     "Telefon & Internet",
+    [],
+    "Q279847",
   ),
   localMerchant(
     "at-drei",
     "Drei",
-    ["Hutchison Drei", "Hutchison Drei Austria"],
+    [
+      "Hutchison Drei",
+      "Hutchison Drei Austria",
+      "Hutchison Drei Austria GmbH",
+      "Drei Österreich",
+    ],
     "Telefon & Internet",
+    [],
+    "Q28956333",
   ),
   localMerchant(
     "at-magenta",
     "Magenta",
-    ["Magenta Telekom", "T-Mobile Austria"],
+    ["Magenta Telekom", "T-Mobile Austria", "Magenta Österreich"],
     "Telefon & Internet",
+    [],
+    "Q63537385",
   ),
   localMerchant("at-adeg", "ADEG", ["ADEG Markt"], "Lebensmittel"),
   localMerchant("at-mpreis", "MPREIS", ["M-Preis", "M Preis"], "Lebensmittel"),

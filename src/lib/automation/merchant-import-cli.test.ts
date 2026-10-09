@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   import: vi.fn(),
   bbox: vi.fn(),
   refresh: vi.fn(),
+  batches: vi.fn(),
 }));
 vi.mock("node:util", async (original) => ({
   ...(await original<typeof import("node:util")>()),
@@ -33,6 +34,9 @@ vi.mock("./merchant-import", () => ({
 }));
 vi.mock("./merchant-logo-refresh", () => ({
   refreshMerchantLogos: mocks.refresh,
+}));
+vi.mock("./merchant-logo-batches", () => ({
+  refreshMerchantLogoBatches: mocks.batches,
 }));
 import { merchantSchema, seedMerchants } from "./merchants";
 const item = (id = "osm-node-1") =>
@@ -71,6 +75,29 @@ beforeEach(() => {
 });
 
 describe("operator merchant import CLI", () => {
+  it("scans all public catalog logo entities in bounded batches without geography or financial input", async () => {
+    mocks.parseArgs.mockReturnValue({
+      values: { "all-logos": true, limit: "10", after: "Q123", refresh: true },
+    });
+    mocks.batches.mockResolvedValue({ processed: 30, remaining: 0 });
+    await run();
+    expect(mocks.batches).toHaveBeenCalledWith(expect.anything(), {
+      batchSize: 10,
+      after: "Q123",
+      refresh: true,
+      onBatch: expect.any(Function),
+    });
+    expect(mocks.import).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.close).toHaveBeenCalledTimes(1);
+  });
+  it("rejects incompatible all-logo and geographic modes before database access", async () => {
+    mocks.parseArgs.mockReturnValue({
+      values: { "all-logos": true, bbox: "48,16,48.1,16.1" },
+    });
+    await expect(run()).rejects.toThrow("--all-logos");
+    expect(mocks.config).not.toHaveBeenCalled();
+  });
   it("refreshes catalog logos without a geography request", async () => {
     mocks.parseArgs.mockReturnValue({
       values: { "logos-only": true, limit: "3", refresh: true },

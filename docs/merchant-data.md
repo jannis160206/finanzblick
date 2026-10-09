@@ -59,6 +59,21 @@ ID. Curated brands are independently linked to public Wikidata identities
 | Amazon | [Q3884](https://www.wikidata.org/wiki/Q3884) |
 | Spotify | [Q689141](https://www.wikidata.org/wiki/Q689141) |
 | Netflix | [Q907311](https://www.wikidata.org/wiki/Q907311) |
+| McDonald's | [Q38076](https://www.wikidata.org/wiki/Q38076) |
+| Burger King | [Q177054](https://www.wikidata.org/wiki/Q177054) |
+| MediaMarkt | [Q2381223](https://www.wikidata.org/wiki/Q2381223) |
+| H&M | [Q188326](https://www.wikidata.org/wiki/Q188326) |
+| C&A | [Q701338](https://www.wikidata.org/wiki/Q701338) |
+| OBI | [Q300518](https://www.wikidata.org/wiki/Q300518) |
+| Bauhaus retailer, not the art school | [Q672043](https://www.wikidata.org/wiki/Q672043) |
+| Hornbach | [Q685926](https://www.wikidata.org/wiki/Q685926) |
+| XXXLutz | [Q70339467](https://www.wikidata.org/wiki/Q70339467) |
+| Moemax, not an XXXLutz alias | [Q56388481](https://www.wikidata.org/wiki/Q56388481) |
+| Fressnapf | [Q875796](https://www.wikidata.org/wiki/Q875796) |
+| Thalia books | [Q2408854](https://www.wikidata.org/wiki/Q2408854) |
+| A1 Austria, not the multinational parent | [Q279847](https://www.wikidata.org/wiki/Q279847) |
+| Drei Austria, not the global 3 brand entity | [Q28956333](https://www.wikidata.org/wiki/Q28956333) |
+| Magenta Austria | [Q63537385](https://www.wikidata.org/wiki/Q63537385) |
 
 The matcher resolves duplicate records only when entity, canonical name, region
 and default category/purpose requirements agree. Same names without this evidence remain collisions;
@@ -97,7 +112,10 @@ entities per run (at most three additional requests per entity; 61 total
 requests including Overpass, before opt-in bounded retries). Requests are sequential, with a 10-second
 per-request and 180-second total network deadline; raster processing has a
 five-second timeout. Preferred P154 is accepted only if unique; otherwise the
-logo is explicitly skipped. Original PNG, JPEG, and WebP files are accepted.
+logo is explicitly skipped.
+Wikidata requests use `wbgetclaims&property=P154`, not a full entity's unrelated
+claims. This keeps large company records inside the original byte budget.
+Original PNG, JPEG, and WebP files are accepted.
 SVG is **never downloaded or executed locally**: the importer requests a Commons
 PNG thumbnail and checks its host, hash-directory path and filename against the
 licensed original. Current Commons uses `thumb.wikimedia.org` and bucketed raster
@@ -108,14 +126,18 @@ This intentionally means
 many brands have **no logo**.
 
 Commons must explicitly provide matching license name and HTTPS license URL for
-CC0 1.0, Public Domain Mark 1.0, CC BY 4.0, or CC BY-SA 4.0, and an attributable
+CC0 1.0 (also Commons' `CC0` label), Public Domain Mark 1.0, CC BY 4.0, or CC BY-SA 4.0, and an attributable
 artist. A missing public-domain license URL is accepted **only** when Commons
 affirmatively declares all of `License=pd`, `LicenseShortName=Public domain`,
 `UsageTerms=Public domain`, `Copyrighted=False`, and `AttributionRequired=false`.
-No URL is invented. A sole `trademarked`/`trademark` advisory is retained in
+Known `creativecommons.org` HTTP/HTTPS and English/German `deed` URL forms are
+canonicalized to the same explicitly named license; missing, foreign, credentialed
+or query-bearing license URLs do not become permissions. No URL is invented.
+A sole `trademarked`/`trademark` advisory is retained in
 attribution, not treated as a copyright prohibition. Additional restrictions,
 fair-use and inferred licenses remain rejected. Known unresolved upstream
-provenance (`logos.fandom.com`, `theslap.com` in source credit) is skipped; the
+provenance (Logopedia, Logowik, Brands of the World and known collection domains
+in source credit) is skipped; the
 importer does not visit those sites. BIPA currently lacks P154; current HOFER and
 Amazon files have unresolved provenance. They therefore retain initials.
 Commons metadata
@@ -170,9 +192,23 @@ npm run merchants:import -- --logos-only --limit 20
 npm run merchants:import -- --logos-only --entities Q689141,Q907311
 # Deliberately recheck current source/license, including cached logos:
 npm run merchants:import -- --logos-only --entities Q537781,Q284688 --refresh
+# Visit all already-known public entities once in sequential groups of 20.
+# Rechecking current license/provenance is deliberate, including cached assets:
+npm run merchants:import -- --all-logos --refresh
+# If the 200-entity cap is reached, continue with the returned nextAfter value:
+npm run merchants:import -- --all-logos --refresh --after Q123
 ```
 
 The limit is 1-20 **network entity lookups** per invocation; cache reuse is free.
+For `--all-logos`, `--limit` controls each sequential batch (1-20); an invocation
+visits at most 200 public entities with a ten-minute overall deadline. IDs are
+deduplicated and sorted into a stable cursor order. Missing/rejected logos do not
+starve later entities. Batch progress prints the last completed cursor; after a
+source failure, repeat from that cursor (already stored assets remain intact).
+This scans known public reference IDs, not the internet for private bank texts.
+It cannot be combined with geographic/entity-selection modes. Private use is
+not treated as a universal copyright exception: only explicit permitted or
+affirmatively public-domain artwork enters the cache.
 Lookups remain sequential. Logo-only requests permit at most two retries for
 HTTP 429/503, honor numeric Retry-After up to five seconds, and stop explicitly
 when the source asks for a later retry. The total deadline remains 180 seconds.

@@ -22,6 +22,10 @@ const licenses = {
     id: "CC0-1.0",
     url: "https://creativecommons.org/publicdomain/zero/1.0/",
   },
+  CC0: {
+    id: "CC0-1.0",
+    url: "https://creativecommons.org/publicdomain/zero/1.0/",
+  },
   "Public domain": {
     id: "Public-domain",
     url: "https://creativecommons.org/publicdomain/mark/1.0/",
@@ -35,6 +39,25 @@ const licenses = {
     url: "https://creativecommons.org/licenses/by-sa/4.0/",
   },
 } as const;
+
+function canonicalLicenseUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  if (!URL.canParse(value)) return value;
+  const url = new URL(value);
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    url.hostname !== "creativecommons.org" ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    return value;
+  url.protocol = "https:";
+  url.pathname = url.pathname.replace(/deed\.(?:en|de)\/?$/, "");
+  return url.href;
+}
 
 function fixedUrl(value: string, host: string, path: string): URL {
   const url = new URL(value);
@@ -195,31 +218,23 @@ export type MerchantLogoResult =
   | { status: "downloaded"; logo: PrivateMerchantLogo }
   | { status: "skipped"; reason: string };
 
-const entitySchema = z.object({
-  entities: z.record(
-    z.string(),
-    z.object({
-      missing: z.unknown().optional(),
-      claims: z
-        .object({
-          P154: z
-            .array(
-              z.object({
-                rank: z.enum(["preferred", "normal", "deprecated"]),
-                mainsnak: z.object({
-                  snaktype: z.enum(["value", "somevalue", "novalue"]),
-                  datavalue: z
-                    .object({ type: z.string(), value: z.unknown() })
-                    .optional(),
-                }),
-              }),
-            )
-            .max(32)
-            .optional(),
-        })
-        .optional(),
-    }),
-  ),
+const logoClaimsSchema = z.object({
+  claims: z.object({
+    P154: z
+      .array(
+        z.object({
+          rank: z.enum(["preferred", "normal", "deprecated"]),
+          mainsnak: z.object({
+            snaktype: z.enum(["value", "somevalue", "novalue"]),
+            datavalue: z
+              .object({ type: z.string(), value: z.unknown() })
+              .optional(),
+          }),
+        }),
+      )
+      .max(32)
+      .optional(),
+  }),
 });
 const metadataSchema = z.object({
   query: z.object({
@@ -303,22 +318,18 @@ export async function retrieveMerchantLogo(
     throw new Error("Invalid Wikidata entity ID");
   const entityUrl = new URL("https://www.wikidata.org/w/api.php");
   entityUrl.search = new URLSearchParams({
-    action: "wbgetentities",
-    ids: wikidataId,
-    props: "claims",
+    action: "wbgetclaims",
+    entity: wikidataId,
+    property: "P154",
     format: "json",
   }).toString();
-  const data = entitySchema.parse(
+  const data = logoClaimsSchema.parse(
     await fetchMerchantJson(entityUrl.href, {
       ...options,
       maxBytes: 256 * 1024,
     }),
   );
-  const entity = data.entities[wikidataId];
-  if (!entity) throw new Error("Wikidata response omitted requested entity");
-  if (Object.hasOwn(entity, "missing"))
-    return { status: "skipped", reason: "Wikidata entity is missing" };
-  const claims = (entity.claims?.P154 ?? []).filter(
+  const claims = (data.claims.P154 ?? []).filter(
     (claim) => claim.rank !== "deprecated",
   );
   const preferred = claims.filter((claim) => claim.rank === "preferred");
@@ -383,7 +394,8 @@ export async function retrieveMerchantLogo(
     fields.UsageTerms?.value === "Public domain";
   if (
     !license ||
-    (fields.LicenseUrl?.value !== license.url && !declaredPublicDomain)
+    (canonicalLicenseUrl(fields.LicenseUrl?.value) !== license.url &&
+      !declaredPublicDomain)
   )
     return {
       status: "skipped",
@@ -397,7 +409,11 @@ export async function retrieveMerchantLogo(
     return { status: "skipped", reason: "Commons lists usage restrictions" };
   const artist = plainMetadata(fields.Artist?.value ?? "");
   const credit = plainMetadata(fields.Credit?.value ?? "");
-  if (/(?:logos\.fandom\.com|theslap\.com)/i.test(credit))
+  if (
+    /(?:logos\.fandom\.com|logopedia|logowik\.com|brandsoftheworld\.com|logos-world\.net|1000logos\.net|theslap\.com)/i.test(
+      credit,
+    )
+  )
     return {
       status: "skipped",
       reason: "Commons lists unreviewed upstream logo provenance",

@@ -13,6 +13,7 @@ import {
   parseMerchantBbox,
 } from "../src/lib/automation/merchant-import";
 import { refreshMerchantLogos } from "../src/lib/automation/merchant-logo-refresh";
+import { refreshMerchantLogoBatches } from "../src/lib/automation/merchant-logo-batches";
 
 const { values } = parseArgs({
   options: {
@@ -22,18 +23,29 @@ const { values } = parseArgs({
     limit: { type: "string", default: "20" },
     refresh: { type: "boolean", default: false },
     entities: { type: "string" },
+    "all-logos": { type: "boolean", default: false },
+    after: { type: "string" },
   },
 });
-if (!values.bbox && !values["logos-only"])
+if (!values.bbox && !values["logos-only"] && !values["all-logos"])
   throw new Error(
     "Required: --bbox south,west,north,east (Austria, bounded tile)",
   );
 if (values.bbox && values["logos-only"])
   throw new Error("Use either --bbox or --logos-only, not both.");
-if (values.refresh && !values["logos-only"])
-  throw new Error("--refresh requires --logos-only.");
+if (values.refresh && !values["logos-only"] && !values["all-logos"])
+  throw new Error("--refresh requires --logos-only or --all-logos.");
 if (values.entities && !values["logos-only"])
   throw new Error("--entities requires --logos-only.");
+if (
+  values["all-logos"] &&
+  (values.bbox || values["logos-only"] || values.entities)
+)
+  throw new Error(
+    "--all-logos cannot be combined with geography or entity selection.",
+  );
+if (values.after && !values["all-logos"])
+  throw new Error("--after requires --all-logos.");
 const bbox = values.bbox ? parseMerchantBbox(values.bbox) : null;
 const config = readAccountConfig();
 const accounts = new AccountDatabase(config.databasePath);
@@ -43,7 +55,21 @@ try {
   const existing = store.loadMerchants();
   if (existing.length > MAX_IMPORTED_MERCHANTS)
     throw new Error("Merchant index limit reached; no network import started");
-  if (values["logos-only"]) {
+  if (values["all-logos"]) {
+    console.info(
+      JSON.stringify(
+        await refreshMerchantLogoBatches(store, {
+          batchSize: Number(values.limit ?? "20"),
+          after: values.after,
+          refresh: values.refresh,
+          onBatch: (progress) =>
+            console.info(JSON.stringify({ phase: "logos", ...progress })),
+        }),
+        null,
+        2,
+      ),
+    );
+  } else if (values["logos-only"]) {
     console.info(
       JSON.stringify(
         await refreshMerchantLogos(store, {
