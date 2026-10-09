@@ -7,11 +7,26 @@ const merchantId = z
   .min(1)
   .max(80)
   .regex(/^[a-zA-Z0-9_-]+$/);
+export const merchantLogoNameSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(100)
+  .refine((name) => !/[\x00-\x1f\x7f]/.test(name));
 export const merchantMarksRequestSchema = z
   .object({
     merchantIds: z.array(merchantId).max(MAX_MERCHANT_MARKS),
+    merchantNames: z
+      .array(merchantLogoNameSchema)
+      .max(MAX_MERCHANT_MARKS)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) =>
+      input.merchantIds.length + (input.merchantNames?.length ?? 0) <=
+      MAX_MERCHANT_MARKS,
+  );
 export const merchantMarkSchema = z
   .object({
     merchantId,
@@ -24,9 +39,24 @@ export const merchantMarkSchema = z
       .nullable(),
   })
   .strict();
+export const merchantNameMarkSchema = z
+  .object({
+    merchantName: merchantLogoNameSchema,
+    logo: merchantMarkSchema.shape.logo,
+  })
+  .strict();
 export const merchantMarksResponseSchema = z
   .object({
     marks: z.array(merchantMarkSchema).max(MAX_MERCHANT_MARKS),
+    nameMarks: z
+      .array(merchantNameMarkSchema)
+      .max(MAX_MERCHANT_MARKS)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (response) =>
+      response.marks.length + (response.nameMarks?.length ?? 0) <=
+      MAX_MERCHANT_MARKS,
+  );
 export type MerchantPresentation = z.infer<typeof merchantMarkSchema>;

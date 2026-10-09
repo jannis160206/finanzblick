@@ -12,6 +12,8 @@ import {
   readPrivateMerchantLogo,
   retrieveAuthorizedCommonsRaster,
   commonsLogoFilenameSchema,
+  reviewedCommonsAssociationSchema,
+  retrieveReviewedCommonsRaster,
 } from "./merchant-logo";
 import {
   authorizedMerchantLogoSchema,
@@ -211,6 +213,111 @@ export async function importAuthorizedLocalLogos(
       if (previous?.version === grant.version) report.cached++;
       else report.imported++;
       report.merchantIds.push(entry.merchantId);
+    }
+    return report;
+  } finally {
+    release();
+  }
+}
+
+export const reviewedCommonsManifestSchema = z
+  .object({
+    entries: z
+      .array(
+        z
+          .object({
+            merchantId: logoMerchantIdSchema,
+            ...reviewedCommonsAssociationSchema.shape,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(MAX_AUTHORIZED_LOGO_ENTITIES),
+  })
+  .strict();
+
+export async function importReviewedCommonsLogos(
+  store: AutomationStore,
+  options: {
+    userId: string;
+    rightsReference: string;
+    manifestPath: string;
+    fetch?: typeof fetch;
+    signal?: AbortSignal;
+  },
+) {
+  const userId = requireLogoAccount(store.accounts, options.userId);
+  const rightsReference = logoRightsReferenceSchema.parse(
+    options.rightsReference,
+  );
+  const signal = deadline(options.signal);
+  signal.throwIfAborted();
+  const manifest = reviewedCommonsManifestSchema.parse(
+    JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        await readBoundedLogoFile(resolve(options.manifestPath), 128 * 1024),
+      ),
+    ),
+  );
+  const ids = new Set<string>();
+  for (const entry of manifest.entries) {
+    if (ids.has(entry.merchantId))
+      throw new Error("Duplicate reviewed merchant identity");
+    ids.add(entry.merchantId);
+    const merchant = store.getMerchant(entry.merchantId);
+    if (!merchant || merchant.wikidataId !== entry.wikidataId)
+      throw new Error(
+        "Reviewed file requires the exact existing public merchant entity",
+      );
+  }
+  const release = acquireAuthorizedLogoImport(store.accounts, userId);
+  const report = {
+    imported: 0,
+    cached: 0,
+    skipped: [] as { merchantId: string; reason: string }[],
+  };
+  try {
+    for (const entry of manifest.entries) {
+      signal.throwIfAborted();
+      const result = await retrieveReviewedCommonsRaster(
+        {
+          wikidataId: entry.wikidataId,
+          filename: entry.filename,
+          evidence: entry.evidence,
+        },
+        { fetch: options.fetch, signal, retries: 2 },
+      );
+      if (result.status === "skipped") {
+        report.skipped.push({
+          merchantId: entry.merchantId,
+          reason: result.reason,
+        });
+        continue;
+      }
+      signal.throwIfAborted();
+      if (store.getMerchant(entry.merchantId)?.wikidataId !== entry.wikidataId)
+        throw new Error("Reviewed merchant entity changed during download");
+      const previous = store.authorizedLogo(userId, entry.merchantId);
+      const grant = await persistRasterGrant(
+        store,
+        userId,
+        entry.merchantId,
+        result.png,
+        {
+          permission: "operator-declared-private-usage-rights",
+          rightsReference,
+          attribution: result.attribution,
+          provenance: {
+            kind: "commons",
+            wikidataId: entry.wikidataId,
+            sourceUrl: result.sourceUrl,
+            associationEvidence: entry.evidence,
+          },
+          publicRights: result.publicRights,
+        },
+      );
+      if (previous?.version === grant.version) report.cached++;
+      else report.imported++;
     }
     return report;
   } finally {

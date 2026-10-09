@@ -1,0 +1,82 @@
+{
+  "entries": [
+    {
+      "merchantId": "renault",
+      "wikidataId": "Q125544573",
+      "filename": "Renault 2021.svg",
+      "evidence": "Commons describes Renault logo since 2021, credits Renault and provides a clean diamond-only vector. Q125544573 identifies the exact Renault automotive brand, not a substitute corporate entity. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "dacia",
+      "wikidataId": "Q131701890",
+      "filename": "Dacia 2021 symbol.svg",
+      "evidence": "Commons describes Logo of Automobile Dacia (2021), credits Automobile Dacia S.A. and shows the interlocking DC symbol. The reviewed association is to the exact Dacia brand Q131701890. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "tesla",
+      "wikidataId": "Q124981765",
+      "filename": "Tesla T symbol.svg",
+      "evidence": "Commons describes the Tesla logo and credits Tesla with Fry1989 vectorization; the artwork is the red T brand symbol only. Q124981765 identifies the exact Tesla automotive brand. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "mercedes-benz",
+      "wikidataId": "Q36008",
+      "filename": "Mercedes-Benz Star (1969-1986, 2025-).svg",
+      "evidence": "Commons explicitly describes Mercedes's 1969-1986 and 2025-present star and credits Mercedes-Benz. This is the clean circled-star brand artwork associated with exact brand Q36008, not a holding-company logo. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "honda",
+      "wikidataId": "Q124966298",
+      "filename": "Honda auto logo.svg",
+      "evidence": "Commons identifies the new H mark for next-generation EVs and hybrid cars announced 2026-01-13 and credits Honda Motor Co. This is automotive brand Q124966298, not the regional Honda Canada artwork. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "skoda",
+      "wikidataId": "Q29637",
+      "filename": "Škoda Auto 2022 text logo.svg",
+      "evidence": "Commons explicitly describes Text logo of Skoda used since 2022. This reviewed wordmark belongs to Skoda Auto Q29637; it is not represented as a independently verified current winged-arrow pictogram. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "peugeot",
+      "wikidataId": "Q6742",
+      "filename": "Wordmark Peugeot 2021.svg",
+      "evidence": "Commons identifies Peugeot as author of this clean 2021 wordmark and cites its Peugeot boutique artwork source. This is Peugeot Q6742, not a photograph or a claimed clean shield pictogram. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "at-bipa",
+      "wikidataId": "Q864933",
+      "filename": "Bipa Logo.svg",
+      "evidence": "Commons describes this file as Logo von Bipa, credits BIPA Parfuemerien GmbH and categorizes it under Bipa. The German Bipa article identifies Q864933 and uses this exact file. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "lieferando",
+      "wikidataId": "Q98660154",
+      "filename": "407862-Lieferando-Logo-Orange-Primary-Hor-RGB-01-4f2092-original-1637232254.png",
+      "evidence": "Commons describes this file as Lieferando-Logo with artist Lieferando. The German Lieferando article identifies Q98660154 and uses this exact artwork, not its parent-company logo. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "zooplus",
+      "wikidataId": "Q220327",
+      "filename": "Zooplus logo.png",
+      "evidence": "Commons explicitly describes this artwork as logo of the brand zooplus and categorizes it under Zooplus SE, the public brand identity Q220327. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "at-post",
+      "wikidataId": "Q1763505",
+      "filename": "Post Horn RGB.svg",
+      "evidence": "Commons description is Logo der Oesterreichischen Post, artist Oesterreichische Post AG and category Oesterreichische Post (company). Its linked company article identifies Q1763505. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "sky-x",
+      "wikidataId": "Q139587834",
+      "filename": "Sky X logo.png",
+      "evidence": "Commons explicitly states Logo used by the Sky X streaming platform, credits Sky Austria and cites the Italian Wikipedia Sky X file. Q139587834 identifies that exact Sky X service, not Sky Group. Verified 2026-10-09."
+    },
+    {
+      "merchantId": "toyota",
+      "wikidataId": "Q53268",
+      "filename": "Toyota Symbol.svg",
+      "evidence": "The exact Toyota identity Q53268 lists Toyota Symbol.svg as a current nondeprecated P154 logo. This explicit reviewed choice uses its symbol rather than the preferred statement's wordmark. Verified 2026-10-09."
+    }
+  ]
+}

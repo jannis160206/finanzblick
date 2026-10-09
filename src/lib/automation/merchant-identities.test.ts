@@ -40,7 +40,9 @@ describe("verified public seed identities", () => {
   });
 
   it("keeps exact product identities and leaves unverified brands without an entity", () => {
-    const seeds = new Map(seedMerchants.map((merchant) => [merchant.id, merchant]));
+    const seeds = new Map(
+      seedMerchants.map((merchant) => [merchant.id, merchant]),
+    );
     expect(seeds.get("rewe")?.wikidataId).toBe("Q16968817");
     expect(seeds.get("sky-x")?.wikidataId).toBe("Q139587834");
     expect(seeds.get("paramount-plus")?.wikidataId).toBe("Q27903045");
@@ -48,6 +50,25 @@ describe("verified public seed identities", () => {
     expect(seeds.get("le-burger")?.wikidataId).toBeNull();
     for (const id of ["esso", "bp", "jet", "avia"]) {
       expect(seeds.get(id)?.requiresCategoryEvidence).toBe(true);
+    }
+  });
+
+  it("keeps automotive names independent of leasing, insurance, repairs and category inference", () => {
+    const index = new MerchantIndex(seedMerchants);
+    for (const name of [
+      "Audi",
+      "BMW",
+      "Volkswagen",
+      "Porsche",
+      "CUPRA",
+      "Opel",
+      "Tesla",
+    ]) {
+      expect(index.match(name).merchant).toMatchObject({
+        canonicalName: name,
+        defaultCategory: null,
+        requiresCategoryEvidence: true,
+      });
     }
   });
 });

@@ -7,6 +7,10 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { isMerchantTransfer } from "@/lib/merchant-transfer";
 import type { Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import {
+  merchantLogoName,
+  merchantNameMarkKey,
+} from "@/lib/automation/merchant-mark-name";
 
 type MarkClassification = Pick<
   ReturnType<typeof classify>,
@@ -108,13 +112,16 @@ export function MerchantMark({
     "inline-flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-xs font-semibold text-muted-foreground",
     className,
   );
+  const name = merchantLogoName(booking);
   const logo = booking.merchantId
     ? marks !== null
       ? marks.get(booking.merchantId)
       : booking.merchantLogo === true
         ? { merchantId: booking.merchantId, version: undefined }
         : null
-    : null;
+    : name && marks !== null
+      ? marks.get(merchantNameMarkKey(name))
+      : null;
   return logo ? (
     <LocalMerchantLogo
       key={`${logo.merchantId}:${logo.version ?? ""}`}

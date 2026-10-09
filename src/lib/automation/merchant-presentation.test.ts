@@ -9,6 +9,7 @@ import * as merchantLogo from "./merchant-logo";
 import { type PrivateMerchantLogo } from "./merchant-logo-metadata";
 import { merchantLogoVersion } from "./merchant-logo-version";
 import { merchantPresentations } from "./merchant-presentation";
+import { accountMerchantNamePresentations } from "./merchant-logo-presentations";
 import {
   MAX_MERCHANT_MARKS,
   merchantMarksResponseSchema,
@@ -78,6 +79,66 @@ afterEach(async () => {
 });
 
 describe("bounded private merchant presentation", () => {
+  it("resolves only exact existing canonical identities for display without fuzzy/category inference", async () => {
+    const logo = await privatePng();
+    store.upsertMerchants([
+      merchant({
+        id: "audi",
+        canonicalName: "Audi",
+        logo,
+        defaultCategory: null,
+      }),
+    ]);
+    const marks = await accountMerchantNamePresentations(
+      store,
+      ["AUDI", "Audi Bank", "Aud1", "Unknown", "Audi", "Example Shop"],
+      "synthetic-account",
+    );
+    expect(marks).toEqual([
+      {
+        merchantName: "AUDI",
+        logo: { merchantId: "audi", version: merchantLogoVersion(logo) },
+      },
+      { merchantName: "Audi Bank", logo: null },
+      { merchantName: "Aud1", logo: null },
+      { merchantName: "Unknown", logo: null },
+      {
+        merchantName: "Audi",
+        logo: { merchantId: "audi", version: merchantLogoVersion(logo) },
+      },
+      {
+        merchantName: "Example Shop",
+        logo: { merchantId: "audi", version: merchantLogoVersion(logo) },
+      },
+    ]);
+    expect(store.getMerchant("audi")?.defaultCategory).toBeNull();
+  });
+
+  it("does not select among same-named different entities or unproven unrelated branches", async () => {
+    const logo = await privatePng();
+    store.upsertMerchants([
+      merchant({
+        id: "first",
+        canonicalName: "Audi",
+        wikidataId: "Q123",
+        logo,
+      }),
+      merchant({ id: "second", canonicalName: "Audi", wikidataId: "Q456" }),
+    ]);
+    expect(
+      await accountMerchantNamePresentations(
+        store,
+        ["Audi"],
+        "synthetic-account",
+      ),
+    ).toEqual([{ merchantName: "Audi", logo: null }]);
+    expect(() =>
+      merchantMarksResponseSchema.parse({
+        marks: [],
+        nameMarks: Array(101).fill({ merchantName: "Audi", logo: null }),
+      }),
+    ).toThrow();
+  });
   it("returns only IDs and verified metadata versions, regardless of an old merchantLogo:false transaction", async () => {
     const logo = await privatePng();
     store.upsertMerchants([merchant({ logo })]);

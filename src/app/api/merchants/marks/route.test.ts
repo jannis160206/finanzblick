@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   runtime: vi.fn(),
   constructStore: vi.fn(),
   presentations: vi.fn(),
+  namedPresentations: vi.fn(),
 }));
 vi.mock("@/lib/server/auth", () => ({
   authorizeApi: mocks.authorize,
@@ -25,6 +26,7 @@ vi.mock("@/lib/automation/store", () => ({
 }));
 vi.mock("@/lib/automation/merchant-logo-presentations", () => ({
   accountMerchantPresentations: mocks.presentations,
+  accountMerchantNamePresentations: mocks.namedPresentations,
 }));
 import { POST } from "./route";
 
@@ -77,6 +79,9 @@ beforeEach(() => {
       logo: null,
     }));
   });
+  mocks.namedPresentations.mockImplementation(async (_store, names: string[]) =>
+    names.map((merchantName) => ({ merchantName, logo: null })),
+  );
   network = vi
     .fn<typeof fetch>()
     .mockRejectedValue(new Error("Network forbidden"));
@@ -89,6 +94,26 @@ afterEach(() => {
 });
 
 describe("private batched merchant marks API", () => {
+  it("resolves named marks locally under the authenticated account with a combined batch limit", async () => {
+    const input = { merchantIds: ["at-shell"], merchantNames: ["Audi"] };
+    const response = await POST(request(input));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      marks: [{ merchantId: "at-shell", logo: null }],
+      nameMarks: [{ merchantName: "Audi", logo: null }],
+    });
+    expect(mocks.namedPresentations).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Object),
+      ["Audi"],
+      "synthetic-account",
+    );
+    for (const body of [
+      { merchantIds: Array(100).fill("at-shell"), merchantNames: ["Audi"] },
+      { merchantIds: [], merchantNames: ["Audi\nprivate"] },
+    ]) {
+      expect((await POST(request(body))).status).toBe(400);
+    }
+  });
   it("exports only supported Next route fields", async () => {
     const route = await import("./route");
     expect(Object.keys(route).sort()).toEqual(["POST", "runtime"]);

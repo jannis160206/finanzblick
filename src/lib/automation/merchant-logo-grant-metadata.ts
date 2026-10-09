@@ -40,6 +40,7 @@ export const authorizedMerchantLogoSchema = z
           kind: z.literal("commons"),
           sourceUrl: privateMerchantLogoSchema.shape.sourceUrl,
           wikidataId: z.string().regex(/^Q[1-9]\d{0,11}$/),
+          associationEvidence: text.optional(),
         })
         .strict(),
       z

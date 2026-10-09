@@ -228,8 +228,15 @@ there is no polling. An old `merchantLogo=false` flag cannot hide a newly import
 logo, and no transaction backfill is needed for image updates.
 
 Desktop and mobile keep the same 32px cell. Missing/unlicensed images fall back
-to canonical initials; transfers have no mark. Manually renamed rows that cleared
-their global ID never reacquire a logo by guessing their name. A changed image
+to canonical initials; transfers have no mark. Rows without an ID may now resolve
+their existing merchant alias against exact local canonical names or factual
+aliases, but never bank text, fuzzy spelling or a conflicting identity. The legacy
+`Audi | Abo` subscription annotation resolves the display name `Audi`; other
+arbitrary suffixes are not stripped. This only supplies an image and attribution:
+it never edits a transaction, category, lock, confirmed name or learned rule.
+Visible names and IDs share the 100-reference batch limit and 500-entry account
+cache; names are sent only to the authenticated same-origin API, not outside.
+Unknown and ambiguous names still use initials. A changed image
 version resets failed-image state. Versions hash both the PNG reference and its
 full validated license/source/credits, so a credit-only change also gets a new
 version. Attribution links carry the same version. Old attribution is archived
@@ -301,9 +308,29 @@ source failures fail visibly and leave prior grants intact. Progress supplies a
 completed batch cursor; `nextAfter` resumes a capped scan. Skips identify public
 QIDs/merchant IDs and reasons, including `No P154 logo`.
 
-Missing assets require **operator-supplied local files**, not fabricated logos.
-The documented current BIPA P154 gap can be filled this way; the scan report
-identifies further gaps. HOFER/Amazon collection credit labels no longer prevent
+Missing P154 does not necessarily mean missing artwork. An explicit reviewed
+Commons manifest can name verified brand artwork independently of P154:
+
+```powershell
+npm run merchants:authorized-logos -- --database ".local-data\accounts.sqlite" --account "YOUR_USERNAME" --rights-reference "User confirmed private usage rights, 2026-10-09" --commons-manifest "scripts\data\merchant-logo-reviewed-files.json"
+```
+
+The checked-in manifest contains public factual file references and subject
+evidence, not images or personal rights. Every entry requires an existing merchant
+ID, its exact current QID, a bounded Commons filename and explicit reviewed
+subject evidence. Unknown, mismatched or duplicate identities fail before any
+request. The importer uses the same Commons metadata, allowlist, sequential
+downloads, thumbnail/raster safeguards, private quotas and tenant grants.
+Credits explicitly say **operator-reviewed file association**, not P154 proof;
+the evidence is retained in account-scoped provenance. No public licence is
+invented, no global logo is written and no financial data changes.
+Five previously absent P154 logos (BIPA, Lieferando, Zooplus, Austrian Post and
+Sky X) have verified Commons references. Toyota's symbol is explicitly reviewed
+instead of silently overriding P154 rank selection.
+
+Artwork with no verified suitable source still requires **operator-supplied local
+files**, not fabricated logos. The scan report identifies remaining gaps.
+HOFER/Amazon collection credit labels no longer prevent
 authorized per-account Commons import when a safe, unambiguous P154 file exists.
 Place a JSON manifest beside the supplied files:
 
@@ -353,6 +380,22 @@ files, foreign URLs or guesses. Unknown/duplicate entities fail before requests;
 missing or deprecated variants skip visibly. Without a choice, ambiguous variants
 remain open. Actual SVGs are never downloaded; authorized oversized SVG originals
 also use only a provenance-matched, size-bounded server PNG thumbnail.
+
+`scripts\data\merchant-logo-choices.json` contains reproducible factual variant
+choices for the known seeded/imported catalog, including Shell's current
+yellow/red pictogram photographic crop instead of its standalone wordmark:
+
+```powershell
+npm run merchants:authorized-logos -- --database ".local-data\accounts.sqlite" --account "YOUR_USERNAME" --rights-reference "User confirmed private usage rights, 2026-10-09" --commons --logo-choices "scripts\data\merchant-logo-choices.json"
+```
+
+Choices are still checked against current P154 on every explicit invocation.
+They grant no rights and are not fabricated illustrations. The Shell candidate
+is a small photograph, not a clean vector; a rights-holder-supplied clean raster
+can replace it through the local manifest without weakening any source checks.
+For a smaller custom catalog, provide only its known QIDs; unknown choices are
+intentionally rejected before requests. After a Commons scan, apply the reviewed
+file manifest to select its independently verified symbols/wordmarks.
 
 Private content-hashed PNGs live in `merchant-authorized-logos/<account-hash>/`
 beside the database, never under a public web directory. One bounded, expiring

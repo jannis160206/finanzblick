@@ -67,10 +67,11 @@ function tree(
   ids = ["muller"],
   workspace: AccountWorkspace | null = account(),
   children: ReactNode = mark(),
+  names: string[] = [],
 ) {
   return (
     <AccountWorkspaceContext.Provider value={workspace}>
-      <MerchantMarksProvider merchantIds={ids}>
+      <MerchantMarksProvider merchantIds={ids} merchantNames={names}>
         {children}
       </MerchantMarksProvider>
     </AccountWorkspaceContext.Provider>
@@ -126,6 +127,37 @@ it("loads historical false flags with one deduplicated request, including under 
   rerender(<StrictMode>{tree(["muller"], workspace, children)}</StrictMode>);
   await act(async () => {});
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("batches exact named marks for legacy subscriptions without sending descriptions or mutating bookings", async () => {
+  const row = {
+    ...booking,
+    merchantId: undefined,
+    merchantAlias: "Audi | Abo",
+  };
+  const before = structuredClone(row);
+  const fetch = vi.fn().mockResolvedValue(
+    Response.json({
+      marks: [],
+      nameMarks: [
+        { merchantName: "Audi", logo: { merchantId: "audi", version } },
+      ],
+    }),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(
+    tree([], account(), mark(row), ["Audi", "Audi"]),
+  );
+  await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+  expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    merchantIds: [],
+    merchantNames: ["Audi"],
+  });
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/audi/logo?v=${version}`,
+  );
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(row).toEqual(before);
 });
 
 it("splits displayed IDs into bounded batches and never requests duplicates or invalid IDs", async () => {
@@ -453,7 +485,20 @@ it.each([false, true])(
       }),
       removeEventListener: vi.fn(),
     }));
-    const fetch = vi.fn().mockResolvedValue(logoResponse());
+    const fetch = vi.fn().mockImplementation(async () =>
+      Response.json({
+        marks: [
+          {
+            merchantId: "muller",
+            logo: { merchantId: "muller-licensed", version },
+          },
+        ],
+        nameMarks: [
+          { merchantName: "Audi", logo: { merchantId: "audi", version } },
+          { merchantName: "Mein Händler", logo: null },
+        ],
+      }),
+    );
     vi.stubGlobal("fetch", fetch);
     const state = createEmptyAccountState();
     state.settings.asOf = "2026-10-07";
@@ -461,6 +506,13 @@ it.each([false, true])(
     state.transactions = [
       booking,
       { ...booking, id: "repeat", date: "2026-10-05" },
+      {
+        ...booking,
+        id: "subscription",
+        date: "2026-10-05",
+        merchantAlias: "Audi | Abo",
+        merchantId: undefined,
+      },
       {
         ...booking,
         id: "transfer",
@@ -520,23 +572,26 @@ it.each([false, true])(
     const ledger = mobile
       ? screen.getByRole("list", { name: "Mobile Buchungen" })
       : screen.getByRole("table", { name: "Buchungen" });
-    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(2));
+    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(3));
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       merchantIds: ["muller"],
+      merchantNames: ["Audi", "Mein Händler"],
     });
     for (const image of ledger.querySelectorAll("img")) {
+      const audi = image.getAttribute("src")?.includes("/audi/");
+      const asset = audi ? "audi" : "muller-licensed";
       expect(image.getAttribute("src")).toBe(
-        `/api/merchants/muller-licensed/logo?v=${version}`,
+        `/api/merchants/${asset}/logo?v=${version}`,
       );
       expect(image.width).toBe(32);
       expect(image.height).toBe(32);
       expect(image.closest("a")!.className).toContain("size-8");
       expect(image.closest("a")!.getAttribute("href")).toBe(
-        `/api/merchants/muller-licensed/attribution?v=${version}`,
+        `/api/merchants/${asset}/attribution?v=${version}`,
       );
       expect(image.closest("a")!.nextElementSibling!.textContent).toBe(
-        "Möbel Müller",
+        audi ? "Audi | Abo" : "Möbel Müller",
       );
     }
     expect(screen.getByText("Eigenes Konto").previousElementSibling).toBeNull();
@@ -555,7 +610,7 @@ it.each([false, true])(
     const switchedLedger = mobile
       ? screen.getByRole("table", { name: "Buchungen" })
       : screen.getByRole("list", { name: "Mobile Buchungen" });
-    expect(switchedLedger.querySelectorAll("img")).toHaveLength(2);
+    expect(switchedLedger.querySelectorAll("img")).toHaveLength(3);
     expect(fetch).toHaveBeenCalledTimes(1);
   },
 );

@@ -13,8 +13,10 @@ import {
   MAX_MERCHANT_MARKS,
   merchantMarksRequestSchema,
   merchantMarksResponseSchema,
+  merchantLogoNameSchema,
   type MerchantPresentation,
 } from "@/lib/automation/merchant-presentation-schema";
+import { merchantNameMarkKey } from "@/lib/automation/merchant-mark-name";
 
 type MerchantLogo = NonNullable<MerchantPresentation["logo"]>;
 type MerchantMarks = ReadonlyMap<string, MerchantLogo | null>;
@@ -58,9 +60,11 @@ async function readMarksResponse(response: Response) {
 
 export function MerchantMarksProvider({
   merchantIds,
+  merchantNames = [],
   children,
 }: {
   merchantIds: string[];
+  merchantNames?: string[];
   children: ReactNode;
 }) {
   const workspace = useAccountWorkspace();
@@ -70,6 +74,7 @@ export function MerchantMarksProvider({
       key={workspace ? `account:${workspace.user.id}` : "local"}
       enabled={!!workspace}
       merchantIds={merchantIds}
+      merchantNames={merchantNames}
     >
       {children}
     </AccountMerchantMarks>
@@ -79,10 +84,12 @@ export function MerchantMarksProvider({
 function AccountMerchantMarks({
   enabled,
   merchantIds,
+  merchantNames,
   children,
 }: {
   enabled: boolean;
   merchantIds: string[];
+  merchantNames: string[];
   children: ReactNode;
 }) {
   const cache = useRef(new Map<string, MerchantLogo | null>());
@@ -90,14 +97,21 @@ function AccountMerchantMarks({
   const [error, setError] = useState(false);
   const idsKey = JSON.stringify(
     [
-      ...new Set(
-        merchantIds.filter(
+      ...new Set([
+        ...merchantIds.filter(
           (id) =>
             id === id.trim() &&
             merchantMarksRequestSchema.shape.merchantIds.element.safeParse(id)
               .success,
         ),
-      ),
+        ...merchantNames
+          .filter(
+            (name) =>
+              name === name.trim() &&
+              merchantLogoNameSchema.safeParse(name).success,
+          )
+          .map(merchantNameMarkKey),
+      ]),
     ]
       .slice(0, CACHE_LIMIT)
       .sort(),
@@ -129,12 +143,19 @@ function AccountMerchantMarks({
       try {
         for (let start = 0; start < ids.length; start += MAX_MERCHANT_MARKS) {
           const batch = ids.slice(start, start + MAX_MERCHANT_MARKS);
+          const merchantIds = batch.filter((key) => !key.startsWith("name:"));
+          const merchantNames = batch
+            .filter((key) => key.startsWith("name:"))
+            .map((key) => key.slice(5));
           const response = await fetch("/api/merchants/marks", {
             method: "POST",
             credentials: "same-origin",
             cache: "no-store",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ merchantIds: batch }),
+            body: JSON.stringify({
+              merchantIds,
+              ...(merchantNames.length ? { merchantNames } : {}),
+            }),
             signal: controller.signal,
           });
           if (!active) return;
@@ -143,11 +164,22 @@ function AccountMerchantMarks({
           const available = new Map<string, MerchantLogo | null>();
           for (const mark of result.marks) {
             if (
-              !batch.includes(mark.merchantId) ||
+              !merchantIds.includes(mark.merchantId) ||
               available.has(mark.merchantId)
             )
               throw new Error("Unexpected merchant marks response");
             available.set(mark.merchantId, mark.logo);
+          }
+          if (merchantNames.length && !result.nameMarks)
+            throw new Error("Missing named merchant marks response");
+          for (const mark of result.nameMarks ?? []) {
+            const key = merchantNameMarkKey(mark.merchantName);
+            if (
+              !merchantNames.includes(mark.merchantName) ||
+              available.has(key)
+            )
+              throw new Error("Unexpected named merchant marks response");
+            available.set(key, mark.logo);
           }
           remember(batch.map((id) => [id, available.get(id) ?? null]));
         }

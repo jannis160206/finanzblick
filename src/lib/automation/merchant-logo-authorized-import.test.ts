@@ -21,6 +21,7 @@ import {
 import {
   importAuthorizedCommonsLogos,
   importAuthorizedLocalLogos,
+  importReviewedCommonsLogos,
   MAX_AUTHORIZED_LOGO_ENTITIES,
 } from "./merchant-logo-authorized-import";
 import {
@@ -164,22 +165,24 @@ function request(
 function commonsRequests(
   info: Record<string, unknown> = {},
   sourceFilename = filename,
+  includeClaims = true,
 ) {
-  network.mockResolvedValueOnce(
-    Response.json({
-      claims: {
-        P154: [
-          {
-            rank: "normal",
-            mainsnak: {
-              snaktype: "value",
-              datavalue: { type: "string", value: sourceFilename },
+  if (includeClaims)
+    network.mockResolvedValueOnce(
+      Response.json({
+        claims: {
+          P154: [
+            {
+              rank: "normal",
+              mainsnak: {
+                snaktype: "value",
+                datavalue: { type: "string", value: sourceFilename },
+              },
             },
-          },
-        ],
-      },
-    }),
-  );
+          ],
+        },
+      }),
+    );
   network.mockResolvedValueOnce(
     Response.json({
       query: {
@@ -248,6 +251,115 @@ afterEach(async () => {
 });
 
 describe("account-scoped authorized logos", () => {
+  it("imports explicitly reviewed Commons artwork without inventing P154 proof, preserving finance and tenant isolation", async () => {
+    const evidence =
+      "Commons file description explicitly identifies this synthetic market logo; operator verified its exact public entity and artwork association.";
+    const path = join(directory, "reviewed.json");
+    await writeFile(
+      path,
+      JSON.stringify({
+        entries: [
+          {
+            merchantId: "example",
+            wikidataId: "Q123",
+            filename,
+            evidence,
+          },
+        ],
+      }),
+    );
+    accounts.putFinance(alice, blankTestState(), 0);
+    const before = accounts.getFinance(alice);
+    for (const expected of [
+      { imported: 1, cached: 0 },
+      { imported: 0, cached: 1 },
+    ]) {
+      commonsRequests({}, filename, false);
+      network.mockResolvedValueOnce(
+        new Response(new Uint8Array(await raster())),
+      );
+      expect(
+        await importReviewedCommonsLogos(store, {
+          userId: alice,
+          rightsReference,
+          manifestPath: path,
+        }),
+      ).toMatchObject({ ...expected, skipped: [] });
+    }
+    const grant = store.authorizedLogo(alice, "example")!;
+    expect(grant.logo.provenance).toMatchObject({
+      kind: "commons",
+      wikidataId: "Q123",
+      associationEvidence: evidence,
+    });
+    expect(grant.logo.attribution).toContain(
+      "Operator-reviewed file association",
+    );
+    expect(grant.logo.attribution).not.toContain("P154 reference");
+    expect(
+      network.mock.calls.every(
+        ([url]) => !String(url).includes("wikidata.org"),
+      ),
+    ).toBe(true);
+    expect(accounts.getFinance(alice)).toEqual(before);
+    expect(store.authorizedLogo(bob, "example")).toBeNull();
+    expect(
+      await accountMerchantPresentations(
+        store,
+        { merchantIds: ["example"] },
+        bob,
+      ),
+    ).toEqual([{ merchantId: "example", logo: null }]);
+    expect(store.getMerchant("example")?.logo).toBeNull();
+  });
+
+  it("rejects unknown or mismatched reviewed identities before network requests", async () => {
+    const path = join(directory, "reviewed.json");
+    for (const entry of [
+      { merchantId: "unknown", wikidataId: "Q123" },
+      { merchantId: "example", wikidataId: "Q999" },
+    ]) {
+      await writeFile(
+        path,
+        JSON.stringify({
+          entries: [
+            {
+              ...entry,
+              filename,
+              evidence:
+                "Operator verified the public source description and exact file subject association.",
+            },
+          ],
+        }),
+      );
+      await expect(
+        importReviewedCommonsLogos(store, {
+          userId: alice,
+          rightsReference,
+          manifestPath: path,
+        }),
+      ).rejects.toThrow("exact existing public merchant entity");
+    }
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("serves private exact-name marks only for their owning account and never mutates finance", async () => {
+    await importLocal();
+    const { accountMerchantNamePresentations } =
+      await import("./merchant-logo-presentations");
+    const before = accounts.getFinance(alice);
+    const own = await accountMerchantNamePresentations(
+      store,
+      ["Synthetic market"],
+      alice,
+    );
+    expect(own[0].logo?.merchantId).toBe("example");
+    expect(
+      await accountMerchantNamePresentations(store, ["Synthetic market"], bob),
+    ).toEqual([{ merchantName: "Synthetic market", logo: null }]);
+    expect(accounts.getFinance(alice)).toEqual(before);
+  });
+
   it("imports locally idempotently, without finance/aliases/shared logos mutations or external traffic", async () => {
     accounts.putFinance(alice, blankTestState(), 0);
     const before = accounts.read((db) => ({

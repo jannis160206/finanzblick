@@ -7,6 +7,7 @@ import { AutomationStore } from "../src/lib/automation/store";
 import {
   importAuthorizedCommonsLogos,
   importAuthorizedLocalLogos,
+  importReviewedCommonsLogos,
   authorizedLogoChoicesSchema,
 } from "../src/lib/automation/merchant-logo-authorized-import";
 import { logoRightsReferenceSchema } from "../src/lib/automation/merchant-logo-grant-metadata";
@@ -23,6 +24,7 @@ async function main() {
       "rights-reference": { type: "string" },
       commons: { type: "boolean", default: false },
       manifest: { type: "string" },
+      "commons-manifest": { type: "string" },
       "logo-choices": { type: "string" },
       "batch-size": { type: "string", default: "20" },
       after: { type: "string" },
@@ -36,7 +38,7 @@ async function main() {
         "Required: --database <existing.sqlite> --account <existing username> " +
         "--rights-reference <operator/user declaration or actual document reference>\n" +
         "Choose --commons [--batch-size 1..20] [--after QID] [--refresh] [--logo-choices <JSON>], " +
-        "or --manifest <bounded local JSON manifest>.\n" +
+        "or --manifest <bounded local JSON manifest>, or --commons-manifest <reviewed Commons JSON>.\n" +
         "No merchant, alias, finance, session or shared-logo changes; at most 200 public entities/run.",
     );
     return;
@@ -45,8 +47,14 @@ async function main() {
     throw new Error(
       "Explicit --database, --account and --rights-reference are required",
     );
-  if (values.commons === Boolean(values.manifest))
-    throw new Error("Choose exactly one of --commons or --manifest");
+  if (
+    [values.commons, values.manifest, values["commons-manifest"]].filter(
+      Boolean,
+    ).length !== 1
+  )
+    throw new Error(
+      "Choose exactly one of --commons, --manifest or --commons-manifest",
+    );
   if (
     !values.commons &&
     (values.after ||
@@ -108,12 +116,19 @@ async function main() {
               JSON.stringify({ phase: "authorized-logos", ...progress }),
             ),
         })
-      : await importAuthorizedLocalLogos(store, {
-          userId: row.id,
-          rightsReference,
-          manifestPath: values.manifest!,
-          signal,
-        });
+      : values["commons-manifest"]
+        ? await importReviewedCommonsLogos(store, {
+            userId: row.id,
+            rightsReference,
+            manifestPath: values["commons-manifest"],
+            signal,
+          })
+        : await importAuthorizedLocalLogos(store, {
+            userId: row.id,
+            rightsReference,
+            manifestPath: values.manifest!,
+            signal,
+          });
     console.info(JSON.stringify(report, null, 2));
   } finally {
     accounts.close();

@@ -428,6 +428,16 @@ async function retrieveCommonsRaster(
       status: "skipped",
       reason: "P154 is not a supported, unambiguous image filename",
     };
+  return retrieveNamedCommonsRaster(wikidataId, filename, policy, options);
+}
+
+async function retrieveNamedCommonsRaster(
+  wikidataId: string,
+  filename: string,
+  policy: "public-license" | "operator-private",
+  options: Parameters<typeof retrieveCommonsRaster>[2],
+  reviewedEvidence?: string,
+): Promise<CommonsRasterResult> {
   const commonsUrl = new URL("https://commons.wikimedia.org/w/api.php");
   commonsUrl.search = new URLSearchParams({
     action: "query",
@@ -538,7 +548,7 @@ async function retrieveCommonsRaster(
   )
     return {
       status: "skipped",
-      reason: "Commons original does not match requested P154 file",
+      reason: "Commons original does not match requested file",
     };
   let downloadMime = info.mime;
   const svg = /\.svg$/i.test(filename);
@@ -593,7 +603,10 @@ async function retrieveCommonsRaster(
       status: "skipped",
       reason: "Commons rights metadata exceeds limits",
     };
-  const attribution = `${artist || "Commons artist not specified"}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${publicLicense ?? "No verified public licence"}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; P154 reference: Wikidata ${wikidataId} (CC0-1.0)`;
+  const reference = reviewedEvidence
+    ? `Operator-reviewed file association: Wikidata ${wikidataId}; ${reviewedEvidence}`
+    : `P154 reference: Wikidata ${wikidataId} (CC0-1.0)`;
+  const attribution = `${artist || "Commons artist not specified"}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${publicLicense ?? "No verified public licence"}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; ${reference}`;
   if (
     attribution.length > 2000 ||
     !privateMerchantLogoSchema.shape.sourceUrl.safeParse(sourceUrl).success
@@ -618,6 +631,37 @@ export async function retrieveAuthorizedCommonsRaster(
   options: Parameters<typeof retrieveCommonsRaster>[2] = {},
 ): Promise<CommonsRasterResult> {
   return retrieveCommonsRaster(wikidataId, "operator-private", options);
+}
+
+export const reviewedCommonsAssociationSchema = z
+  .object({
+    wikidataId: z.string().regex(/^Q[1-9]\d{0,11}$/),
+    filename: commonsLogoFilenameSchema,
+    evidence: z
+      .string()
+      .trim()
+      .min(40)
+      .max(800)
+      .refine((text) => !/[\x00-\x1f\x7f]/.test(text)),
+  })
+  .strict();
+
+export async function retrieveReviewedCommonsRaster(
+  input: z.infer<typeof reviewedCommonsAssociationSchema>,
+  options: Omit<
+    NonNullable<Parameters<typeof retrieveCommonsRaster>[2]>,
+    "filename"
+  > = {},
+) {
+  const { wikidataId, filename, evidence } =
+    reviewedCommonsAssociationSchema.parse(input);
+  return retrieveNamedCommonsRaster(
+    wikidataId,
+    filename,
+    "operator-private",
+    options,
+    evidence,
+  );
 }
 
 export async function retrieveMerchantLogo(

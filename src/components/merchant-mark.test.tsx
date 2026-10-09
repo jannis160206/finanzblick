@@ -208,6 +208,19 @@ it("does not reattach a logo to a manually corrected name with no merchant ID", 
   expect(screen.getByText("MH")).toBeTruthy();
 });
 
+it("displays an exact locally resolved Audi subscription mark without rewriting its assignment", () => {
+  const row = { ...booking, merchantAlias: "Audi | Abo", is_locked: true };
+  const before = structuredClone(row);
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+    new Map([["name:Audi", { merchantId: "audi", version: "a".repeat(64) }]]),
+  );
+  const { container } = render(mark(row));
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/audi/logo?v=${"a".repeat(64)}`,
+  );
+  expect(row).toEqual(before);
+});
+
 it("uses a neutral fallback for a missing logo with no canonical alias", () => {
   const { container } = render(
     mark({ ...booking, merchantId: "unknown", merchantLogo: true }),
