@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -17,18 +18,34 @@ import {
   type MerchantPresentation,
 } from "@/lib/automation/merchant-presentation-schema";
 import { merchantNameMarkKey } from "@/lib/automation/merchant-mark-name";
+import { Button } from "@/components/ui/button";
+import { z } from "zod";
 
-type MerchantLogo = NonNullable<MerchantPresentation["logo"]>;
+type MerchantLogo = NonNullable<MerchantPresentation["logo"]> & {
+  refreshVersion?: number;
+};
 type MerchantMarks = ReadonlyMap<string, MerchantLogo | null>;
 const MerchantMarksContext = createContext<MerchantMarks | null>(null);
+const MerchantLogoFailureContext = createContext<(() => void) | null>(null);
 
 const CACHE_LIMIT = 500;
 const RESPONSE_LIMIT = 64 * 1024;
+const FOCUS_REFRESH_INTERVAL = 30_000;
+const responseEnvelopeSchema = z
+  .object({
+    marks: merchantMarksResponseSchema.shape.marks,
+    nameMarks: z.unknown().optional(),
+  })
+  .strict();
 const ERROR_MESSAGE =
-  "Händlerlogos konnten nicht geladen werden. Stattdessen werden Initialen angezeigt.";
+  "Einige Händlerlogos konnten nicht geladen werden. Verfügbare Logos bleiben sichtbar; für fehlende Bilder werden Initialen angezeigt.";
 
 export function useMerchantMarks() {
   return useContext(MerchantMarksContext);
+}
+
+export function useMerchantLogoFailure() {
+  return useContext(MerchantLogoFailureContext);
 }
 
 async function readMarksResponse(response: Response) {
@@ -48,7 +65,7 @@ async function readMarksResponse(response: Response) {
       body += decoder.decode(value, { stream: true });
     }
     body += decoder.decode();
-    return merchantMarksResponseSchema.parse(JSON.parse(body));
+    return responseEnvelopeSchema.parse(JSON.parse(body));
   } finally {
     try {
       await reader.cancel();
@@ -93,8 +110,13 @@ function AccountMerchantMarks({
   children: ReactNode;
 }) {
   const cache = useRef(new Map<string, MerchantLogo | null>());
+  const invalidated = useRef(new Set<string>());
+  const lastFocusRefresh = useRef(-Infinity);
+  const imageFailed = useRef(false);
   const [marks, setMarks] = useState<MerchantMarks>(new Map());
   const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const idsKey = JSON.stringify(
     [
       ...new Set([
@@ -117,10 +139,42 @@ function AccountMerchantMarks({
       .sort(),
   );
 
+  const refreshMarks = useCallback(() => {
+    imageFailed.current = false;
+    for (const key of JSON.parse(idsKey) as string[])
+      invalidated.current.add(key);
+    setRefreshVersion((version) => version + 1);
+  }, [idsKey]);
+  const reportImageFailure = useCallback(() => {
+    imageFailed.current = true;
+    setError(true);
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    function onReturn() {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastFocusRefresh.current < FOCUS_REFRESH_INTERVAL) return;
+      lastFocusRefresh.current = now;
+      refreshMarks();
+    }
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [enabled, refreshMarks]);
+
   useEffect(() => {
     if (!enabled) return;
     const visibleIds = new Set(JSON.parse(idsKey) as string[]);
-    const ids = [...visibleIds].filter((id) => !cache.current.has(id));
+    for (const key of invalidated.current)
+      if (!visibleIds.has(key)) invalidated.current.delete(key);
+    const ids = [...visibleIds].filter(
+      (id) => !cache.current.has(id) || invalidated.current.has(id),
+    );
     if (!ids.length) return;
     const controller = new AbortController();
     let active = true;
@@ -128,7 +182,10 @@ function AccountMerchantMarks({
 
     function remember(entries: [string, MerchantLogo | null][]) {
       if (!active) return;
-      for (const [id, logo] of entries) cache.current.set(id, logo);
+      for (const [id, logo] of entries) {
+        cache.current.set(id, logo ? { ...logo, refreshVersion } : null);
+        invalidated.current.delete(id);
+      }
       for (const id of cache.current.keys()) {
         if (cache.current.size <= CACHE_LIMIT) break;
         if (!visibleIds.has(id)) cache.current.delete(id);
@@ -140,6 +197,7 @@ function AccountMerchantMarks({
       // Deferring prevents Strict Mode's discarded effect from sending a batch.
       await Promise.resolve();
       if (!active) return;
+      setLoading(true);
       try {
         for (let start = 0; start < ids.length; start += MAX_MERCHANT_MARKS) {
           const batch = ids.slice(start, start + MAX_MERCHANT_MARKS);
@@ -170,9 +228,14 @@ function AccountMerchantMarks({
               throw new Error("Unexpected merchant marks response");
             available.set(mark.merchantId, mark.logo);
           }
-          if (merchantNames.length && !result.nameMarks)
+          // An incomplete named response must not erase independently valid ID marks.
+          remember(merchantIds.map((id) => [id, available.get(id) ?? null]));
+          const nameMarks = merchantMarksResponseSchema.shape.nameMarks.parse(
+            result.nameMarks,
+          );
+          if (merchantNames.length && !nameMarks)
             throw new Error("Missing named merchant marks response");
-          for (const mark of result.nameMarks ?? []) {
+          for (const mark of nameMarks ?? []) {
             const key = merchantNameMarkKey(mark.merchantName);
             if (
               !merchantNames.includes(mark.merchantName) ||
@@ -183,13 +246,12 @@ function AccountMerchantMarks({
           }
           remember(batch.map((id) => [id, available.get(id) ?? null]));
         }
+        if (active) setError(imageFailed.current);
       } catch {
-        if (active) {
-          remember(ids.map((id) => [id, cache.current.get(id) ?? null]));
-          setError(true);
-        }
+        if (active) setError(true);
       } finally {
         clearTimeout(timeout);
+        if (active) setLoading(false);
       }
     }
 
@@ -199,19 +261,30 @@ function AccountMerchantMarks({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [enabled, idsKey]);
+  }, [enabled, idsKey, refreshVersion]);
 
   return (
-    <MerchantMarksContext.Provider value={marks}>
-      {error && (
-        <p
-          role="status"
-          className="px-4 py-2 text-xs text-muted-foreground sm:px-5"
-        >
-          {ERROR_MESSAGE}
-        </p>
-      )}
-      {children}
-    </MerchantMarksContext.Provider>
+    <MerchantLogoFailureContext.Provider value={reportImageFailure}>
+      <MerchantMarksContext.Provider value={marks}>
+        {error && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center gap-2 px-4 py-2 text-xs text-muted-foreground sm:px-5"
+          >
+            <p>{ERROR_MESSAGE}</p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={loading}
+              onClick={refreshMarks}
+            >
+              Logos erneut laden
+            </Button>
+          </div>
+        )}
+        {children}
+      </MerchantMarksContext.Provider>
+    </MerchantLogoFailureContext.Provider>
   );
 }

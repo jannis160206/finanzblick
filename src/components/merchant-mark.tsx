@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useMerchantMarks } from "@/components/merchant-marks-provider";
+import {
+  useMerchantLogoFailure,
+  useMerchantMarks,
+} from "@/components/merchant-marks-provider";
 import type { classify } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
 import { isMerchantTransfer } from "@/lib/merchant-transfer";
@@ -50,15 +53,18 @@ function LocalMerchantLogo({
   alias,
   fallback,
   className,
+  refreshVersion = 0,
 }: {
   id: string;
   version?: string;
   alias?: string;
   fallback: string;
   className: string;
+  refreshVersion?: number;
 }) {
-  const [failed, setFailed] = useState(false);
-  if (failed)
+  const [failedVersion, setFailedVersion] = useState<number | null>(null);
+  const reportFailure = useMerchantLogoFailure();
+  if (failedVersion === refreshVersion)
     return (
       <span aria-hidden="true" className={className}>
         {fallback}
@@ -88,7 +94,10 @@ function LocalMerchantLogo({
         loading="lazy"
         decoding="async"
         className="size-8 object-contain"
-        onError={() => setFailed(true)}
+        onError={() => {
+          setFailedVersion(refreshVersion);
+          reportFailure?.();
+        }}
       />
     </a>
   );
@@ -127,6 +136,9 @@ export function MerchantMark({
       key={`${logo.merchantId}:${logo.version ?? ""}`}
       id={logo.merchantId}
       version={logo.version}
+      refreshVersion={
+        "refreshVersion" in logo ? logo.refreshVersion : undefined
+      }
       alias={alias}
       fallback={fallback}
       className={markClassName}

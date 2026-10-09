@@ -160,6 +160,143 @@ it("batches exact named marks for legacy subscriptions without sending descripti
   expect(row).toEqual(before);
 });
 
+it("keeps valid ID logos when a stale API omits named marks and can explicitly recover the missing names", async () => {
+  const audi = {
+    ...booking,
+    id: "audi",
+    merchantId: undefined,
+    merchantAlias: "Audi | Abo",
+  };
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(logoResponse())
+    .mockResolvedValueOnce(
+      Response.json({
+        marks: [
+          {
+            merchantId: "muller",
+            logo: { merchantId: "muller-licensed", version },
+          },
+        ],
+        nameMarks: [
+          { merchantName: "Audi", logo: { merchantId: "audi", version } },
+        ],
+      }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(
+    tree(
+      ["muller"],
+      account(),
+      <>
+        {mark()}
+        {mark(audi)}
+      </>,
+      ["Audi"],
+    ),
+  );
+  await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+  expect(container.querySelectorAll("img")).toHaveLength(1);
+  expect(container.querySelector("img")!.getAttribute("src")).toContain(
+    "/muller-licensed/",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Logos erneut laden" }));
+  await waitFor(() =>
+    expect(container.querySelectorAll("img")).toHaveLength(2),
+  );
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("refreshes visible metadata on a return to the app without polling or clearing working images", async () => {
+  const next = deferred();
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(logoResponse())
+    .mockReturnValueOnce(next.promise);
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(tree());
+  await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+  fireEvent.focus(window);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(container.querySelector("img")).not.toBeNull();
+  await act(async () => next.resolve(logoResponse("updated-logo")));
+  await waitFor(() =>
+    expect(container.querySelector("img")!.getAttribute("src")).toContain(
+      "/updated-logo/",
+    ),
+  );
+  fireEvent.focus(window);
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each([
+  [{ merchantName: "Audi", logo: { merchantId: "audi", version: "bad" } }],
+  [{ merchantName: "Unrequested", logo: null }],
+  null,
+])(
+  "does not let an invalid named response hide valid known ID logos: %j",
+  async (nameMarks) => {
+    const fetch = vi.fn().mockResolvedValue(
+      Response.json({
+        marks: [
+          {
+            merchantId: "muller",
+            logo: { merchantId: "muller-licensed", version },
+          },
+        ],
+        nameMarks,
+      }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const { container } = render(tree(["muller"], account(), mark(), ["Audi"]));
+    await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("preserves cached logos after a failed refresh and recovers through the retry action", async () => {
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(logoResponse())
+    .mockRejectedValueOnce(new TypeError("Network unavailable"))
+    .mockResolvedValueOnce(logoResponse("recovered-logo"));
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(tree());
+  await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+  fireEvent.focus(window);
+  await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+  expect(container.querySelector("img")!.getAttribute("src")).toContain(
+    "/muller-licensed/",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Logos erneut laden" }));
+  await waitFor(() =>
+    expect(container.querySelector("img")!.getAttribute("src")).toContain(
+      "/recovered-logo/",
+    ),
+  );
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it("reports an image failure and retries the same unchanged asset after metadata recovery", async () => {
+  const fetch = vi.fn().mockImplementation(async () => logoResponse());
+  vi.stubGlobal("fetch", fetch);
+  const { container } = render(tree());
+  await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+  const src = container.querySelector("img")!.getAttribute("src");
+  fireEvent.error(container.querySelector("img")!);
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByRole("status")).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Logos erneut laden" }));
+  await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(src);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("status")).toBeNull();
+});
+
 it("splits displayed IDs into bounded batches and never requests duplicates or invalid IDs", async () => {
   const fetch = vi.fn().mockImplementation(async (_url, options) => {
     const { merchantIds } = JSON.parse(options.body) as {

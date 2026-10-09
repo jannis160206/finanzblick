@@ -224,7 +224,18 @@ and file integrity checks, not remote downloads or per-transaction matching.
 Proven same-entity/name/region references can supply an image with that asset's
 own attribution. Same names without entity proof cannot. The account-scoped
 client cache is bounded to 500 entries and is reset/aborted on account changes;
-there is no polling. An old `merchantLogo=false` flag cannot hide a newly imported
+there is no polling. Returning to the visible browser tab/window refreshes only
+its displayed metadata, throttled to once per 30 seconds; it does not clear
+currently working images. A partial, missing or malformed named response cannot
+discard independently valid ID logos. Transport/validation failures are reported
+and are never cached as a definitive missing image. The contextual
+`Logos erneut laden` action retries visible metadata and clears the warning only
+after successful loading. This also recovers after a temporary server outage or
+a stale development API. Image transport failures are reported as well; a
+successful metadata refresh retries failed images even when their asset/version
+has not changed, without remounting already working images. A process serving old
+route code still needs restarting.
+An old `merchantLogo=false` flag cannot hide a newly imported
 logo, and no transaction backfill is needed for image updates.
 
 Desktop and mobile keep the same 32px cell. Missing/unlicensed images fall back
