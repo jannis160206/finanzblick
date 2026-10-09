@@ -54,6 +54,130 @@ async function upload(text: string, tenant = userId) {
 const csv =
   'American Express\nDatum,Beschreibung,Karteninhaber,Kartennummer,Betrag\n08.10.2026,BILLA FILIALE 4711,Test User,XXXX-1001,"42,00"';
 
+it("rechecks assigned rows once in a new pass without resetting the previous version", async () => {
+  const index = new MerchantIndex(store.loadMerchants());
+  worker = new AutomationWorker(store, owner, index);
+  const match = vi.spyOn(index, "match");
+  const assigned = transactionSchema.parse({
+    id: "assigned",
+    date: "2026-10-08",
+    bank: "Amex",
+    pocket: "Amex",
+    description: "BILLA FILIALE 4711",
+    amount: -42,
+    category: "Lebensmittel",
+    merchantAlias: "BILLA",
+    merchantId: "at-billa",
+    merchantMatch: "alias",
+    includeInPlan: true,
+  });
+  accounts.putFinance(
+    userId,
+    { ...blankTestState(), transactions: [assigned] },
+    0,
+  );
+  const original = store.enqueueBackfill(userId, Date.now(), {
+    onceVersion: MERCHANT_BACKFILL_VERSION,
+  });
+  await worker.process(store.claim(owner)!);
+  const completed = store
+    .snapshot(userId)
+    .jobs.find((job) => job.id === original.id)!;
+  const oldItems = accounts.read((db) =>
+    db
+      .prepare("SELECT * FROM automation_backfill_items WHERE job_id = ?")
+      .all(original.id),
+  );
+  const before = accounts.getFinance(userId);
+  accounts.putFinance(
+    userId,
+    {
+      ...before.state!,
+      transactions: [
+        ...before.state!.transactions,
+        {
+          ...assigned,
+          id: "locked",
+          merchantAlias: "Mein Laden",
+          category: "Shopping",
+          is_locked: true,
+        },
+      ],
+      fixedReceipts: [
+        {
+          key: "receipt",
+          date: assigned.date,
+          amount: assigned.amount,
+          category: "Prüfen",
+          booking: {
+            ...assigned,
+            id: "receipt-only",
+            description: "Müller",
+            category: "Prüfen",
+            merchantAlias: undefined,
+            merchantId: undefined,
+            merchantMatch: undefined,
+          },
+        },
+      ],
+    },
+    before.revision,
+  );
+  const protectedRow = accounts.getFinance(userId).state!.transactions[1];
+  const options = { onceVersion: "explicit-recheck-v1" };
+  const next = store.enqueueBackfill(userId, Date.now(), options);
+  expect(next).toMatchObject({ status: "QUEUED", total: 3, cursor: 0 });
+  expect(next.id).not.toBe(original.id);
+  expect(store.enqueueBackfill(userId, Date.now(), options)).toEqual(next);
+  expect(
+    store.enqueueBackfill(userId, Date.now(), {
+      onceVersion: MERCHANT_BACKFILL_VERSION,
+    }),
+  ).toEqual(completed);
+  expect(() =>
+    store.enqueueBackfill(userId, Date.now(), {
+      onceVersion: "another-recheck",
+    }),
+  ).toThrow("bisherige Backfill läuft");
+  match.mockClear();
+  await worker.process(store.claim(owner)!);
+  expect(match).toHaveBeenCalledWith(assigned.description, assigned.merchantId);
+  const final = accounts.getFinance(userId).state!;
+  expect(final.transactions).toHaveLength(2);
+  expect(final.transactions[1]).toEqual(protectedRow);
+  expect(final.fixedReceipts?.[0].booking).toMatchObject({
+    merchantAlias: "Müller",
+    category: "Drogerie",
+  });
+  expect(store.enqueueBackfill(userId, Date.now(), options)).toMatchObject({
+    id: next.id,
+    status: "COMPLETED",
+    cursor: 3,
+    progress: 100,
+  });
+  expect(
+    store.snapshot(userId).jobs.find((job) => job.id === original.id),
+  ).toEqual(completed);
+  expect(
+    accounts.read((db) =>
+      db
+        .prepare("SELECT * FROM automation_backfill_items WHERE job_id = ?")
+        .all(original.id),
+    ),
+  ).toEqual(oldItems);
+  const path = accounts.path;
+  accounts.close();
+  accounts = new AccountDatabase(path);
+  store = new AutomationStore(accounts);
+  expect(
+    store.enqueueBackfill(userId, Date.now(), {
+      onceVersion: MERCHANT_BACKFILL_VERSION,
+    }),
+  ).toEqual(completed);
+  expect(store.enqueueBackfill(userId, Date.now(), options).id).toBe(next.id);
+  expect(store.claim(owner)).toBeNull();
+});
+
 it("imports atomically and idempotently, keeps original facts and isolates tenants", async () => {
   const bob = (await accounts.register("bob", "test-only-password-123")).user
     .id;
@@ -527,7 +651,9 @@ it("runs the upgraded merchant backfill once per tenant and never resets its dur
     progress: 100,
   });
   expect(store.enqueueBackfill(userId, Date.now(), options)).toEqual(completed);
-  expect(() => store.enqueueBackfill(userId, Date.now(), { rerun: true })).toThrow("nicht zurückgesetzt");
+  expect(() =>
+    store.enqueueBackfill(userId, Date.now(), { rerun: true }),
+  ).toThrow("nicht zurückgesetzt");
   expect(store.claim(owner)).toBeNull();
   expect(accounts.getFinance(userId).revision).toBe(revision);
   expect(accounts.getFinance(userId).state!.transactions).toHaveLength(203);
@@ -579,7 +705,9 @@ it("does not replace an unrelated active backfill or retry a failed once-only pa
     status: "FAILED",
     attempts: MAX_ATTEMPTS,
   });
-  expect(() => store.enqueueBackfill(userId, Date.now(), { rerun: true })).toThrow("nicht zurückgesetzt");
+  expect(() =>
+    store.enqueueBackfill(userId, Date.now(), { rerun: true }),
+  ).toThrow("nicht zurückgesetzt");
   expect(() =>
     store.enqueueBackfill(userId, Date.now(), {
       onceVersion: MERCHANT_BACKFILL_VERSION,

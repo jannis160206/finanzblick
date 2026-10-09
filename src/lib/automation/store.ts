@@ -175,7 +175,7 @@ export class AutomationStore {
     now = Date.now(),
     options: { rerun?: boolean; onceVersion?: string } = {},
   ): AutomationJob {
-    if (options.onceVersion) {
+    if (options.onceVersion !== undefined) {
       z.string()
         .regex(/^[a-z0-9-]{1,80}$/)
         .parse(options.onceVersion);
@@ -188,17 +188,19 @@ export class AutomationStore {
     return this.accounts.transaction((db) => {
       const existing = db
         .prepare(
-          `SELECT ${columns} FROM automation_jobs WHERE user_id = ? AND kind = 'backfill'`,
+          `SELECT ${columns} FROM automation_jobs WHERE user_id = ? AND kind = 'backfill'
+          ORDER BY (status NOT IN ('COMPLETED', 'FAILED')) DESC, created_at DESC, rowid DESC LIMIT 1`,
         )
         .get(userId);
-      const previous = existing ? automationJobSchema.parse(existing) : null;
+      let previous = existing ? automationJobSchema.parse(existing) : null;
       if (options.onceVersion) {
         const pass = db
           .prepare(
-            "SELECT job_id FROM automation_backfill_passes WHERE user_id = ? AND version = ?",
+            `SELECT ${columns} FROM automation_jobs WHERE user_id = ? AND id =
+              (SELECT job_id FROM automation_backfill_passes WHERE user_id = ? AND version = ?)`,
           )
-          .get(userId, options.onceVersion);
-        if (pass && previous) return previous;
+          .get(userId, userId, options.onceVersion);
+        if (pass) return automationJobSchema.parse(pass);
         if (
           previous &&
           previous.status !== "COMPLETED" &&
@@ -217,11 +219,14 @@ export class AutomationStore {
             "SELECT job_id FROM automation_backfill_passes WHERE job_id = ?",
           )
           .get(previous.id)
-      )
-        throw new AccountError(
-          409,
-          "Ein versionierter Nachlauf darf nicht zurückgesetzt werden.",
-        );
+      ) {
+        if (options.rerun)
+          throw new AccountError(
+            409,
+            "Ein versionierter Nachlauf darf nicht zurückgesetzt werden.",
+          );
+        previous = null;
+      }
       if (
         previous &&
         ((!options.rerun && !options.onceVersion) ||

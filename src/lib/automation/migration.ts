@@ -126,4 +126,14 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (6, unixepoch() * 1000);
     `);
   }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 7").get()
+  ) {
+    db.exec(`
+      DROP INDEX automation_backfill_once;
+      CREATE UNIQUE INDEX automation_backfill_once ON automation_jobs(user_id)
+        WHERE kind = 'backfill' AND status NOT IN ('COMPLETED', 'FAILED');
+      INSERT INTO automation_migrations VALUES (7, unixepoch() * 1000);
+    `);
+  }
 }

@@ -152,6 +152,22 @@ Fehler bleibt sichtbar statt beim erneuten Start ein neues Retry-Budget zu erhal
 Ein bereits versionierter Job ist auch vor einem späteren Aufruf nur mit
 `--rerun` geschützt; der Befehl meldet dann einen Konflikt statt neu anzufangen.
 
+Für eine ausdrücklich gewünschte weitere einmalige Prüfung nach einem bereits
+versionierten, abgeschlossenen Nachlauf:
+
+```sh
+npm run backfill -- --once-version merchant-recheck-20261009
+```
+
+Eine neue Kennung legt einen eigenen Backfill mit aktuellem ID-Snapshot an.
+Alte Jobs, Fortschritte und eingefrorene IDs bleiben erhalten. Dieselbe Kennung
+verwendet immer ihren ursprünglichen Job, auch nach Abschluss oder einem Fehler.
+Pro Konto ist höchstens ein Backfill gleichzeitig aktiv; ein neuer Prüfpass
+lässt sich erst nach Abschluss des alten anlegen. `--once-version` kann nicht mit `--rerun`
+oder `--merchant-upgrade` kombiniert werden. Auch bereits zugeordnete Umsätze
+und reine Fixkostenbelege werden besucht; manuelle/gesperrte Entscheidungen
+bleiben geschützt.
+
 Der Worker verwendet weiterhin einen einzigen Prozess und einen Händlerindex pro
 Start. Vor dem Vergleich entfernt er POS-/Terminal-IDs, Uhrzeit, IBAN und Referenzen.
 Exakte Aliase oder vertrauenswürdige lokale Regexregeln dürfen Namen und Kategorie
