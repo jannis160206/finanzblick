@@ -44,36 +44,36 @@ The optional `wikidataId` persists that brand identity evidence. Older
 ID. Curated brands are independently linked to public Wikidata identities
 (CC0 facts, **not image rights**). Verified on 2026-10-09:
 
-| Reference | Entity |
-| --- | --- |
-| BILLA | [Q537781](https://www.wikidata.org/wiki/Q537781) |
-| PENNY | [Q284688](https://www.wikidata.org/wiki/Q284688) |
-| Mueller drugstores | [Q1958759](https://www.wikidata.org/wiki/Q1958759) |
-| SPAR international brand | [Q610492](https://www.wikidata.org/wiki/Q610492) |
-| HOFER Austria | [Q15815751](https://www.wikidata.org/wiki/Q15815751) |
-| Lidl | [Q151954](https://www.wikidata.org/wiki/Q151954) |
-| dm-drogerie markt | [Q266572](https://www.wikidata.org/wiki/Q266572) |
-| BIPA | [Q864933](https://www.wikidata.org/wiki/Q864933) |
-| IKEA | [Q54078](https://www.wikidata.org/wiki/Q54078) |
-| Austrian Federal Railways | [Q83822](https://www.wikidata.org/wiki/Q83822) |
-| Amazon | [Q3884](https://www.wikidata.org/wiki/Q3884) |
-| Spotify | [Q689141](https://www.wikidata.org/wiki/Q689141) |
-| Netflix | [Q907311](https://www.wikidata.org/wiki/Q907311) |
-| McDonald's | [Q38076](https://www.wikidata.org/wiki/Q38076) |
-| Burger King | [Q177054](https://www.wikidata.org/wiki/Q177054) |
-| MediaMarkt | [Q2381223](https://www.wikidata.org/wiki/Q2381223) |
-| H&M | [Q188326](https://www.wikidata.org/wiki/Q188326) |
-| C&A | [Q701338](https://www.wikidata.org/wiki/Q701338) |
-| OBI | [Q300518](https://www.wikidata.org/wiki/Q300518) |
-| Bauhaus retailer, not the art school | [Q672043](https://www.wikidata.org/wiki/Q672043) |
-| Hornbach | [Q685926](https://www.wikidata.org/wiki/Q685926) |
-| XXXLutz | [Q70339467](https://www.wikidata.org/wiki/Q70339467) |
-| Moemax, not an XXXLutz alias | [Q56388481](https://www.wikidata.org/wiki/Q56388481) |
-| Fressnapf | [Q875796](https://www.wikidata.org/wiki/Q875796) |
-| Thalia books | [Q2408854](https://www.wikidata.org/wiki/Q2408854) |
-| A1 Austria, not the multinational parent | [Q279847](https://www.wikidata.org/wiki/Q279847) |
+| Reference                                   | Entity                                               |
+| ------------------------------------------- | ---------------------------------------------------- |
+| BILLA                                       | [Q537781](https://www.wikidata.org/wiki/Q537781)     |
+| PENNY                                       | [Q284688](https://www.wikidata.org/wiki/Q284688)     |
+| Mueller drugstores                          | [Q1958759](https://www.wikidata.org/wiki/Q1958759)   |
+| SPAR international brand                    | [Q610492](https://www.wikidata.org/wiki/Q610492)     |
+| HOFER Austria                               | [Q15815751](https://www.wikidata.org/wiki/Q15815751) |
+| Lidl                                        | [Q151954](https://www.wikidata.org/wiki/Q151954)     |
+| dm-drogerie markt                           | [Q266572](https://www.wikidata.org/wiki/Q266572)     |
+| BIPA                                        | [Q864933](https://www.wikidata.org/wiki/Q864933)     |
+| IKEA                                        | [Q54078](https://www.wikidata.org/wiki/Q54078)       |
+| Austrian Federal Railways                   | [Q83822](https://www.wikidata.org/wiki/Q83822)       |
+| Amazon                                      | [Q3884](https://www.wikidata.org/wiki/Q3884)         |
+| Spotify                                     | [Q689141](https://www.wikidata.org/wiki/Q689141)     |
+| Netflix                                     | [Q907311](https://www.wikidata.org/wiki/Q907311)     |
+| McDonald's                                  | [Q38076](https://www.wikidata.org/wiki/Q38076)       |
+| Burger King                                 | [Q177054](https://www.wikidata.org/wiki/Q177054)     |
+| MediaMarkt                                  | [Q2381223](https://www.wikidata.org/wiki/Q2381223)   |
+| H&M                                         | [Q188326](https://www.wikidata.org/wiki/Q188326)     |
+| C&A                                         | [Q701338](https://www.wikidata.org/wiki/Q701338)     |
+| OBI                                         | [Q300518](https://www.wikidata.org/wiki/Q300518)     |
+| Bauhaus retailer, not the art school        | [Q672043](https://www.wikidata.org/wiki/Q672043)     |
+| Hornbach                                    | [Q685926](https://www.wikidata.org/wiki/Q685926)     |
+| XXXLutz                                     | [Q70339467](https://www.wikidata.org/wiki/Q70339467) |
+| Moemax, not an XXXLutz alias                | [Q56388481](https://www.wikidata.org/wiki/Q56388481) |
+| Fressnapf                                   | [Q875796](https://www.wikidata.org/wiki/Q875796)     |
+| Thalia books                                | [Q2408854](https://www.wikidata.org/wiki/Q2408854)   |
+| A1 Austria, not the multinational parent    | [Q279847](https://www.wikidata.org/wiki/Q279847)     |
 | Drei Austria, not the global 3 brand entity | [Q28956333](https://www.wikidata.org/wiki/Q28956333) |
-| Magenta Austria | [Q63537385](https://www.wikidata.org/wiki/Q63537385) |
+| Magenta Austria                             | [Q63537385](https://www.wikidata.org/wiki/Q63537385) |
 
 The matcher resolves duplicate records only when entity, canonical name, region
 and default category/purpose requirements agree. Same names without this evidence remain collisions;
@@ -277,6 +277,50 @@ requests. Back up the database and private logo directory together; deleting
 the cache produces missing-logo responses, not live-network fallbacks.
 
 ## Authorized private logos for one account
+
+### Completing the known catalogue
+
+```powershell
+npm run merchants:complete -- --database ".local-data\finanzblick.sqlite" --account "YOUR_USERNAME" --rights-reference "User confirmed private usage rights, 2026-10-09"
+```
+
+This operator-only command upserts the same offline factual seeds, checks the
+existing index bounds, and sequentially drains the existing 200-entity Commons
+scan with its continuation cursor. All passes share a ten-minute deadline.
+It then imports the checked-in reviewed Commons and Wikimedia manifests.
+`--after QID` resumes from the last printed completed scan cursor after a source
+failure; already stored valid assets are reused on ordinary repeat runs.
+There is still one statement worker, no second queue, no scheduled scraping and
+no per-transaction download. The report distinguishes imported, cached and
+missing sources; a finished scan is not a claim that every merchant has artwork.
+New multipurpose references do not infer a purchase category from a brand name.
+Exhausted fuzzy-search budgets remain ambiguous evidence, including when another
+source field names a different known merchant; they never become proof of absence.
+This command never enqueues a financial backfill, overwrites a locked/manual
+assignment or changes a transaction, category, review decision or balance.
+
+Reviewed German Wikipedia files are available **only** through the explicit
+private `--wikimedia-manifest` mode of `merchants:authorized-logos`, or the
+completion command above. The mixed manifest names only `commons` or `de`,
+an existing exact merchant/QID, the public filename and reviewed subject evidence.
+German Wikipedia provenance remains German Wikipedia, not Commons or P154 proof.
+Its private artwork may serve historical references in the same account only when
+their current canonical names, exact public identity and region also agree, using
+the same guards as private Commons artwork.
+Public image credit and licence labels such as `Logo` are retained independently
+of the account's operator-declared permission; they are not converted into CC
+licences. General/shared logo imports remain Commons-only with their original
+licence gate. Files from German Wikipedia use the same bounded server-rendered
+PNG, exact upload-namespace/thumbnail checks, private quotas and account isolation.
+For the explicitly reviewed German `.tiff` source only, its exact first-page
+`lossless-page1` PNG thumbnail is permitted. TIFF originals, known multipage
+metadata, other pages and arbitrary TIFF sources remain rejected.
+
+After a server code update, run this command with the **server's own database and
+existing account**. Local financial files, browser state and credentials are not
+copied to the server. Restart the existing worker after catalogue completion so
+its one in-memory index picks up the added references. Deployment remains a
+separate operation and must not be claimed solely because Git was pushed.
 
 When an operator has private usage rights, the separate authorized import accepts
 an explicit **existing account username** and a required human rights reference.

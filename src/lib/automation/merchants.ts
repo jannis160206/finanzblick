@@ -3,6 +3,7 @@ import { categories } from "@/lib/categories";
 import { merchantText } from "@/lib/import/merchant-description";
 import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
 import { curatedMerchantIdentities } from "./merchant-identities";
+import { expandedMerchantIdentities } from "./merchant-expansion";
 
 const MAX_INPUT = 1024;
 const MAX_NORMALIZED = 512;
@@ -257,6 +258,23 @@ const localMerchant = (
 
 /** Curated offline identities, not account-specific learned category overrides. */
 export const seedMerchants: Merchant[] = [
+  localMerchant(
+    "brunello-cucinelli",
+    "Brunello Cucinelli",
+    [],
+    null,
+    [],
+    "Q3645582",
+  ),
+  localMerchant("vom-fass", "vomFASS", [], null, [], "Q2533008"),
+  localMerchant(
+    "segafredo",
+    "Segafredo",
+    [],
+    "Cafés & Snacks",
+    [],
+    "Q21282762",
+  ),
   localMerchant("audi", "Audi", [], null, [], "Q124983953", true),
   localMerchant("bmw", "BMW", [], null, [], "Q796364", true),
   localMerchant("volkswagen", "Volkswagen", ["VW"], null, [], "Q246", true),
@@ -680,6 +698,19 @@ export const seedMerchants: Merchant[] = [
   localMerchant("bp", "BP", [], "Tanken", [], null, true),
   localMerchant("jet", "JET", ["JET Tankstelle"], "Tanken", [], null, true),
   localMerchant("avia", "AVIA", ["AVIA Tankstelle"], "Tanken", [], null, true),
+  ...expandedMerchantIdentities.map((identity) =>
+    merchantSchema.parse({
+      ...identity,
+      aliases: [...identity.aliases],
+      regexPatterns: [],
+      region: "AT",
+      source: "local",
+      requiresCategoryEvidence: true,
+      license: "Local factual merchant rules; no logo rights asserted",
+      attribution: `Finanzblick: verified public identity https://www.wikidata.org/wiki/${identity.wikidataId}`,
+      updatedAt: Date.UTC(2026, 9, 10, 0, 0),
+    }),
+  ),
 ];
 
 interface AliasEntry {
@@ -932,15 +963,16 @@ export class MerchantIndex {
           length++
         ) {
           const bucket = this.fuzzy.get(`${length}:${gram}`);
-          if (bucket === null) return unresolved();
+          if (bucket === null) return unresolved("fuzzy");
           for (const entry of bucket ?? []) {
             candidates.add(entry);
-            if (candidates.size > MAX_FUZZY_CANDIDATES) return unresolved();
+            if (candidates.size > MAX_FUZZY_CANDIDATES)
+              return unresolved("fuzzy");
           }
         }
       }
       for (const entry of candidates) {
-        if (++comparisons > MAX_FUZZY_CANDIDATES) return unresolved();
+        if (++comparisons > MAX_FUZZY_CANDIDATES) return unresolved("fuzzy");
         if (
           1 - 1 / Math.max(phrase.length, entry.text.length) >= 0.85 &&
           oneEditApart(phrase, entry.text)

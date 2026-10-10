@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
@@ -16,6 +17,16 @@ import {
   publicLogoRightsSchema,
   type PublicLogoRights,
 } from "./merchant-logo-grant-metadata";
+import {
+  commonsLogoFilenameSchema,
+  dewikiLogoSourceUrlSchema,
+  reviewedWikimediaFilenameSchema,
+  reviewedWikimediaEvidenceSchema,
+  reviewedWikimediaWikiSchema,
+  wikimediaSourceUrl,
+  type ReviewedWikimediaWiki,
+} from "./merchant-logo-wikimedia";
+export { commonsLogoFilenameSchema } from "./merchant-logo-wikimedia";
 export {
   privateMerchantLogoSchema,
   type PrivateMerchantLogo,
@@ -23,12 +34,6 @@ export {
 
 const MAX_DOWNLOAD = 2 * 1024 * 1024;
 const MAX_PIXELS = 4_000_000;
-export const commonsLogoFilenameSchema = z
-  .string()
-  .min(1)
-  .max(240)
-  .regex(/\.(?:png|jpe?g|webp|svg)$/i)
-  .refine((filename) => !/[/\\\x00-\x1f|#]/.test(filename));
 const licenses = {
   "CC0 1.0": {
     id: "CC0-1.0",
@@ -86,8 +91,30 @@ function fixedUrl(value: string, host: string, path: string): URL {
   return url;
 }
 
-function allowedRequestUrl(value: string): URL {
+function allowedRequestUrl(
+  value: string,
+  reviewedWiki?: ReviewedWikimediaWiki,
+): URL {
   const url = new URL(value);
+  if (reviewedWiki) {
+    const host =
+      reviewedWiki === "de" ? "de.wikipedia.org" : "commons.wikimedia.org";
+    if (url.hostname === host) return fixedUrl(value, host, "/w/api.php");
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== "upload.wikimedia.org" ||
+      url.port ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      url.search ||
+      !new RegExp(
+        `^/wikipedia/${reviewedWiki}/(?:[a-f0-9]/[a-f0-9]{2}/[^/]+|thumb/[a-f0-9]/[a-f0-9]{2}/[^/]+/${reviewedWiki === "de" ? "(?:lossless-page1-)?" : ""}(?:[1-9]\\d{0,1}|[1-4]\\d{2}|50\\d|51[0-2])px-[^/]+\\.png)$`,
+      ).test(url.pathname)
+    )
+      throw new Error("Disallowed reviewed Wikimedia data URL");
+    return url;
+  }
   if (url.hostname === "overpass-api.de")
     return fixedUrl(value, "overpass-api.de", "/api/interpreter");
   if (url.hostname === "www.wikidata.org")
@@ -128,7 +155,15 @@ export async function fetchMerchantBytes(
     retries?: number;
   },
 ): Promise<Buffer> {
-  const target = allowedRequestUrl(url);
+  return fetchScopedMerchantBytes(url, options);
+}
+
+async function fetchScopedMerchantBytes(
+  url: string,
+  options: Parameters<typeof fetchMerchantBytes>[1],
+  reviewedWiki?: ReviewedWikimediaWiki,
+): Promise<Buffer> {
+  const target = allowedRequestUrl(url, reviewedWiki);
   if (
     !Number.isSafeInteger(options.maxBytes) ||
     options.maxBytes < 1 ||
@@ -262,6 +297,7 @@ const metadataSchema = z.object({
               width: z.number().int().positive(),
               height: z.number().int().positive(),
               mime: z.string().max(100),
+              pagecount: z.number().int().positive().optional(),
               thumburl: z.string().url().max(2000).optional(),
               thumbmime: z.string().max(100).optional(),
               thumbwidth: z.number().int().positive().optional(),
@@ -299,25 +335,40 @@ function plainMetadata(value: string): string {
     .trim();
 }
 
-function commonsMediaUrl(
+function wikimediaMediaUrl(
   value: string,
   kind: "original" | "thumbnail",
+  reviewedWiki?: ReviewedWikimediaWiki,
 ): string {
+  const url = withoutWikimediaTracking(value, kind, reviewedWiki);
+  return allowedRequestUrl(url.href, reviewedWiki).href;
+}
+
+function withoutWikimediaTracking(
+  value: string,
+  kind: "original" | "thumbnail",
+  reviewedWiki?: ReviewedWikimediaWiki,
+): URL {
   const url = new URL(value);
   if (url.search) {
     if (
       url.searchParams.size !== 3 ||
-      url.searchParams.get("utm_source") !== "commons.wikimedia.org" ||
+      url.searchParams.get("utm_source") !==
+        (reviewedWiki === "de"
+          ? "de.wikipedia.org"
+          : "commons.wikimedia.org") ||
       url.searchParams.get("utm_campaign") !== "imageinfo" ||
       url.searchParams.get("utm_content") !== kind
     )
-      throw new Error("Disallowed Commons media query");
+      throw new Error(
+        `Disallowed ${reviewedWiki === "de" ? "German Wikipedia" : "Commons"} media query`,
+      );
     url.search = "";
   }
-  return allowedRequestUrl(url.href).href;
+  return url;
 }
 
-function provenanceMatchedCommonsPngThumbnail(
+function provenanceMatchedWikimediaPngThumbnail(
   original: URL,
   info: {
     thumburl?: string;
@@ -326,6 +377,8 @@ function provenanceMatchedCommonsPngThumbnail(
     thumbheight?: number;
   },
   originalIsPng: boolean,
+  reviewedWiki?: ReviewedWikimediaWiki,
+  firstPageTiff = false,
 ): string | null {
   if (
     !info.thumburl ||
@@ -336,25 +389,38 @@ function provenanceMatchedCommonsPngThumbnail(
     info.thumbmime !== "image/png"
   )
     return null;
-  const source = /^\/wikipedia\/commons\/([a-f0-9]\/[a-f0-9]{2}\/[^/]+)$/.exec(
-    original.pathname,
+  const wiki = reviewedWiki ?? "commons";
+  const source = new RegExp(
+    `^/wikipedia/${wiki}/([a-f0-9]/[a-f0-9]{2}/[^/]+)$`,
+  ).exec(original.pathname);
+  const thumbnail = withoutWikimediaTracking(
+    info.thumburl,
+    "thumbnail",
+    reviewedWiki,
   );
-  const thumbnail = allowedRequestUrl(
-    commonsMediaUrl(info.thumburl, "thumbnail"),
-  );
+  const reviewedAlias =
+    reviewedWiki !== undefined && thumbnail.hostname === "thumb.wikimedia.org";
+  if (reviewedAlias) {
+    const validated = new URL(thumbnail.href);
+    validated.hostname = "upload.wikimedia.org";
+    allowedRequestUrl(validated.href, reviewedWiki);
+  } else allowedRequestUrl(thumbnail.href, reviewedWiki);
   const width =
-    thumbnail && /\/(\d+)px-[^/]+\.png$/.exec(thumbnail.pathname)?.[1];
+    thumbnail &&
+    /\/(?:lossless-page1-)?(\d+)px-[^/]+\.png$/.exec(thumbnail.pathname)?.[1];
   const filename = source?.[1].split("/").at(-1);
   const expected =
     source &&
     width &&
     filename &&
-    `/wikipedia/commons/thumb/${source[1]}/${width}px-${filename}${originalIsPng ? "" : ".png"}`;
+    `/wikipedia/${wiki}/thumb/${source[1]}/${firstPageTiff ? "lossless-page1-" : ""}${width}px-${filename}${originalIsPng ? "" : ".png"}`;
   if (!expected || thumbnail.pathname !== expected) return null;
+  // Normalize only the validated API alias after exact original-file matching.
+  if (reviewedAlias) thumbnail.hostname = "upload.wikimedia.org";
   return thumbnail.href;
 }
 
-type CommonsRasterResult =
+type WikimediaRasterResult =
   | {
       status: "downloaded";
       png: Buffer;
@@ -374,7 +440,7 @@ async function retrieveCommonsRaster(
     retries?: number;
     filename?: string;
   } = {},
-): Promise<CommonsRasterResult> {
+): Promise<WikimediaRasterResult> {
   if (!/^Q[1-9]\d{0,11}$/.test(wikidataId))
     throw new Error("Invalid Wikidata entity ID");
   const entityUrl = new URL("https://www.wikidata.org/w/api.php");
@@ -428,18 +494,25 @@ async function retrieveCommonsRaster(
       status: "skipped",
       reason: "P154 is not a supported, unambiguous image filename",
     };
-  return retrieveNamedCommonsRaster(wikidataId, filename, policy, options);
+  return retrieveNamedWikimediaRaster(wikidataId, filename, policy, options);
 }
 
-async function retrieveNamedCommonsRaster(
+async function retrieveNamedWikimediaRaster(
   wikidataId: string,
   filename: string,
   policy: "public-license" | "operator-private",
   options: Parameters<typeof retrieveCommonsRaster>[2],
   reviewedEvidence?: string,
-): Promise<CommonsRasterResult> {
-  const commonsUrl = new URL("https://commons.wikimedia.org/w/api.php");
-  commonsUrl.search = new URLSearchParams({
+  reviewedWiki?: ReviewedWikimediaWiki,
+): Promise<WikimediaRasterResult> {
+  const wiki = reviewedWiki ?? "commons";
+  const sourceName = wiki === "de" ? "German Wikipedia" : "Commons";
+  const metadataUrl = new URL(
+    wiki === "de"
+      ? "https://de.wikipedia.org/w/api.php"
+      : "https://commons.wikimedia.org/w/api.php",
+  );
+  metadataUrl.search = new URLSearchParams({
     action: "query",
     titles: `File:${filename}`,
     prop: "imageinfo",
@@ -452,17 +525,22 @@ async function retrieveNamedCommonsRaster(
     format: "json",
   }).toString();
   const metadata = metadataSchema.parse(
-    await fetchMerchantJson(commonsUrl.href, {
-      ...options,
-      maxBytes: 128 * 1024,
-    }),
+    JSON.parse(
+      (
+        await fetchScopedMerchantBytes(
+          metadataUrl.href,
+          { ...options, maxBytes: 128 * 1024 },
+          reviewedWiki,
+        )
+      ).toString("utf8"),
+    ),
   );
   const pages = Object.values(metadata.query.pages);
   if (pages.length !== 1)
-    throw new Error("Commons response must contain one requested file");
+    throw new Error(`${sourceName} response must contain one requested file`);
   const page = pages[0];
   if (Object.hasOwn(page, "missing") || !page.imageinfo?.length)
-    return { status: "skipped", reason: "Commons file is missing" };
+    return { status: "skipped", reason: `${sourceName} file is missing` };
   const info = page.imageinfo[0];
   const fields = info.extmetadata;
   const shortName = fields.LicenseShortName?.value;
@@ -498,7 +576,10 @@ async function retrieveNamedCommonsRaster(
   ).toLowerCase();
   const trademark = ["trademark", "trademarked"].includes(restriction);
   if (restriction && !trademark)
-    return { status: "skipped", reason: "Commons lists usage restrictions" };
+    return {
+      status: "skipped",
+      reason: `${sourceName} lists usage restrictions`,
+    };
   const artist = plainMetadata(fields.Artist?.value ?? "");
   const credit = plainMetadata(fields.Credit?.value ?? "");
   if (
@@ -517,30 +598,50 @@ async function retrieveNamedCommonsRaster(
   )
     return {
       status: "skipped",
-      reason: "Missing or oversized Commons attribution",
+      reason: `Missing or oversized ${sourceName} attribution`,
     };
   const oversizedOriginal =
     info.size > MAX_DOWNLOAD || info.width * info.height > MAX_PIXELS;
+  const firstPageTiff =
+    reviewedWiki === "de" &&
+    policy === "operator-private" &&
+    /\.tiff$/i.test(filename) &&
+    info.mime === "image/tiff";
+  if (/\.tiff$/i.test(filename) && !firstPageTiff)
+    return {
+      status: "skipped",
+      reason: "Reviewed TIFF source format does not match",
+    };
+  if (firstPageTiff && info.pagecount !== undefined && info.pagecount !== 1)
+    return {
+      status: "skipped",
+      reason: "Reviewed dewiki TIFF has multiple pages",
+    };
   const authorizedRasterThumbnail =
     policy === "operator-private" &&
     oversizedOriginal &&
     (["image/png", "image/jpeg"].includes(info.mime) ||
-      (/\.svg$/i.test(filename) && info.mime === "image/svg+xml"));
+      (/\.svg$/i.test(filename) && info.mime === "image/svg+xml") ||
+      firstPageTiff);
   if (
     info.size < 1 ||
     (oversizedOriginal && !authorizedRasterThumbnail) ||
     !(
       ["image/png", "image/jpeg", "image/webp"].includes(info.mime) ||
-      (/\.svg$/i.test(filename) && info.mime === "image/svg+xml")
+      (/\.svg$/i.test(filename) && info.mime === "image/svg+xml") ||
+      firstPageTiff
     )
   )
-    return { status: "skipped", reason: "Commons image exceeds raster limits" };
-  let downloadUrl = commonsMediaUrl(info.url, "original");
+    return {
+      status: "skipped",
+      reason: `${sourceName} image exceeds raster limits`,
+    };
+  let downloadUrl = wikimediaMediaUrl(info.url, "original", reviewedWiki);
   const originalUrl = new URL(downloadUrl);
   const originalName = originalUrl.pathname.split("/").at(-1);
   if (
     originalUrl.hostname !== "upload.wikimedia.org" ||
-    !/^\/wikipedia\/commons\/[a-f0-9]\/[a-f0-9]{2}\/[^/]+$/.test(
+    !new RegExp(`^/wikipedia/${wiki}/[a-f0-9]/[a-f0-9]{2}/[^/]+$`).test(
       originalUrl.pathname,
     ) ||
     !originalName ||
@@ -548,32 +649,48 @@ async function retrieveNamedCommonsRaster(
   )
     return {
       status: "skipped",
-      reason: "Commons original does not match requested file",
+      reason: `${sourceName} original does not match requested file`,
     };
+  if (reviewedWiki) {
+    const hash = createHash("md5")
+      .update(filename.replace(/ /g, "_"))
+      .digest("hex");
+    const directories = originalUrl.pathname.split("/").slice(-3, -1);
+    if (directories[0] !== hash[0] || directories[1] !== hash.slice(0, 2))
+      return {
+        status: "skipped",
+        reason: `${sourceName} original hash directories do not match requested file`,
+      };
+  }
   let downloadMime = info.mime;
   const svg = /\.svg$/i.test(filename);
-  const downloadThumbnail = svg || authorizedRasterThumbnail;
+  const downloadThumbnail = svg || firstPageTiff || authorizedRasterThumbnail;
   if (downloadThumbnail) {
-    const thumbnail = provenanceMatchedCommonsPngThumbnail(
+    const thumbnail = provenanceMatchedWikimediaPngThumbnail(
       originalUrl,
       info,
       info.mime === "image/png",
+      reviewedWiki,
+      firstPageTiff,
     );
     if (!thumbnail || (svg && info.mime !== "image/svg+xml")) {
       return {
         status: "skipped",
-        reason: svg
-          ? "No provenance-matched Commons PNG thumbnail for SVG"
-          : "No provenance-matched Commons PNG thumbnail for oversized raster",
+        reason: firstPageTiff
+          ? "No provenance-matched dewiki first-page PNG thumbnail for TIFF"
+          : svg
+            ? `No provenance-matched ${sourceName} PNG thumbnail for SVG`
+            : `No provenance-matched ${sourceName} PNG thumbnail for oversized raster`,
       };
     }
     downloadUrl = thumbnail;
     downloadMime = "image/png";
   }
-  const bytes = await fetchMerchantBytes(downloadUrl, {
-    ...options,
-    maxBytes: MAX_DOWNLOAD,
-  });
+  const bytes = await fetchScopedMerchantBytes(
+    downloadUrl,
+    { ...options, maxBytes: MAX_DOWNLOAD },
+    reviewedWiki,
+  );
   if (logoRasterMime(bytes) !== downloadMime)
     return {
       status: "skipped",
@@ -588,7 +705,7 @@ async function retrieveNamedCommonsRaster(
       status: "skipped",
       reason: "Raster decoding or normalization failed",
     };
-  const sourceUrl = `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(filename)}`;
+  const sourceUrl = wikimediaSourceUrl(wiki, filename);
   const publicRights = publicLogoRightsSchema.safeParse({
     license: publicLicense,
     licenseName: plainMetadata(shortName ?? "") || null,
@@ -597,23 +714,34 @@ async function retrieveNamedCommonsRaster(
     restrictions: restriction || null,
     artist: artist || null,
     credit: credit || null,
+    ...(wiki === "de"
+      ? {
+          copyrighted: plainMetadata(fields.Copyrighted?.value ?? "") || null,
+          attributionRequired:
+            plainMetadata(fields.AttributionRequired?.value ?? "") || null,
+        }
+      : {}),
   });
   if (!publicRights.success)
     return {
       status: "skipped",
-      reason: "Commons rights metadata exceeds limits",
+      reason: `${sourceName} rights metadata exceeds limits`,
     };
   const reference = reviewedEvidence
     ? `Operator-reviewed file association: Wikidata ${wikidataId}; ${reviewedEvidence}`
     : `P154 reference: Wikidata ${wikidataId} (CC0-1.0)`;
-  const attribution = `${artist || "Commons artist not specified"}${credit ? `; ${credit}` : ""}; Wikimedia Commons; ${sourceUrl}; ${publicLicense ?? "No verified public licence"}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; ${reference}`;
+  const attribution = `${artist || `${sourceName} artist not specified`}${credit ? `; ${credit}` : ""}; ${wiki === "de" ? "German Wikipedia" : "Wikimedia Commons"}; ${sourceUrl}; ${publicLicense ?? "No verified public licence"}; resized to PNG${trademark ? "; trademark rights may apply" : ""}; ${reference}`;
   if (
     attribution.length > 2000 ||
-    !privateMerchantLogoSchema.shape.sourceUrl.safeParse(sourceUrl).success
+    !(
+      wiki === "de"
+        ? dewikiLogoSourceUrlSchema
+        : privateMerchantLogoSchema.shape.sourceUrl
+    ).safeParse(sourceUrl).success
   )
     return {
       status: "skipped",
-      reason: "Commons attribution or source exceeds storage metadata limits",
+      reason: `${sourceName} attribution or source exceeds storage metadata limits`,
     };
   return {
     status: "downloaded",
@@ -629,7 +757,7 @@ async function retrieveNamedCommonsRaster(
 export async function retrieveAuthorizedCommonsRaster(
   wikidataId: string,
   options: Parameters<typeof retrieveCommonsRaster>[2] = {},
-): Promise<CommonsRasterResult> {
+): Promise<WikimediaRasterResult> {
   return retrieveCommonsRaster(wikidataId, "operator-private", options);
 }
 
@@ -637,12 +765,7 @@ export const reviewedCommonsAssociationSchema = z
   .object({
     wikidataId: z.string().regex(/^Q[1-9]\d{0,11}$/),
     filename: commonsLogoFilenameSchema,
-    evidence: z
-      .string()
-      .trim()
-      .min(40)
-      .max(800)
-      .refine((text) => !/[\x00-\x1f\x7f]/.test(text)),
+    evidence: reviewedWikimediaEvidenceSchema,
   })
   .strict();
 
@@ -655,12 +778,41 @@ export async function retrieveReviewedCommonsRaster(
 ) {
   const { wikidataId, filename, evidence } =
     reviewedCommonsAssociationSchema.parse(input);
-  return retrieveNamedCommonsRaster(
+  return retrieveNamedWikimediaRaster(
     wikidataId,
     filename,
     "operator-private",
     options,
     evidence,
+  );
+}
+
+export const reviewedWikimediaAssociationSchema =
+  reviewedCommonsAssociationSchema
+    .extend({
+      wiki: reviewedWikimediaWikiSchema,
+      filename: reviewedWikimediaFilenameSchema,
+    })
+    .strict()
+    .refine(
+      (entry) => entry.wiki === "de" || !/\.tiff$/i.test(entry.filename),
+      { message: "Reviewed TIFF thumbnails require the de namespace" },
+    );
+
+/** Only an explicit reviewed private import can select a Wikipedia namespace. */
+export async function retrieveReviewedWikimediaRaster(
+  input: z.infer<typeof reviewedWikimediaAssociationSchema>,
+  options: Parameters<typeof retrieveReviewedCommonsRaster>[1] = {},
+) {
+  const { wiki, wikidataId, filename, evidence } =
+    reviewedWikimediaAssociationSchema.parse(input);
+  return retrieveNamedWikimediaRaster(
+    wikidataId,
+    filename,
+    "operator-private",
+    options,
+    evidence,
+    wiki,
   );
 }
 
@@ -757,7 +909,7 @@ export async function merchantAttribution(
         `Rechte-Referenz (Betreiber-/Nutzererklärung; kein geprüfter Lizenznachweis): ${logo.rightsReference}`,
         `Logo-Quellenangabe und Bearbeitung: ${logo.attribution}`,
         `Logo-Originalquelle: ${
-          logo.provenance.kind === "commons"
+          logo.provenance.kind !== "local-file"
             ? logo.provenance.sourceUrl
             : `Lokal bereitgestellt: ${logo.provenance.sourceLabel}`
         }`,
@@ -771,6 +923,11 @@ export async function merchantAttribution(
           `Öffentliche Einschränkungen: ${rights.restrictions ?? "Nicht angegeben"}`,
           `Öffentliche Künstlerangabe: ${rights.artist ?? "Nicht angegeben"}`,
           `Öffentliche Quellenangabe: ${rights.credit ?? "Nicht angegeben"}`,
+        );
+      if (rights && Object.hasOwn(rights, "copyrighted"))
+        lines.push(
+          `Urheberrechtsschutz (Quellenmetadaten): ${rights.copyrighted ?? "Nicht angegeben"}`,
+          `Namensnennung erforderlich (Quellenmetadaten): ${rights.attributionRequired ?? "Nicht angegeben"}`,
         );
       lines.push(
         "",

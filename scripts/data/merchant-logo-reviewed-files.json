@@ -1,6 +1,24 @@
 {
   "entries": [
     {
+      "merchantId": "icloud",
+      "wikidataId": "Q283469",
+      "filename": "ICloud logo.svg",
+      "evidence": "Commons describes this artwork as the iCloud cloud storage and cloud computing service logo, not Apple corporate branding. The German ICloud article resolves to exact service Q283469 and uses this exact Commons file. Verified 2026-10-10."
+    },
+    {
+      "merchantId": "nkd",
+      "wikidataId": "Q927272",
+      "filename": "NKD Logo kl RGB SVG.svg",
+      "evidence": "Commons describes NKD's red redesigned logo implemented in autumn 2021. The German NKD retailer article identifies Q927272 and uses this exact file; the reviewed identity is NKD retail, not an acronym or similarly named entity. Verified 2026-10-10."
+    },
+    {
+      "merchantId": "segafredo",
+      "wikidataId": "Q21282762",
+      "filename": "Segafredo Zanetti logo.svg",
+      "evidence": "Commons explicitly describes this artwork as Segafredo Zanetti's logo and categorizes it under Segafredo Zanetti. The German Segafredo Zanetti article identifies Q21282762 and uses this exact file. This is the coffee company/brand, not a similarly named retailer. Verified 2026-10-10."
+    },
+    {
       "merchantId": "renault",
       "wikidataId": "Q125544573",
       "filename": "Renault 2021.svg",

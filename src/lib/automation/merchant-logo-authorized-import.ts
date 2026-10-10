@@ -14,6 +14,8 @@ import {
   commonsLogoFilenameSchema,
   reviewedCommonsAssociationSchema,
   retrieveReviewedCommonsRaster,
+  reviewedWikimediaAssociationSchema,
+  retrieveReviewedWikimediaRaster,
 } from "./merchant-logo";
 import {
   authorizedMerchantLogoSchema,
@@ -236,15 +238,47 @@ export const reviewedCommonsManifestSchema = z
   })
   .strict();
 
+export const reviewedWikimediaManifestSchema = z
+  .object({
+    entries: z
+      .array(
+        reviewedWikimediaAssociationSchema
+          .safeExtend({
+            merchantId: logoMerchantIdSchema,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(MAX_AUTHORIZED_LOGO_ENTITIES),
+  })
+  .strict();
+
+type ReviewedLogoImportOptions = {
+  userId: string;
+  rightsReference: string;
+  manifestPath: string;
+  fetch?: typeof fetch;
+  signal?: AbortSignal;
+};
+
 export async function importReviewedCommonsLogos(
   store: AutomationStore,
-  options: {
-    userId: string;
-    rightsReference: string;
-    manifestPath: string;
-    fetch?: typeof fetch;
-    signal?: AbortSignal;
-  },
+  options: ReviewedLogoImportOptions,
+) {
+  return importReviewedLogos(store, options, false);
+}
+
+export async function importReviewedWikimediaLogos(
+  store: AutomationStore,
+  options: ReviewedLogoImportOptions,
+) {
+  return importReviewedLogos(store, options, true);
+}
+
+async function importReviewedLogos(
+  store: AutomationStore,
+  options: ReviewedLogoImportOptions,
+  mixed: boolean,
 ) {
   const userId = requireLogoAccount(store.accounts, options.userId);
   const rightsReference = logoRightsReferenceSchema.parse(
@@ -252,7 +286,9 @@ export async function importReviewedCommonsLogos(
   );
   const signal = deadline(options.signal);
   signal.throwIfAborted();
-  const manifest = reviewedCommonsManifestSchema.parse(
+  const manifest = (
+    mixed ? reviewedWikimediaManifestSchema : reviewedCommonsManifestSchema
+  ).parse(
     JSON.parse(
       new TextDecoder("utf-8", { fatal: true }).decode(
         await readBoundedLogoFile(resolve(options.manifestPath), 128 * 1024),
@@ -279,14 +315,24 @@ export async function importReviewedCommonsLogos(
   try {
     for (const entry of manifest.entries) {
       signal.throwIfAborted();
-      const result = await retrieveReviewedCommonsRaster(
-        {
-          wikidataId: entry.wikidataId,
-          filename: entry.filename,
-          evidence: entry.evidence,
-        },
-        { fetch: options.fetch, signal, retries: 2 },
-      );
+      const association = {
+        wikidataId: entry.wikidataId,
+        filename: entry.filename,
+        evidence: entry.evidence,
+      };
+      const retrievalOptions = { fetch: options.fetch, signal, retries: 2 };
+      const result =
+        "wiki" in entry
+          ? await retrieveReviewedWikimediaRaster(
+              {
+                ...association,
+                wiki: reviewedWikimediaAssociationSchema.shape.wiki.parse(
+                  entry.wiki,
+                ),
+              },
+              retrievalOptions,
+            )
+          : await retrieveReviewedCommonsRaster(association, retrievalOptions);
       if (result.status === "skipped") {
         report.skipped.push({
           merchantId: entry.merchantId,
@@ -308,7 +354,7 @@ export async function importReviewedCommonsLogos(
           rightsReference,
           attribution: result.attribution,
           provenance: {
-            kind: "commons",
+            kind: "wiki" in entry && entry.wiki === "de" ? "dewiki" : "commons",
             wikidataId: entry.wikidataId,
             sourceUrl: result.sourceUrl,
             associationEvidence: entry.evidence,
@@ -419,7 +465,7 @@ export async function importAuthorizedCommonsLogos(
             const candidate = store.authorizedLogo(userId, merchant.id);
             if (
               candidate &&
-              candidate.logo.provenance.kind === "commons" &&
+              candidate.logo.provenance.kind !== "local-file" &&
               candidate.logo.provenance.wikidataId === wikidataId &&
               (await readAuthorizedMerchantLogo(
                 store.accounts.path,

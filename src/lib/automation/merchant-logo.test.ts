@@ -144,16 +144,26 @@ describe("fixed, bounded merchant data network", () => {
 });
 
 describe("Commons-generated raster logos", () => {
-  const svgMetadata = () =>
-    commons({
-      url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Example_logo.svg",
-      mime: "image/svg+xml",
-      thumburl:
-        "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Example_logo.svg/250px-Example_logo.svg.png",
-      thumbmime: "image/png",
-      thumbwidth: 128,
-      thumbheight: 64,
-    });
+  const svgMetadata = () => ({
+    query: {
+      pages: {
+        "7": {
+          imageinfo: [
+            {
+              ...imageinfo(),
+              url: "https://upload.wikimedia.org/wikipedia/commons/a/ab/Example_logo.svg",
+              mime: "image/svg+xml",
+              thumburl:
+                "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Example_logo.svg/250px-Example_logo.svg.png",
+              thumbmime: "image/png",
+              thumbwidth: 128,
+              thumbheight: 64,
+            },
+          ],
+        },
+      },
+    },
+  });
   it("downloads a provenance-matched Commons PNG, never the source SVG", async () => {
     const request = network([
       Response.json(entity([claim("Example logo.svg")])),
@@ -171,6 +181,34 @@ describe("Commons-generated raster logos", () => {
         .map((call) => String(call[0]))
         .filter((url) => url.endsWith(".svg")),
     ).toEqual([]);
+  });
+  it("retains public Commons-only retrieval with the exact imageinfo tracking triplets and thumbnail alias", async () => {
+    const metadata = svgMetadata();
+    const info = metadata.query.pages["7"].imageinfo[0];
+    info.url +=
+      "?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original";
+    info.thumburl +=
+      "?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail";
+    const request = network([
+      Response.json(entity([claim("Example logo.svg")])),
+      Response.json(metadata),
+      new Response(new Uint8Array(await png())),
+    ]);
+    expect(
+      await retrieveMerchantLogo("Q123", await privateDatabase(), {
+        fetch: request,
+      }),
+    ).toMatchObject({ status: "downloaded", logo: { license: "CC-BY-4.0" } });
+    expect(String(request.mock.calls[2][0])).toBe(
+      "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Example_logo.svg/250px-Example_logo.svg.png",
+    );
+    expect(
+      request.mock.calls.every(
+        ([url]) =>
+          !String(url).includes("de.wikipedia.org") &&
+          !String(url).endsWith(".svg"),
+      ),
+    ).toBe(true);
   });
   it.each([
     { thumburl: undefined },

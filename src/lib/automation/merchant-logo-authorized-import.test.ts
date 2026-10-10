@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountDatabase, hashToken } from "@/lib/server/database";
@@ -23,11 +24,15 @@ import {
   importAuthorizedCommonsLogos,
   importAuthorizedLocalLogos,
   importReviewedCommonsLogos,
+  importReviewedWikimediaLogos,
+  reviewedWikimediaManifestSchema,
   MAX_AUTHORIZED_LOGO_ENTITIES,
 } from "./merchant-logo-authorized-import";
 import {
   privateMerchantLogoSchema,
   retrieveMerchantLogo,
+  fetchMerchantBytes,
+  retrieveReviewedWikimediaRaster,
 } from "./merchant-logo";
 import {
   normalizeLogoRaster,
@@ -56,6 +61,62 @@ const rightsReference = "User confirmed private usage rights, 2026-10-09";
 const filename = "Synthetic shape.png";
 const upload =
   "https://upload.wikimedia.org/wikipedia/commons/a/ab/Synthetic_shape.png";
+const deFilename = "Synthetic German logo.svg";
+const deEvidence =
+  "The exact public German Wikipedia article identifies Q123 and displays this exact file as the synthetic merchant logo; operator reviewed that factual association.";
+const deEntry = {
+  merchantId: "example",
+  wiki: "de" as const,
+  wikidataId: "Q123",
+  filename: deFilename,
+  evidence: deEvidence,
+};
+function wikimediaUpload(name: string, wiki = "de", thumbnail = false) {
+  const normalized = name.replace(/ /g, "_");
+  const hash = createHash("md5").update(normalized).digest("hex");
+  const source = `${hash[0]}/${hash.slice(0, 2)}/${encodeURIComponent(normalized)}`;
+  return `https://upload.wikimedia.org/wikipedia/${wiki}/${thumbnail ? `thumb/${source}/250px-${encodeURIComponent(normalized)}.png` : source}`;
+}
+function deInfo(overrides = {}) {
+  return {
+    url: wikimediaUpload(deFilename),
+    size: 1024,
+    width: 400,
+    height: 200,
+    mime: "image/svg+xml",
+    thumburl: wikimediaUpload(deFilename, "de", true),
+    thumbmime: "image/png",
+    thumbwidth: 128,
+    thumbheight: 64,
+    extmetadata: {
+      Artist: { value: "Synthetic German artist" },
+      Credit: { value: "Original synthetic creator" },
+      LicenseShortName: { value: "Copyrighted" },
+      Copyrighted: { value: "True" },
+      AttributionRequired: { value: "true" },
+      UsageTerms: { value: "Copyrighted logo" },
+      Restrictions: { value: "trademarked" },
+    },
+    ...overrides,
+  };
+}
+function wikimediaResponse(info = deInfo()) {
+  return Response.json({ query: { pages: { "1": { imageinfo: [info] } } } });
+}
+async function reviewedWikimediaManifest(entries: unknown[] = [deEntry]) {
+  const path = join(directory, "wikimedia-reviewed.json");
+  await writeFile(path, JSON.stringify({ entries }));
+  return path;
+}
+async function importDeLogo(reference = rightsReference) {
+  network.mockResolvedValueOnce(wikimediaResponse());
+  network.mockResolvedValueOnce(new Response(new Uint8Array(await raster())));
+  return importReviewedWikimediaLogos(store, {
+    userId: alice,
+    rightsReference: reference,
+    manifestPath: await reviewedWikimediaManifest(),
+  });
+}
 
 function merchant(id = "example", wikidataId: string | null = "Q123") {
   return merchantSchema.parse({
@@ -252,6 +313,896 @@ afterEach(async () => {
 });
 
 describe("account-scoped authorized logos", () => {
+  it("imports reviewed dewiki artwork idempotently with truthful account-only provenance and credits", async () => {
+    accounts.putFinance(alice, blankTestState(), 0);
+    const before = accounts.read((db) => ({
+      merchants: db.prepare("SELECT * FROM merchants").all(),
+      finance: db.prepare("SELECT * FROM finance").all(),
+      users: db.prepare("SELECT * FROM users").all(),
+      sessions: db.prepare("SELECT * FROM sessions").all(),
+    }));
+    expect(await importDeLogo()).toEqual({
+      imported: 1,
+      cached: 0,
+      skipped: [],
+    });
+    expect(await importDeLogo()).toEqual({
+      imported: 0,
+      cached: 1,
+      skipped: [],
+    });
+    const grant = store.authorizedLogo(alice, "example")!;
+    const sourceUrl = `https://de.wikipedia.org/wiki/Datei:${encodeURIComponent(deFilename)}`;
+    expect(grant.logo).toMatchObject({
+      permission: "operator-declared-private-usage-rights",
+      rightsReference,
+      provenance: {
+        kind: "dewiki",
+        wikidataId: "Q123",
+        sourceUrl,
+        associationEvidence: deEvidence,
+      },
+      publicRights: {
+        license: null,
+        licenseName: "Copyrighted",
+        copyrighted: "True",
+        attributionRequired: "true",
+        usageTerms: "Copyrighted logo",
+        restrictions: "trademarked",
+        artist: "Synthetic German artist",
+        credit: "Original synthetic creator",
+      },
+    });
+    expect(grant.logo.attribution).toContain("German Wikipedia");
+    expect(grant.logo.attribution).toContain(deEvidence);
+    expect(grant.logo.attribution).not.toMatch(/P154|Commons|CC0-1.0/);
+    expect(privateMerchantLogoSchema.safeParse(grant.logo).success).toBe(false);
+    const bytes = await readAuthorizedMerchantLogo(
+      accounts.path,
+      alice,
+      grant.logo,
+    );
+    const info = await sharp(bytes!).metadata();
+    expect(info.format).toBe("png");
+    expect(Math.max(info.width!, info.height!)).toBeLessThanOrEqual(128);
+    expect(bytes!.length).toBeLessThanOrEqual(256 * 1024);
+    expect(
+      await readAuthorizedMerchantLogo(accounts.path, bob, grant.logo),
+    ).toBeNull();
+    expect(store.authorizedLogo(bob, "example", grant.version)).toBeNull();
+    expect(
+      await accountMerchantPresentations(
+        store,
+        { merchantIds: ["example"] },
+        alice,
+      ),
+    ).toEqual([
+      {
+        merchantId: "example",
+        logo: { merchantId: "example", version: grant.version },
+      },
+    ]);
+    expect(
+      await accountMerchantPresentations(
+        store,
+        { merchantIds: ["example"] },
+        bob,
+      ),
+    ).toEqual([{ merchantId: "example", logo: null }]);
+    const ctx = { params: Promise.resolve({ id: "example" }) };
+    const image = await logoApi(
+      request(`example/logo?v=${grant.version}`),
+      ctx,
+    );
+    expect(image.status).toBe(200);
+    expect(image.headers.get("X-Merchant-Logo-License")).toBeNull();
+    const credits = await attributionApi(
+      request(`example/attribution?v=${grant.version}`),
+      ctx,
+    );
+    expect(await credits.text()).toContain(sourceUrl);
+    expect(
+      (await logoApi(request(`example/logo?v=${grant.version}`, "bob"), ctx))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await attributionApi(
+          request(`example/attribution?v=${grant.version}`, "bob"),
+          ctx,
+        )
+      ).status,
+    ).toBe(404);
+    expect(
+      network.mock.calls.map(([url]) => new URL(String(url)).hostname),
+    ).toEqual([
+      "de.wikipedia.org",
+      "upload.wikimedia.org",
+      "de.wikipedia.org",
+      "upload.wikimedia.org",
+    ]);
+    expect(
+      network.mock.calls.every(
+        ([url, init]) =>
+          !String(url).endsWith(".svg") && init?.redirect === "error",
+      ),
+    ).toBe(true);
+    expect(
+      accounts.read((db) => ({
+        merchants: db.prepare("SELECT * FROM merchants").all(),
+        finance: db.prepare("SELECT * FROM finance").all(),
+        users: db.prepare("SELECT * FROM users").all(),
+        sessions: db.prepare("SELECT * FROM sessions").all(),
+      })),
+    ).toEqual(before);
+    expect(
+      await readdir(authorizedLogoDirectory(accounts.path, alice)),
+    ).toHaveLength(1);
+  });
+
+  it("preserves reviewed dewiki choices through ordinary Commons scans without reminting versions", async () => {
+    await importDeLogo();
+    const old = store.authorizedLogo(alice, "example")!;
+    network.mockClear();
+    expect(
+      await importAuthorizedCommonsLogos(store, {
+        userId: alice,
+        rightsReference:
+          "Later declaration must not silently rewrite reviewed dewiki credits",
+      }),
+    ).toMatchObject({ imported: 0, cached: 1 });
+    expect(store.authorizedLogo(alice, "example")).toEqual(old);
+    expect(network).not.toHaveBeenCalled();
+    commonsRequests();
+    network.mockResolvedValueOnce(
+      new Response(new Uint8Array(await raster(80))),
+    );
+    expect(
+      await importAuthorizedCommonsLogos(store, {
+        userId: alice,
+        rightsReference,
+        refresh: true,
+      }),
+    ).toMatchObject({ imported: 1, cached: 0 });
+    expect(store.authorizedLogo(alice, "example")?.logo.provenance.kind).toBe(
+      "commons",
+    );
+    expect(store.authorizedLogo(alice, "example", old.version)).toEqual(old);
+    const ctx = { params: Promise.resolve({ id: "example" }) };
+    expect(
+      (await logoApi(request(`example/logo?v=${old.version}`), ctx)).status,
+    ).toBe(200);
+    expect(
+      await (
+        await attributionApi(
+          request(`example/attribution?v=${old.version}`),
+          ctx,
+        )
+      ).text(),
+    ).toContain(deEvidence);
+  });
+
+  it("does not lend dewiki artwork to other names, regions, or stale QIDs; local files retain precedence", async () => {
+    await importDeLogo();
+    store.upsertMerchants([
+      { ...merchant("other-name"), canonicalName: "Unrelated brand" },
+      { ...merchant("other-region"), region: "DE" },
+      merchant("same-name"),
+    ]);
+    for (const id of ["other-name", "other-region"])
+      expect(store.authorizedLogoCandidates(alice, [id]).get(id)).toEqual([]);
+    expect(
+      store.authorizedLogoCandidates(alice, ["same-name"]).get("same-name"),
+    ).toEqual([store.authorizedLogo(alice, "example")]);
+    store.upsertMerchants([{ ...merchant("example", "Q456"), updatedAt: 2 }]);
+    expect(
+      store.authorizedLogoCandidates(alice, ["example"]).get("example"),
+    ).toEqual([]);
+    expect(
+      store.authorizedLogoCandidates(alice, ["same-name"]).get("same-name"),
+    ).toEqual([]);
+    store.upsertMerchants([{ ...merchant(), updatedAt: 3 }]);
+    accounts.transaction((db) =>
+      db
+        .prepare(
+          "DELETE FROM merchants WHERE id IN ('other-name', 'other-region', 'same-name')",
+        )
+        .run(),
+    );
+    await importLocal();
+    const local = store.authorizedLogo(alice, "example")!;
+    network.mockClear();
+    await importAuthorizedCommonsLogos(store, {
+      userId: alice,
+      rightsReference,
+    });
+    expect(store.authorizedLogo(alice, "example")).toEqual(local);
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it.each(
+    [
+      [{ ...deEntry, wiki: "en" }],
+      [{ ...deEntry, wiki: "de.wikipedia.org" }],
+      [{ ...deEntry, sourceUrl: "https://evil.example/logo.png" }],
+      [{ ...deEntry, merchantId: "unknown" }],
+      [{ ...deEntry, wikidataId: "Q999" }],
+      [deEntry, deEntry],
+      [deEntry, { ...deEntry, merchantId: "unknown" }],
+      [{ ...deEntry, filename: "../logo.svg" }],
+      [{ ...deEntry, filename: "https:logo.svg" }],
+      [{ ...deEntry, evidence: "Unproven" }],
+    ].map((entries) => ({ entries })),
+  )(
+    "rejects invalid mixed manifests before network %#",
+    async ({ entries }) => {
+      await expect(
+        importReviewedWikimediaLogos(store, {
+          userId: alice,
+          rightsReference,
+          manifestPath: await reviewedWikimediaManifest(entries),
+        }),
+      ).rejects.toThrow();
+      expect(network).not.toHaveBeenCalled();
+      expect(store.authorizedLogo(alice, "example")).toBeNull();
+    },
+  );
+
+  it.each([
+    { url: wikimediaUpload(deFilename, "commons") },
+    {
+      url: wikimediaUpload(deFilename).replace(
+        "upload.wikimedia.org",
+        "evil.example",
+      ),
+    },
+    { url: wikimediaUpload(deFilename).replace("https:", "http:") },
+    { url: `${wikimediaUpload(deFilename)}?redirect=1` },
+    { thumburl: wikimediaUpload(deFilename, "commons", true) },
+    {
+      thumburl: wikimediaUpload(deFilename, "de", true).replace(
+        "upload.wikimedia.org",
+        "thumb.wikimedia.org:444",
+      ),
+    },
+    {
+      thumburl: wikimediaUpload(deFilename, "de", true).replace(
+        "upload.wikimedia.org",
+        "upload.wikimedia.org.evil.example",
+      ),
+    },
+    {
+      thumburl: wikimediaUpload(deFilename, "de", true).replace(
+        "250px",
+        "513px",
+      ),
+    },
+    { thumburl: `${wikimediaUpload(deFilename, "de", true)}#fragment` },
+  ])(
+    "rejects untrusted reviewed media URLs without downloading %#",
+    async (overrides) => {
+      network.mockResolvedValueOnce(wikimediaResponse(deInfo(overrides)));
+      await expect(
+        retrieveReviewedWikimediaRaster(
+          {
+            wiki: "de",
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).rejects.toThrow("Disallowed");
+      expect(network).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["commons", "de"] as const)(
+    "normalizes only the provenance-matched %s API thumbnail alias and exact tracking triplet",
+    async (wiki) => {
+      const tracking = (kind: string) =>
+        `?utm_source=${wiki === "de" ? "de.wikipedia.org" : "commons.wikimedia.org"}&utm_campaign=imageinfo&utm_content=${kind}`;
+      const original = wikimediaUpload(deFilename, wiki);
+      const thumbnail = wikimediaUpload(deFilename, wiki, true);
+      network.mockResolvedValueOnce(
+        wikimediaResponse(
+          deInfo({
+            url: `${original}${tracking("original")}`,
+            thumburl: `${thumbnail.replace("upload.wikimedia.org", "thumb.wikimedia.org")}${tracking("thumbnail")}`,
+            extmetadata: { LicenseShortName: { value: "Logo" } },
+          }),
+        ),
+      );
+      network.mockResolvedValueOnce(
+        new Response(new Uint8Array(await raster())),
+      );
+      expect(
+        await retrieveReviewedWikimediaRaster(
+          {
+            wiki,
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).toMatchObject({
+        status: "downloaded",
+        publicRights: { license: null, licenseName: "Logo" },
+      });
+      expect(String(network.mock.calls[1][0])).toBe(thumbnail);
+      expect(network.mock.calls[1][1]).toMatchObject({
+        redirect: "error",
+        credentials: "omit",
+      });
+    },
+  );
+
+  it.each([undefined, 1])(
+    "imports reviewed dewiki TIFF only as the exact first-page PNG (pagecount=%s)",
+    async (pagecount) => {
+      const name = "FORSTINGER LOGO.tiff";
+      const original = wikimediaUpload(name);
+      const thumbnail = wikimediaUpload(name, "de", true).replace(
+        "/250px-",
+        "/lossless-page1-250px-",
+      );
+      const evidence =
+        "German Wikipedia describes this exact file as Forstinger company artwork by Forstinger Oesterreich GmbH; operator verified its association with Q1438333.";
+      store.upsertMerchants([merchant("forstinger", "Q1438333")]);
+      network.mockResolvedValueOnce(
+        wikimediaResponse(
+          deInfo({
+            url: `${original}?utm_source=de.wikipedia.org&utm_campaign=imageinfo&utm_content=original`,
+            mime: "image/tiff",
+            size: 443_000,
+            pagecount,
+            thumburl: `${thumbnail.replace("upload.wikimedia.org", "thumb.wikimedia.org")}?utm_source=de.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail`,
+            extmetadata: {
+              Artist: { value: "Forstinger Oesterreich GmbH" },
+              LicenseShortName: { value: "Logo" },
+            },
+          }),
+        ),
+      );
+      network.mockResolvedValueOnce(
+        new Response(new Uint8Array(await raster())),
+      );
+      expect(
+        await importReviewedWikimediaLogos(store, {
+          userId: alice,
+          rightsReference,
+          manifestPath: await reviewedWikimediaManifest([
+            {
+              merchantId: "forstinger",
+              wikidataId: "Q1438333",
+              wiki: "de",
+              filename: name,
+              evidence,
+            },
+          ]),
+        }),
+      ).toEqual({ imported: 1, cached: 0, skipped: [] });
+      expect(String(network.mock.calls[1][0])).toBe(thumbnail);
+      expect(
+        network.mock.calls.some(([url]) => String(url).endsWith(".tiff")),
+      ).toBe(false);
+      expect(
+        store.authorizedLogo(alice, "forstinger")?.logo.provenance,
+      ).toMatchObject({
+        kind: "dewiki",
+        associationEvidence: evidence,
+        sourceUrl: "https://de.wikipedia.org/wiki/Datei:FORSTINGER%20LOGO.tiff",
+      });
+    },
+  );
+
+  it.each([
+    { pagecount: 2 },
+    { mime: "image/png" },
+    { thumbmime: "image/tiff" },
+    { thumbwidth: 129 },
+    { thumburl: wikimediaUpload("FORSTINGER LOGO.tiff", "de", true) },
+    {
+      thumburl: wikimediaUpload("FORSTINGER LOGO.tiff", "de", true).replace(
+        "/250px-",
+        "/lossless-page1-513px-",
+      ),
+    },
+    {
+      thumburl: wikimediaUpload("FORSTINGER LOGO.tiff", "de", true).replace(
+        "/250px-",
+        "/lossless-page2-250px-",
+      ),
+    },
+    {
+      thumburl: wikimediaUpload("Other.tiff", "de", true).replace(
+        "/250px-",
+        "/lossless-page1-250px-",
+      ),
+    },
+  ])(
+    "rejects unsupported TIFF page/render metadata without source download %#",
+    async (overrides) => {
+      const name = "FORSTINGER LOGO.tiff";
+      network.mockResolvedValueOnce(
+        wikimediaResponse(
+          deInfo({
+            url: wikimediaUpload(name),
+            mime: "image/tiff",
+            pagecount: 1,
+            thumburl: wikimediaUpload(name, "de", true).replace(
+              "/250px-",
+              "/lossless-page1-250px-",
+            ),
+            ...overrides,
+          }),
+        ),
+      );
+      try {
+        expect(
+          await retrieveReviewedWikimediaRaster(
+            {
+              wiki: "de",
+              wikidataId: "Q1438333",
+              filename: name,
+              evidence: deEvidence,
+            },
+            { fetch: network },
+          ),
+        ).toMatchObject({ status: "skipped" });
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toContain("Disallowed");
+      }
+      expect(network).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rejects TIFF outside reviewed dewiki manifests before any network request", async () => {
+    for (const entry of [
+      { ...deEntry, wiki: "commons", filename: "FORSTINGER LOGO.tiff" },
+      { ...deEntry, filename: "FORSTINGER LOGO.tif" },
+    ])
+      await expect(
+        importReviewedWikimediaLogos(store, {
+          userId: alice,
+          rightsReference,
+          manifestPath: await reviewedWikimediaManifest([entry]),
+        }),
+      ).rejects.toThrow();
+    await expect(
+      importReviewedCommonsLogos(store, {
+        userId: alice,
+        rightsReference,
+        manifestPath: await reviewedWikimediaManifest([
+          {
+            merchantId: "example",
+            wikidataId: "Q123",
+            filename: "FORSTINGER LOGO.tiff",
+            evidence: deEvidence,
+          },
+        ]),
+      }),
+    ).rejects.toThrow();
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "utm_source=de.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+    "utm_source=de.wikipedia.org&utm_campaign=other&utm_content=thumbnail",
+    "utm_source=de.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail&extra=1",
+    "utm_source=de.wikipedia.org&utm_campaign=imageinfo",
+    "utm_source=de.wikipedia.org&utm_source=de.wikipedia.org&utm_campaign=imageinfo",
+  ])(
+    "rejects malicious or incomplete alias tracking query: %s",
+    async (query) => {
+      network.mockResolvedValueOnce(
+        wikimediaResponse(
+          deInfo({
+            thumburl: `${wikimediaUpload(deFilename, "de", true).replace("upload.wikimedia.org", "thumb.wikimedia.org")}?${query}`,
+          }),
+        ),
+      );
+      await expect(
+        retrieveReviewedWikimediaRaster(
+          {
+            wiki: "de",
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).rejects.toThrow("Disallowed");
+      expect(network).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    wikimediaUpload("Other.svg", "de", true),
+    wikimediaUpload(deFilename, "de", true).replace(
+      /\/[a-f0-9]\/[a-f0-9]{2}\//,
+      "/0/00/",
+    ),
+  ])(
+    "never normalizes a thumbnail alias without exact original provenance",
+    async (value) => {
+      network.mockResolvedValueOnce(
+        wikimediaResponse(
+          deInfo({
+            thumburl: value.replace(
+              "upload.wikimedia.org",
+              "thumb.wikimedia.org",
+            ),
+          }),
+        ),
+      );
+      expect(
+        await retrieveReviewedWikimediaRaster(
+          {
+            wiki: "de",
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).toMatchObject({ status: "skipped" });
+      expect(network).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    { url: wikimediaUpload("Different logo.svg") },
+    {
+      url: wikimediaUpload(deFilename).replace(
+        /\/[a-f0-9]\/[a-f0-9]{2}\//,
+        "/0/00/",
+      ),
+    },
+    { thumburl: undefined },
+    { thumbmime: "image/svg+xml" },
+    { thumbwidth: 129 },
+    { thumbheight: 129 },
+    { thumburl: wikimediaUpload("Different logo.svg", "de", true) },
+    {
+      thumburl: wikimediaUpload(deFilename, "de", true).replace(
+        /\/[a-f0-9]\/[a-f0-9]{2}\//,
+        "/0/00/",
+      ),
+    },
+    {
+      thumburl: wikimediaUpload(deFilename, "de", true).replace(
+        "250px-Synthetic",
+        "250px-Foreign",
+      ),
+    },
+    { mime: "image/png" },
+    { size: 0 },
+    { extmetadata: { Restrictions: { value: "noncommercial" } } },
+    { extmetadata: { Restrictions: { value: "trademark; restricted use" } } },
+    { extmetadata: { Artist: { value: "x".repeat(1501) } } },
+  ])(
+    "skips unproven or restricted reviewed artwork before media download %#",
+    async (overrides) => {
+      network.mockResolvedValueOnce(wikimediaResponse(deInfo(overrides)));
+      expect(
+        await retrieveReviewedWikimediaRaster(
+          {
+            wiki: "de",
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).toMatchObject({ status: "skipped" });
+      expect(network).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("rejects redirects in metadata and raster requests, independent of the fetch redirect setting", async () => {
+    for (const metadataRedirect of [true, false]) {
+      network.mockReset();
+      const redirected = metadataRedirect
+        ? wikimediaResponse()
+        : new Response(new Uint8Array(await raster()));
+      Object.defineProperty(redirected, "redirected", { value: true });
+      if (!metadataRedirect) network.mockResolvedValueOnce(wikimediaResponse());
+      network.mockResolvedValueOnce(redirected);
+      await expect(
+        retrieveReviewedWikimediaRaster(
+          {
+            wiki: "de",
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).rejects.toThrow("redirects");
+      expect(
+        network.mock.calls.every(([, init]) => init?.redirect === "error"),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects real oversized pixels/thumbnail dimensions, SVG bytes and oversized streamed bodies", async () => {
+    for (const bytes of [
+      await raster(20, 513, 1),
+      await raster(20, 2001, 2000),
+      Buffer.from(
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+      ),
+    ]) {
+      network.mockReset();
+      network.mockResolvedValueOnce(wikimediaResponse());
+      network.mockResolvedValueOnce(new Response(new Uint8Array(bytes)));
+      expect(
+        await retrieveReviewedWikimediaRaster(
+          {
+            wiki: "de",
+            wikidataId: "Q123",
+            filename: deFilename,
+            evidence: deEvidence,
+          },
+          { fetch: network },
+        ),
+      ).toMatchObject({ status: "skipped" });
+    }
+    network.mockReset();
+    network.mockResolvedValueOnce(wikimediaResponse());
+    network.mockResolvedValueOnce(
+      new Response(new Uint8Array(Buffer.alloc(2 * 1024 * 1024 + 1))),
+    );
+    await expect(
+      retrieveReviewedWikimediaRaster(
+        {
+          wiki: "de",
+          wikidataId: "Q123",
+          filename: deFilename,
+          evidence: deEvidence,
+        },
+        { fetch: network },
+      ),
+    ).rejects.toThrow("byte limit");
+  });
+
+  it("requires account, permission, bounded manifests and an unexpired deadline before network", async () => {
+    const path = await reviewedWikimediaManifest();
+    for (const options of [
+      { userId: "missing-account", rightsReference },
+      { userId: alice, rightsReference: " " },
+      { userId: alice, rightsReference, signal: AbortSignal.abort() },
+    ])
+      await expect(
+        importReviewedWikimediaLogos(store, {
+          ...options,
+          manifestPath: path,
+        }),
+      ).rejects.toThrow();
+    expect(
+      reviewedWikimediaManifestSchema.safeParse({
+        entries: Array.from({ length: 201 }, () => deEntry),
+      }).success,
+    ).toBe(false);
+    const release = acquireAuthorizedLogoImport(accounts, alice);
+    try {
+      await expect(
+        importReviewedWikimediaLogos(store, {
+          userId: alice,
+          rightsReference,
+          manifestPath: path,
+        }),
+      ).rejects.toThrow("already running");
+    } finally {
+      release();
+    }
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("rejects additional frames in reviewed raster originals", async () => {
+    const name = "Synthetic animated.webp";
+    const bytes = await sharp([await raster(20), await raster(80)], {
+      join: { animated: true },
+    })
+      .webp({ loop: 0, delay: [100, 100] })
+      .toBuffer();
+    expect((await sharp(bytes).metadata()).pages).toBe(2);
+    network.mockResolvedValueOnce(
+      wikimediaResponse(
+        deInfo({
+          url: wikimediaUpload(name),
+          mime: "image/webp",
+        }),
+      ),
+    );
+    network.mockResolvedValueOnce(new Response(new Uint8Array(bytes)));
+    expect(
+      await retrieveReviewedWikimediaRaster(
+        {
+          wiki: "de",
+          wikidataId: "Q123",
+          filename: name,
+          evidence: deEvidence,
+        },
+        { fetch: network },
+      ),
+    ).toMatchObject({ status: "skipped" });
+  });
+
+  it("validates dewiki provenance URLs and evidence without accepting spoofed Commons sources", async () => {
+    await importDeLogo();
+    const logo = store.authorizedLogo(alice, "example")!.logo;
+    for (const provenance of [
+      { ...logo.provenance, kind: "commons" },
+      {
+        ...logo.provenance,
+        sourceUrl: "https://de.wikipedia.org/wiki/Datei:../logo.svg",
+      },
+      {
+        ...logo.provenance,
+        sourceUrl: "https://de.wikipedia.org/wiki/Datei:logo.svg?user=alice",
+      },
+      {
+        ...logo.provenance,
+        sourceUrl: "https://evil.example/wiki/Datei:logo.svg",
+      },
+      { ...logo.provenance, associationEvidence: undefined },
+      { ...logo.provenance, associationEvidence: "Unknown" },
+    ])
+      expect(
+        authorizedMerchantLogoSchema.safeParse({ ...logo, provenance }).success,
+      ).toBe(false);
+    expect(
+      authorizedMerchantLogoSchema.safeParse({
+        ...logo,
+        publicRights: null,
+      }).success,
+    ).toBe(false);
+    expect(() =>
+      store.saveAuthorizedLogo(alice, "example", {
+        ...logo,
+        provenance: {
+          ...logo.provenance,
+          kind: "dewiki",
+          wikidataId: "Q999",
+          sourceUrl: `https://de.wikipedia.org/wiki/Datei:${encodeURIComponent(deFilename)}`,
+          associationEvidence: deEvidence,
+        },
+      }),
+    ).toThrow("identity changed");
+  });
+
+  it("executes the new reviewed Wikimedia CLI using only an explicit fixture and trusted mocked sources", async () => {
+    const hook = join(directory, "wikimedia-network.mjs");
+    const payload = await wikimediaResponse().text();
+    const bytes = (await raster()).toString("base64");
+    await writeFile(
+      hook,
+      `
+      globalThis.fetch = async (input, init) => {
+        const url = new URL(input);
+        if (init.redirect !== "error") throw new Error("Redirects must be disabled");
+        if (url.hostname === "de.wikipedia.org" && url.pathname === "/w/api.php" &&
+            url.searchParams.get("titles") === ${JSON.stringify(`File:${deFilename}`)})
+          return new Response(${JSON.stringify(payload)}, { headers: { "Content-Type": "application/json" } });
+        if (url.href === ${JSON.stringify(wikimediaUpload(deFilename, "de", true))})
+          return new Response(Buffer.from(${JSON.stringify(bytes)}, "base64"));
+        throw new Error("Unexpected CLI network target");
+      };
+    `,
+    );
+    const run = promisify(execFile);
+    const args = [
+      "--import",
+      "tsx",
+      "--import",
+      pathToFileURL(hook).href,
+      join(process.cwd(), "scripts", "merchant-authorized-logos.ts"),
+      "--database",
+      accounts.path,
+      "--account",
+      "alice",
+      "--rights-reference",
+      rightsReference,
+      "--wikimedia-manifest",
+      await reviewedWikimediaManifest(),
+    ];
+    const before = accounts.getFinance(alice);
+    const result = await run(process.execPath, args, { timeout: 20_000 });
+    expect(JSON.parse(result.stdout)).toEqual({
+      imported: 1,
+      cached: 0,
+      skipped: [],
+    });
+    expect(store.authorizedLogo(alice, "example")?.logo.provenance.kind).toBe(
+      "dewiki",
+    );
+    expect(store.authorizedLogo(bob, "example")).toBeNull();
+    expect(accounts.getFinance(alice)).toEqual(before);
+    await expect(
+      run(process.execPath, [...args, "--commons-manifest", "unused.json"], {
+        timeout: 20_000,
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("Choose exactly one"),
+    });
+    await expect(
+      run(process.execPath, [...args, "--refresh"], {
+        timeout: 20_000,
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("require --commons"),
+    });
+    expect(network).not.toHaveBeenCalled();
+  });
+
+  it("keeps generic/public retrieval Commons-only, including when extra namespace properties are passed", async () => {
+    await expect(
+      fetchMerchantBytes("https://de.wikipedia.org/w/api.php", {
+        maxBytes: 100,
+        fetch: network,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      fetchMerchantBytes(wikimediaUpload(deFilename), {
+        maxBytes: 100,
+        fetch: network,
+      }),
+    ).rejects.toThrow();
+    network.mockResolvedValueOnce(Response.json({ claims: { P154: [] } }));
+    expect(
+      await retrieveMerchantLogo("Q123", accounts.path, {
+        fetch: network,
+        ...{ wiki: "de" },
+      }),
+    ).toEqual({ status: "skipped", reason: "No P154 logo" });
+    expect(network).toHaveBeenCalledTimes(1);
+    expect(String(network.mock.calls[0][0])).toContain("www.wikidata.org");
+  });
+
+  it("supports mixed Commons entries while retaining the original Commons manifest schema", async () => {
+    const name = "Synthetic shape.png";
+    expect(
+      reviewedWikimediaManifestSchema.safeParse({
+        entries: [{ ...deEntry, wiki: "commons", filename: name }],
+      }).success,
+    ).toBe(true);
+    network.mockResolvedValueOnce(
+      wikimediaResponse(
+        deInfo({
+          url: wikimediaUpload(name, "commons"),
+          mime: "image/png",
+        }),
+      ),
+    );
+    network.mockResolvedValueOnce(new Response(new Uint8Array(await raster())));
+    expect(
+      await importReviewedWikimediaLogos(store, {
+        userId: alice,
+        rightsReference,
+        manifestPath: await reviewedWikimediaManifest([
+          { ...deEntry, wiki: "commons", filename: name },
+        ]),
+      }),
+    ).toEqual({ imported: 1, cached: 0, skipped: [] });
+    expect(store.authorizedLogo(alice, "example")?.logo.provenance.kind).toBe(
+      "commons",
+    );
+    network.mockClear();
+    await expect(
+      importReviewedCommonsLogos(store, {
+        userId: alice,
+        rightsReference,
+        manifestPath: await reviewedWikimediaManifest(),
+      }),
+    ).rejects.toThrow();
+    expect(network).not.toHaveBeenCalled();
+  });
+
   it("serves identical private assets for identified and locked legacy bookings without leaking tenant references", async () => {
     await importLocal();
     const row = transactionSchema.parse({
@@ -721,39 +1672,54 @@ describe("account-scoped authorized logos", () => {
     },
   );
 
-  it("permits normalized canonical-name equivalents for direct and related private presentation", async () => {
-    commonsRequests();
-    network.mockResolvedValueOnce(new Response(new Uint8Array(await raster())));
-    await importAuthorizedCommonsLogos(store, {
-      userId: alice,
-      rightsReference,
-    });
-    const grant = store.authorizedLogo(alice, "example")!;
-    store.upsertMerchants([
-      { ...merchant(), canonicalName: "SYNTHETIC MARKET", updatedAt: 2 },
-      { ...merchant("equivalent-name"), canonicalName: "synthetic MARKET" },
-    ]);
-    network.mockClear();
-    expect(
-      await accountMerchantPresentations(
-        store,
+  it.each(["commons", "dewiki"] as const)(
+    "permits normalized canonical-name equivalents for direct and related %s private presentation",
+    async (kind) => {
+      if (kind === "dewiki") await importDeLogo();
+      else {
+        commonsRequests();
+        network.mockResolvedValueOnce(
+          new Response(new Uint8Array(await raster())),
+        );
+        await importAuthorizedCommonsLogos(store, {
+          userId: alice,
+          rightsReference,
+        });
+      }
+      const grant = store.authorizedLogo(alice, "example")!;
+      store.upsertMerchants([
+        { ...merchant(), canonicalName: "SYNTHETIC MARKET", updatedAt: 2 },
+        { ...merchant("equivalent-name"), canonicalName: "synthetic MARKET" },
+      ]);
+      network.mockClear();
+      expect(
+        await accountMerchantPresentations(
+          store,
+          {
+            merchantIds: ["example", "equivalent-name"],
+          },
+          alice,
+        ),
+      ).toEqual([
         {
-          merchantIds: ["example", "equivalent-name"],
+          merchantId: "example",
+          logo: { merchantId: "example", version: grant.version },
         },
-        alice,
-      ),
-    ).toEqual([
-      {
-        merchantId: "example",
-        logo: { merchantId: "example", version: grant.version },
-      },
-      {
-        merchantId: "equivalent-name",
-        logo: { merchantId: "example", version: grant.version },
-      },
-    ]);
-    expect(network).not.toHaveBeenCalled();
-  });
+        {
+          merchantId: "equivalent-name",
+          logo: { merchantId: "example", version: grant.version },
+        },
+      ]);
+      expect(network).not.toHaveBeenCalled();
+      expect(
+        await accountMerchantPresentations(
+          store,
+          { merchantIds: ["equivalent-name"] },
+          bob,
+        ),
+      ).toEqual([{ merchantId: "equivalent-name", logo: null }]);
+    },
+  );
 
   it.each(["local-file", "commons"] as const)(
     "falls back after a direct %s grant's public canonical name changes, preserving owner-only archived credits",

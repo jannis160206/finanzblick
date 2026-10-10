@@ -8,6 +8,7 @@ import {
   importAuthorizedCommonsLogos,
   importAuthorizedLocalLogos,
   importReviewedCommonsLogos,
+  importReviewedWikimediaLogos,
   authorizedLogoChoicesSchema,
 } from "../src/lib/automation/merchant-logo-authorized-import";
 import { logoRightsReferenceSchema } from "../src/lib/automation/merchant-logo-grant-metadata";
@@ -25,6 +26,7 @@ async function main() {
       commons: { type: "boolean", default: false },
       manifest: { type: "string" },
       "commons-manifest": { type: "string" },
+      "wikimedia-manifest": { type: "string" },
       "logo-choices": { type: "string" },
       "batch-size": { type: "string", default: "20" },
       after: { type: "string" },
@@ -38,7 +40,8 @@ async function main() {
         "Required: --database <existing.sqlite> --account <existing username> " +
         "--rights-reference <operator/user declaration or actual document reference>\n" +
         "Choose --commons [--batch-size 1..20] [--after QID] [--refresh] [--logo-choices <JSON>], " +
-        "or --manifest <bounded local JSON manifest>, or --commons-manifest <reviewed Commons JSON>.\n" +
+        "or --manifest <bounded local JSON manifest>, --commons-manifest <reviewed Commons JSON>, " +
+        "or --wikimedia-manifest <reviewed commons/de Wikimedia JSON>.\n" +
         "No merchant, alias, finance, session or shared-logo changes; at most 200 public entities/run.",
     );
     return;
@@ -48,12 +51,15 @@ async function main() {
       "Explicit --database, --account and --rights-reference are required",
     );
   if (
-    [values.commons, values.manifest, values["commons-manifest"]].filter(
-      Boolean,
-    ).length !== 1
+    [
+      values.commons,
+      values.manifest,
+      values["commons-manifest"],
+      values["wikimedia-manifest"],
+    ].filter(Boolean).length !== 1
   )
     throw new Error(
-      "Choose exactly one of --commons, --manifest or --commons-manifest",
+      "Choose exactly one of --commons, --manifest, --commons-manifest or --wikimedia-manifest",
     );
   if (
     !values.commons &&
@@ -123,12 +129,19 @@ async function main() {
             manifestPath: values["commons-manifest"],
             signal,
           })
-        : await importAuthorizedLocalLogos(store, {
-            userId: row.id,
-            rightsReference,
-            manifestPath: values.manifest!,
-            signal,
-          });
+        : values["wikimedia-manifest"]
+          ? await importReviewedWikimediaLogos(store, {
+              userId: row.id,
+              rightsReference,
+              manifestPath: values["wikimedia-manifest"],
+              signal,
+            })
+          : await importAuthorizedLocalLogos(store, {
+              userId: row.id,
+              rightsReference,
+              manifestPath: values.manifest!,
+              signal,
+            });
     console.info(JSON.stringify(report, null, 2));
   } finally {
     accounts.close();

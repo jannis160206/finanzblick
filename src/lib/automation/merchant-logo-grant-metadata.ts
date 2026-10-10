@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
+import {
+  dewikiLogoSourceUrlSchema,
+  reviewedWikimediaEvidenceSchema,
+} from "./merchant-logo-wikimedia";
 
 const text = z
   .string()
@@ -25,6 +29,8 @@ export const publicLogoRightsSchema = z
     restrictions: text.nullable(),
     artist: text.nullable(),
     credit: text.nullable(),
+    copyrighted: text.nullable().optional(),
+    attributionRequired: text.nullable().optional(),
   })
   .strict();
 export type PublicLogoRights = z.infer<typeof publicLogoRightsSchema>;
@@ -45,6 +51,14 @@ export const authorizedMerchantLogoSchema = z
         .strict(),
       z
         .object({
+          kind: z.literal("dewiki"),
+          sourceUrl: dewikiLogoSourceUrlSchema,
+          wikidataId: z.string().regex(/^Q[1-9]\d{0,11}$/),
+          associationEvidence: reviewedWikimediaEvidenceSchema,
+        })
+        .strict(),
+      z
+        .object({
           kind: z.literal("local-file"),
           sourceLabel: text,
         })
@@ -54,10 +68,13 @@ export const authorizedMerchantLogoSchema = z
   })
   .strict()
   .superRefine((value, context) => {
-    if ((value.provenance.kind === "commons") !== (value.publicRights !== null))
+    if (
+      (value.provenance.kind !== "local-file") !==
+      (value.publicRights !== null)
+    )
       context.addIssue({
         code: "custom",
-        message: "Commons requires separate public rights metadata",
+        message: "Wikimedia sources require separate public rights metadata",
       });
   });
 export type AuthorizedMerchantLogo = z.infer<

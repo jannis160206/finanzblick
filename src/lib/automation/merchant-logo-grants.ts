@@ -229,7 +229,7 @@ export function saveAuthorizedLogoGrant(
         : null);
     if (
       known.canonical_name !== canonicalName ||
-      (logo.provenance.kind === "commons" &&
+      (logo.provenance.kind !== "local-file" &&
         entity !== logo.provenance.wikidataId)
     )
       throw new Error(

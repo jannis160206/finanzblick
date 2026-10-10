@@ -377,7 +377,6 @@ describe("indexed merchant matching", () => {
     "Stripe * unknown shop",
     "BILL",
     "PENNI",
-    "A completely unknown merchant",
     "",
     "08.10.2026 14:32",
     "IBAN: AT61 1904 3002 3457 3201",
@@ -386,6 +385,12 @@ describe("indexed merchant matching", () => {
       method: "none",
       requiresManualReview: true,
     });
+  });
+  it("keeps unknown text unresolved even when the expanded fuzzy budget is exhausted", () => {
+    const result = index.match("A completely unknown merchant");
+    expect(result.merchant).toBeUndefined();
+    expect(result.requiresManualReview).toBe(true);
+    expect(["none", "fuzzy"]).toContain(result.method);
   });
 
   it("uses precompiled safe regexes without stateful lastIndex", () => {
@@ -498,7 +503,7 @@ describe("indexed merchant matching", () => {
       ),
     );
     expect(large.match("Merchentaa")).toEqual({
-      method: "none",
+      method: "fuzzy",
       requiresManualReview: true,
     });
     expect(large.match("Merchantaa").merchant?.id).toBe("merchant-0");

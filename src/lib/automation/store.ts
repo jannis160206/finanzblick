@@ -145,7 +145,7 @@ export class AutomationStore {
       return merchant &&
         normalizeMerchantText(grant.canonicalName) ===
           normalizeMerchantText(merchant.canonicalName) &&
-        (grant.logo.provenance.kind !== "commons" ||
+        (grant.logo.provenance.kind === "local-file" ||
           grant.logo.provenance.wikidataId === merchant.wikidataId)
         ? [{ merchant, grant }]
         : [];
@@ -156,7 +156,7 @@ export class AutomationStore {
         const direct = references.filter(
           (reference) =>
             reference.merchant.id === id &&
-            (reference.grant.logo.provenance.kind !== "commons" ||
+            (reference.grant.logo.provenance.kind === "local-file" ||
               reference.grant.logo.provenance.wikidataId ===
                 merchant?.wikidataId),
         );
@@ -164,7 +164,7 @@ export class AutomationStore {
           ? references.filter(
               (reference) =>
                 reference.merchant.id !== id &&
-                reference.grant.logo.provenance.kind === "commons" &&
+                reference.grant.logo.provenance.kind !== "local-file" &&
                 reference.grant.logo.provenance.wikidataId ===
                   merchant.wikidataId &&
                 reference.merchant.wikidataId === merchant.wikidataId &&

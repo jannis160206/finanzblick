@@ -1,0 +1,74 @@
+{
+  "entries": [
+    {
+      "wiki": "de",
+      "merchantId": "at-forstinger",
+      "wikidataId": "Q1438333",
+      "filename": "FORSTINGER LOGO.tiff",
+      "evidence": "The German Forstinger company article identifies exact Austrian retailer Q1438333 and uses this local file. Its file metadata explicitly says Logo Forstinger and credits Forstinger Oesterreich GmbH. Only the exact server-rendered first-page PNG is used; the TIFF original is never downloaded or decoded. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "carrefour",
+      "wikidataId": "Q217599",
+      "filename": "Carrefour Logo.svg",
+      "evidence": "The local German Wikipedia file explicitly describes the supermarket chain Carrefour logo. The rendered PNG was visually reviewed as the Carrefour wordmark and red/blue symbol, not Carrefour Mobile. Wikidata Q217599 and its English Carrefour article identify the exact supermarket company; German Carrefour alone is a disambiguation page and is not used as identity proof. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "greggs",
+      "wikidataId": "Q3403981",
+      "filename": "Greggs Logo.svg",
+      "evidence": "The local German Wikipedia file explicitly describes Logo von Greggs and credits Greggs. The rendered image was visually reviewed as the blue/yellow GREGGS bakery wordmark, not a similarly named publishing company or military institution. The German Greggs article independently identifies exact company Q3403981. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "taco-bell",
+      "wikidataId": "Q752941",
+      "filename": "Taco Bell Logo.svg",
+      "evidence": "This explicitly named local German Wikipedia logo file was visually reviewed as the clean purple/pink bell and TACO BELL wordmark. The German Taco Bell article independently identifies exact restaurant chain Q752941. This reviewed file replaces the P154 historic sign photograph; no claim of independently verified current logo revision is made. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "at-shell",
+      "wikidataId": "Q154950",
+      "filename": "Royal Dutch Shell.svg",
+      "evidence": "The German Shell plc article resolves to exact Shell entity Q154950 and uses this locally hosted file. Its file description explicitly identifies the Royal Dutch Shell logo. The server-rendered PNG was visually reviewed as a clean red/yellow pecten symbol, not the logo-history montage or a photograph. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "at-anker",
+      "wikidataId": "Q557116",
+      "filename": "Ankerbrot Logo ohne Effekte.svg",
+      "evidence": "The German Ankerbrot article identifies exact Austrian bakery entity Q557116. This local file is explicitly described as Ankerbrot Logo and credits Ankerbrot AG. Its rendered image was visually reviewed as the red ANKER frisch bakery wordmark with wheat ears, not the unrelated electronics brand. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "at-wiener-staedtische",
+      "wikidataId": "Q16088560",
+      "filename": "Wiener Städtische Versicherung Logo.svg",
+      "evidence": "The German Wiener Staedtische Versicherung article identifies exact insurance company Q16088560 and uses this local file. Its file metadata explicitly describes Logo Wiener Staedtische Versicherung. This association is to the Austrian insurer, not its holding company or another insurer. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "brunello-cucinelli",
+      "wikidataId": "Q3645582",
+      "filename": "Brunello Cucinelli (Unternehmen) logo.svg",
+      "evidence": "The German Brunello Cucinelli company article identifies exact fashion house Q3645582 and uses this local file. Its file description and artist identify Brunello Cucinelli (Unternehmen), not the founder as a separate person or another fashion brand. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "vom-fass",
+      "wikidataId": "Q2533008",
+      "filename": "Vom Fass logo.svg",
+      "evidence": "The German Vom Fass article identifies specialty retail brand Q2533008 and uses this local file. Its file metadata explicitly describes Logo vom Vom Fass and credits Vom Fass. This is the exact retail brand, not a generic reference to barrel products. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "at-hartlauer",
+      "wikidataId": "Q1587223",
+      "filename": "Hartlauer Logo.svg",
+      "evidence": "The German Hartlauer article identifies exact Austrian retailer Q1587223 and uses this locally hosted SVG. Its metadata explicitly describes Logo von Hartlauer. This reviewed association does not substitute another electronics chain or a parent company. Verified 2026-10-10."
+    }
+  ]
+}
