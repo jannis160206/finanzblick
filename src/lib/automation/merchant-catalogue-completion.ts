@@ -3,13 +3,20 @@ import {
   MAX_AUTHORIZED_LOGO_ENTITIES,
   authorizedLogoChoicesSchema,
 } from "./merchant-logo-authorized-import";
-import { MerchantIndex, seedMerchants } from "./merchants";
+import {
+  MerchantIndex,
+  normalizeMerchantText,
+  seedMerchants,
+} from "./merchants";
+import { reviewedBookingMerchants } from "./booking-merchant-rules";
 import type { AutomationStore } from "./store";
 import type { z } from "zod";
 import { logoRightsReferenceSchema } from "./merchant-logo-grant-metadata";
 import { requireLogoAccount } from "./merchant-logo-grants";
 
-export function merchantCatalogueReferences(store: AutomationStore) {
+export function merchantCatalogueReferences(
+  store: Pick<AutomationStore, "loadMerchants">,
+) {
   const references = new Map(
     store.loadMerchants().map((merchant) => [merchant.id, merchant]),
   );
@@ -17,6 +24,41 @@ export function merchantCatalogueReferences(store: AutomationStore) {
     const previous = references.get(seed.id);
     if (!previous || previous.updatedAt <= seed.updatedAt)
       references.set(seed.id, seed);
+  }
+  const reviewedIds = new Set(
+    reviewedBookingMerchants.map((merchant) => merchant.id),
+  );
+  const categories = new Map(
+    [...references.values()]
+      .filter(
+        (merchant) =>
+          reviewedIds.has(merchant.id) &&
+          merchant.source === "local" &&
+          merchant.wikidataId,
+      )
+      .map((merchant) => [
+        `${merchant.wikidataId}|${merchant.region}|${normalizeMerchantText(merchant.canonicalName)}`,
+        merchant,
+      ]),
+  );
+  for (const [id, merchant] of references) {
+    if (
+      merchant.source !== "osm" ||
+      merchant.defaultCategory !== null ||
+      !merchant.wikidataId
+    )
+      continue;
+    const review = categories.get(
+      `${merchant.wikidataId}|${merchant.region}|${normalizeMerchantText(merchant.canonicalName)}`,
+    );
+    if (!review || review.defaultCategory === null) continue;
+    references.set(id, {
+      ...merchant,
+      defaultCategory: review.defaultCategory,
+      requiresCategoryEvidence: review.requiresCategoryEvidence,
+      attribution: `${merchant.attribution ?? "© OpenStreetMap contributors"}; ${review.attribution}`,
+      updatedAt: Math.max(review.updatedAt, merchant.updatedAt + 1),
+    });
   }
   return references;
 }
@@ -58,7 +100,10 @@ export async function completeMerchantCatalogue(
     choices.add(choice.wikidataId);
   }
   new MerchantIndex([...references.values()]);
-  store.upsertMerchants(seedMerchants);
+  store.upsertMerchants([
+    ...seedMerchants,
+    ...[...references.values()].filter((merchant) => merchant.source === "osm"),
+  ]);
   const maxPasses =
     Math.ceil(references.size / MAX_AUTHORIZED_LOGO_ENTITIES) + 1;
   const reports: Awaited<ReturnType<typeof importAuthorizedCommonsLogos>>[] =

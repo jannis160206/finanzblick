@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { categories } from "@/lib/categories";
 import type { Transaction } from "@/lib/types";
 import { merchantEvidence } from "./evidence";
+import { reviewedBookingMerchants } from "./booking-merchant-rules";
 import { expandedMerchantIdentities } from "./merchant-expansion";
 import {
   MerchantIndex,
@@ -21,7 +22,7 @@ const definitions = expandedMerchantIdentities.map((identity) => ({
 }));
 
 describe("expanded verified public merchant identities", () => {
-  it("keeps exhausted fuzzy evidence ambiguous instead of accepting a conflicting named merchant", () => {
+  it("keeps fuzzy evidence in review instead of accepting a conflicting named merchant", () => {
     const index = new MerchantIndex(seedMerchants);
     const row: Transaction = {
       id: "expanded-budget-conflict",
@@ -34,11 +35,46 @@ describe("expanded verified public merchant identities", () => {
       category: "Prüfen",
       includeInPlan: true,
     };
-    expect(index.match(row.description)).toEqual({
+    expect(index.match(row.description)).toMatchObject({
       method: "fuzzy",
       requiresManualReview: true,
     });
     expect(merchantEvidence(row, index)).toEqual({ kind: "conflict" });
+  });
+
+  it("keeps truly saturated fuzzy postings conflicting with a named source", () => {
+    const index = new MerchantIndex([
+      ...seedMerchants,
+      ...Array.from({ length: 65 }, (_, position) =>
+        merchantSchema.parse({
+          ...seedMerchants[0],
+          id: `saturated-${position}`,
+          canonicalName: `Merchant${String.fromCharCode(97 + Math.floor(position / 26))}${String.fromCharCode(97 + (position % 26))}`,
+          aliases: [],
+          regexPatterns: [],
+        }),
+      ),
+    ]);
+    expect(index.match("Merchentaa")).toEqual({
+      method: "fuzzy",
+      requiresManualReview: true,
+    });
+    expect(
+      merchantEvidence(
+        {
+          id: "saturated-source-conflict",
+          date: "2026-10-10",
+          bank: "Amex",
+          pocket: "Amex",
+          description: "Merchentaa",
+          rawDetails: ["Merchant: BILLA"],
+          amount: -10,
+          category: "Prüfen",
+          includeInPlan: true,
+        },
+        index,
+      ),
+    ).toEqual({ kind: "conflict" });
   });
 
   it("wires every new identity into the existing single seed catalogue without category inference", () => {
@@ -47,12 +83,17 @@ describe("expanded verified public merchant identities", () => {
     );
     const index = new MerchantIndex(seedMerchants);
     for (const identity of expandedMerchantIdentities) {
+      const review = reviewedBookingMerchants.find(
+        (merchant) => merchant.id === identity.id,
+      );
       expect(seeds.get(identity.id)).toMatchObject({
         wikidataId: identity.wikidataId,
         source: "local",
         logo: null,
-        defaultCategory: null,
-        requiresCategoryEvidence: true,
+        defaultCategory: review?.category ?? null,
+        requiresCategoryEvidence: review
+          ? (review.requiresCategoryEvidence ?? false)
+          : true,
       });
     }
     for (const name of [

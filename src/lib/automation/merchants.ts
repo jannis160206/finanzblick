@@ -4,6 +4,7 @@ import { merchantText } from "@/lib/import/merchant-description";
 import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
 import { curatedMerchantIdentities } from "./merchant-identities";
 import { expandedMerchantIdentities } from "./merchant-expansion";
+import { reviewedBookingMerchants } from "./booking-merchant-rules";
 
 const MAX_INPUT = 1024;
 const MAX_NORMALIZED = 512;
@@ -257,7 +258,7 @@ const localMerchant = (
   });
 
 /** Curated offline identities, not account-specific learned category overrides. */
-export const seedMerchants: Merchant[] = [
+const baseSeedMerchants: Merchant[] = [
   localMerchant(
     "brunello-cucinelli",
     "Brunello Cucinelli",
@@ -713,6 +714,47 @@ export const seedMerchants: Merchant[] = [
   ),
 ];
 
+const bookingReviews = new Map(
+  reviewedBookingMerchants.map((merchant) => [merchant.id, merchant]),
+);
+const baseSeedIds = new Set(baseSeedMerchants.map((merchant) => merchant.id));
+export const seedMerchants: Merchant[] = [
+  ...baseSeedMerchants.map((merchant) => {
+    const review = bookingReviews.get(merchant.id);
+    return review ? reviewedSeed(review, merchant) : merchant;
+  }),
+  ...reviewedBookingMerchants
+    .filter((merchant) => !baseSeedIds.has(merchant.id))
+    .map((merchant) => reviewedSeed(merchant)),
+];
+
+function reviewedSeed(
+  review: (typeof reviewedBookingMerchants)[number],
+  previous?: Merchant,
+): Merchant {
+  return merchantSchema.parse({
+    ...previous,
+    id: review.id,
+    canonicalName: review.canonicalName,
+    aliases: [...new Set([...(previous?.aliases ?? []), ...review.aliases])],
+    regexPatterns: [
+      ...new Set([
+        ...(previous?.regexPatterns ?? []),
+        ...(review.regexPatterns ?? []),
+      ]),
+    ],
+    defaultCategory: review.category,
+    wikidataId: review.wikidataId,
+    requiresCategoryEvidence: review.requiresCategoryEvidence ?? false,
+    region: review.region ?? previous?.region ?? "AT",
+    city: review.city ?? null,
+    source: "local",
+    license: "Local factual merchant rules; no logo rights asserted",
+    attribution: `Reviewed public merchant identity and category: ${review.evidenceUrl}`,
+    updatedAt: Date.UTC(2026, 9, 10, 0, 53),
+  });
+}
+
 interface AliasEntry {
   text: string;
   merchants: Set<Merchant>;
@@ -955,8 +997,9 @@ export class MerchantIndex {
     let comparisons = 0;
     for (const phrase of phrases) {
       if (phrase.length < 6 || phrase.length > 100) continue;
-      const candidates = new Set<AliasEntry>();
-      for (const gram of bigrams(phrase)) {
+      const candidates = new Map<AliasEntry, number>();
+      const grams = bigrams(phrase);
+      for (const gram of grams) {
         for (
           let length = phrase.length - 1;
           length <= phrase.length + 1;
@@ -965,13 +1008,15 @@ export class MerchantIndex {
           const bucket = this.fuzzy.get(`${length}:${gram}`);
           if (bucket === null) return unresolved("fuzzy");
           for (const entry of bucket ?? []) {
-            candidates.add(entry);
+            candidates.set(entry, (candidates.get(entry) ?? 0) + 1);
             if (candidates.size > MAX_FUZZY_CANDIDATES)
               return unresolved("fuzzy");
           }
         }
       }
-      for (const entry of candidates) {
+      for (const [entry, sharedGrams] of candidates) {
+        // One edit, including transposition, destroys at most three bigrams.
+        if (sharedGrams < grams.size - 3) continue;
         if (++comparisons > MAX_FUZZY_CANDIDATES) return unresolved("fuzzy");
         if (
           1 - 1 / Math.max(phrase.length, entry.text.length) >= 0.85 &&

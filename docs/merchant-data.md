@@ -5,6 +5,54 @@ curated seeds remain available without network access. Imported reference data
 does not include statements, balances, transactions, account identifiers, or
 learned user categories. Neither the worker nor HTTP requests trigger imports.
 
+## Booking-derived public reference reviews
+
+`booking-merchant-rules.ts` contains 109 explicitly reviewed public identities
+and category references (2026-10-10). These update existing stable seed IDs or add
+new ones to the same `merchants` table, never a second catalogue. Each carries a
+public factual citation; foreign references have an explicit region, while
+existing identity regions remain stable for private logo grants. Only isolated
+public business names were researched, not account data, people, amounts or
+full payment narratives.
+
+Category defaults reference the application's existing purpose categories.
+Mixed-purpose businesses, fuel shops, hotels and marketplaces still require
+purchase evidence. Verified infrastructure such as Transak, Glovo or Coral Gas
+can have a known identity and **no** default category. Conflicting old rules stay
+open rather than overriding human choices. Generic or truncated names such as
+Hotspot, Mensen, Avant, OCH Auto Dus and Best Buy Cyprus are not guessed.
+Location-ambiguous candidates require a distinctive full or location-qualified
+name; missing logos retain the normal fallback icon.
+
+`npm run merchants:complete` upserts reviewed references before its existing
+bounded, account-authorized Wikimedia scan. An imported OSM reference receives
+a missing category only when its QID, normalized canonical name and region
+exactly match the reviewed seed. Existing nonempty categories and source credits
+are preserved. The worker must be restarted after an operator import to compile
+the updated index; it performs no network research itself.
+Its bounded fuzzy fallback counts shared bigrams and rejects candidates that
+cannot be one edit away before spending its comparison budget. A transposition
+can destroy at most three bigrams. Saturated postings and genuine budget
+exhaustion still fail closed; a larger catalogue must not turn clear fee
+narratives into artificial fuzzy conflicts.
+
+For one resumable historical pass, including ledger entries, fixed receipts,
+pending booking drafts and bookings inside fixed-cost review proposals:
+
+```powershell
+npm run backfill -- --once-version booking-merchant-review-2026-10-10-final
+```
+
+The existing single worker processes its immutable per-account ID snapshot in
+200-entry batches. Complete, unlocked pending-only drafts receive suggestions
+but remain explicitly `requires_manual_review`; they are **not** accepted into
+the ledger, including on subsequent review hydration. Incomplete and manually
+edited drafts remain unchanged. Fixed-cost proposal totals and metadata are not
+recalculated. Repeating the same version reuses its pass and never resets its
+cursor. Financial facts and manual locks are preserved; unresolved identities
+and purchase purposes still require confirmation. This is measured coverage,
+not a claimed 99% accuracy rate.
+
 ## Operator-only geographic import
 
 Use the configured account database and environment:

@@ -354,9 +354,18 @@ export class AutomationStore {
           SELECT json_extract(item.value, '$.booking.id') AS transaction_id
           FROM finance, json_each(finance.state_json, '$.fixedReceipts') AS item
           WHERE finance.user_id = ? AND json_extract(item.value, '$.booking.id') IS NOT NULL
+          UNION
+          SELECT json_extract(item.value, '$.draft.id') AS transaction_id
+          FROM finance, json_each(finance.state_json, '$.reviewQueue') AS item
+          WHERE finance.user_id = ? AND json_extract(item.value, '$.kind') = 'booking'
+          UNION
+          SELECT json_extract(booking.value, '$.id') AS transaction_id
+          FROM finance, json_each(finance.state_json, '$.reviewQueue') AS item,
+            json_each(item.value, '$.change.bookings') AS booking
+          WHERE finance.user_id = ? AND json_extract(item.value, '$.kind') = 'fixed'
         )
         SELECT ?, row_number() OVER (ORDER BY transaction_id), transaction_id FROM historical_ids`,
-      ).run(userId, userId, id);
+      ).run(userId, userId, userId, userId, id);
       db.prepare(
         `UPDATE automation_jobs SET total =
         (SELECT count(*) FROM automation_backfill_items WHERE job_id = ?) WHERE id = ?`,

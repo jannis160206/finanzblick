@@ -140,7 +140,7 @@ describe("merchant schema and local seeds", () => {
     });
     expect(index.match("Test Merchant").merchant).toBeUndefined();
   });
-  it("validates the curated AT database against current purpose categories", () => {
+  it("validates the curated public references against current purpose categories", () => {
     expect(new Set(seedMerchants.map((item) => item.id)).size).toBe(
       seedMerchants.length,
     );
@@ -148,7 +148,7 @@ describe("merchant schema and local seeds", () => {
       expect(merchantSchema.parse(item)).toEqual(item);
       if (item.defaultCategory !== null)
         expect(categories).toContain(item.defaultCategory);
-      expect(item.region).toBe("AT");
+      expect(item.region).toMatch(/^(?:[A-Z]{2}|GLOBAL)$/);
       expect(item.source).toBe("local");
     }
   });
@@ -483,6 +483,44 @@ describe("indexed merchant matching", () => {
       requiresManualReview: true,
     });
   });
+
+  it.each([
+    "Nordlich",
+    "Nordlichtt",
+    "Nordlxcht",
+    "Nordlihct",
+    "abcdefghijklmnpoqrst",
+    "aaaaabaaaa",
+    "aaaaaabaaaa",
+  ])(
+    "preserves one-edit recall after necessary bigram-overlap pruning: %s",
+    (text) => {
+      const canonicalName = text.startsWith("Nord")
+        ? "Nordlicht"
+        : text.startsWith("abc")
+          ? "abcdefghijklmnopqrst"
+          : "aaaaabaaaaa";
+      expect(
+        new MerchantIndex([merchant({ canonicalName })]).match(text),
+      ).toMatchObject({ method: "fuzzy", merchant: { id: "test-merchant" } });
+    },
+  );
+
+  it.each([
+    "Entgelt für die Kontoführung",
+    "Gebühr für die Bargeldabhebung",
+    "Account maintenance fee",
+    "Monthly account fee",
+    "Entgelt wegen einer Rücklastschrift",
+  ])(
+    "does not spend the enlarged catalogue's edit budget on impossible candidates for %s",
+    (text) => {
+      expect(index.match(text)).toEqual({
+        method: "none",
+        requiresManualReview: true,
+      });
+    },
+  );
 
   it("fails closed on oversized text and too many words, rather than truncating conflicts", () => {
     expect(

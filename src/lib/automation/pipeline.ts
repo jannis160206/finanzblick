@@ -2,6 +2,7 @@ import { classify } from "@/lib/calc";
 import {
   transactionSchema,
   type AppState,
+  type ReviewItem,
   type Transaction,
 } from "@/lib/types";
 import { MerchantIndex } from "./merchants";
@@ -15,7 +16,11 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { knownMerchantCategory } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { merchantEvidence, qualifiedCompany } from "./evidence";
-import { bankOperation, bankOperationReviewMessage, bankTransferPurpose } from "@/lib/bank-operation";
+import {
+  bankOperation,
+  bankOperationReviewMessage,
+  bankTransferPurpose,
+} from "@/lib/bank-operation";
 export { isAutomationLocked } from "./locks";
 
 export function enrichTransaction(
@@ -30,23 +35,41 @@ export function enrichTransaction(
     return { ...row, requires_manual_review: true };
   if (operation?.kind === "internal-transfer")
     return transactionSchema.parse({
-      ...row, category: operation.category, includeInPlan: false, fixedCost: false,
-      merchantId: undefined, merchantAlias: undefined, merchantMatch: undefined,
-      merchantLogo: false, requires_manual_review: false,
+      ...row,
+      category: operation.category,
+      includeInPlan: false,
+      fixedCost: false,
+      merchantId: undefined,
+      merchantAlias: undefined,
+      merchantMatch: undefined,
+      merchantLogo: false,
+      requires_manual_review: false,
     });
   if (operation?.kind === "external-transfer") {
-    if (classified.isTransfer || (row.amount > 0 && isIncomeCategory(classified.category))) return row;
+    if (
+      classified.isTransfer ||
+      (row.amount > 0 && isIncomeCategory(classified.category))
+    )
+      return row;
     const learned = resolveAccount?.(row);
-    const choice = learned?.kind === "matched" && !learned.normalized && !learned.choice.identityOnly &&
+    const choice =
+      learned?.kind === "matched" &&
+      !learned.normalized &&
+      !learned.choice.identityOnly &&
       !(row.amount <= 0 && learned.choice.category === "Rückerstattungen")
-      ? learned.choice : undefined;
+        ? learned.choice
+        : undefined;
     const category = choice?.category ?? bankTransferPurpose(row) ?? "Prüfen";
     return transactionSchema.parse({
-      ...row, category,
+      ...row,
+      category,
       ...(category !== "Prüfen" ? { categoryOverride: true } : {}),
       ...(choice ? { fixedCost: choice.fixedCost ?? row.fixedCost } : {}),
-      merchantId: undefined, merchantAlias: undefined, merchantMatch: undefined,
-      merchantLogo: false, requires_manual_review: category === "Prüfen",
+      merchantId: undefined,
+      merchantAlias: undefined,
+      merchantMatch: undefined,
+      merchantLogo: false,
+      requires_manual_review: category === "Prüfen",
     });
   }
   if (isMerchantTransfer(row)) return row;
@@ -65,7 +88,9 @@ export function enrichTransaction(
     ...(row.rawDetails ?? []),
   ].join(" ");
   const known = knownMerchantCategory(
-    operation?.kind === "fee" ? sourceText.replace(/\batm[-\s]*fee\b/gi, "") : sourceText,
+    operation?.kind === "fee"
+      ? sourceText.replace(/\batm[-\s]*fee\b/gi, "")
+      : sourceText,
     row.amount,
   );
   const learned = resolveAccount?.(row);
@@ -118,18 +143,30 @@ export function enrichTransaction(
       row.fixedCost === undefined
         ? { fixedCost: choice.fixedCost }
         : {}),
-      requires_manual_review: !(choice.merchantAlias || merchant || operation?.kind === "fee"),
+      requires_manual_review: !(
+        choice.merchantAlias ||
+        merchant ||
+        operation?.kind === "fee"
+      ),
     });
   }
   if (operation?.kind === "fee") {
     const identity = index.match(evidence.text);
-    if (known === "Prüfen" || identity.method !== "none" ||
-      (learned?.kind === "matched" && learned.choice.identityOnly))
+    if (
+      known === "Prüfen" ||
+      identity.method !== "none" ||
+      (learned?.kind === "matched" && learned.choice.identityOnly)
+    )
       return { ...row, requires_manual_review: true };
     return transactionSchema.parse({
-      ...row, category: operation.category, categoryOverride: true,
-      merchantId: undefined, merchantAlias: undefined, merchantMatch: undefined,
-      merchantLogo: false, requires_manual_review: false,
+      ...row,
+      category: operation.category,
+      categoryOverride: true,
+      merchantId: undefined,
+      merchantAlias: undefined,
+      merchantMatch: undefined,
+      merchantLogo: false,
+      requires_manual_review: false,
     });
   }
   const confirmedName =
@@ -283,10 +320,49 @@ export function backfillBatch(
       row.amount < 0 &&
       !isMerchantTransfer(row) &&
       !isIncomeCategory(row.category));
-  const queue = (state.reviewQueue ?? []).flatMap((item) => {
-    if (item.kind !== "booking" || !ids.has(item.draft.id)) return [item];
+  const queue = (state.reviewQueue ?? []).flatMap<ReviewItem>((item) => {
+    if (item.kind === "fixed")
+      return [
+        {
+          ...item,
+          change: {
+            ...item.change,
+            bookings: item.change.bookings.map((row) =>
+              ids.has(row.id) && !isAutomationLocked(row)
+                ? enrichTransaction(row, index, resolveAccount)
+                : row,
+            ),
+          },
+        },
+      ];
+    if (!ids.has(item.draft.id)) return [item];
+    if (isAutomationLocked(item.draft)) return [item];
     const row = updated.get(item.draft.id);
-    if (!row) return [];
+    if (!row) {
+      const draft = item.draft;
+      if (
+        isAutomationLocked(draft) ||
+        draft.amount === null ||
+        draft.amount === 0 ||
+        !draft.date ||
+        !draft.description
+      )
+        return [item];
+      // Pending imports gain suggestions, never acceptance or fabricated facts.
+      return [
+        {
+          ...item,
+          draft: {
+            ...enrichTransaction(
+              transactionSchema.parse(draft),
+              index,
+              resolveAccount,
+            ),
+            requires_manual_review: true,
+          },
+        },
+      ];
+    }
     if (isAutomationLocked(row) && needsReview(row))
       return [{ ...item, draft: row }];
     return needsReview(row)
@@ -294,19 +370,29 @@ export function backfillBatch(
           {
             ...item,
             draft: row,
-            message: bankOperationReviewMessage(row) ?? "Händlerzuordnung unsicher – bitte prüfen.",
+            message:
+              bankOperationReviewMessage(row) ??
+              "Händlerzuordnung unsicher – bitte prüfen.",
           },
         ]
       : [];
   });
-  const queued = new Set(queue.map((item) => item.id));
+  const queued = new Set(
+    queue.flatMap((item) =>
+      item.kind === "booking"
+        ? [item.draft.id]
+        : item.change.bookings.map((row) => row.id),
+    ),
+  );
   for (const row of updated.values()) {
     if (!needsReview(row) || queued.has(row.id)) continue;
     queue.push({
       kind: "booking",
       id: row.id,
       draft: row,
-      message: bankOperationReviewMessage(row) ?? "Händlerzuordnung unsicher – bitte prüfen.",
+      message:
+        bankOperationReviewMessage(row) ??
+        "Händlerzuordnung unsicher – bitte prüfen.",
     });
   }
   return {

@@ -61,7 +61,7 @@ async function main() {
         "--rights-reference <operator/user rights declaration>\n" +
         "Seeds the existing table, drains sequential 200-entity Commons scans and imports reviewed Wikimedia artwork.\n" +
         "Optional: --after QID and explicit --logo-choices / --commons-manifest / --wikimedia-manifest paths.\n" +
-        "One 10-minute deadline; no finance, locks, categories or backfill changes.",
+        "Seeds reviewed reference categories. One 10-minute deadline; no finance, manual locks or backfill changes.",
     );
     return;
   }
