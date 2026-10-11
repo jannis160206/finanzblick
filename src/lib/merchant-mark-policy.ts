@@ -2,6 +2,7 @@ import type { classify } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
 import { isMerchantTransfer } from "@/lib/merchant-transfer";
 import type { Transaction } from "@/lib/types";
+import { bankOperation } from "@/lib/bank-operation";
 
 export type MarkClassification = Pick<
   ReturnType<typeof classify>,
@@ -21,6 +22,8 @@ export function shouldShowMerchantMark(
 ) {
   return !(
     classification.isTransfer ||
+    bankOperation(booking)?.kind === "fee" ||
+    bankOperation(booking)?.kind === "interest" ||
     isMerchantTransfer(booking) ||
     transferCategories.includes(booking.category) ||
     transferCategories.includes(classification.category) ||

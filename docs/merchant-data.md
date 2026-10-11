@@ -7,6 +7,82 @@ learned user categories. Neither the worker nor HTTP requests trigger imports.
 
 ## Booking-derived public reference reviews
 
+### Recurring-purpose correction pass (2026-10-11)
+
+The local audit covered 2,980 complete logical bookings plus one incomplete
+pending draft, and all 14 import-example files: five readable files / 288 rows,
+with nine password-protected PDFs explicitly unavailable. The initial 343
+name/direction groups included intentional no-merchant transfers and bank
+operations, not 343 proven recognition errors. Original narratives, directions,
+frequencies and examples remain local; public research receives only isolated
+business names. No account data or artwork is committed.
+
+`recurring-merchant-rules.ts` adds only gap-derived public references. Existing
+Amazon, Pret, Bonsaimuseum, Warmbaderhof and Malaga pharmacy/cathedral IDs are
+reused; truncated or geographically ambiguous names are not broad aliases.
+Generic Post PP, PACE PAY, NYX MyElite, Gusto, DBike and unproved payment
+fragments remain open. A full company identity does not identify a subsidiary,
+an outlet or its purpose.
+
+The shared `recurring-purpose.ts` rules distinguish purpose from identity:
+
+- Debit capital tax / KESt and account maintenance are Bankgebuehren.
+  Positive Habenzinsen are Zinsertrag, represented by existing income category
+  Einkommen, never Rueckerstattungen; no bank merchant or logo is attached.
+  Negations and contradictory direction or tax/interest evidence stay open.
+- BIPA and the exact personal Mensa/Mensen/Hotspot descriptors are Mittagessen
+  on working days, excluding weekends and Austrian/Kaernten holidays. This
+  personal rule does not require a clock time. Outside those days, BIPA is
+  Drogerie and Mensa/Mensen/Hotspot are Restaurants. Generic meal names receive
+  no invented chain identity/logo.
+- Recognised station identities are Tanken unless a shop, coffee, car wash,
+  maintenance or contradictory labelled MCC disproves fuel purpose.
+  MCC 5541/5542 or a consistent station description is allowed. The explicit
+  personal Tankstelle/Diskont (including Villach) purpose can be set without
+  inventing a merchant; PAGRO Diskont is not this fuel rule.
+- Amazon marketplace debits use Shopping; explicit Amazon Prime/AMZNPrime
+  descriptors use Abonnements. Verified equivalent stored IDs retain the same
+  purpose eligibility. Merchant credits remain refunds, not expense debits.
+
+Only exact aliases or fixed rules can replace automatic identity/category/logo
+links. Source evidence is re-evaluated instead of preserving a stale automatic
+category. Unproven legacy identities and fuzzy matches do not overwrite existing
+assignments. Manual categories, aliases and `is_locked` rows remain protected.
+Transfers have their stale merchant fields cleared and no merchant mark.
+Actual logo availability still comes from the tenant-authenticated private-file
+resolver, not a boolean or an external hotlink.
+
+The two additional exact logo selections are ABOUT YOU and Pret a Manger,
+whose Commons file pages explicitly state public domain (trademarks remain
+protected). No unlicensed brands/CDNs/logo directories are fetched. Missing
+or unproved logos use initials; the private PNG files stay beside the database.
+
+After importing reviewed references/logos and restarting the single worker:
+
+```powershell
+npm run backfill -- --once-version recurring-purpose-v3-2026-10-11
+```
+
+This is also the version selected by `--merchant-upgrade`. It snapshots all
+existing ledger, fixed-receipt and review booking IDs, uses the existing atomic
+200-row checkpoint mechanism and never resets the same version. Pending-only
+drafts retain their acceptance requirement; incomplete drafts are preserved.
+No financial fact or duplicate booking is created by the pass.
+
+Local persisted result: the pass completed all 2,981 IDs without a retry;
+196 ledger/receipt/proposal copies changed. All 47 locked copies, 13 pending-only
+drafts (including one incomplete draft), financial facts and receipt aggregate
+metadata were preserved. Re-requesting the same version left finance revisions,
+job IDs and the completed cursor unchanged. Eight additional reference IDs bring
+the local catalogue to 901, with 397 actually readable logo references.
+
+Deployment is restricted to a confirmed home WebStorm SSH session: normal
+`git pull`, production build, restart `finanzblick` and `finanzblick-worker`,
+then the operator's existing `merchants:complete` invocation if logo updates
+are needed, restart the worker to reload its index, and run the above version.
+An office or unconfirmed SSH context leaves this server step pending; do not
+attempt another connection method.
+
 `booking-merchant-rules.ts` combines the initial 109 explicitly reviewed public
 identities with further Austrian references from `austrian-merchant-rules.ts`
 (2026-10-11). These update existing stable seed IDs or add

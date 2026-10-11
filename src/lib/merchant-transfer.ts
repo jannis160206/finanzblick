@@ -15,7 +15,7 @@ export function hasMerchantRefundEvidence(row: Transaction): boolean {
 
 export function isMerchantTransfer(row: Transaction): boolean {
   const operation = bankOperation(row);
-  if (operation?.kind === "fee") return false;
+  if (operation?.kind === "fee" || operation?.kind === "interest") return false;
   if (operation?.kind === "internal-transfer" || operation?.kind === "external-transfer") return true;
   if (classify(row).isTransfer) return true;
   if (row.amount > 0 && hasMerchantRefundEvidence(row)) return false;

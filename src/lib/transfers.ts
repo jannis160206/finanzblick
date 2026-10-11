@@ -9,7 +9,7 @@ type NamedBooking = Pick<Transaction, "description"> &
 
 export function isNamedTransfer(row: NamedBooking): boolean {
   const operation = bankOperation(row);
-  if (operation?.kind === "fee" || operation?.kind === "ambiguous") return false;
+  if (operation?.kind === "fee" || operation?.kind === "interest" || operation?.kind === "ambiguous") return false;
   // Merchant text only: cardholder headers in OCR details are not transfer names.
   return [row.description, row.rawDescription, row.merchantAlias].some((value) => {
     const text = (value ?? "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")

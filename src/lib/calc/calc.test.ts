@@ -83,7 +83,7 @@ describe("merchant classification", () => {
 describe("weighted plan", () => {
   it("uses four completed months and adds the weighted current month", () => {
     const rows = ["05", "06", "07", "08", "09"].map((month) =>
-      transaction("Mensa", -100, `2026-${month}-01`),
+      transaction("Mensa", -100, `2026-${month}-${month === "05" ? "04" : month === "08" ? "03" : "01"}`),
     );
     const result = calculatePlan(rows, "2026-09-11");
     expect(result.months).toEqual(["2026-05", "2026-06", "2026-07", "2026-08"]);

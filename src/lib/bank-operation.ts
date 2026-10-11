@@ -14,6 +14,7 @@ export type BankOperation =
       kind: "fee";
       category: "Bankgebühren" | "Rücklastschriftgebühren" | "Rückerstattungen";
     }
+  | { kind: "interest"; category: "Einkommen" }
   | { kind: "internal-transfer"; category: "Transfer intern" }
   | { kind: "external-transfer" | "ambiguous"; category: "Prüfen" };
 
@@ -39,6 +40,9 @@ const providerFee =
   /\b(?:pay\s*pal(?:\s*[*\/]\s*|\s+)|pp\s*[*\/]\s*)(?:transaktionsgeb(?:ue|u)hr(?:en)?|geb(?:ue|u)hr(?:en)?)\b/;
 const withdrawalFee =
   /\b(?:bankomatgeb(?:ue|u)hr(?:en)?|bargeld(?:behebungs|abhebungs)(?:geb(?:ue|u)hr(?:en)?|entgelte?)|atm[-\s]*fee|cash\s+withdrawal\s+fee)\b|\bgeb(?:ue|u)hr\s+f(?:ue|u)r\s+(?:die\s+)?bargeld(?:behebung|abhebung)\b/;
+const capitalTax = /\b(?:kapitalertragsteuer|kapitalertragssteuer|kest)\b/;
+const creditInterest =
+  /\b(?:haben[-\s]*zinsen|zinsertrag|zinsgutschrift|credit\s+interest|interest\s+earned)\b/;
 const walletTopUp =
   /^(?:pay\s*pal\s*\*?|pp\s*[*\/])\s*(?:guthaben(?:s)?[-\s]*(?:aufladung|aufgeladen)|guthaben\s+aufladen|wallet\s+top[-\s]*up|balance\s+top[-\s]*up)\s*(?:[\d.,+\-/\s]+\s*(?:eur|usd|gbp)?)?$/;
 
@@ -73,13 +77,25 @@ export function bankOperation(row: BankBooking): BankOperation | undefined {
     issuerFee ||
     accountFee.test(text) ||
     providerFee.test(text) ||
-    withdrawalFee.test(text);
+    withdrawalFee.test(text) ||
+    capitalTax.test(text);
+  if (creditInterest.test(text)) {
+    if (
+      fee ||
+      refund.test(text) ||
+      typeof row.amount !== "number" ||
+      row.amount <= 0 ||
+      /\b(?:keine?|ohne|nicht|not|no|sollzinsen|debitor|debit)\b/.test(text)
+    )
+      return { kind: "ambiguous", category: "Prüfen" };
+    return { kind: "interest", category: "Einkommen" };
+  }
   if (fee) {
     if (
       /\b(?:inkl(?:usive)?|einschliesslich|zzgl|zuz(?:ue|u)glich|plus|samt)\b[^|]*\b[a-z-]*(?:geb(?:ue|u)hr|entgelt|spesen)/.test(
         text,
       ) ||
-      /\b(?:keine?|ohne|nicht|not|no)\b[^|]{0,40}\b(?:kontof(?:ue|u)hrung|geb(?:ue|u)hr|fee|entgelt|spesen)/.test(
+      /\b(?:keine?|ohne|nicht|not|no)\b[^|]{0,40}\b(?:kontof(?:ue|u)hrung|geb(?:ue|u)hr|fee|entgelt|spesen|kapitalertrags?steuer|kest)/.test(
         text,
       ) ||
       row.amount === null ||

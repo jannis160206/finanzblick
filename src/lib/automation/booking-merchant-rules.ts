@@ -1,5 +1,6 @@
 import type { Category } from "@/lib/categories";
 import { reviewedAustrianMerchants } from "./austrian-merchant-rules";
+import { reviewedRecurringMerchants } from "./recurring-merchant-rules";
 
 export interface ReviewedBookingMerchant {
   readonly id: string;
@@ -17,6 +18,7 @@ export interface ReviewedBookingMerchant {
 // Public business facts only; no booking text, personal data or image rights.
 export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
   ...reviewedAustrianMerchants,
+  ...reviewedRecurringMerchants,
   {
     id: "zara",
     canonicalName: "Zara",
@@ -92,7 +94,7 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
   {
     id: "amazon",
     canonicalName: "Amazon",
-    aliases: ["AMZ-Shop"],
+    aliases: ["AMZ-Shop", "Amazon Prime", "AMZNPrime"],
     category: "Shopping",
     wikidataId: "Q3884",
     requiresCategoryEvidence: true,
@@ -263,7 +265,8 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
     canonicalName: "Japan Bonsai Museum",
     aliases: ["Bonsai Museum Seeboden", "Bonsaimuseum Seeboden"],
     category: "Freizeit",
-    wikidataId: null,
+    wikidataId: "Q112121522",
+    requiresCategoryEvidence: true,
     city: "Seeboden am Millstätter See",
     evidenceUrl: "https://www.bonsai.at/bonsai-museum/",
   },
@@ -340,11 +343,10 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
   },
   {
     id: "at-warmbaderhof-restaurant",
-    canonicalName: "Warmbaderhof Panorama Restaurant",
-    aliases: ["Warmbaderhof Restaurant"],
+    canonicalName: "Warmbaderhof Restaurant",
+    aliases: ["Restaurant Warmbaderhof", "Warmbaderhof Panorama Restaurant"],
     category: "Restaurants",
     wikidataId: null,
-    requiresCategoryEvidence: true,
     city: "Villach",
     evidenceUrl: "https://www.warmbaderhof.com/gourmethotel/gourmetgenuss",
   },
@@ -949,8 +951,8 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
   {
     id: "es-malaga-cathedral",
     canonicalName: "Málaga Cathedral",
-    aliases: ["Kathedrale von Málaga"],
-    regexPatterns: ["^catedral de la encarnacion malaga\\b"],
+    aliases: ["Kathedrale von Málaga", "Catedral de Malaga", "Cathedral of Malaga"],
+    regexPatterns: ["^catedral de la encarnacion malaga\\b", "^catedral de la encarnacion de malaga\\b"],
     category: "Freizeit",
     wikidataId: "Q1582758",
     requiresCategoryEvidence: true,
@@ -1015,7 +1017,7 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
   {
     id: "es-farmacia-las-flores",
     canonicalName: "Farmacia Las Flores Málaga",
-    aliases: [],
+    aliases: ["Farmacia Carmen Fernandez Robledo"],
     category: "Gesundheit",
     wikidataId: null,
     city: "Málaga",

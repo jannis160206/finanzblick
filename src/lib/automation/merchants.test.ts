@@ -261,6 +261,8 @@ describe("merchant text normalization", () => {
       "mueller",
     ],
     ["Rückerstattung BILLA 08.10.2026", "billa"],
+    ["POS BILLA BKAUATWWXXX Zahlungsreferenz", "billa"],
+    ["POS PENNY BIC: DEUTATWWXXX Kartenfolge 2", "penny"],
   ])("cleans %s without losing merchant letters", (input, expected) => {
     expect(normalizeMerchantText(input)).toBe(expected);
   });

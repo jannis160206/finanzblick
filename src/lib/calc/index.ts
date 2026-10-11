@@ -19,7 +19,8 @@ import {
 } from "@/lib/import/identity";
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
 import { allocateGoals, goalBalance, goalExtraIncome, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
-import { alwaysLunch, isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
+import { isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
+import { hasRecurringFuelEvidence, merchantPurposeSourceCategory, recurringAmazonCategory, recurringLunchCategory, unnamedFuelPurpose } from "@/lib/recurring-purpose";
 import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
 import { reconcileLeasingSources } from "@/lib/leasing";
@@ -156,14 +157,17 @@ export function classify(
                 : !transaction.includeInPlan ? "Manuell ausgeschlossen" : "Manuell zugeordnet",
     };
   }
-  const sourceText = [description, transaction.rawDescription ?? transaction.description, ...(transaction.rawDetails ?? []), transaction.sourceCategory].filter(Boolean).join(" ");
+  const sourceText = [description, transaction.rawDescription ?? transaction.description, ...(transaction.rawDetails ?? []), merchantPurposeSourceCategory(transaction.sourceCategory)].filter(Boolean).join(" ");
   const operation = bankOperation(transaction);
   const operationCategory = operation?.kind === "external-transfer"
     ? (transaction.category === "Transfer" || transaction.category === "Transfer intern"
       ? transaction.category : bankTransferPurpose(transaction) ?? operation.category)
     : operation?.category;
   const known = operationCategory ?? knownMerchantCategory(sourceText, amount) ?? amexMerchantCategory({ ...recovered, description, amount });
-  const forcedLunch = alwaysLunch(description) && known !== "Prüfen";
+  const lunchPurpose = known !== "Prüfen"
+    ? recurringLunchCategory(description, transaction.date, amount)
+    : undefined;
+  const forcedLunch = lunchPurpose === "Mittagessen";
   const sharedHoliday = isSharedHoliday(transaction);
   const reimbursement = !!transaction.holidayReimbursementFor;
   const payroll = payrollCategory(transaction);
@@ -216,9 +220,10 @@ export function classify(
   )
     category = transaction.category;
   if (category === "Mittagessen" && !forcedLunch && !allowsLunch())
-    category = groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen";
+    category = lunchPurpose ?? (groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen");
   if (/\btrafik\b/i.test(description)) category = "Shopping";
-  if (isAmazon && !operation) category = "Shopping";
+  if (!operation && (isAmazon || recurringAmazonCategory(description))) category = recurringAmazonCategory(description) ?? "Shopping";
+  if (!operation && unnamedFuelPurpose(description, amount) && hasRecurringFuelEvidence(transaction)) category = "Tanken";
   if (isRoundUp) category = "Transfer intern";
   if (amount > 0 && specialIncome && !detectedTransfer)
     category = payroll ?? "Einkommen";
@@ -228,6 +233,8 @@ export function classify(
     (!transaction.categoryOverride || ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(transaction.category)))
     category = payroll;
   if (forcedLunch) category = "Mittagessen";
+  else if (lunchPurpose && category === "Mittagessen") category = lunchPurpose;
+  if (operation?.kind === "interest") category = operation.category;
   if (detectedTransfer) category = "Transfer intern";
   category = canonicalCategory(category);
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
@@ -243,7 +250,7 @@ export function classify(
   if (known === "Prüfen" && !transaction.categoryOverride && !detectedTransfer &&
     !(operation?.kind === "external-transfer" && payroll)) category = "Prüfen";
   if (amount > 0 && transaction.categoryOverride && transaction.category === "Rückerstattungen" &&
-    !detectedTransfer && !reimbursement) category = "Rückerstattungen";
+    !detectedTransfer && !reimbursement && operation?.kind !== "interest") category = "Rückerstattungen";
   // A partner transfer must not become a salary receipt before reconciliation.
   if (isRaphaelPayment(transaction) && ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(category)) category = "Sonstiges";
   if (reimbursement) category = "Transfer";
@@ -281,7 +288,7 @@ export function classify(
     isRoundUp,
     isAmazon,
     includeInPlan,
-    merchant: merchantName(description, transaction.merchantAlias),
+    merchant: operation?.kind === "interest" ? "Zinsertrag" : merchantName(description, transaction.merchantAlias),
     reason: sharedHoliday
       ? "Geteilt: 50 % Eigenanteil, 50 % Raphael"
       : reimbursement

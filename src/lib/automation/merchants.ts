@@ -68,6 +68,10 @@ export function normalizeMerchantText(text: string): string {
     .replace(/\bmcc\s*[:=]\s*\d{4}\b/gi, " ")
     .replace(/\bbic\s*:?\s*[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b/gi, " ")
     .replace(
+      /\b(?:BKAUATWW|BAWAATWW|DEUTATWW|DEUTDEMM|RZBAATWW|REVOLT21)(?:[A-Z0-9]{3})?\b/gi,
+      " ",
+    )
+    .replace(
       /\b(?:terminal|kartenterminal|kartenfolge)[-\s]*(?:id|nr|nummer)?\.?\s*[:=#]?\s*(?=[A-Z0-9*-]*\d)[A-Z0-9*-]+\b/gi,
       " ",
     )
@@ -113,7 +117,7 @@ export function normalizeMerchantText(text: string): string {
     .replace(/\b\d+\b/g, " ")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(
-      /\b(?:iban|bic|sepa|pos|terminal|kartenterminal|kartenfolge|kartenzahlung|zahlung|debit|erstattung|rueckerstattung|rueckverguetung|refund|gutschrift|filiale|fil|branch|store|nr|nummer)\b/g,
+      /\b(?:iban|bic|sepa|pos|terminal|kartenterminal|kartenfolge|kartenzahlung|zahlung|debit|erstattung|rueckerstattung|rueckverguetung|refund|gutschrift|filiale|fil|branch|store|nr|nummer|zahlungsreferenz|auftraggeberreferenz|referenz|reference)\b/g,
       " ",
     )
     .replace(/\s+/g, " ")
@@ -754,7 +758,7 @@ function reviewedSeed(
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: `Reviewed public merchant identity and category: ${review.evidenceUrl}`,
-    updatedAt: Date.UTC(2026, 9, 11, 18, 14),
+    updatedAt: Date.UTC(2026, 9, 11, 20, 40),
   });
 }
 

@@ -121,17 +121,11 @@ describe("booking-derived public merchant references", () => {
   });
 
   it.each([
-    "Amazon",
     "G2A.com",
     "Glovo",
     "Transak",
     "Coral Gas Cyprus",
     "Too Good To Go",
-    "Petrol Group",
-    "Petrolina",
-    "MOL",
-    "Galp",
-    "Avanti",
     "Der Gams",
     "Falkensteiner Schlosshotel Velden",
   ])(

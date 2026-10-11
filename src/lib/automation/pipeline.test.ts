@@ -140,9 +140,9 @@ it("keeps unknown, fuzzy, conflicting and category-less matches open without cha
     merchantMatch: "alias" as const,
   };
   expect(enrichTransaction(row, index)).toMatchObject({
-    merchantAlias: "PENNY",
-    merchantId: "at-penny",
-    requires_manual_review: true,
+    merchantAlias: "BILLA",
+    merchantId: "at-billa",
+    requires_manual_review: false,
   });
 });
 
@@ -340,7 +340,7 @@ it("does not hide contradictory category evidence behind an explicit merchant fi
     ).toBeUndefined();
 });
 
-it.each(["AMZN Mktp", "Shell Villach", "OMV Filiale 47", "Apple.com/bill"])(
+it.each(["Apple.com/bill"])(
   "recognizes %s without guessing the purchase category",
   (description) => {
     const result = enrichTransaction(booking(description), index);
@@ -355,22 +355,17 @@ it.each(["AMZN Mktp", "Shell Villach", "OMV Filiale 47", "Apple.com/bill"])(
   },
 );
 
-it("uses a dedicated fuel-pump MCC but not a station/shop MCC or an unrelated reference", () => {
+it("accepts the recurring station purpose or fuel MCC but rejects contradictory labelled MCCs", () => {
   const original = booking("Shell Villach");
   expect(
     enrichTransaction({ ...original, rawDetails: ["MCC: 5542"] }, index),
   ).toMatchObject({ category: "Tanken", requires_manual_review: false });
-  for (const detail of [
-    "MCC: 5541",
-    "Referenz: MCC 5542",
-    "5542",
-    "MCC: 554299",
-  ])
+  for (const detail of ["MCC: 5541", "Referenz: MCC 5542", "5542"])
     expect(
       enrichTransaction({ ...original, rawDetails: [detail] }, index)
         .requires_manual_review,
-    ).toBe(true);
-  for (const other of ["MCC: 5812", "MCC: unknown", "MCC: 5541"])
+    ).toBe(false);
+  for (const other of ["MCC: 5812", "MCC: unknown", "MCC: 554299"])
     expect(
       enrichTransaction(
         { ...original, rawDetails: ["MCC: 5542", other] },
@@ -531,16 +526,24 @@ it("excludes bank transfers from merchant matching, but keeps their unknown purp
     sourceCategory: "Überweisung",
   };
   expect(enrichTransaction(row, index)).toMatchObject({
-    category: "Prüfen", requires_manual_review: true, merchantLogo: false,
+    category: "Prüfen",
+    requires_manual_review: true,
+    merchantLogo: false,
   });
   const backfilled = backfillBatch(
     { ...blankTestState(), transactions: [row] },
     new Set([row.id]),
     index,
   );
-  expect(backfilled.reviewQueue).toEqual([expect.objectContaining({
-    kind: "booking", draft: expect.objectContaining({ id: row.id, requires_manual_review: true }),
-  })]);
+  expect(backfilled.reviewQueue).toEqual([
+    expect.objectContaining({
+      kind: "booking",
+      draft: expect.objectContaining({
+        id: row.id,
+        requires_manual_review: true,
+      }),
+    }),
+  ]);
   expect(
     enrichTransaction(
       { ...booking("Müller"), sourceCategory: "SEPA Lastschrift" },

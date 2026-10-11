@@ -6,6 +6,13 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { MerchantIndex } from "./merchants";
+import {
+  hasRecurringFuelEvidence,
+  merchantPurposeSourceCategory,
+  recurringAmazonCategory,
+  recurringLunchCategory,
+  unnamedFuelPurpose,
+} from "@/lib/recurring-purpose";
 import { reviewedAustrianBankIds } from "./austrian-merchant-rules";
 import { isAutomationLocked } from "./locks";
 import { createAccountMerchantResolver } from "./aliases";
@@ -23,6 +30,23 @@ import {
   bankTransferPurpose,
 } from "@/lib/bank-operation";
 export { isAutomationLocked } from "./locks";
+
+function withoutMerchantIdentity(row: Transaction): Transaction {
+  if (
+    !row.merchantId &&
+    !row.merchantAlias &&
+    !row.merchantMatch &&
+    !row.merchantLogo
+  )
+    return row;
+  return {
+    ...row,
+    merchantId: undefined,
+    merchantAlias: undefined,
+    merchantMatch: undefined,
+    merchantLogo: false,
+  };
+}
 
 export function enrichTransaction(
   row: Transaction,
@@ -51,7 +75,7 @@ export function enrichTransaction(
       classified.isTransfer ||
       (row.amount > 0 && isIncomeCategory(classified.category))
     )
-      return row;
+      return withoutMerchantIdentity(row);
     const learned = resolveAccount?.(row);
     const choice =
       learned?.kind === "matched" &&
@@ -73,11 +97,12 @@ export function enrichTransaction(
       requires_manual_review: category === "Prüfen",
     });
   }
-  if (isMerchantTransfer(row)) return row;
+  if (isMerchantTransfer(row)) return withoutMerchantIdentity(row);
   const refund =
+    operation?.kind !== "interest" &&
     row.amount > 0 &&
     (!isIncomeCategory(classified.category) || hasMerchantRefundEvidence(row));
-  if (row.amount > 0 && !refund) return row;
+  if (row.amount > 0 && !refund && operation?.kind !== "interest") return row;
   const evidence = merchantEvidence(row, index);
   if (evidence.kind === "conflict")
     return { ...row, requires_manual_review: true };
@@ -85,11 +110,11 @@ export function enrichTransaction(
     evidence.text,
     row.description,
     row.rawDescription,
-    row.sourceCategory,
+    merchantPurposeSourceCategory(row.sourceCategory),
     ...(row.rawDetails ?? []),
   ].join(" ");
   const known = knownMerchantCategory(
-    operation?.kind === "fee"
+    operation?.kind === "fee" || operation?.kind === "interest"
       ? sourceText.replace(/\batm[-\s]*fee\b/gi, "")
       : sourceText,
     row.amount,
@@ -97,7 +122,11 @@ export function enrichTransaction(
   const learned = resolveAccount?.(row);
   if (learned?.kind === "conflict")
     return { ...row, requires_manual_review: true };
-  if (learned?.kind === "matched" && !learned.choice.identityOnly) {
+  if (
+    learned?.kind === "matched" &&
+    !learned.choice.identityOnly &&
+    operation?.kind !== "interest"
+  ) {
     const { choice } = learned;
     if (!refund && choice.category === "Rückerstattungen")
       return { ...row, requires_manual_review: true };
@@ -151,7 +180,7 @@ export function enrichTransaction(
       ),
     });
   }
-  if (operation?.kind === "fee") {
+  if (operation?.kind === "fee" || operation?.kind === "interest") {
     const identity = index.match(evidence.text);
     const bankFeeIdentity =
       identity.method === "exact" &&
@@ -170,6 +199,9 @@ export function enrichTransaction(
       ...row,
       category: operation.category,
       categoryOverride: true,
+      ...(operation.kind === "interest"
+        ? { fixedCost: false, includeInPlan: false }
+        : {}),
       merchantId: undefined,
       merchantAlias: undefined,
       merchantMatch: undefined,
@@ -193,6 +225,26 @@ export function enrichTransaction(
     };
   const matchingText = confirmedName ?? evidence.text;
   const match = index.match(matchingText, original.merchantId);
+  const lunchPurpose =
+    known !== "Prüfen"
+      ? recurringLunchCategory(matchingText, row.date, row.amount)
+      : undefined;
+  const unnamedPurpose =
+    lunchPurpose ??
+    (known !== "Prüfen" &&
+    unnamedFuelPurpose(matchingText, row.amount) &&
+    hasRecurringFuelEvidence(row)
+      ? "Tanken"
+      : undefined);
+  if (unnamedPurpose && match.method === "none" && !confirmedName) {
+    return transactionSchema.parse({
+      ...withoutMerchantIdentity(row),
+      merchantLogo: false,
+      category: unnamedPurpose,
+      categoryOverride: true,
+      requires_manual_review: false,
+    });
+  }
   if (
     !match.merchant ||
     (match.method !== "exact" && match.method !== "regex")
@@ -206,14 +258,16 @@ export function enrichTransaction(
         "Prüfen")
   )
     return { ...row, requires_manual_review: true };
-  // A new index must not replace a previously safe, different identity.
+  // Correct source-backed automatic identities only; unproven legacy IDs stay open.
   if (
     original.merchantId &&
     original.requires_manual_review === false &&
-    original.merchantId !== match.merchant.id
+    original.merchantId !== match.merchant.id &&
+    (match.method !== "exact" ||
+      !["alias", "rule"].includes(original.merchantMatch ?? ""))
   )
     return { ...original, requires_manual_review: true };
-  // Existing safe assignments and contextual rules (e.g. lunch time) keep precedence.
+  // Source-backed purpose rules outrank stale automatic assignments, not manual choices.
   const contextual = classify({
     ...row,
     description: matchingText,
@@ -221,6 +275,15 @@ export function enrichTransaction(
     categoryOverride: false,
   }).category;
   const defaultCategory = match.merchant.defaultCategory;
+  const amazonIdentity =
+    match.merchant.wikidataId === "Q3884" &&
+    match.merchant.canonicalName.toLocaleLowerCase("de-AT") === "amazon";
+  const eniIdentity =
+    match.merchant.wikidataId === "Q565594" &&
+    match.merchant.canonicalName.toLocaleLowerCase("de-AT") === "eni";
+  const amazonPurpose = amazonIdentity
+    ? recurringAmazonCategory(matchingText)
+    : undefined;
   const canonicalName = match.merchant.canonicalName;
   const broadCompatible =
     defaultCategory !== null &&
@@ -243,19 +306,23 @@ export function enrichTransaction(
     ].some((text) => qualifiedCompany(text, canonicalName))
   )
     return { ...row, requires_manual_review: true };
-  const mccValues = (row.rawDetails ?? []).flatMap((detail) => {
-    const field = /^(?:mcc|merchant\s*category\s*code)\s*[:=]?\s*(.*)$/i.exec(
-      detail.trim(),
-    );
-    return field ? [field[1].trim()] : [];
-  });
-  const fuelEvidence =
-    mccValues.length > 0 && mccValues.every((code) => code === "5542");
+  const recurringFuel =
+    (defaultCategory === "Tanken" || eniIdentity) &&
+    hasRecurringFuelEvidence(row);
+  const purposeCategory =
+    lunchPurpose ??
+    amazonPurpose ??
+    (recurringFuel ? "Tanken" : defaultCategory);
+  const evidencedPurpose =
+    lunchPurpose !== undefined ||
+    amazonPurpose !== undefined ||
+    recurringFuel ||
+    (amazonIdentity && known === "Shopping");
   if (
     !refund &&
-    (match.merchant.defaultCategory === null ||
-      (match.merchant.requiresCategoryEvidence &&
-        !(match.merchant.defaultCategory === "Tanken" && fuelEvidence)))
+    ((!evidencedPurpose &&
+      (defaultCategory === null || match.merchant.requiresCategoryEvidence)) ||
+      ((defaultCategory === "Tanken" || eniIdentity) && !recurringFuel))
   )
     return transactionSchema.parse({
       ...row,
@@ -269,20 +336,21 @@ export function enrichTransaction(
   if (
     !refund &&
     contextual !== "Prüfen" &&
-    contextual !== match.merchant.defaultCategory &&
+    contextual !== purposeCategory &&
     !broadCompatible &&
+    !evidencedPurpose &&
     !specialContext
   )
     return { ...row, requires_manual_review: true };
   const category = refund
     ? "Rückerstattungen"
-    : row.merchantId === match.merchant.id &&
-        row.requires_manual_review === false &&
-        row.category !== "Prüfen"
-      ? row.category
-      : specialContext
-        ? contextual
-        : match.merchant.defaultCategory;
+    : (lunchPurpose ??
+      amazonPurpose ??
+      (recurringFuel
+        ? "Tanken"
+        : specialContext
+          ? contextual
+          : defaultCategory));
   return transactionSchema.parse({
     ...row,
     merchantId: match.merchant.id,
