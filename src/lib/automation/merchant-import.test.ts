@@ -62,6 +62,9 @@ describe("bounded Austrian operator import", () => {
         `nwr["${type}"]["name"](area.austria)(48.18,16.33,48.22,16.39)`,
       );
     expect(query).toContain("out tags 1001");
+    expect(query).toContain(
+      'nwr["leisure"~"^(fitness_centre|sports_centre|swimming_pool)$"]["name"](area.austria)(48.18,16.33,48.22,16.39)',
+    );
     expect(query).not.toMatch(/https?:|statement|transaction|account/i);
   });
 
@@ -182,6 +185,55 @@ describe("bounded Austrian operator import", () => {
 });
 
 describe("conservative OSM identities and categories", () => {
+  it.each([
+    [{ shop: "clothes" }, "Shopping", false],
+    [{ shop: "shoes" }, "Shopping", false],
+    [{ shop: "bakery" }, "Lebensmittel", false],
+    [{ shop: "books" }, "Bildung", false],
+    [{ shop: "cosmetics" }, "Drogerie", false],
+    [{ shop: "sports" }, "Sport & Fitness", false],
+    [{ shop: "department_store" }, "Shopping", true],
+    [{ shop: "mobile_phone" }, "Telefon & Internet", true],
+    [{ shop: "hardware" }, "Reparaturen & Instandhaltung", true],
+    [{ shop: "garden_centre" }, "Wohnen & Haushalt", true],
+    [{ shop: "unknown" }, null, true],
+    [{ tourism: "hotel" }, "Urlaub", true],
+    [{ tourism: "museum" }, "Freizeit", false],
+    [{ amenity: "driving_school" }, "Bildung", false],
+    [{ amenity: "parking" }, "Parken & Maut", false],
+    [{ amenity: "car_wash" }, "Fahrzeugwartung", false],
+    [{ leisure: "fitness_centre" }, "Sport & Fitness", false],
+    [{ leisure: "swimming_pool" }, "Freizeit", false],
+  ])(
+    "maps the explicit public type %j to an existing purpose with appropriate review protection",
+    (tags, category, review) => {
+      expect(osmMerchantCategory(tags)).toBe(category);
+      expect(
+        parseOsmMerchants(
+          payload([element(1, { name: "Public Example", ...tags })]),
+        ).merchants[0],
+      ).toMatchObject({
+        defaultCategory: category,
+        requiresCategoryEvidence: review,
+      });
+    },
+  );
+
+  it("keeps conflicting shop, tourism and leisure purposes open and does not import unnamed leisure places", () => {
+    expect(
+      osmMerchantCategory({ shop: "books", leisure: "fitness_centre" }),
+    ).toBeNull();
+    expect(osmMerchantCategory({ shop: "bakery", amenity: "cafe" })).toBeNull();
+    expect(
+      parseOsmMerchants(
+        payload([
+          element(1, { name: "Public Park", leisure: "park" }),
+          element(2, { leisure: "fitness_centre" }),
+        ]),
+      ).merchants,
+    ).toEqual([]);
+  });
+
   it("indexes explicit alternative names and reports unsafe alternatives", () => {
     const { merchants, report } = parseOsmMerchants(
       payload([

@@ -56,6 +56,15 @@ describe("explicit bank operations", () => {
     "Bargeldbehebungsentgelt",
     "Gebühr für die Bargeldabhebung",
     "ATM fee",
+    "Erste Bank Kontoführungsgebühr",
+    "BAWAG Kontoführungsgebühr",
+    "bank99 Kontoführungsgebühr",
+    "Bank Austria Bankgebühr",
+    "Oberbank Kontospesen",
+    "BKS Bank Kartengebühr",
+    "DADAT Bank Buchungsentgelt",
+    "DenizBank Österreich Kontoführung",
+    "Santander Consumer Bank Überweisungsgebühr",
   ])("assigns only the existing fee category for %s", (description) => {
     const row = booking(description);
     expect(bankOperation(row)).toEqual({
@@ -143,6 +152,11 @@ describe("explicit bank operations", () => {
     "Kontoführung inklusive Gebühr",
     "Überweisung an Alex inklusive Kontoführungsgebühr",
     "BILLA Kontoführungsgebühr",
+    "Erste Bank BILLA Kontoführungsgebühr",
+    "BAWAG NETFLIX Kartengebühr",
+    "bank99 Kontoführung ohne Gebühr",
+    "BAWAG Shop GmbH Kontoführungsgebühr",
+    "Erste Bannk Kontoführungsgebühr",
   ])("keeps mixed or negated evidence in review: %s", (description) => {
     expect(
       enrichTransaction(booking(description), index).requires_manual_review,

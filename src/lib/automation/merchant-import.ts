@@ -71,6 +71,7 @@ area["ISO3166-1"="AT"]["admin_level"="2"]->.austria;
   nwr["shop"]["name"](area.austria)(${bbox.join(",")});
   nwr["amenity"]["name"](area.austria)(${bbox.join(",")});
   nwr["tourism"]["name"](area.austria)(${bbox.join(",")});
+  nwr["leisure"~"^(fitness_centre|sports_centre|swimming_pool)$"]["name"](area.austria)(${bbox.join(",")});
 );
 out tags ${MAX_OSM_ELEMENTS + 1};`;
 }
@@ -98,11 +99,39 @@ const shopCategories: Record<string, Merchant["defaultCategory"]> = {
   greengrocer: "Lebensmittel",
   butcher: "Lebensmittel",
   seafood: "Lebensmittel",
+  bakery: "Lebensmittel",
+  beverages: "Lebensmittel",
+  confectionery: "Lebensmittel",
+  deli: "Lebensmittel",
   chemist: "Drogerie",
   hairdresser: "Körperpflege",
   optician: "Gesundheit",
   pet: "Haustiere",
   furniture: "Möbel & Einrichtung",
+  clothes: "Shopping",
+  shoes: "Shopping",
+  fashion_accessories: "Shopping",
+  jewellery: "Shopping",
+  watches: "Shopping",
+  department_store: "Shopping",
+  variety_store: "Shopping",
+  mall: "Shopping",
+  toys: "Shopping",
+  tobacco: "Shopping",
+  electronics: "Shopping",
+  computer: "Shopping",
+  stationery: "Shopping",
+  books: "Bildung",
+  sports: "Sport & Fitness",
+  bicycle: "Sport & Fitness",
+  beauty: "Körperpflege",
+  cosmetics: "Drogerie",
+  mobile_phone: "Telefon & Internet",
+  hardware: "Reparaturen & Instandhaltung",
+  doityourself: "Reparaturen & Instandhaltung",
+  garden_centre: "Wohnen & Haushalt",
+  car_repair: "Fahrzeugwartung",
+  tyres: "Fahrzeugwartung",
 };
 const amenityCategories: Record<string, Merchant["defaultCategory"]> = {
   restaurant: "Restaurants",
@@ -113,13 +142,41 @@ const amenityCategories: Record<string, Merchant["defaultCategory"]> = {
   veterinary: "Haustiere",
   fuel: "Tanken",
   cinema: "Entertainment",
+  fast_food: "Restaurants",
+  ice_cream: "Cafés & Snacks",
+  car_wash: "Fahrzeugwartung",
+  parking: "Parken & Maut",
+  driving_school: "Bildung",
 };
 const tourismCategories: Record<string, Merchant["defaultCategory"]> = {
   hotel: "Urlaub",
   motel: "Urlaub",
   guest_house: "Urlaub",
   hostel: "Urlaub",
+  museum: "Freizeit",
+  gallery: "Freizeit",
+  zoo: "Freizeit",
+  aquarium: "Freizeit",
+  theme_park: "Freizeit",
 };
+const leisureCategories: Record<string, Merchant["defaultCategory"]> = {
+  fitness_centre: "Sport & Fitness",
+  sports_centre: "Sport & Fitness",
+  swimming_pool: "Freizeit",
+};
+const multipurposeShops = new Set([
+  "department_store",
+  "variety_store",
+  "mall",
+  "electronics",
+  "computer",
+  "stationery",
+  "bicycle",
+  "mobile_phone",
+  "hardware",
+  "doityourself",
+  "garden_centre",
+]);
 
 export function osmMerchantCategory(
   tags: Record<string, string>,
@@ -134,6 +191,9 @@ export function osmMerchantCategory(
         : null,
       Object.hasOwn(tourismCategories, tags.tourism)
         ? tourismCategories[tags.tourism]
+        : null,
+      Object.hasOwn(leisureCategories, tags.leisure)
+        ? leisureCategories[tags.leisure]
         : null,
     ].filter((category) => category != null),
   );
@@ -174,7 +234,15 @@ export function parseOsmMerchants(
       throw new Error("Overpass returned duplicate OSM identities");
     seen.add(osmId);
     const tags = element.tags;
-    if (!tags.name || !(tags.shop || tags.amenity || tags.tourism)) {
+    if (
+      !tags.name ||
+      !(
+        tags.shop ||
+        tags.amenity ||
+        tags.tourism ||
+        Object.hasOwn(leisureCategories, tags.leisure)
+      )
+    ) {
       report.skipped.push({ id: osmId, reason: "Missing merchant name/type" });
       continue;
     }
@@ -220,7 +288,11 @@ export function parseOsmMerchants(
       aliases,
       regexPatterns: [],
       defaultCategory,
-      requiresCategoryEvidence: defaultCategory === "Tanken",
+      requiresCategoryEvidence:
+        defaultCategory === null ||
+        defaultCategory === "Tanken" ||
+        defaultCategory === "Urlaub" ||
+        multipurposeShops.has(tags.shop),
       region: "AT",
       city,
       source: "osm",

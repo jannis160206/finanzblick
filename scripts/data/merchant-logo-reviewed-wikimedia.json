@@ -69,6 +69,13 @@
       "wikidataId": "Q1587223",
       "filename": "Hartlauer Logo.svg",
       "evidence": "The German Hartlauer article identifies exact Austrian retailer Q1587223 and uses this locally hosted SVG. Its metadata explicitly describes Logo von Hartlauer. This reviewed association does not substitute another electronics chain or a parent company. Verified 2026-10-10."
+    },
+    {
+      "wiki": "de",
+      "merchantId": "at-nah-frisch",
+      "wikidataId": "Q1963643",
+      "filename": "Logo Nah und Frisch.jpg",
+      "evidence": "The German Nah & Frisch article identifies exact Austrian grocery retail brand Q1963643 and uses this locally hosted file. The German file description identifies the Nah und Frisch brand logo. This is an explicitly reviewed article/file association, not a Commons P154 candidate or a parent-company substitution. Verified 2026-10-11."
     }
   ]
 }

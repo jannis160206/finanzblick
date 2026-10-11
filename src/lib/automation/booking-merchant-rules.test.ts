@@ -24,6 +24,17 @@ describe("booking-derived public merchant references", () => {
   it("matches every reviewed canonical name and alias to its own exact identity", () => {
     for (const review of reviewedBookingMerchants) {
       for (const name of [review.canonicalName, ...review.aliases]) {
+        if (
+          review.id === "at-porsche-bank" ||
+          review.id === "at-mpreis-baguette" ||
+          (review.id === "at-mueller-glas" && name === "Müller Glas")
+        ) {
+          expect(index.match(name), name).toEqual({
+            method: "exact",
+            requiresManualReview: true,
+          });
+          continue;
+        }
         expect(index.match(name), name).toMatchObject({
           method: "exact",
           merchant: { id: review.id },

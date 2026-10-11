@@ -153,6 +153,23 @@ describe("operator merchant import CLI", () => {
     });
   });
 
+  it.each([false, true])(
+    "never removes a stricter purchase-purpose guard during geographic refresh (logos=%s)",
+    async (logos) => {
+      mocks.parseArgs.mockReturnValue({
+        values: { bbox: "48.18,16.33,48.22,16.39", logos },
+      });
+      mocks.load.mockReturnValue([
+        { ...item(), requiresCategoryEvidence: true },
+      ]);
+      await run();
+      expect(mocks.upsert).toHaveBeenLastCalledWith(
+        [{ ...item(), requiresCategoryEvidence: true }],
+        { replaceLogos: logos },
+      );
+    },
+  );
+
   it("does not retain an older logo when an explicit logo refresh skipped it", async () => {
     mocks.parseArgs.mockReturnValue({
       values: { bbox: "48.18,16.33,48.22,16.39", logos: true },

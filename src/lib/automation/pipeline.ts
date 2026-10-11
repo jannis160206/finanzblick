@@ -6,6 +6,7 @@ import {
   type Transaction,
 } from "@/lib/types";
 import { MerchantIndex } from "./merchants";
+import { reviewedAustrianBankIds } from "./austrian-merchant-rules";
 import { isAutomationLocked } from "./locks";
 import { createAccountMerchantResolver } from "./aliases";
 import {
@@ -152,9 +153,16 @@ export function enrichTransaction(
   }
   if (operation?.kind === "fee") {
     const identity = index.match(evidence.text);
+    const bankFeeIdentity =
+      identity.method === "exact" &&
+      identity.merchant !== undefined &&
+      reviewedAustrianBankIds.has(identity.merchant.id) &&
+      identity.merchant.defaultCategory === null &&
+      !qualifiedCompany(sourceText, identity.merchant.canonicalName) &&
+      !/\b(?:shop|shopping|handel|kunstforum)\b/i.test(sourceText);
     if (
       known === "Prüfen" ||
-      identity.method !== "none" ||
+      (identity.method !== "none" && !bankFeeIdentity) ||
       (learned?.kind === "matched" && learned.choice.identityOnly)
     )
       return { ...row, requires_manual_review: true };

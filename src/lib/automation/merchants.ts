@@ -105,7 +105,10 @@ export function normalizeMerchantText(text: string): string {
     .replace(/(\p{L})\+(?=\s|$)/gu, "$1 plus")
     .normalize("NFKD")
     .replace(/\p{M}/gu, "")
-    .replace(/\b([a-z]{3,})\d{2,}\b/g, "$1")
+    // bank99 is a bank brand, not a bank plus a branch number.
+    .replace(/\b([a-z]{3,})\d{2,}\b/g, (value, brand: string) =>
+      value === "bank99" ? value : brand,
+    )
     .replace(/\b(?=[a-z0-9-]*\d)[a-z0-9]{8,}(?:-[a-z0-9]+)*\b/g, " ")
     .replace(/\b\d+\b/g, " ")
     .replace(/[^\p{L}\p{N}]+/gu, " ")
@@ -751,7 +754,7 @@ function reviewedSeed(
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: `Reviewed public merchant identity and category: ${review.evidenceUrl}`,
-    updatedAt: Date.UTC(2026, 9, 10, 0, 53),
+    updatedAt: Date.UTC(2026, 9, 11, 18, 14),
   });
 }
 
@@ -871,7 +874,10 @@ export class MerchantIndex {
             merchant.region,
             normalizeMerchantText(merchant.canonicalName),
             merchant.defaultCategory,
-            merchant.requiresCategoryEvidence,
+            // A null purpose already mandates review, regardless of this flag.
+            merchant.defaultCategory === null
+              ? false
+              : merchant.requiresCategoryEvidence,
           ])
         : JSON.stringify([merchant.id]);
       const group = groups.get(key);

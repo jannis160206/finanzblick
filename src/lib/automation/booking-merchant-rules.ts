@@ -1,4 +1,5 @@
 import type { Category } from "@/lib/categories";
+import { reviewedAustrianMerchants } from "./austrian-merchant-rules";
 
 export interface ReviewedBookingMerchant {
   readonly id: string;
@@ -15,6 +16,7 @@ export interface ReviewedBookingMerchant {
 
 // Public business facts only; no booking text, personal data or image rights.
 export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
+  ...reviewedAustrianMerchants,
   {
     id: "zara",
     canonicalName: "Zara",

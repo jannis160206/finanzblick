@@ -107,6 +107,7 @@ try {
     for (const merchant of result.merchants) {
       const old = previous.get(merchant.id);
       if (!old) continue;
+      merchant.requiresCategoryEvidence ||= old.requiresCategoryEvidence;
       if (old.defaultCategory !== merchant.defaultCategory)
         merchant.defaultCategory = null;
       if (old.city !== merchant.city) merchant.city = null;

@@ -7,13 +7,66 @@ learned user categories. Neither the worker nor HTTP requests trigger imports.
 
 ## Booking-derived public reference reviews
 
-`booking-merchant-rules.ts` contains 109 explicitly reviewed public identities
-and category references (2026-10-10). These update existing stable seed IDs or add
+`booking-merchant-rules.ts` combines the initial 109 explicitly reviewed public
+identities with further Austrian references from `austrian-merchant-rules.ts`
+(2026-10-11). These update existing stable seed IDs or add
 new ones to the same `merchants` table, never a second catalogue. Each carries a
 public factual citation; foreign references have an explicit region, while
 existing identity regions remain stable for private logo grants. Only isolated
 public business names were researched, not account data, people, amounts or
 full payment narratives.
+
+The readable files under `import-example` are examined locally with the existing
+CSV/PDF/screenshot parsers. Password-protected PDFs are explicitly unavailable,
+not decrypted or bypassed; personal names, banking narratives and generic
+fragments are never submitted to public research. A verified full business name
+does not prove an arbitrary truncated spelling. Distinct outlets and parent/
+subsidiary identities are not collapsed to make coverage look complete.
+
+The 2026-10-11 fixture audit read five files / 288 parsed rows without parse
+issues; nine password-protected PDFs could not be examined. Of 15 isolated
+public gaps researched, four additional identities were verified (PACE Mobility,
+ME Group Austria, Burgschenke Finkenstein and ATRIO Villach), five were already
+covered, and six remain unverified or ambiguous. A separately verified cafe is
+accepted only as **Die Kaffeemacher Schwaz**, not unqualified KaffeeMacher.
+No financial records are rewritten by this catalogue expansion.
+
+Further curated Austrian retail/service references include UNIMARKT,
+Nah&Frisch, PAGRO, Gigasport, KELAG, TIWAG, banks and regional transport networks.
+Legacy retailers are factual historical references, not claims of current
+Austrian stores. INTERSPAR remains the existing SPAR alias: its distinct
+subsidiary is not added as a conflicting second automatic match. BILLA PLUS
+also reuses BILLA. MPREIS Baguette, Porsche Bank and Mueller Glas retain
+identity-conflict review against their shorter existing names.
+The registered brand `bank99` is preserved during numeric-ID cleanup; generic
+`bank` cannot become a bank99 match. Bank issuers and transfers do not supply
+merchant identity or imply a purchase category.
+Explicit bank-fee narratives may name one of the reviewed banks without
+blocking the existing Bankgebuehren rule; fees still receive no merchant logo.
+Purchase conflicts, fuzzy bank names, negations and company qualifiers remain
+in review. Existing unbound OSM outlets named Heindl, Felber, Aida or Joseph
+Brot are not automatically merged with public chain references by name alone;
+their remaining identity conflicts require review.
+For otherwise identical QID/name/region references, a null category always
+requires review; differing purchase-evidence flags do not manufacture an
+identity conflict. Non-null category/evidence disagreements still fail closed.
+
+The public logo selection manifest adds 38 exact active P154 file choices,
+plus a separately reviewed local German Wikipedia logo for Nah&Frisch.
+Artwork is downloaded only by the existing explicit private operator import,
+stored outside Git, and served through the authenticated account resolver.
+Missing or ambiguous artwork retains the normal category icon. An active
+P154 statement is identity evidence, not a guarantee of a brand's newest artwork
+or a public image licence. This is a curated expansion, not an exhaustive
+registry of every Austrian business or a promise of 99% accuracy.
+
+Measured local result of this expansion: 93 additional merchant references and
+35 formerly missing category defaults, bringing the existing table to 893
+references. The authenticated resolver can read logos for 396 references
+(previously 355). Finance snapshots and historical pass/cursor tables remained
+byte-for-byte unchanged. A selected Fussl raster exceeded the safe original
+image bounds without a provenance-matched PNG thumbnail and remains skipped;
+unsafe oversized artwork is not decoded to inflate coverage.
 
 Category defaults reference the application's existing purpose categories.
 Mixed-purpose businesses, fuel shops, hotels and marketplaces still require
@@ -68,7 +121,9 @@ There is no all-Austria download. Each side is at most 1 degree, the area at mos
 0.25 square degrees, and coordinates must lie within Austria's outer envelope.
 The Overpass query additionally intersects the bbox with the administrative
 country area `ISO3166-1=AT`; an envelope alone is not a country filter.
-It selects named `shop`, `amenity`, and `tourism` nodes/ways/relations only.
+It selects named `shop`, `amenity`, and `tourism` nodes/ways/relations, plus
+named `leisure=fitness_centre`, `sports_centre` and `swimming_pool` facilities.
+All four selections use the same Austrian area intersection and unchanged caps.
 
 Each invocation makes one POST to `https://overpass-api.de/api/interpreter`.
 The result is limited to 1,000 elements, 4 MiB, 25 seconds per request, and an
@@ -84,9 +139,15 @@ Stable OSM identities make repeat imports upserts, not duplicate insertions.
 The same normalized name is **not** sufficient to merge unrelated outlets.
 Only matching `brand:wikidata` plus a matching brand/name label collapses a
 chain's outlets. Differently named sub-brands remain distinct. Ambiguous names
-remain collisions for manual review. Category mapping is deliberately small:
+remain collisions for manual review. Category mapping uses explicit public types:
 unknown or contradictory types yield `null`, not a guessed category. OSM
 addresses may supply a city; a chain spanning cities has no single city.
+Clothing, shoes, books, cosmetics, sports stores, driving schools, parking,
+car washes, museums and fitness centres reuse existing purpose categories.
+Department stores, hardware/garden shops, electronics/mobile stores, hotels and
+fuel outlets require extra purchase evidence. Mixed types remain `null`; bakery
+plus cafe does not silently select the first category. Geographic refreshes
+never remove a stricter existing purchase-purpose guard.
 The optional `wikidataId` persists that brand identity evidence. Older
 `osm-brand-Q…-hash` rows retain the same evidence through their importer-generated
 ID. Curated brands are independently linked to public Wikidata identities
@@ -146,6 +207,13 @@ conflicting categories or cities stay empty rather than being overwritten by
 the latest tile. Previously unknown categories stay unknown pending deliberate
 reference correction. Review stale rows deliberately. Large coverage may hit
 the index caps.
+
+There is no reliable exhaustive list of every Austrian shop with usable image
+rights. The curated national chains and incremental local tiles are complementary:
+repeat the existing bounded import for additional Austrian areas, splitting busy
+tiles rather than increasing memory limits. Missing safe artwork retains the
+application's fallback icon. Neither a nationwide completeness claim nor a new
+category taxonomy is implied.
 
 OSM rows store source `osm`, license `ODbL-1.0`, and attribution
 `© OpenStreetMap contributors` with the OSM copyright URL:
