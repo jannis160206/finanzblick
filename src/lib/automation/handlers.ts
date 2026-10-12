@@ -11,7 +11,7 @@ import {
 } from "@/lib/server/http";
 import { getAccountRuntime } from "@/lib/server/runtime";
 import { AutomationStore } from "./store";
-import { MAX_UPLOAD_BYTES } from "./schema";
+import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "./schema";
 
 async function authorized(request: Request, stream = false) {
   if (!isAccountMode())
@@ -60,7 +60,13 @@ export async function uploadStatement(request: Request): Promise<Response> {
     if (!request.body)
       throw new AccountError(400, "Eine Datei ist erforderlich.");
     const name = new URL(request.url).searchParams.get("name") ?? "";
-    const id = randomUUID();
+    const requestedId = request.headers.get("X-Upload-Id");
+    const parsedId = statementUploadResponseSchema.safeParse({
+      id: requestedId ?? randomUUID(),
+    });
+    if (!parsedId.success)
+      throw new AccountError(400, "Ungültige Upload-ID.");
+    const { id } = parsedId.data;
     store.reserveUpload(user.id, id, name, size);
     const path = store.filePath(id);
     try {

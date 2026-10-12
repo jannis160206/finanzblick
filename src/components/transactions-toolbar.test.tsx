@@ -22,9 +22,11 @@ function mount(storageError: string | null = null) {
   return { update, state };
 }
 
-it("keeps one upload in the drop zone and separates search, filters, status and tools", () => {
+it("keeps one upload in the drop zone and separates search, filters and tools without status tabs", () => {
   const { update } = mount();
   const toolbar = screen.getByRole("group", { name: "Umsatz-Werkzeugleiste" });
+  expect(screen.queryByRole("group", { name: "Zuordnungsstatus filtern" })).toBeNull();
+  expect(within(toolbar).queryByRole("button", { name: /^(Alle|Prüfung offen|Zugeordnet)(\s*\d+)?$/ })).toBeNull();
   expect(within(toolbar).queryByRole("button", { name: "Dateien auswählen" })).toBeNull();
   expect(within(toolbar).getByRole("button", { name: "Zuordnung prüfen" }).textContent).toBe("Prüfen");
   for (const label of ["Geteilt", "Urlaub", "Weitere Filter", "Ansicht exportieren"]) {

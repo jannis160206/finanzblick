@@ -6,6 +6,7 @@ import { getAccountRuntime, closeAccountDatabases } from "@/lib/server/runtime";
 import { createTestDirectory } from "@/lib/server/test-support";
 import { uploadStatement, statementEvents } from "./handlers";
 import { AutomationStore } from "./store";
+import { randomUUID } from "node:crypto";
 
 let directory: string;
 let alice: { id: string; token: string };
@@ -63,6 +64,31 @@ it("only persists and enqueues the upload, returning 202 without parsing", async
   );
   expect(store.snapshot(alice.id).jobs[0].status).toBe("QUEUED");
   expect(database.getFinance(alice.id).state).toBeNull();
+});
+
+it("correlates client uploads by validated UUID and never overwrites a reused ID", async () => {
+  const id = randomUUID();
+  const input = request();
+  input.headers.set("X-Upload-Id", id);
+  const response = await uploadStatement(input);
+  expect(response.status).toBe(202);
+  expect(await response.json()).toEqual({ id });
+  const duplicate = request(bob);
+  duplicate.headers.set("X-Upload-Id", id);
+  expect((await uploadStatement(duplicate)).status).toBe(409);
+  const { database } = await getAccountRuntime();
+  const store = new AutomationStore(database);
+  expect(store.snapshot(alice.id).jobs.map((job) => job.id)).toEqual([id]);
+  expect(store.snapshot(bob.id).jobs).toEqual([]);
+  expect((await readFile(store.filePath(id))).toString()).toBe("not parsed here");
+});
+
+it.each(["not-a-uuid", "../outside", ""])("rejects invalid client upload ID %s before reserving a job", async (id) => {
+  const input = request();
+  input.headers.set("X-Upload-Id", id);
+  expect((await uploadStatement(input)).status).toBe(400);
+  const { database } = await getAccountRuntime();
+  expect(new AutomationStore(database).snapshot(alice.id).jobs).toEqual([]);
 });
 
 it("rejects unauthenticated, switched-account and cross-origin uploads", async () => {

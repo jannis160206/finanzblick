@@ -44,17 +44,19 @@ import { accountLabel } from "@/lib/accounts";
 import { isAmexScreenshot } from "@/lib/import/identity";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 import { screenshotReviewMessage } from "@/lib/import/amex-screenshot";
-import { StatementImportStatus } from "@/components/statement-import-status";
 import { bookingDescription } from "@/lib/import/merchant-description";
 import { useAccountWorkspace } from "@/components/account-context";
-import { AutomationStatus } from "@/components/automation-status";
-import { MAX_UPLOAD_BYTES } from "@/lib/automation/schema";
+import { useAutomation } from "@/components/automation-context";
+import { useUploadActivity, type UploadActivity } from "@/components/upload-activity";
+import { UploadStatus } from "@/components/upload-status";
+import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "@/lib/automation/schema";
 
 type Pending = {
   requestId: string;
   removeId?: string;
   rows: Transaction[];
   decisions: FixedDecision[];
+  uploadIds?: string[];
 };
 type ImportUI = {
   review: ReviewItem[];
@@ -294,6 +296,19 @@ export function StatementImport({ reviewRequest = 0 }: {
   reviewRequest?: number;
 }) {
   const workspace = useAccountWorkspace();
+  return <StatementImportWorkspace key={workspace?.user.id ?? "local"} reviewRequest={reviewRequest} />;
+}
+
+function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) {
+  const workspace = useAccountWorkspace();
+  const automation = useAutomation();
+  const { activities, add: addActivities, change: changeActivities } = useUploadActivity(automation.jobs);
+  const importController = useRef<AbortController | null>(null);
+  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    importController.current?.abort();
+    if (commitTimer.current !== null) clearTimeout(commitTimer.current);
+  }, []);
   const { state, ready, saved, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -340,9 +355,12 @@ export function StatementImport({ reviewRequest = 0 }: {
   useEffect(() => {
     if (!ui.pending || statementImport?.requestId !== ui.pending.requestId)
       return;
+    if (ui.pending.uploadIds && !statementImport.error && !saved && !storageError) return;
     pendingRef.current = false;
-    if (statementImport.error) {
-      toast.error(statementImport.error);
+    const importError = statementImport.error ?? (ui.pending.uploadIds ? storageError : null);
+    if (importError) {
+      if (ui.pending.uploadIds) changeActivities(ui.pending.uploadIds, "failed", importError);
+      toast.error(importError);
       const retry: ReviewItem[] = ui.pending.removeId
         ? []
         : ui.pending.rows.map((draft) => ({
@@ -354,6 +372,7 @@ export function StatementImport({ reviewRequest = 0 }: {
           }));
       setUI({ pending: null, review: [...ui.review, ...retry], open: true });
     } else {
+      if (ui.pending.uploadIds) changeActivities(ui.pending.uploadIds, "completed");
       const remaining = new Set(ui.review.map((item) => item.id));
       const removeId = ui.pending.removeId;
       toast.success(
@@ -371,23 +390,24 @@ export function StatementImport({ reviewRequest = 0 }: {
         pending: null,
       }));
     }
-  }, [statementImport, ui.pending, ui.review, localUI.open]);
+  }, [statementImport, ui.pending, ui.review, localUI.open, saved, storageError, changeActivities]);
 
   const commit = useCallback((
     rows: Transaction[],
     duplicates = 0,
     removeId?: string,
     decisions: FixedDecision[] = [],
+    uploadIds?: string[],
   ) => {
     if (pendingRef.current || !ready || storageError) return;
     pendingRef.current = true;
     const requestId = crypto.randomUUID();
     const metadata = importMetadata.current;
     importMetadata.current = {};
-    setUI({ pending: { requestId, rows, removeId, decisions } });
+    setUI({ pending: { requestId, rows, removeId, decisions, uploadIds } });
     // Let React display the disabled controls/progress before the synchronous
     // reducer runs. The reducer still applies to the latest state, not a copy.
-    setTimeout(() => appendStatements(rows, duplicates, requestId, decisions, metadata), 0);
+    commitTimer.current = setTimeout(() => appendStatements(rows, duplicates, requestId, decisions, metadata), 0);
   }, [appendStatements, ready, storageError]);
   const saveBooking = useCallback((row: Transaction, id: string) => {
     const original = latestState.current.reviewQueue?.find((item) => item.id === id);
@@ -415,32 +435,79 @@ export function StatementImport({ reviewRequest = 0 }: {
     )
       return;
     busyRef.current = true;
+    const controller = new AbortController();
+    importController.current = controller;
     setUI({ busy: true, dragging: false, ledgerOnly: false });
     const results: StatementResult[] = [];
+    const uploads: UploadActivity[] = files.map((file) => ({
+      id: crypto.randomUUID(), name: file.name, phase: "waiting", error: null,
+    }));
+    if (workspace && files.length > 5) {
+      const message = "Bitte höchstens fünf Auszüge gleichzeitig auswählen.";
+      addActivities([{ id: crypto.randomUUID(), name: "Dateiauswahl", phase: "failed", error: message }]);
+      toast.error(message);
+      busyRef.current = false;
+      setUI({ busy: false });
+      return;
+    }
+    addActivities(uploads);
+    const parsedIds: string[] = [];
     try {
       if (workspace) {
         if (!saved) throw new Error("Bitte zuerst die laufende Synchronisierung abwarten.");
-        if (files.length > 5) throw new Error("Bitte höchstens fünf Auszüge gleichzeitig auswählen.");
-        for (const file of files) {
-          if (!file.size || file.size > MAX_UPLOAD_BYTES) throw new Error("Ein Kontoauszug darf höchstens 20 MiB groß sein.");
-          const response = await fetch(`/api/statements?name=${encodeURIComponent(file.name)}`, {
-            method: "POST", credentials: "same-origin", body: file,
-            signal: AbortSignal.timeout(90_000),
-            headers: { "Content-Type": "application/octet-stream", "X-Upload-Size": String(file.size),
-              "X-Finanzblick-Account": workspace.user.id },
-          });
-          if (!response.ok) {
-            const body = await response.json();
-            throw new Error(typeof body.error === "string" ? body.error : "Der Auszug konnte nicht hochgeladen werden.");
+        for (const [index, file] of files.entries()) {
+          const id = uploads[index].id;
+          changeActivities([id], "uploading");
+          try {
+            if (!file.size || file.size > MAX_UPLOAD_BYTES) throw new Error("Ein Kontoauszug muss Daten enthalten und darf höchstens 20 MiB groß sein.");
+            const response = await fetch(`/api/statements?name=${encodeURIComponent(file.name)}`, {
+              method: "POST", credentials: "same-origin", body: file,
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
+              headers: { "Content-Type": "application/octet-stream", "X-Upload-Size": String(file.size),
+                "X-Upload-Id": id, "X-Finanzblick-Account": workspace.user.id },
+            });
+            let body: unknown;
+            try {
+              body = await response.json();
+            } catch {
+              throw new Error("Der Server hat eine ungültige Uploadantwort gesendet. Bitte den Hintergrundstatus prüfen.");
+            }
+            if (!response.ok) {
+              throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
+                ? body.error : "Der Auszug konnte nicht hochgeladen werden.");
+            }
+            const accepted = statementUploadResponseSchema.safeParse(body);
+            if (!accepted.success || accepted.data.id !== id)
+              throw new Error("Die Uploadbestätigung ist ungültig. Bitte den Hintergrundstatus prüfen.");
+            if (controller.signal.aborted) return;
+            changeActivities([id], "accepted");
+            toast.success(`${file.name}: zur Hintergrundverarbeitung angenommen.`);
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            const message = error instanceof Error ? error.message : "Der Auszug konnte nicht hochgeladen werden.";
+            changeActivities([id], "failed", message);
+            toast.error(`${file.name}: ${message}`);
           }
-          toast.success(`${file.name}: zur Hintergrundverarbeitung angenommen.`);
         }
         return;
       }
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
+        const id = uploads[index].id;
+        changeActivities([id], "reading");
         try {
-          results.push(await parseStatementFile(file));
+          const result = await parseStatementFile(file);
+          if (controller.signal.aborted) return;
+          results.push(result);
+          if (!result.rows.length && result.issues.length)
+            changeActivities([id], "failed", result.issues.map((issue) => issue.message).join(" "));
+          else {
+            parsedIds.push(id);
+            changeActivities([id], "saving");
+          }
         } catch (error) {
+          if (controller.signal.aborted) return;
+          const message = error instanceof Error ? error.message : "Datei konnte nicht gelesen werden.";
+          changeActivities([id], "failed", message);
           results.push({
             file: file.name,
             source: null,
@@ -449,10 +516,7 @@ export function StatementImport({ reviewRequest = 0 }: {
             issues: [
               {
                 file: file.name,
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Datei konnte nicht gelesen werden.",
+                message,
               },
             ],
           });
@@ -462,22 +526,25 @@ export function StatementImport({ reviewRequest = 0 }: {
       importMetadata.current = prepared.metadata;
       if (prepared.issues.length) toast.error(prepared.issues.length === 1
         ? prepared.issues[0]
-        : `${prepared.issues.length} Importhinweise – Details unter „Importhinweise“.`);
+        : `${prepared.issues.length} Importhinweise – Details im Uploadstatus.`);
       setUI({ review: prepared.review, open: prepared.review.length > 0 });
-      commit(prepared.automatic, prepared.duplicates);
+      commit(prepared.automatic, prepared.duplicates, undefined, [], parsedIds);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Import fehlgeschlagen.",
-      );
+      if (controller.signal.aborted) return;
+      const message = error instanceof Error ? error.message : "Import fehlgeschlagen.";
+      changeActivities(uploads.map((item) => item.id), "failed", message);
+      toast.error(message);
     } finally {
-      busyRef.current = false;
-      setUI({ busy: false });
+      if (!controller.signal.aborted) {
+        busyRef.current = false;
+        setUI({ busy: false });
+      }
     }
   }
   const fileButton = <Button
     size="sm"
     variant="outline"
-    className="ml-auto h-11 w-full shrink-0 sm:w-auto"
+    className="h-11 min-w-0 flex-1 sm:flex-none"
     aria-label="Dateien auswählen"
     disabled={!ready || !!storageError || ui.busy || !!ui.pending}
     onClick={() => fileInput.current?.click()}
@@ -535,13 +602,13 @@ export function StatementImport({ reviewRequest = 0 }: {
             void selectFiles(files);
           }}
         />
-        {fileButton}
+        <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
+          <UploadStatus activities={activities} jobs={workspace ? automation.jobs : []}
+            error={workspace ? automation.error : null} summary={state.importStatus}
+            reviewCount={openReviewCount} />
+          {fileButton}
+        </div>
       </section>
-      {workspace && <AutomationStatus />}
-      {state.importStatus && (
-        <StatementImportStatus imported={state.importStatus.imported} reviewCount={openReviewCount}
-          issues={state.importStatus.issues} />
-      )}
       <Dialog
         open={ui.open && ui.review.length > 0}
         onOpenChange={(open) => {

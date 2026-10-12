@@ -40,10 +40,10 @@ test("review survives reload, permits another file and bulk-assigns a merchant",
         "Revolut\nLebensmittel (EUR)\nDatum,Beschreibung,Betrag\n11.09.2026,Neuer Laden,-10\n12.09.2026,Neuer Laden,-15",
       ),
     );
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Art", { exact: true })).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Später prüfen" }).first().click();
+  await dialog.getByRole("button", { name: "Prüfung schließen", exact: true }).click();
   expect((await stored(page)).reviewQueue).toHaveLength(2);
   await page.reload();
   await expect(
@@ -56,6 +56,9 @@ test("review survives reload, permits another file and bulk-assigns a merchant",
         "Revolut\nLebensmittel (EUR)\nDatum,Beschreibung,Betrag\n12.09.2026,BIPA,-5",
       ),
     );
+  await expect.poll(async () => (await stored(page)).transactions.length).toBe(3);
+  if (await dialog.isVisible())
+    await dialog.getByRole("button", { name: "Prüfung schließen", exact: true }).click();
   await expect(
     page.getByText("1 neu, 0 Duplikate ignoriert", { exact: true }),
   ).toBeVisible();
@@ -78,9 +81,13 @@ test("review survives reload, permits another file and bulk-assigns a merchant",
       .filter((row) => row.description === "Neuer Laden")
       .every((row) => row.category === "Shopping"),
   ).toBe(true);
-  await expect(page.getByLabel("Importstatus")).toContainText(
+  await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+  const upload = page.getByRole("dialog", { name: "Uploadstatus", exact: true });
+  await expect(upload.getByLabel("Importstatus")).toContainText(
     "Übernommen 3 · offen 0 · nicht lesbar 0",
   );
+  await page.keyboard.press("Escape");
+  await expect(upload).toHaveCount(0);
   await expect(page.locator("thead th")).toHaveText([
     "Datum",
     "Beschreibung",
@@ -246,7 +253,11 @@ test("TR manual balance wins across reload and Revolut names remain read-only an
         "Revolut\nZeitraum,01.09.2026 bis 12.09.2026\nNotgroschen (EUR)\nSchlussguthaben,10\nMittagessen (EUR)\nSchlussguthaben,20\nLebensmittel (EUR)\nSchlussguthaben,30\nEntertainment & Haushalt (EUR)\nSchlussguthaben,40\nTanken (EUR)\nSchlussguthaben,50",
       ),
     );
-  await expect(page.getByLabel("Importstatus")).toBeVisible();
+  await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+  const upload = page.getByRole("dialog", { name: "Uploadstatus", exact: true });
+  await expect(upload.getByLabel("Importstatus")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(upload).toHaveCount(0);
   await page.goto("/pockets");
   await expect(page.getByLabel("Notgroschen Kontostand")).toContainText(
     "5.000,00",

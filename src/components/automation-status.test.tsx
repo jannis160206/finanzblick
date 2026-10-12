@@ -40,7 +40,9 @@ afterEach(() => {
 it("uploads the original file in account mode without executing the browser parser", async () => {
   const request = vi.fn<
     (url: string, options: RequestInit) => Promise<Response>
-  >(async () => Response.json({ id: "job-id" }, { status: 202 }));
+  >(async (_url, options) => Response.json({
+    id: new Headers(options.headers).get("X-Upload-Id"),
+  }, { status: 202 }));
   vi.stubGlobal("fetch", request);
   const view = render(
     <FinanceProvider initialState={createEmptyAccountState()}>
@@ -264,7 +266,7 @@ it.each([
   },
 );
 
-it("renders upload, queue and retry animations without the processing shimmer", () => {
+it("renders queue and retry animations and an honest indeterminate upload bar", () => {
   render(
     statusView(
       (["UPLOADING", "QUEUED", "RETRYING"] as const).map((status, index) =>
@@ -274,5 +276,5 @@ it("renders upload, queue and retry animations without the processing shimmer", 
   );
   expect(document.querySelectorAll("svg.animate-spin")).toHaveLength(1);
   expect(document.querySelectorAll("svg.animate-pulse")).toHaveLength(2);
-  expect(document.querySelector(".automation-progress-shimmer")).toBeNull();
+  expect(document.querySelectorAll(".automation-progress-shimmer")).toHaveLength(1);
 });

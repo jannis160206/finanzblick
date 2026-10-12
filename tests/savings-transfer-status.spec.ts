@@ -77,7 +77,11 @@ for (const width of [1440, 390]) {
           await page.getByLabel("Kontoauszüge auswählen").setInputFiles({
             name: "sparkonto.csv", mimeType: "text/csv", buffer: Buffer.from(csv),
           });
-          await expect(page.getByLabel("Importstatus")).toBeVisible();
+          await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+          const upload = page.getByRole("dialog", { name: "Uploadstatus", exact: true });
+          await expect(upload.getByLabel("Importstatus")).toBeVisible();
+          await page.keyboard.press("Escape");
+          await expect(upload).toHaveCount(0);
           await expect(page.getByRole("dialog")).toHaveCount(0);
           await expect.poll(async () => (await snapshot(page)).state.transactions.length).toBe(saved.state.transactions.length + 2);
         }

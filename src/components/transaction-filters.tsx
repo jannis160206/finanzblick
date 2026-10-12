@@ -22,9 +22,7 @@ import { HolidayRanges } from "@/components/holiday-ranges";
 import { ReviewCount } from "@/components/review-count";
 import { FinancialData } from "@/components/financial-data";
 import {
-  AssignmentSwitch,
   TransactionToolbar,
-  type AssignmentStatus,
   type FilterChip,
 } from "@/components/transaction-workspace";
 import { accountLabel } from "@/lib/accounts";
@@ -45,7 +43,6 @@ export type LedgerFilters = {
   from: string;
   to: string;
   showTransfers: boolean;
-  assignment: AssignmentStatus;
 };
 
 export const emptyLedgerFilters: LedgerFilters = {
@@ -57,7 +54,6 @@ export const emptyLedgerFilters: LedgerFilters = {
   from: "",
   to: "",
   showTransfers: false,
-  assignment: "all",
 };
 
 export function TransactionFilters({
@@ -66,8 +62,6 @@ export function TransactionFilters({
   currentMonth,
   ledger,
   receivables,
-  count,
-  pending,
   reviewCount,
   disabled,
   exportDisabled,
@@ -79,8 +73,6 @@ export function TransactionFilters({
   currentMonth: string;
   ledger: AccountedTransaction[];
   receivables: HolidayReceivable[];
-  count: number;
-  pending: number;
   reviewCount: number;
   disabled: boolean;
   exportDisabled: boolean;
@@ -142,12 +134,6 @@ export function TransactionFilters({
       id: "transfers",
       label: "Transfers sichtbar",
       remove: () => change("showTransfers", false),
-    });
-  if (filters.assignment !== "all")
-    chips.push({
-      id: "assignment",
-      label: filters.assignment === "review" ? "Prüfung offen" : "Zugeordnet",
-      remove: () => change("assignment", "all"),
     });
   const advanced = !!(
     filters.plan ||
@@ -351,14 +337,6 @@ export function TransactionFilters({
             </FinancialData>
           </label>
         </>
-      }
-      status={
-        <AssignmentSwitch
-          value={filters.assignment}
-          count={count}
-          pending={pending}
-          onChange={(value) => change("assignment", value)}
-        />
       }
     />
   );

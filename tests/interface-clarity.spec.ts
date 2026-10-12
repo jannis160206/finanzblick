@@ -42,34 +42,34 @@ async function unlock(page: Page) {
   if (await privacy.getAttribute("aria-pressed") === "true") await privacy.click();
 }
 
-test("status filters and explanations preserve the original ledger and filtered sum", async ({ page }) => {
+test("row review indications and explanations preserve every matching ledger row and sum", async ({ page }) => {
   await ledger(page);
   const rows = page.getByLabel("Buchungen", { exact: true }).locator("tbody tr");
   const total = page.getByText("Summe", { exact: false }).filter({ has: page.locator("strong") });
-  const status = page.getByRole("group", { name: "Zuordnungsstatus filtern" });
+  const pending = rows.filter({ hasText: "Kulturhaus Teststadt" });
+  await expect(page.getByRole("group", { name: "Zuordnungsstatus filtern" })).toHaveCount(0);
   await expect(total).toContainText(currency(-64));
-  await status.getByRole("button", { name: "Prüfung offen 1", exact: true }).click();
-  await expect(rows).toHaveCount(1);
-  await expect(rows).toContainText("Kulturhaus Teststadt");
-  await expect(total).toContainText(currency(-27));
+  await expect(pending.getByText("Prüfung offen", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Zuordnungsdetails: Kulturhaus Teststadt", exact: true }).click();
   await expect(page.getByText("Kategorie noch offen oder widersprüchlich.", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Zurücksetzen", exact: true }).click();
   await expect(rows).toHaveCount(4);
-  await status.getByRole("button", { name: "Zugeordnet 3", exact: true }).click();
-  await expect(rows).toHaveCount(3);
-  await expect(total).toContainText(currency(-37));
-  await page.getByRole("button", { name: "Zurücksetzen", exact: true }).click();
+  await expect(total).toContainText(currency(-64));
   await page.getByRole("button", { name: "Zuordnung prüfen", exact: true }).click();
-  const review = page.getByRole("dialog");
+  const review = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
   await review.getByLabel("Kategorie", { exact: true }).selectOption("Entertainment");
   await review.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
   await expect(review).toHaveCount(0);
-  await expect(status.getByRole("button", { name: "Prüfung offen 0", exact: true })).toBeVisible();
+  await expect(rows.getByText("Prüfung offen", { exact: true })).toHaveCount(0);
+  await expect(pending.getByText("Geprüft", { exact: true })).toBeVisible();
+  await expect(rows).toHaveCount(4);
+  await expect(total).toContainText(currency(-64));
   await page.reload();
   await unlock(page);
-  await expect(status.getByRole("button", { name: "Zugeordnet 4", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Zuordnungsstatus filtern" })).toHaveCount(0);
+  await expect(rows).toHaveCount(4);
+  await expect(pending.getByText("Geprüft", { exact: true })).toBeVisible();
+  await expect(total).toContainText(currency(-64));
 });
 
 test("one Raiffeisen account filter includes every legacy alias after reload", async ({ page }) => {
@@ -107,7 +107,9 @@ test("keeps the original design and only adds ledger status in light, dark and m
   await expect(page.locator("thead th")).toHaveText(["Datum", "Beschreibung", "Kategorie", "Betrag", "Konto/Pocket"]);
   await page.screenshot({ path: "test-results/clarity-ledger-desktop.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole("group", { name: "Zuordnungsstatus filtern" })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Zuordnungsstatus filtern" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Zuordnung prüfen", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Uploadstatus", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: "test-results/clarity-ledger-mobile.png", fullPage: true });
   expect(errors).toEqual([]);

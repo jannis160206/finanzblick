@@ -13,11 +13,6 @@ import type { AutomationJob } from "@/lib/automation/schema";
 import { cn } from "@/lib/utils";
 
 const statuses = {
-  PENDING: {
-    label: "In der Warteschlange",
-    Icon: Clock3,
-    animation: "animate-pulse",
-  },
   UPLOADING: {
     label: "Wird hochgeladen",
     Icon: Loader2,
@@ -49,11 +44,11 @@ const EXIT_MS = 350;
 type JobCard = { job: AutomationJob; exiting: boolean; generation: number };
 const exitKey = (card: JobCard) => `${card.job.id}:${card.generation}`;
 
-function useJobCards(jobs: AutomationJob[]) {
+function useJobCards(jobs: AutomationJob[], showCompleted: boolean) {
   const [presence, setPresence] = useState(() => ({
     source: jobs,
     cards: jobs
-      .filter((job) => job.status !== "COMPLETED")
+      .filter((job) => showCompleted || job.status !== "COMPLETED")
       .map((job): JobCard => ({ job, exiting: false, generation: 0 })),
   }));
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
@@ -69,7 +64,7 @@ function useJobCards(jobs: AutomationJob[]) {
     });
     const cards = jobs.flatMap((job): JobCard[] => {
       const old = previous.get(job.id);
-      if (job.status === "COMPLETED")
+      if (!showCompleted && job.status === "COMPLETED")
         return old ? [leave({ ...old, job })] : [];
       return [{ job, exiting: false, generation: old?.generation ?? 0 }];
     });
@@ -114,9 +109,15 @@ function useJobCards(jobs: AutomationJob[]) {
   return presence.cards;
 }
 
-function AutomationJobCard({ job, exiting }: JobCard) {
+export function AutomationJobCard({ job, exiting = false, label: customLabel, indeterminate = job.status === "UPLOADING" }: {
+  job: Pick<AutomationJob, "id" | "name" | "status" | "progress" | "error">;
+  exiting?: boolean;
+  label?: string;
+  indeterminate?: boolean;
+}) {
   const errorId = useId();
-  const { label, Icon, animation } = statuses[job.status];
+  const { label: statusLabel, Icon, animation } = statuses[job.status];
+  const label = customLabel ?? statusLabel;
   const processing = job.status === "PROCESSING";
   const failed = job.status === "FAILED";
   const completed = job.status === "COMPLETED";
@@ -171,32 +172,33 @@ function AutomationJobCard({ job, exiting }: JobCard) {
             {label}
           </span>
         </div>
-        <span
+        {!indeterminate && <span
           className={cn(
             "w-12 shrink-0 pt-0.5 text-right text-sm font-semibold tabular-nums",
             tone,
           )}
         >
           {percentage}%
-        </span>
+        </span>}
       </div>
       <div
         role="progressbar"
         aria-label={`Fortschritt: ${job.name}`}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={percentage}
-        aria-valuetext={`${percentage}% (${label})`}
+        aria-valuenow={indeterminate ? undefined : percentage}
+        aria-valuetext={indeterminate ? label : `${percentage}% (${label})`}
         aria-describedby={job.error ? errorId : undefined}
         className="h-2 overflow-hidden rounded-full bg-muted/80 ring-1 ring-inset ring-foreground/5"
       >
         <div
           className={cn(
             "relative h-full overflow-hidden rounded-full bg-primary transition-all duration-500 ease-out motion-reduce:transition-none",
-            processing && "automation-progress-shimmer",
+            (processing || indeterminate) && "automation-progress-shimmer",
+            indeterminate && "animate-pulse motion-reduce:animate-none",
             failed && "bg-rose-500",
           )}
-          style={{ width: `${percentage}%` }}
+          style={{ width: indeterminate ? "35%" : `${percentage}%` }}
         />
       </div>
       {job.error && (
@@ -217,9 +219,15 @@ function AutomationJobCard({ job, exiting }: JobCard) {
   );
 }
 
-export function AutomationStatus() {
-  const { jobs, error } = useAutomation();
-  const cards = useJobCards(jobs);
+export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, showCompleted = false }: {
+  jobs?: AutomationJob[];
+  error?: string | null;
+  showCompleted?: boolean;
+} = {}) {
+  const automation = useAutomation();
+  const jobs = suppliedJobs ?? automation.jobs;
+  const error = suppliedError === undefined ? automation.error : suppliedError;
+  const cards = useJobCards(jobs, showCompleted);
   if (!cards.length && !error) return null;
   return (
     <section aria-label="Hintergrundverarbeitung" className="mb-4 space-y-3">

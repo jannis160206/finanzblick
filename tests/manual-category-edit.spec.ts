@@ -36,19 +36,22 @@ test("manual POS assignment saves, reloads and inferred fixed expenses show a fl
   }, state);
   await page.goto("/umsaetze");
   await unlock(page);
-  const status = page.getByRole("group", { name: "Zuordnungsstatus filtern" });
-  await expect(status.getByRole("button", { name: "Prüfung offen 2", exact: true })).toBeVisible();
+  const rows = page.getByRole("table", { name: "Buchungen" }).locator("tbody tr");
+  const pending = rows.getByText("Prüfung offen", { exact: true });
+  await expect(page.getByRole("group", { name: "Zuordnungsstatus filtern" })).toHaveCount(0);
+  await expect(rows).toHaveCount(5);
+  await expect(pending).toHaveCount(2);
   await page.getByRole("button", { name: `Zuordnung ändern: ${original.description}`, exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Zuordnung ändern", exact: true });
   await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Shopping");
   await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
-  await expect(status.getByRole("button", { name: "Prüfung offen 2", exact: true })).toBeVisible();
+  await expect(pending).toHaveCount(2);
   expect((await stored(page)).transactions.find((row) => row.id === original.id)?.reviewed).toBeUndefined();
   await page.getByRole("button", { name: `Zuordnung ändern: ${original.description}`, exact: true }).click();
   await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Shopping");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(status.getByRole("button", { name: "Prüfung offen 2", exact: true })).toBeVisible();
+  await expect(pending).toHaveCount(2);
   await page.getByRole("button", { name: `Zuordnung ändern: ${original.description}`, exact: true }).click();
   await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Shopping");
   await dialog.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
@@ -57,7 +60,8 @@ test("manual POS assignment saves, reloads and inferred fixed expenses show a fl
   await expect.poll(async () => (await read()).transactions.find((row) => row.id === original.id)?.category).toBe("Shopping");
   const pos = page.getByRole("row").filter({ has: page.getByRole("cell", { name: original.description, exact: true }) });
   await expect(pos.getByText("Geprüft", { exact: true })).toBeVisible();
-  await expect(status.getByRole("button", { name: "Prüfung offen 1", exact: true })).toBeVisible();
+  await expect(pending).toHaveCount(1);
+  await expect(rows).toHaveCount(5);
   await page.getByRole("button", { name: "Zuordnung prüfen", exact: true }).click();
   const review = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
   await expect(review.getByRole("region", { name: `Buchung prüfen: ${original.description}`, exact: true })).toHaveCount(0);
@@ -76,6 +80,7 @@ test("manual POS assignment saves, reloads and inferred fixed expenses show a fl
     buffer: Buffer.from(`Raiffeisen\nBuchungsdatum;Verwendungszweck/Text;Valuta;Betrag\n10.09.2026;${original.description};10.09.2026;-3,50`),
   });
   await expect(page.getByText("0 neu, 1 Duplikate ignoriert", { exact: true })).toBeVisible();
+  if (await review.isVisible()) await review.getByRole("button", { name: "Prüfung schließen", exact: true }).click();
   await expect(pos.getByText("Geprüft", { exact: true })).toBeVisible();
   expect((await read()).transactions).toHaveLength(state.transactions.length);
   expect((await read()).reviewQueue).toHaveLength(1);
@@ -98,7 +103,8 @@ test("manual POS assignment saves, reloads and inferred fixed expenses show a fl
   await dialog.getByLabel("Kategorie", { exact: true }).selectOption("Prüfen");
   await dialog.getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
   await expect(pos.getByText("Prüfung offen", { exact: true })).toBeVisible();
-  await expect(status.getByRole("button", { name: "Prüfung offen 2", exact: true })).toBeVisible();
+  await expect(pending).toHaveCount(2);
+  await expect(rows).toHaveCount(5);
   await expect.poll(async () => (await read()).transactions.find((row) => row.id === original.id)?.reviewed).toBe(false);
 });
 
@@ -123,13 +129,17 @@ test("pencil save acknowledges receipt-only fixed-cost review without changing t
   }, state);
   await page.goto("/umsaetze");
   await unlock(page);
-  const status = page.getByRole("group", { name: "Zuordnungsstatus filtern" });
-  await expect(status.getByRole("button", { name: "Prüfung offen 1", exact: true })).toBeVisible();
+  const rows = page.getByRole("table", { name: "Buchungen" }).locator("tbody tr");
+  const pending = rows.getByText("Prüfung offen", { exact: true });
+  await expect(page.getByRole("group", { name: "Zuordnungsstatus filtern" })).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
+  await expect(pending).toHaveCount(1);
   await page.getByRole("button", { name: `Zuordnung ändern: ${original.description}`, exact: true }).click();
   await page.getByRole("dialog").getByRole("button", { name: "Zuordnung übernehmen", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("table", { name: "Buchungen" }).getByText("Geprüft", { exact: true })).toBeVisible();
-  await expect(status.getByRole("button", { name: "Prüfung offen 0", exact: true })).toBeVisible();
+  await expect(pending).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
   await expect.poll(async () => (await stored(page)).fixedReceipts?.[0].booking?.reviewed).toBe(true);
   const saved = await stored(page);
   expect(saved.reviewQueue).toEqual([]);
@@ -138,7 +148,8 @@ test("pencil save acknowledges receipt-only fixed-cost review without changing t
   expect(saved.financeRows.find((row) => row.id === "leasing")).toEqual(state.financeRows[0]);
   await page.reload();
   await unlock(page);
-  await expect(status.getByRole("button", { name: "Prüfung offen 0", exact: true })).toBeVisible();
+  await expect(pending).toHaveCount(0);
+  await expect(rows).toHaveCount(1);
   await page.getByRole("button", { name: "Zuordnung prüfen", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByText("Alle Umsätze sind zugeordnet", { exact: true })).toBeVisible();

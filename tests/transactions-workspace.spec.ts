@@ -184,7 +184,20 @@ for (const width of [1440, 390]) {
       },
     }));
     const before = await open(page, state);
-    const status = page.getByRole("region", {
+    const review = page.getByRole("dialog", {
+      name: "Kontoauszüge prüfen",
+      exact: true,
+    });
+    if (await review.isVisible())
+      await review
+        .getByRole("button", { name: "Prüfung schließen", exact: true })
+        .click();
+    await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+    const upload = page.getByRole("dialog", {
+      name: "Uploadstatus",
+      exact: true,
+    });
+    const status = upload.getByRole("region", {
       name: "Importstatus",
       exact: true,
     });
@@ -227,15 +240,23 @@ for (const width of [1440, 390]) {
     await page.screenshot({
       path: testInfo.outputPath(`import-feedback-${width}-dark.png`),
     });
+    await page.keyboard.press("Escape");
+    await expect(upload).toHaveCount(0);
     await page
       .getByRole("button", { name: "Farbschema wechseln", exact: true })
       .click();
     await expect(page.locator("html")).toHaveClass(/light/);
+    await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+    await expect(upload).toBeVisible();
+    if (await hints.getAttribute("aria-expanded") === "false")
+      await hints.click();
     await page.screenshot({
       path: testInfo.outputPath(`import-feedback-${width}-light.png`),
     });
     await hints.click();
     await expect(status.getByRole("list")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(upload).toHaveCount(0);
     expect((await snapshot(page)).state).toEqual(before.state);
   });
 

@@ -72,7 +72,7 @@ test("travel PDF and Revolut tax CSV replace stale errors, preserve money and su
   await page.getByLabel("Kontoauszüge auswählen").setInputFiles(files);
   await expect.poll(async () => (await saved(page)).importStatus?.issues).toEqual([unrelated]);
   // Ordinary merchant categorization remains separate from parser errors.
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
   for (let remaining = 5; remaining > 0; remaining--) {
     const before = (await saved(page)).reviewQueue?.length ?? 0;
     if (!before) break; // The closing dialog may remain mounted during its exit animation.
@@ -93,9 +93,14 @@ test("travel PDF and Revolut tax CSV replace stale errors, preserve money and su
     .toContain("Originalbetrag: 1,200.00 UNITED STATES DOLLAR");
   expect(first.accountSnapshots).toEqual([expect.objectContaining({ name: "Persönliches Konto", balance: 491 })]);
   await page.reload();
-  await expect(page.getByLabel("Importstatus")).toContainText("nicht lesbar 1");
+  const upload = page.getByRole("dialog", { name: "Uploadstatus", exact: true });
+  await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+  await expect(upload.getByLabel("Importstatus")).toContainText("nicht lesbar 1");
+  await page.keyboard.press("Escape");
+  await expect(upload).toHaveCount(0);
   await page.getByLabel("Kontoauszüge auswählen").setInputFiles(files);
   await expect(page.getByText("0 neu, 9 Duplikate ignoriert", { exact: true })).toBeVisible();
+  if (await dialog.isVisible()) await dialog.getByRole("button", { name: "Prüfung schließen", exact: true }).click();
   expect((await saved(page)).transactions).toEqual(first.transactions);
 
   const broken = "Revolut\nPersönliches Konto (USD)\nKontoauszug zu Transaktionen\nDatum;Beschreibung;Geld ein-/ausgezahlt;Geld ein-/ausgezahlt\n02.09.2026;BIPA;-10,00$;\n---------\nDatum;Unbekanntes Layout\n03.09.2026;Nicht verstecken";
@@ -107,6 +112,9 @@ test("travel PDF and Revolut tax CSV replace stale errors, preserve money and su
   await page.getByLabel("Kontoauszüge auswählen").setInputFiles(files);
   await expect.poll(async () => (await saved(page)).importStatus?.issues).toEqual([unrelated]);
   await page.reload();
-  await expect(page.getByLabel("Importstatus")).toContainText("nicht lesbar 1");
+  await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+  await expect(upload.getByLabel("Importstatus")).toContainText("nicht lesbar 1");
+  await page.keyboard.press("Escape");
+  await expect(upload).toHaveCount(0);
   expect((await saved(page)).transactions).toEqual(first.transactions);
 });

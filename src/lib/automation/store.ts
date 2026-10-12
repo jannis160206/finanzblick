@@ -402,7 +402,7 @@ export class AutomationStore {
       jobs: db
         .prepare(
           `SELECT ${columns} FROM automation_jobs WHERE user_id = ?
-        ORDER BY created_at DESC, id DESC LIMIT 20`,
+        ORDER BY (status NOT IN ('COMPLETED', 'FAILED')) DESC, created_at DESC, id DESC LIMIT 20`,
         )
         .all(userId)
         .map((row) => automationJobSchema.parse(row)),

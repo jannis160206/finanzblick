@@ -29,7 +29,6 @@ import { cn } from "@/lib/utils";
 import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
 
-export type AssignmentStatus = "all" | "review" | "assigned";
 export type FilterChip = { id: string; label: string; remove: () => void };
 
 export { useCompactLayout as useMobileLedger } from "@/components/ui/use-compact-layout";
@@ -38,13 +37,11 @@ export function TransactionToolbar({
   search,
   filters,
   actions,
-  status,
   chips,
 }: {
   search: ReactNode;
   filters: ReactNode;
   actions: ReactNode;
-  status: ReactNode;
   chips: FilterChip[];
 }) {
   return (
@@ -58,7 +55,6 @@ export function TransactionToolbar({
         <div className="flex flex-wrap items-center gap-2">{actions}</div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{filters}</div>
-      {status}
       {chips.length > 0 && (
         <FinancialData
           role="group"
@@ -81,52 +77,6 @@ export function TransactionToolbar({
           ))}
         </FinancialData>
       )}
-    </div>
-  );
-}
-
-export function AssignmentSwitch({
-  value,
-  count,
-  pending,
-  onChange,
-}: {
-  value: AssignmentStatus;
-  count: number;
-  pending: number;
-  onChange: (value: AssignmentStatus) => void;
-}) {
-  const options = [
-    { value: "all", label: "Alle", count },
-    { value: "review", label: "Prüfung offen", count: pending },
-    { value: "assigned", label: "Zugeordnet", count: count - pending },
-  ] as const;
-  return (
-    <div
-      role="group"
-      aria-label="Zuordnungsstatus filtern"
-      className="grid grid-cols-3 gap-1 rounded-xl bg-muted/50 p-1 sm:inline-grid"
-    >
-      {options.map((option) => (
-        <Button
-          key={option.value}
-          variant="ghost"
-          size="sm"
-          aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-          className={cn(
-            "h-auto min-h-11 min-w-0 flex-wrap rounded-lg px-2 text-xs whitespace-normal sm:px-4",
-            value === option.value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground",
-          )}
-        >
-          {option.label}
-          <FinancialData as="span" className="tabular-nums text-muted-foreground">
-            {option.count}
-          </FinancialData>
-        </Button>
-      ))}
     </div>
   );
 }

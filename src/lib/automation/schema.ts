@@ -21,6 +21,7 @@ export const automationJobSchema = z.object({
   updatedAt: z.number(),
 });
 export type AutomationJob = z.infer<typeof automationJobSchema>;
+export const statementUploadResponseSchema = automationJobSchema.pick({ id: true });
 export const automationEventSchema = z.object({
   revision: z.number().int().nonnegative(),
   jobs: z.array(automationJobSchema).max(20),

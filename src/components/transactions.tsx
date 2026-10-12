@@ -239,7 +239,7 @@ const TransactionLedger = memo(function TransactionLedger({
   const [sorting, setSorting] = useState<SortingState>([
     { id: "date", desc: true },
   ]);
-  const filtered = useMemo(
+  const data = useMemo(
     () =>
       ledger.filter((row) => {
         const result = classifications.get(row)!;
@@ -258,18 +258,6 @@ const TransactionLedger = memo(function TransactionLedger({
         );
       }),
     [ledger, classifications, filters, month],
-  );
-  const pendingCount = filtered.filter((row) =>
-    reviewReasons.has(row.id),
-  ).length;
-  const data = useMemo(
-    () =>
-      filtered.filter(
-        (row) =>
-          filters.assignment === "all" ||
-          reviewReasons.has(row.id) === (filters.assignment === "review"),
-      ),
-    [filtered, reviewReasons, filters.assignment],
   );
   const scope = JSON.stringify([filters, currentMonth]);
   const [selection, setSelection] = useState<{
@@ -482,8 +470,6 @@ const TransactionLedger = memo(function TransactionLedger({
           currentMonth={currentMonth}
           ledger={ledger}
           receivables={holiday.receivables}
-          count={filtered.length}
-          pending={pendingCount}
           reviewCount={openReviewCount}
           disabled={locked || !!storageError}
           exportDisabled={locked || !data.length}

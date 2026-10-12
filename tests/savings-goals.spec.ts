@@ -15,7 +15,11 @@ async function importTransfers(page: Page, text: string) {
     mimeType: "text/csv",
     buffer: Buffer.from(text),
   });
-  await expect(page.getByLabel("Importstatus")).toBeVisible();
+  await page.getByRole("button", { name: "Uploadstatus", exact: true }).click();
+  const upload = page.getByRole("dialog", { name: "Uploadstatus", exact: true });
+  await expect(upload.getByLabel("Importstatus")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(upload).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await stored(page);
 }
