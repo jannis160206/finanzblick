@@ -24,6 +24,14 @@ export function normalizeLogoIdentityName(name: string) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+export function contractLogoIdentityName(name: string) {
+  const match =
+    /^(.*?)\s*(?:\|\s*|\s+)(?:leasing|telefonvertrag|mobilfunkvertrag|kfz[- ]versicherung|versicherung|haftpflicht(?:versicherung)?|vollkasko|teilkasko|abo)(?:\s+\([^()\r\n]{1,80}\))?$/iu.exec(
+      name.trim(),
+    );
+  return match?.[1].trim() || name.trim();
+}
 export function merchantLogoBookingId(
   booking: Pick<
     Transaction,

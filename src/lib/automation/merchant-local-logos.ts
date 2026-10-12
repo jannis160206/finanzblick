@@ -72,20 +72,35 @@ export function localLogoGrants(store: AutomationStore, userId: string) {
 export async function availableLocalLogoGrants(
   store: AutomationStore,
   userId: string,
+  files = new Map<string, Promise<boolean>>(),
 ) {
   const available = new Map<string, AuthorizedLogoGrant>();
-  const files = new Map<string, boolean>();
-  for (const [name, grant] of localLogoGrants(store, userId)) {
-    if (!files.has(grant.logo.file))
-      files.set(
-        grant.logo.file,
-        !!(await readAuthorizedMerchantLogo(
-          store.accounts.path,
-          userId,
-          grant.logo,
-        )),
-      );
-    if (files.get(grant.logo.file)) available.set(name, grant);
+  const names = localLogoGrants(store, userId);
+  const grants = [
+    ...new Map(
+      [...names.values()].map((grant) => [grant.logo.file, grant]),
+    ).values(),
+  ];
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(8, grants.length) }, async () => {
+      while (cursor < grants.length) {
+        const grant = grants[cursor++];
+        if (!files.has(grant.logo.file))
+          files.set(
+            grant.logo.file,
+            readAuthorizedMerchantLogo(
+              store.accounts.path,
+              userId,
+              grant.logo,
+            ).then((bytes) => !!bytes),
+          );
+        await files.get(grant.logo.file);
+      }
+    }),
+  );
+  for (const [name, grant] of names) {
+    if (await files.get(grant.logo.file)) available.set(name, grant);
   }
   return available;
 }

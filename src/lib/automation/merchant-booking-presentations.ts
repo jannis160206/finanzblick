@@ -1,8 +1,7 @@
-import { actualBookings, classify } from "@/lib/calc";
+import { classify } from "@/lib/calc";
 import { shouldShowMerchantMark } from "@/lib/merchant-mark-policy";
 import type { AccountDatabase } from "@/lib/server/database";
 import type { Transaction } from "@/lib/types";
-import { createAccountMerchantResolver } from "./aliases";
 import { merchantEvidence, qualifiedCompany } from "./evidence";
 import {
   logoAccountIdSchema,
@@ -17,10 +16,8 @@ import { merchantMarksRequestSchema } from "./merchant-presentation-schema";
 import { MerchantIndex, normalizeMerchantDescriptor } from "./merchants";
 import type { AutomationStore } from "./store";
 import { isIncomeCategory } from "@/lib/fixed";
-import {
-  availableLocalLogoGrants,
-  normalizeLocalLogoName,
-} from "./merchant-local-logos";
+import { normalizeLocalLogoName } from "./merchant-local-logos";
+import { MerchantLogoRequest } from "./merchant-logo-request";
 import {
   atmLogoBank,
   isAtmBooking,
@@ -42,7 +39,7 @@ const indices = new WeakMap<
   }
 >();
 
-function displayIndex(store: AutomationStore) {
+function displayIndex(store: AutomationStore, request: MerchantLogoRequest) {
   // data_version covers other connections; total_changes also covers this one.
   const revision = store.accounts.read((db) =>
     JSON.stringify([
@@ -52,7 +49,7 @@ function displayIndex(store: AutomationStore) {
   );
   const cached = indices.get(store.accounts);
   if (cached?.revision === revision) return cached;
-  const merchants = store.loadMerchants();
+  const merchants = request.merchants();
   const entry = {
     revision,
     index: new MerchantIndex(merchants),
@@ -74,24 +71,23 @@ export async function accountMerchantBookingPresentations(
   store: AutomationStore,
   bookingIds: string[],
   userId: string,
+  request = new MerchantLogoRequest(store, userId),
 ) {
   logoAccountIdSchema.parse(userId);
+  request.assertAccount(store, userId);
   const input = merchantMarksRequestSchema.parse({
     merchantIds: [],
     bookingIds,
   });
   const wanted = new Set(input.bookingIds);
   if (!wanted.size) return [];
-  const state = store.accounts.getFinance(userId).state;
+  const lookup = request.bookings();
   const rows = new Map<string, Transaction | null>();
-  for (const row of state ? actualBookings(state) : []) {
-    if (!wanted.has(row.id)) continue;
-    rows.set(row.id, rows.has(row.id) ? null : row);
-  }
+  for (const id of wanted) rows.set(id, lookup?.rows.get(id) ?? null);
   const identities = new Map<string, string>();
   const confirmedNames = new Map<string, string>();
-  if (rows.size && state) {
-    const supplied = await availableLocalLogoGrants(store, userId);
+  if (lookup && [...rows.values()].some(Boolean)) {
+    const supplied = await request.localLogos();
     const localIdentities = new Map<
       string,
       {
@@ -115,11 +111,11 @@ export async function accountMerchantBookingPresentations(
           .filter(Boolean)
           .map((name) => ({ name, grant })),
     );
-    const { index, bankReferences: publicBanks } = displayIndex(store);
+    const { index, bankReferences: publicBanks } = displayIndex(store, request);
     const bankReferences: AtmBankReference[] = [...publicBanks];
     for (const name of supplied.keys())
       if (isBankLogoName(name)) bankReferences.push({ name, aliases: [] });
-    for (const bank of new Set(state.transactions.map((row) => row.bank)))
+    for (const bank of lookup.banks)
       bankReferences.push({
         name: normalizeAccount({ bank, pocket: null }).bank,
         aliases: [bank],
@@ -166,7 +162,7 @@ export async function accountMerchantBookingPresentations(
         return null;
       return local.merchantId;
     }
-    const resolveAccount = createAccountMerchantResolver(state);
+    const resolveAccount = lookup.resolveAccount;
     for (const [id, row] of rows) {
       if (
         !row ||
@@ -254,6 +250,7 @@ export async function accountMerchantBookingPresentations(
         store,
         { merchantIds: [...new Set(identities.values())] },
         userId,
+        request,
       )
     : [];
   const byId = new Map(marks.map((mark) => [mark.merchantId, mark.logo]));
@@ -262,6 +259,7 @@ export async function accountMerchantBookingPresentations(
         store,
         [...new Set(confirmedNames.values())],
         userId,
+        request,
       )
     : [];
   const byName = new Map(

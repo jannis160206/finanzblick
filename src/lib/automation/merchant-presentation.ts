@@ -9,10 +9,10 @@ import {
 export async function merchantPresentations(
   store: AutomationStore,
   input: unknown,
+  files = new Map<string, Promise<boolean>>(),
 ): Promise<MerchantPresentation[]> {
   const { merchantIds } = merchantMarksRequestSchema.parse(input);
   const candidates = store.logoCandidates([...new Set(merchantIds)]);
-  const files = new Map<string, boolean>();
   const result: MerchantPresentation[] = [];
   for (const [merchantId, references] of candidates) {
     let logo: MerchantPresentation["logo"] = null;
@@ -22,12 +22,11 @@ export async function merchantPresentations(
       if (!files.has(file))
         files.set(
           file,
-          !!(await readPrivateMerchantLogo(
-            store.accounts.path,
-            reference.logo,
-          )),
+          readPrivateMerchantLogo(store.accounts.path, reference.logo).then(
+            (bytes) => !!bytes,
+          ),
         );
-      if (files.get(file)) {
+      if (await files.get(file)) {
         logo = {
           merchantId: reference.id,
           version: merchantLogoVersion(reference.logo),

@@ -4,24 +4,27 @@ import {
   type MerchantPresentation,
 } from "./merchant-presentation-schema";
 import { logoAccountIdSchema } from "./merchant-logo-grant-metadata";
-import { readAuthorizedMerchantLogo } from "./merchant-logo-grants";
 import { AutomationStore } from "./store";
-import { normalizeLogoIdentityName } from "./merchant-mark-name";
 import {
-  availableLocalLogoGrants,
-  normalizeLocalLogoName,
-} from "./merchant-local-logos";
+  contractLogoIdentityName,
+  normalizeLogoIdentityName,
+} from "./merchant-mark-name";
+import { normalizeLocalLogoName } from "./merchant-local-logos";
+import { MerchantLogoRequest } from "./merchant-logo-request";
 
 export async function accountMerchantPresentations(
   store: AutomationStore,
   input: unknown,
   userId: string,
+  request = new MerchantLogoRequest(store, userId),
 ): Promise<MerchantPresentation[]> {
   logoAccountIdSchema.parse(userId);
+  request.assertAccount(store, userId);
   const { merchantIds } = merchantMarksRequestSchema.parse(input);
+  if (!merchantIds.length) return [];
   const privateCandidates = store.authorizedLogoCandidates(userId, merchantIds);
   const privateMarks = new Map<string, MerchantPresentation["logo"]>();
-  const supplied = await availableLocalLogoGrants(store, userId);
+  const supplied = await request.localLogos();
   for (const merchantId of new Set(merchantIds)) {
     const merchant = store.getMerchant(merchantId);
     const matches = [
@@ -47,20 +50,10 @@ export async function accountMerchantPresentations(
         version: matches[0].version,
       });
   }
-  const files = new Map<string, boolean>();
   for (const [merchantId, grants] of privateCandidates) {
     if (privateMarks.has(merchantId)) continue;
     for (const grant of grants) {
-      if (!files.has(grant.logo.file))
-        files.set(
-          grant.logo.file,
-          !!(await readAuthorizedMerchantLogo(
-            store.accounts.path,
-            userId,
-            grant.logo,
-          )),
-        );
-      if (files.get(grant.logo.file)) {
+      if (await request.privateLogoExists(grant.logo)) {
         privateMarks.set(merchantId, {
           merchantId: grant.merchantId,
           version: grant.version,
@@ -69,11 +62,15 @@ export async function accountMerchantPresentations(
       }
     }
   }
-  const publicMarks = await merchantPresentations(store, {
-    merchantIds: [...new Set(merchantIds)].filter(
-      (id) => !privateMarks.has(id),
-    ),
-  });
+  const publicMarks = await merchantPresentations(
+    store,
+    {
+      merchantIds: [...new Set(merchantIds)].filter(
+        (id) => !privateMarks.has(id),
+      ),
+    },
+    request.publicFiles,
+  );
   const publicById = new Map(
     publicMarks.map((mark) => [mark.merchantId, mark.logo]),
   );
@@ -87,20 +84,34 @@ export async function accountMerchantNamePresentations(
   store: AutomationStore,
   names: string[],
   userId: string,
+  request = new MerchantLogoRequest(store, userId),
 ) {
   logoAccountIdSchema.parse(userId);
+  request.assertAccount(store, userId);
   const { merchantNames } = merchantMarksRequestSchema.parse({
     merchantIds: [],
     merchantNames: names,
   });
   const unique = [...new Set(merchantNames)];
-  const supplied = await availableLocalLogoGrants(store, userId);
-  const wanted = new Set(unique.map(normalizeLogoIdentityName));
+  if (!unique.length) return [];
+  const supplied = await request.localLogos();
+  const local = new Map(
+    unique.map((name) => [
+      name,
+      supplied.get(normalizeLocalLogoName(name)) ??
+        supplied.get(normalizeLocalLogoName(contractLogoIdentityName(name))),
+    ]),
+  );
+  const wanted = new Set(
+    unique
+      .filter((name) => !local.get(name))
+      .map((name) => normalizeLogoIdentityName(contractLogoIdentityName(name))),
+  );
   const candidates = new Map<
     string,
     ReturnType<AutomationStore["loadMerchants"]>
   >();
-  for (const merchant of store.loadMerchants()) {
+  for (const merchant of wanted.size ? request.merchants() : []) {
     for (const alias of [merchant.canonicalName, ...merchant.aliases]) {
       const name = normalizeLogoIdentityName(alias);
       if (!wanted.has(name)) continue;
@@ -111,7 +122,11 @@ export async function accountMerchantNamePresentations(
   }
   const identities = new Map<string, string>();
   for (const name of unique) {
-    const matches = candidates.get(normalizeLogoIdentityName(name)) ?? [];
+    if (local.get(name)) continue;
+    const matches =
+      candidates.get(
+        normalizeLogoIdentityName(contractLogoIdentityName(name)),
+      ) ?? [];
     const entities = new Set(
       matches.map((merchant) => merchant.wikidataId ?? `id:${merchant.id}`),
     );
@@ -126,14 +141,15 @@ export async function accountMerchantNamePresentations(
       merchantIds: [...new Set(identities.values())],
     },
     userId,
+    request,
   );
   const byId = new Map(marks.map((mark) => [mark.merchantId, mark.logo]));
   return unique.map((merchantName) => {
-    const local = supplied.get(normalizeLocalLogoName(merchantName));
+    const grant = local.get(merchantName);
     return {
       merchantName,
-      logo: local
-        ? { merchantId: local.merchantId, version: local.version }
+      logo: grant
+        ? { merchantId: grant.merchantId, version: grant.version }
         : (byId.get(identities.get(merchantName) ?? "") ?? null),
     };
   });

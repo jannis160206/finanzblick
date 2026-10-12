@@ -9,7 +9,10 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useAccountWorkspace } from "@/components/account-context";
+import {
+  useAccountWorkspace,
+  type AccountWorkspace,
+} from "@/components/account-context";
 import {
   MAX_MERCHANT_MARKS,
   MAX_MERCHANT_MARKS_BYTES,
@@ -35,6 +38,31 @@ const MerchantLogoFailureContext = createContext<(() => void) | null>(null);
 const CACHE_LIMIT = 500;
 const RESPONSE_LIMIT = 64 * 1024;
 const FOCUS_REFRESH_INTERVAL = 30_000;
+const MAX_CONCURRENT_BATCHES = 3;
+type WorkspaceMarksCache = {
+  accountId: string;
+  marks: Map<string, MerchantLogo | null>;
+  fetchedAt: Map<string, number>;
+  loadedRevision: Map<string, number>;
+  invalidated: Set<string>;
+};
+const workspaceCaches = new WeakMap<AccountWorkspace, WorkspaceMarksCache>();
+let nextRequestRevision = 0;
+
+function workspaceCache(workspace: AccountWorkspace | null) {
+  const previous = workspace && workspaceCaches.get(workspace);
+  if (previous && previous.accountId === workspace?.user.id) return previous;
+  const cache: WorkspaceMarksCache = {
+    accountId: workspace?.user.id ?? "",
+    marks: new Map(),
+    fetchedAt: new Map(),
+    loadedRevision: new Map(),
+    invalidated: new Set(),
+  };
+  if (workspace) workspaceCaches.set(workspace, cache);
+  return cache;
+}
+
 const responseEnvelopeSchema = z
   .object({
     marks: merchantMarksResponseSchema.shape.marks,
@@ -123,7 +151,7 @@ export function MerchantMarksProvider({
   return (
     <AccountMerchantMarks
       key={workspace ? `account:${workspace.user.id}` : "local"}
-      enabled={!!workspace}
+      workspace={workspace}
       merchantIds={merchantIds}
       merchantNames={merchantNames}
       bookingIds={bookingIds}
@@ -134,23 +162,23 @@ export function MerchantMarksProvider({
 }
 
 function AccountMerchantMarks({
-  enabled,
+  workspace,
   merchantIds,
   merchantNames,
   bookingIds,
   children,
 }: {
-  enabled: boolean;
+  workspace: AccountWorkspace | null;
   merchantIds: string[];
   merchantNames: string[];
   bookingIds: string[];
   children: ReactNode;
 }) {
-  const cache = useRef(new Map<string, MerchantLogo | null>());
-  const invalidated = useRef(new Set<string>());
+  const enabled = !!workspace;
+  const [cache] = useState(() => workspaceCache(workspace));
   const lastFocusRefresh = useRef(-Infinity);
   const imageFailed = useRef(false);
-  const [marks, setMarks] = useState<MerchantMarks>(new Map());
+  const [marks, setMarks] = useState<MerchantMarks>(() => new Map(cache.marks));
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
@@ -187,13 +215,18 @@ function AccountMerchantMarks({
   const refreshMarks = useCallback(() => {
     imageFailed.current = false;
     for (const key of JSON.parse(idsKey) as string[])
-      invalidated.current.add(key);
+      cache.invalidated.add(key);
     setRefreshVersion((version) => version + 1);
-  }, [idsKey]);
+  }, [cache, idsKey]);
   const reportImageFailure = useCallback(() => {
     imageFailed.current = true;
     setError(true);
   }, []);
+
+  useEffect(() => {
+    // Context values may be recreated while this same account stays mounted.
+    if (workspace) workspaceCaches.set(workspace, cache);
+  }, [workspace, cache]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -214,28 +247,49 @@ function AccountMerchantMarks({
 
   useEffect(() => {
     if (!enabled) return;
-    const visibleIds = new Set(JSON.parse(idsKey) as string[]);
-    for (const key of invalidated.current)
-      if (!visibleIds.has(key)) invalidated.current.delete(key);
-    const ids = [...visibleIds].filter(
-      (id) => !cache.current.has(id) || invalidated.current.has(id),
-    );
-    if (!ids.length) return;
-    const controller = new AbortController();
     let active = true;
+    const visibleIds = new Set(JSON.parse(idsKey) as string[]);
+    for (const key of cache.invalidated)
+      if (!visibleIds.has(key)) cache.invalidated.delete(key);
+    const ids = [...visibleIds].filter(
+      (id) =>
+        !cache.marks.has(id) ||
+        cache.invalidated.has(id) ||
+        Date.now() - (cache.fetchedAt.get(id) ?? -Infinity) >=
+          FOCUS_REFRESH_INTERVAL,
+    );
+    if (!ids.length) {
+      void Promise.resolve().then(() => {
+        if (active) setLoading(false);
+      });
+      return () => {
+        active = false;
+      };
+    }
+    const controller = new AbortController();
+    const requestRevision = ++nextRequestRevision;
     const timeout = setTimeout(() => controller.abort(), 15_000);
 
     function remember(entries: [string, MerchantLogo | null][]) {
-      if (!active) return;
+      if (!active || controller.signal.aborted) return;
       for (const [id, logo] of entries) {
-        cache.current.set(id, logo ? { ...logo, refreshVersion } : null);
-        invalidated.current.delete(id);
+        // Another mounted view may have already received a newer response.
+        if ((cache.loadedRevision.get(id) ?? 0) > requestRevision) continue;
+        cache.marks.set(id, logo ? { ...logo, refreshVersion } : null);
+        cache.fetchedAt.set(id, Date.now());
+        cache.loadedRevision.set(id, requestRevision);
+        cache.invalidated.delete(id);
       }
-      for (const id of cache.current.keys()) {
-        if (cache.current.size <= CACHE_LIMIT) break;
-        if (!visibleIds.has(id)) cache.current.delete(id);
+      for (const id of cache.marks.keys()) {
+        if (cache.marks.size <= CACHE_LIMIT) break;
+        if (!visibleIds.has(id)) {
+          cache.marks.delete(id);
+          cache.fetchedAt.delete(id);
+          cache.loadedRevision.delete(id);
+          cache.invalidated.delete(id);
+        }
       }
-      setMarks(new Map(cache.current));
+      setMarks(new Map(cache.marks));
     }
 
     function rememberReferences(
@@ -265,7 +319,10 @@ function AccountMerchantMarks({
       if (!active) return;
       setLoading(true);
       try {
-        for (const batch of markBatches(ids)) {
+        const batches = markBatches(ids);
+        let nextBatch = 0;
+        let failed = false;
+        async function loadBatch(batch: string[]) {
           const merchantIds = batch.filter(
             (key) => !key.startsWith("name:") && !key.startsWith("booking:"),
           );
@@ -287,9 +344,9 @@ function AccountMerchantMarks({
             }),
             signal: controller.signal,
           });
-          if (!active) return;
+          if (!active || controller.signal.aborted) return;
           const result = await readMarksResponse(response);
-          if (!active) return;
+          if (!active || controller.signal.aborted) return;
           const available = new Map<string, MerchantLogo | null>();
           for (const mark of result.marks) {
             if (
@@ -333,7 +390,29 @@ function AccountMerchantMarks({
           if (!namesValid || !bookingsValid)
             throw new Error("Incomplete merchant reference marks response");
         }
-        if (active) setError(imageFailed.current);
+        async function worker() {
+          while (
+            active &&
+            !controller.signal.aborted &&
+            nextBatch < batches.length
+          ) {
+            const batch = batches[nextBatch++];
+            try {
+              await loadBatch(batch);
+            } catch {
+              failed = true;
+              if (active) setError(true);
+            }
+          }
+        }
+        await Promise.all(
+          Array.from(
+            { length: Math.min(MAX_CONCURRENT_BATCHES, batches.length) },
+            worker,
+          ),
+        );
+        if (active)
+          setError(failed || controller.signal.aborted || imageFailed.current);
       } catch {
         if (active) setError(true);
       } finally {
@@ -348,7 +427,7 @@ function AccountMerchantMarks({
       clearTimeout(timeout);
       controller.abort();
     };
-  }, [enabled, idsKey, refreshVersion]);
+  }, [enabled, cache, idsKey, refreshVersion]);
 
   return (
     <MerchantLogoFailureContext.Provider value={reportImageFailure}>

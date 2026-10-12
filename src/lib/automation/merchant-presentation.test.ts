@@ -4,6 +4,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountDatabase } from "@/lib/server/database";
+import * as calculation from "@/lib/calc";
 import { blankTestState, createTestDirectory } from "@/lib/server/test-support";
 import * as merchantLogo from "./merchant-logo";
 import { type PrivateMerchantLogo } from "./merchant-logo-metadata";
@@ -133,7 +134,7 @@ describe("bounded private merchant presentation", () => {
       0,
     );
     const before = accounts.getFinance("display-account");
-    const snapshotRead = vi.spyOn(accounts, "getFinance");
+    const ledgerRead = vi.spyOn(calculation, "actualBookings");
     const catalogRead = vi.spyOn(store, "loadMerchants");
     const marks = await accountMerchantBookingPresentations(
       store,
@@ -146,7 +147,7 @@ describe("bounded private merchant presentation", () => {
         version: merchantLogoVersion(logo),
       })),
     );
-    expect(snapshotRead).toHaveBeenCalledExactlyOnceWith("display-account");
+    expect(ledgerRead).toHaveBeenCalledTimes(1);
     expect(catalogRead).toHaveBeenCalledTimes(1);
     await accountMerchantBookingPresentations(
       store,
@@ -154,6 +155,7 @@ describe("bounded private merchant presentation", () => {
       "display-account",
     );
     expect(catalogRead).toHaveBeenCalledTimes(1);
+    expect(ledgerRead).toHaveBeenCalledTimes(1);
     expect(accounts.getFinance("display-account")).toEqual(before);
   });
 

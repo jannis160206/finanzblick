@@ -4,6 +4,7 @@ import {
   normalizeLogoIdentityName,
   merchantLogoBookingId,
   merchantBookingMarkKey,
+  contractLogoIdentityName,
 } from "./merchant-mark-name";
 
 describe("display-only merchant names", () => {
@@ -73,5 +74,18 @@ describe("display-only merchant names", () => {
     expect(normalizeLogoIdentityName("Audi Bank")).toBe("audi bank");
     expect(normalizeLogoIdentityName("Audi 123")).toBe("audi 123");
     expect(normalizeLogoIdentityName("Aud1")).not.toBe("audi");
+  });
+  it.each([
+    ["Porsche Bank Leasing (KL123AB)", "Porsche Bank"],
+    ["A1 Telefonvertrag", "A1"],
+    ["Allianz | KFZ-Versicherung (KL-123AB)", "Allianz"],
+    ["Allianz Haftpflichtversicherung", "Allianz"],
+    ["Audi | Abo", "Audi"],
+    ["Allianz Management", "Allianz Management"],
+    ["Audi | Volkswagen", "Audi | Volkswagen"],
+    ["Porsche Bank Leasing Shop", "Porsche Bank Leasing Shop"],
+    ["Allianz | Versicherung GmbH", "Allianz | Versicherung GmbH"],
+  ])("uses only a recognized contract annotation in %s", (name, expected) => {
+    expect(contractLogoIdentityName(name)).toBe(expected);
   });
 });

@@ -82,7 +82,7 @@ it("requests only a licensed same-origin image and exposes its attribution link"
   );
   expect(image.width).toBe(32);
   expect(image.height).toBe(32);
-  expect(image.getAttribute("loading")).toBe("lazy");
+  expect(image.getAttribute("loading")).toBe("eager");
   expect(image.getAttribute("decoding")).toBe("async");
   expect(image.alt).toBe("");
   expect(image.className).toContain("size-8");

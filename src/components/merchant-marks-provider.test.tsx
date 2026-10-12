@@ -91,11 +91,298 @@ function logoResponse(assetId = "muller-licensed") {
 
 function deferred() {
   let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((complete) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<Response>((complete, fail) => {
     resolve = complete;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
+
+it("starts three batches before any resolve, bounds concurrency, and preserves successful batches after a failure", async () => {
+  const pending = Array.from({ length: 5 }, deferred);
+  let inFlight = 0;
+  let maximumInFlight = 0;
+  const fetch = vi.fn().mockImplementation(() => {
+    const request = pending[fetch.mock.calls.length - 1];
+    inFlight++;
+    maximumInFlight = Math.max(maximumInFlight, inFlight);
+    return request.promise.finally(() => inFlight--);
+  });
+  vi.stubGlobal("fetch", fetch);
+  const ids = Array.from(
+    { length: 500 },
+    (_, index) => `merchant-${String(index).padStart(3, "0")}`,
+  );
+  function response(batch: number) {
+    return Response.json({
+      marks: JSON.parse(fetch.mock.calls[batch][1].body).merchantIds.map(
+        (merchantId: string) => ({
+          merchantId,
+          logo: { merchantId, version },
+        }),
+      ),
+    });
+  }
+  const { container } = render(
+    tree(
+      ids,
+      account(),
+      <>
+        {mark({ ...booking, merchantId: ids[0] })}
+        {mark({ ...booking, merchantId: ids[100] })}
+        {mark({ ...booking, merchantId: ids[400] })}
+      </>,
+    ),
+  );
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  expect(inFlight).toBe(3);
+  expect(container.querySelector("img")).toBeNull();
+  await act(async () => pending[1].resolve(response(1)));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
+  expect(container.querySelector(`img[src*="/${ids[100]}/"]`)).not.toBeNull();
+  expect(container.querySelector(`img[src*="/${ids[0]}/"]`)).toBeNull();
+  await act(async () =>
+    pending[0].reject(new TypeError("Network unavailable")),
+  );
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
+  expect(screen.getByRole("status")).toBeTruthy();
+  expect(
+    screen
+      .getByRole("button", { name: "Logos erneut laden" })
+      .hasAttribute("disabled"),
+  ).toBe(true);
+  await act(async () => {
+    for (const index of [2, 3, 4]) pending[index].resolve(response(index));
+  });
+  await waitFor(() =>
+    expect(container.querySelectorAll("img")).toHaveLength(2),
+  );
+  expect(maximumInFlight).toBe(3);
+  expect(inFlight).toBe(0);
+  expect(fetch).toHaveBeenCalledTimes(5);
+  expect(screen.getByRole("status")).toBeTruthy();
+  expect(
+    screen
+      .getByRole("button", { name: "Logos erneut laden" })
+      .hasAttribute("disabled"),
+  ).toBe(false);
+});
+
+it("renders warm metadata immediately on the same workspace's next provider mount and still refreshes versions and attribution", async () => {
+  const workspace = account();
+  const nextVersion = "b".repeat(64);
+  const next = deferred();
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(logoResponse())
+    .mockReturnValueOnce(next.promise);
+  vi.stubGlobal("fetch", fetch);
+  const first = render(tree(["muller"], workspace));
+  await waitFor(() =>
+    expect(first.container.querySelector("img")).not.toBeNull(),
+  );
+  first.unmount();
+  const warm = render(<StrictMode>{tree(["muller"], workspace)}</StrictMode>);
+  expect(warm.container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/muller-licensed/logo?v=${version}`,
+  );
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(1);
+  fireEvent.focus(window);
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  expect(warm.container.querySelector("img")).not.toBeNull();
+  await act(async () =>
+    next.resolve(
+      Response.json({
+        marks: [
+          {
+            merchantId: "muller",
+            logo: { merchantId: "new-licensed", version: nextVersion },
+          },
+        ],
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(warm.container.querySelector("img")!.getAttribute("src")).toBe(
+      `/api/merchants/new-licensed/logo?v=${nextVersion}`,
+    ),
+  );
+  expect(warm.container.querySelector("a")!.getAttribute("href")).toBe(
+    `/api/merchants/new-licensed/attribution?v=${nextVersion}`,
+  );
+  warm.unmount();
+  const latest = render(tree(["muller"], workspace));
+  expect(latest.container.querySelector("img")!.getAttribute("src")).toContain(
+    "/new-licensed/",
+  );
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("keeps warm reuse when the context value is recreated around a mounted same-account provider", async () => {
+  const workspace = account();
+  const refreshedWorkspace = { ...workspace };
+  const fetch = vi.fn().mockResolvedValue(logoResponse());
+  vi.stubGlobal("fetch", fetch);
+  const first = render(tree(["muller"], workspace));
+  await waitFor(() =>
+    expect(first.container.querySelector("img")).not.toBeNull(),
+  );
+  first.rerender(tree(["muller"], refreshedWorkspace));
+  expect(first.container.querySelector("img")).not.toBeNull();
+  await act(async () => {});
+  first.unmount();
+  const warm = render(tree(["muller"], refreshedWorkspace));
+  expect(warm.container.querySelector("img")).not.toBeNull();
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it("revalidates aged warm metadata on mount and removes a revoked logo without polling", async () => {
+  let now = 100_000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const workspace = account();
+  const fetch = vi
+    .fn()
+    .mockResolvedValueOnce(logoResponse())
+    .mockResolvedValueOnce(
+      Response.json({ marks: [{ merchantId: "muller", logo: null }] }),
+    );
+  vi.stubGlobal("fetch", fetch);
+  const first = render(tree(["muller"], workspace));
+  await waitFor(() =>
+    expect(first.container.querySelector("img")).not.toBeNull(),
+  );
+  first.unmount();
+  now += 30_001;
+  const warm = render(tree(["muller"], workspace));
+  expect(warm.container.querySelector("img")).not.toBeNull();
+  await waitFor(() => expect(warm.container.querySelector("img")).toBeNull());
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(screen.getByText("MM")).toBeTruthy();
+  warm.unmount();
+  const revoked = render(tree(["muller"], workspace));
+  expect(revoked.container.querySelector("img")).toBeNull();
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it("cannot overwrite a newer same-workspace version with an older concurrent provider response", async () => {
+  const workspace = account();
+  const older = deferred();
+  const newer = deferred();
+  const fetch = vi
+    .fn()
+    .mockReturnValueOnce(older.promise)
+    .mockReturnValueOnce(newer.promise);
+  vi.stubGlobal("fetch", fetch);
+  const first = render(tree(["muller"], workspace));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+  const second = render(tree(["muller"], workspace));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  await act(async () => newer.resolve(logoResponse("newer-version")));
+  await waitFor(() =>
+    expect(
+      second.container.querySelector("img")!.getAttribute("src"),
+    ).toContain("/newer-version/"),
+  );
+  await act(async () => older.resolve(logoResponse("older-version")));
+  await waitFor(() =>
+    expect(first.container.querySelector("img")!.getAttribute("src")).toContain(
+      "/newer-version/",
+    ),
+  );
+  first.unmount();
+  second.unmount();
+  const warm = render(tree(["muller"], workspace));
+  expect(warm.container.querySelector("img")!.getAttribute("src")).toContain(
+    "/newer-version/",
+  );
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it.each(["first", "second"])(
+  "does not reuse another workspace's metadata even for the same user ID (%s), or in local mode",
+  async (id) => {
+    const workspace = account();
+    const next = deferred();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(logoResponse())
+      .mockReturnValueOnce(next.promise);
+    vi.stubGlobal("fetch", fetch);
+    const first = render(tree(["muller"], workspace));
+    await waitFor(() =>
+      expect(first.container.querySelector("img")).not.toBeNull(),
+    );
+    first.unmount();
+    const other = render(tree(["muller"], account(id)));
+    expect(other.container.querySelector("img")).toBeNull();
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    const signal = fetch.mock.calls[1][1].signal as AbortSignal;
+    other.unmount();
+    expect(signal.aborted).toBe(true);
+    const local = render(
+      tree(["muller"], null, mark({ ...booking, merchantLogo: true })),
+    );
+    await act(async () => next.resolve(logoResponse("other-workspace")));
+    expect(local.container.querySelector("img")).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(2);
+    local.unmount();
+    const original = render(tree(["muller"], workspace));
+    expect(
+      original.container.querySelector("img")!.getAttribute("src"),
+    ).toContain("/muller-licensed/");
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("aborts concurrent in-flight batches on unmount, never starts queued batches, and cannot poison the next warm cache", async () => {
+  const workspace = account();
+  const pending = Array.from({ length: 3 }, deferred);
+  const fetch = vi
+    .fn()
+    .mockImplementation(() => pending[fetch.mock.calls.length - 1].promise);
+  vi.stubGlobal("fetch", fetch);
+  const ids = [
+    "muller",
+    ...Array.from({ length: 499 }, (_, index) => `merchant-${index}`),
+  ];
+  const first = render(tree(ids, workspace));
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+  first.unmount();
+  for (const [, options] of fetch.mock.calls)
+    expect(options.signal.aborted).toBe(true);
+  await act(async () => {
+    pending.forEach((request, index) =>
+      request.resolve(
+        Response.json({
+          marks: JSON.parse(fetch.mock.calls[index][1].body).merchantIds.map(
+            (merchantId: string) => ({
+              merchantId,
+              logo: { merchantId: "stale", version },
+            }),
+          ),
+        }),
+      ),
+    );
+  });
+  expect(fetch).toHaveBeenCalledTimes(3);
+  fetch.mockResolvedValueOnce(logoResponse("current"));
+  const current = render(tree(["muller"], workspace));
+  expect(current.container.querySelector("img")).toBeNull();
+  await waitFor(() =>
+    expect(
+      current.container.querySelector("img")!.getAttribute("src"),
+    ).toContain("/current/"),
+  );
+  expect(fetch).toHaveBeenCalledTimes(4);
+  expect(screen.queryByRole("status")).toBeNull();
+});
 
 it("loads historical false flags with one deduplicated request, including under Strict Mode", async () => {
   const fetch = vi.fn().mockImplementation(async () => logoResponse());

@@ -32,6 +32,19 @@ artwork unless the source text explicitly names another bank; that bank's
 available account-authorized artwork takes precedence. The account's own bank,
 card-sequence numbers and confirmed display aliases do not identify the operator.
 Unavailable or ambiguous explicit operators keep the neutral fallback.
+Recognized contract annotations such as `Leasing (...)`, `Telefonvertrag` and
+`| KFZ-Versicherung (...)` can use the exact named company's artwork. An exact
+supplied name binding takes precedence; unrelated qualifiers are not guessed.
+
+Marks resolve ID, name and booking requests together, sharing catalogue reads
+and verified file results within that authenticated request. At most eight
+supplied files are verified concurrently. Small, derived booking lookups are
+cached in memory for at most two accounts and invalidated by a hash of the
+stored finance snapshot; oversized snapshots are not cached. Grant permissions
+and safe content-hash file validation remain fresh on every metadata request.
+Visible 32px images load eagerly, up to three client batches run concurrently,
+and same-workspace navigation reuses bounded metadata with 30-second refresh.
+No private logo metadata is stored in browser local storage or public caches.
 
 Only supplied local files allow up to 20 million input pixels (still at most
 2 MiB); remote image limits are unchanged. Uniform edge padding is trimmed and

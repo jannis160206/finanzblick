@@ -20,6 +20,9 @@ import {
 import { accountMerchantBookingPresentations } from "./merchant-booking-presentations";
 import { merchantSchema } from "./merchants";
 import { normalizeLogoRaster } from "./merchant-logo-raster";
+import * as logoGrants from "./merchant-logo-grants";
+import { MerchantLogoRequest } from "./merchant-logo-request";
+import * as calculation from "@/lib/calc";
 import {
   authorizedLogoDirectory,
   readAuthorizedMerchantLogo,
@@ -33,6 +36,7 @@ vi.mock("@/lib/server/auth", () => ({
 }));
 import { GET as logoApi } from "@/app/api/merchants/[id]/logo/route";
 import { GET as attributionApi } from "@/app/api/merchants/[id]/attribution/route";
+import { POST as marksApi } from "@/app/api/merchants/marks/route";
 
 let directory: string;
 let accounts: AccountDatabase;
@@ -821,6 +825,200 @@ it("uses an available public bank reference for explicitly named ATM operators b
   );
   expect(other[0].logo?.merchantId).toBe("at-bank-austria");
   expect(other[1].logo).toBeNull();
+});
+
+it("resolves supplied company artwork for contract labels without changing their names or finance", async () => {
+  await supplied("Porsche Bank.png");
+  await supplied("A1.png");
+  await supplied("Allianz.png");
+  await importLogos();
+  const names = [
+    "Porsche Bank Leasing (KL123AB)",
+    "A1 Telefonvertrag",
+    "Allianz | KFZ-Versicherung (KL-123AB)",
+    "Porsche Bank Leasing (OTHER123)",
+    "A1 Telekom Shop",
+    "Allianz Consulting GmbH",
+  ];
+  const before = accounts.getFinance(userId);
+  const result = await accountMerchantNamePresentations(store, names, userId);
+  const suppliedGrants = localLogoGrants(store, userId);
+  expect(result.map((mark) => mark.merchantName)).toEqual(names);
+  expect(result.map((mark) => mark.logo?.merchantId ?? null)).toEqual([
+    suppliedGrants.get("porsche bank")!.merchantId,
+    suppliedGrants.get("a1")!.merchantId,
+    suppliedGrants.get("allianz")!.merchantId,
+    suppliedGrants.get("porsche bank")!.merchantId,
+    null,
+    null,
+  ]);
+  expect((await accountMerchantNamePresentations(
+    store, names, "other-logo-account",
+  )).every((mark) => mark.logo === null)).toBe(true);
+  expect(accounts.getFinance(userId)).toEqual(before);
+  const file = suppliedGrants.get("porsche bank")!.logo.file;
+  await rm(join(authorizedLogoDirectory(accounts.path, userId), file));
+  expect((await accountMerchantNamePresentations(store, names, userId))
+    .every((mark) => mark.logo === null)).toBe(true);
+});
+
+it("prefers an exact supplied contract label to the generic company's artwork", async () => {
+  await supplied("Allianz.png");
+  await supplied("Allianz Haftpflicht.png");
+  await importLogos();
+  const result = await accountMerchantNamePresentations(
+    store, ["Allianz Haftpflicht"], userId,
+  );
+  expect(result[0].logo?.merchantId).toBe(
+    localLogoGrants(store, userId).get("allianz haftpflicht")!.merchantId,
+  );
+});
+
+it("shares artwork validation and catalogue reads across ID, name and booking marks within one authenticated request", async () => {
+  await supplied("A1.png");
+  await importLogos();
+  store.upsertMerchants([merchantSchema.parse({
+    id: "a1-reference", canonicalName: "A1", aliases: [],
+    regexPatterns: [], region: "AT", source: "local",
+    defaultCategory: null, updatedAt: 1,
+  })]);
+  const row = transactionSchema.parse({
+    id: "shared-request", date: "2026-10-01", bank: "Revolut", pocket: null,
+    description: "A1", amount: -10, category: "Shopping",
+    categoryOverride: true, includeInPlan: true,
+  });
+  accounts.putFinance(userId, { ...blankTestState(), transactions: [row] }, 0);
+  const read = vi.spyOn(logoGrants, "readAuthorizedMerchantLogo");
+  const catalogue = vi.spyOn(AutomationStore.prototype, "loadMerchants");
+  try {
+    const response = await marksApi(new Request("http://localhost/api/merchants/marks", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `${sessionCookieName()}=${hashToken(userId)}`,
+      },
+      body: JSON.stringify({
+        merchantIds: ["a1-reference"],
+        merchantNames: ["A1 Telefonvertrag", "Unmatched company"],
+        bookingIds: [row.id],
+      }),
+    }));
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    const logo = localLogoGrants(store, userId).get("a1")!;
+    expect(result.marks[0].logo?.merchantId).toBe(logo.merchantId);
+    expect(result.nameMarks[0].logo?.merchantId).toBe(logo.merchantId);
+    expect(result.bookingMarks[0].logo?.merchantId).toBe(logo.merchantId);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(catalogue).toHaveBeenCalledTimes(1);
+  } finally {
+    read.mockRestore();
+    catalogue.mockRestore();
+  }
+});
+
+it("rejects sharing a request context with another account or database", async () => {
+  const requestContext = new MerchantLogoRequest(store, userId);
+  await expect(accountMerchantNamePresentations(
+    store, ["A1 Telefonvertrag"], "other-logo-account", requestContext,
+  )).rejects.toThrow("account mismatch");
+  const other = new AccountDatabase(join(directory, "other.sqlite"));
+  try {
+    await expect(accountMerchantPresentations(
+      new AutomationStore(other), { merchantIds: [] }, userId, requestContext,
+    )).rejects.toThrow("account mismatch");
+  } finally {
+    other.close();
+  }
+});
+
+it("reuses derived booking lookup data only for the same account and exact stored snapshot", () => {
+  const row = transactionSchema.parse({
+    id: "cached-booking", date: "2026-10-01", bank: "Revolut", pocket: null,
+    description: "A1", amount: -10, category: "Shopping",
+    categoryOverride: true, includeInPlan: true,
+  });
+  const state = { ...blankTestState(), transactions: [row] };
+  accounts.putFinance(userId, state, 0);
+  accounts.putFinance("other-logo-account", state, 0);
+  const calculate = vi.spyOn(calculation, "actualBookings");
+  try {
+    const first = new MerchantLogoRequest(store, userId).bookings();
+    expect(new MerchantLogoRequest(store, userId).bookings()).toBe(first);
+    expect(calculate).toHaveBeenCalledTimes(1);
+    expect(new MerchantLogoRequest(store, "other-logo-account").bookings()).not.toBe(first);
+    expect(calculate).toHaveBeenCalledTimes(2);
+    const updated = { ...state, transactions: [{ ...row, merchantAlias: "A1 Telefonvertrag" }] };
+    accounts.putFinance(userId, updated, 1);
+    const second = new MerchantLogoRequest(store, userId).bookings();
+    expect(second?.rows.get(row.id)?.merchantAlias).toBe("A1 Telefonvertrag");
+    expect(second).not.toBe(first);
+    expect(calculate).toHaveBeenCalledTimes(3);
+    accounts.transaction((db) => db.prepare(
+      "UPDATE finance SET state_json = ? WHERE user_id = ?",
+    ).run(JSON.stringify({ ...state, transactions: [{ ...row, description: "Allianz" }] }), userId));
+    expect(new MerchantLogoRequest(store, userId).bookings()
+      ?.rows.get(row.id)?.description).toBe("Allianz");
+    expect(calculate).toHaveBeenCalledTimes(4);
+    accounts.transaction((db) => db.prepare("DELETE FROM finance WHERE user_id = ?").run(userId));
+    expect(new MerchantLogoRequest(store, userId).bookings()).toBeNull();
+  } finally {
+    calculate.mockRestore();
+  }
+});
+
+it("does not retain oversized snapshots in the derived booking cache", () => {
+  const state = blankTestState();
+  accounts.putFinance(userId, state, 0);
+  accounts.transaction((db) => db.prepare(
+    "UPDATE finance SET state_json = ? WHERE user_id = ?",
+  ).run(JSON.stringify({ ...state, legacyExtension: "x".repeat(8 * 1024 * 1024) }), userId));
+  const first = new MerchantLogoRequest(store, userId).bookings();
+  expect(new MerchantLogoRequest(store, userId).bookings()).not.toBe(first);
+});
+
+it("evicts least-recently-used account lookup data at the small cache limit", () => {
+  accounts.transaction((db) => db.prepare(
+    "INSERT INTO users VALUES ('third-logo-account', 'third-logo-account', 'user', 'fixture', 1)",
+  ).run());
+  for (const id of [userId, "other-logo-account", "third-logo-account"])
+    accounts.putFinance(id, blankTestState(), 0);
+  const first = new MerchantLogoRequest(store, userId).bookings();
+  new MerchantLogoRequest(store, "other-logo-account").bookings();
+  const third = new MerchantLogoRequest(store, "third-logo-account").bookings();
+  expect(new MerchantLogoRequest(store, userId).bookings()).not.toBe(first);
+  expect(new MerchantLogoRequest(store, "third-logo-account").bookings()).toBe(third);
+});
+
+it("bounds parallel verification of supplied files instead of re-reading them serially", async () => {
+  for (let index = 0; index < 12; index++) {
+    const bytes = await sharp({
+      create: { width: 16, height: 16, channels: 4, background: { r: index + 2, g: 40, b: 160, alpha: 1 } },
+    }).png().toBuffer();
+    await supplied(`Brand ${index}.png`, bytes);
+  }
+  await importLogos();
+  const originalRead = logoGrants.readAuthorizedMerchantLogo;
+  let active = 0;
+  let maximum = 0;
+  const read = vi.spyOn(logoGrants, "readAuthorizedMerchantLogo").mockImplementation(async (...args) => {
+    active++;
+    maximum = Math.max(maximum, active);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return await originalRead(...args);
+    } finally {
+      active--;
+    }
+  });
+  try {
+    expect((await availableLocalLogoGrants(store, userId)).size).toBe(12);
+    expect(read).toHaveBeenCalledTimes(12);
+    expect(maximum).toBeGreaterThan(1);
+    expect(maximum).toBeLessThanOrEqual(8);
+  } finally {
+    read.mockRestore();
+  }
 });
 
 it.each(["png", "jpeg", "webp"] as const)(
