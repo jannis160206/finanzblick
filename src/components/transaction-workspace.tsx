@@ -18,6 +18,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { currency, dateLabel } from "@/lib/format";
+import { bookingDescription } from "@/lib/import/merchant-description";
 import type { classify } from "@/lib/calc";
 import type { Category } from "@/lib/types";
 import type {
@@ -165,7 +166,7 @@ export function TransactionDescriptionCell({
   booking: AccountedTransaction;
   classification: Pick<ReturnType<typeof classify>, "category" | "isTransfer">;
 }) {
-  const description = booking.merchantAlias ?? booking.description;
+  const description = bookingDescription(booking);
   return (
     <div className="flex min-w-0 items-center gap-2">
       <MerchantMark booking={booking} classification={classification} />

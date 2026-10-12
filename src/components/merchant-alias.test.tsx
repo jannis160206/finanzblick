@@ -7,6 +7,8 @@ import { StatementImport } from "./statement-import";
 import { createSeed } from "@/lib/seed";
 import { prepareStatementImport } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
+import { cleanBookingText } from "@/lib/import/bank-description";
+import { recoverMerchant } from "@/lib/import/merchant-description";
 import type { AppState, Transaction } from "@/lib/types";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
@@ -34,7 +36,7 @@ function mount(stored = true) {
   const view = render(<FinanceProvider initialState={state}><Harness /></FinanceProvider>);
   const open = () => {
     fireEvent.click(screen.getByRole("button", { name: "Prüfung öffnen" }));
-    return within(screen.getByRole("region", { name: `Buchung prüfen: ${original.description}` }));
+    return within(screen.getByRole("region", { name: `Buchung prüfen: ${recoverMerchant(original).description}` }));
   };
   return { ...view, read: () => current, open };
 }
@@ -58,7 +60,8 @@ it.each([false, true])("saves a pencil-edited name and learns future imports via
   fireEvent.click(section.getByRole("button", { name: "Zuordnung übernehmen" }));
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(view.read().state.transactions[0]).toMatchObject({
-    ...original, merchantAlias: "Hausverwaltung", category: "Miete", manualCategory: true, reviewed: true,
+    ...original, description: "Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt", rawDescription: original.description,
+    merchantAlias: "Hausverwaltung", category: "Miete", manualCategory: true, reviewed: true,
     categoryOverride: true, fixedCost: true, includeInPlan: false,
   });
   expect(statementFingerprint(view.read().state.transactions[0])).toBe(statementFingerprint(original));
@@ -76,7 +79,8 @@ it.each([false, true])("saves a pencil-edited name and learns future imports via
   act(() => loaded.read().appendStatements(prepared.automatic, prepared.duplicates, "future-import", [], prepared.metadata));
   expect(loaded.read().state.transactions).toHaveLength(2);
   expect(loaded.read().state.transactions[1]).toMatchObject({
-    ...future, merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: true, includeInPlan: false, categoryOverride: true,
+    ...future, description: "Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt", rawDescription: future.description,
+    merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: true, includeInPlan: false, categoryOverride: true,
   });
 });
 
@@ -93,5 +97,5 @@ it("rejects blank names and discards an unconfirmed rename on skip", () => {
   expect(section.getByRole<HTMLButtonElement>("button", { name: "Zuordnung übernehmen" }).disabled).toBe(false);
   fireEvent.click(section.getByRole("button", { name: "Später prüfen" }));
   expect(view.read().state).toBe(before);
-  expect(view.open().getByLabelText<HTMLInputElement>("Text").value).toBe(original.description);
+  expect(view.open().getByLabelText<HTMLInputElement>("Text").value).toBe(cleanBookingText(original.description));
 });

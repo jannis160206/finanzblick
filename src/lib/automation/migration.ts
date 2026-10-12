@@ -165,4 +165,17 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (8, unixepoch() * 1000);
     `);
   }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 9").get()
+  ) {
+    db.exec(`
+      CREATE TABLE merchant_authorized_logo_names (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL CHECK(length(name) BETWEEN 2 AND 100),
+        merchant_id TEXT NOT NULL,
+        PRIMARY KEY(user_id, name)
+      );
+      INSERT INTO automation_migrations VALUES (9, unixepoch() * 1000);
+    `);
+  }
 }

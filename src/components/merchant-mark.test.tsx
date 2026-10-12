@@ -238,6 +238,41 @@ it("displays an exact locally resolved Audi subscription mark without rewriting 
   expect(row).toEqual(before);
 });
 
+it("prefers an explicitly supplied booking logo over an unconfirmed historical public ID without changing it", () => {
+  const row = { ...booking, merchantAlias: "Old merchant", merchantId: "old" };
+  const before = structuredClone(row);
+  const version = "a".repeat(64);
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+    new Map([
+      ["old", { merchantId: "old", version }],
+      [`booking:${row.id}`, { merchantId: "private-supplied", version }],
+    ]),
+  );
+  const { container } = render(mark(row));
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/private-supplied/logo?v=${version}`,
+  );
+  expect(container.querySelector("img")!.className).toContain("object-contain");
+  expect(row).toEqual(before);
+});
+
+it("shows income artwork only when an explicitly supplied private booking logo is available", () => {
+  const row = { ...booking, category: "Gehalt" as const, amount: 1000 };
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+    new Map([
+      [
+        `booking:${row.id}`,
+        { merchantId: "private-employer", version: "a".repeat(64) },
+      ],
+    ]),
+  );
+  const { container, rerender } = render(mark(row));
+  expect(container.querySelector("img")).not.toBeNull();
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(new Map());
+  rerender(mark(row));
+  expect(container.childElementCount).toBe(0);
+});
+
 it("uses a neutral fallback for a missing logo with no canonical alias", () => {
   const { container } = render(
     mark({ ...booking, merchantId: "unknown", merchantLogo: true }),

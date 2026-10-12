@@ -19,6 +19,7 @@ const transferCategories = [
 export function shouldShowMerchantMark(
   booking: Transaction,
   classification: MarkClassification,
+  suppliedLogo = false,
 ) {
   return !(
     classification.isTransfer ||
@@ -28,6 +29,7 @@ export function shouldShowMerchantMark(
     transferCategories.includes(booking.category) ||
     transferCategories.includes(classification.category) ||
     (!booking.merchantAlias?.trim() &&
-      isIncomeCategory(classification.category))
+      isIncomeCategory(classification.category) &&
+      !suppliedLogo)
   );
 }

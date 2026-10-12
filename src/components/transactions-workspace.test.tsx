@@ -106,6 +106,32 @@ function mount(initial = fixture(), storageError: string | null = null) {
 }
 
 it.each([false, true])(
+  "hides banking metadata in historical bookings and assignment dialogs (mobile: %s)",
+  (mobile) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: mobile,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const state = fixture();
+    const original = "Testfirma IBAN Auftraggeber: AT001234567890123456 BIC Auftraggeber: TESTAT00XXX";
+    state.transactions = [{
+      ...state.transactions[0],
+      description: original,
+      merchantAlias: undefined,
+      sharedWithRaphael: false,
+      is_locked: true,
+    }];
+    const view = mount(state);
+    expect(screen.getByText("Testfirma")).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/IBAN Auftraggeber|BIC Auftraggeber|AT001234567890123456/);
+    fireEvent.click(screen.getByRole("button", { name: "Zuordnung ändern: Testfirma" }));
+    expect(screen.getByRole("dialog").textContent).not.toMatch(/IBAN Auftraggeber|BIC Auftraggeber|AT001234567890123456/);
+    expect(view.read().transactions[0].description).toBe(original);
+  },
+);
+
+it.each([false, true])(
   "renders the same 32px merchant cell before booking text without changing ledger order (mobile: %s)",
   (mobile) => {
     vi.stubGlobal("matchMedia", () => ({

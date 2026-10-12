@@ -5,6 +5,33 @@ curated seeds remain available without network access. Imported reference data
 does not include statements, balances, transactions, account identifiers, or
 learned user categories. Neither the worker nor HTTP requests trigger imports.
 
+## User-supplied booking logos
+
+The explicit private importer accepts a local PNG/JPEG/WebP/AVIF folder. The filename without
+its extension is the booking/merchant name; case, spacing, punctuation and
+apostrophes are normalized, but spelling, company qualifiers and fuzzy matches
+are not guessed. An optional JSON object maps exact filenames to additional
+operator-confirmed names. Names without public merchant IDs are supported.
+
+```powershell
+npm run merchants:authorized-logos -- --database ".local-data\finanzblick.sqlite" --account "<existing username>" --rights-reference "<user's private-use declaration>" --directory "Logo"
+```
+
+Add `--name-aliases "<private JSON file>"` only for explicitly confirmed alternate
+booking names. The importer validates every input before writing, is repeatable,
+and leaves financial snapshots, classifications, public merchants and source
+files unchanged. The existing authenticated logo/attribution endpoints serve
+versioned account-scoped grants; names and files are never public assets.
+Historical display and future matching use the same persisted associations.
+Missing files, ambiguous names and unmatched names retain existing fallbacks.
+
+Only supplied local files allow up to 20 million input pixels (still at most
+2 MiB); remote image limits are unchanged. Uniform edge padding is trimmed and
+the aspect ratio preserved inside 128×128 PNG storage and 32×32 `object-contain`
+booking badges. Source folders `Logo`/`Logos` and private database assets remain
+excluded from Git. Do not imply a public licence from the user's private-use
+declaration.
+
 ## Booking-derived public reference reviews
 
 ### Recurring-purpose correction pass (2026-10-11)

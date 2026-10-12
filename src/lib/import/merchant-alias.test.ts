@@ -7,6 +7,7 @@ import { approveReviewedBooking } from "./approve-review";
 import { statementFingerprint } from "./identity";
 import { applyMerchantRules, merchantRuleKey, rememberMerchants } from "./merchant-rules";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "./review";
+import { recoverMerchant } from "./merchant-description";
 import type { StatementResult } from "./statements";
 
 const booking = (patch: Partial<Transaction> = {}): Transaction => ({
@@ -43,7 +44,7 @@ describe("remembered review merchant names", () => {
     expect(approveReviewedBooking(state, selected)).toBeUndefined();
     const saved = approve(state, selected);
     expect(state).toEqual(before);
-    expect(saved.transactions).toEqual([{ ...selected, includeInPlan: false }]);
+    expect(saved.transactions).toEqual([{ ...recoverMerchant(selected), includeInPlan: false }]);
     expect(saved.reviewQueue).toEqual([]);
     expect(saved.financeRows).toEqual(before.financeRows);
     expect(statementFingerprint(saved.transactions[0])).toBe(statementFingerprint(original));
@@ -73,7 +74,7 @@ describe("remembered review merchant names", () => {
       expect(prepared.review).toEqual([]);
       expect(prepared.automatic).toHaveLength(1);
       expect(prepared.automatic[0]).toMatchObject({
-        ...future, category: "Miete", merchantAlias: "Hausverwaltung", categoryOverride: true, fixedCost, includeInPlan: !fixedCost,
+        ...recoverMerchant(future), category: "Miete", merchantAlias: "Hausverwaltung", categoryOverride: true, fixedCost, includeInPlan: !fixedCost,
       });
       expect(prepared.automatic[0].manualCategory).toBeUndefined();
       expect(prepared.automatic[0].reviewed).toBeUndefined();
@@ -96,7 +97,7 @@ describe("remembered review merchant names", () => {
     expect(saved.transactions.find((row) => row.id === twin.id)).toMatchObject({
       merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: false,
     });
-    expect(saved.transactions.find((row) => row.id === manual.id)).toEqual(manual);
+    expect(saved.transactions.find((row) => row.id === manual.id)).toEqual(recoverMerchant(manual));
     expect(saved.transactions.find((row) => row.id === queued.id)).toMatchObject({
       merchantAlias: "Hausverwaltung", category: "Miete",
     });
@@ -133,7 +134,7 @@ describe("remembered review merchant names", () => {
       booking({ id: "bank", bank: "Revolut", pocket: "Giro" }),
       booking({ id: "manual", category: "Shopping", categoryOverride: true, manualCategory: true }),
     ];
-    expect(applyMerchantRules(state, others)).toEqual(others);
+    expect(applyMerchantRules(state, others)).toEqual(others.map(recoverMerchant));
   });
 
   it.each(["POS 3,00 AT D1", "POS Zahlung 8,40", "POS 8,40", "8,40", "Terminal 7,90", "PayPal", "SumUp", "Stripe"])("only renames the selected booking for non-specific source %s", (description) => {

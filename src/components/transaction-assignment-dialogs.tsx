@@ -27,6 +27,7 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 import { currency, dateLabel } from "@/lib/format";
 import { queueLedgerReview } from "@/lib/import/review";
+import { bookingDescription } from "@/lib/import/merchant-description";
 import { synchronizePlan } from "@/lib/planning";
 import { assignTransactions } from "@/lib/transaction-tools";
 import {
@@ -71,7 +72,9 @@ export function TransactionForm({
     defaultValues: transaction,
   });
   const values = useWatch({ control: form.control });
-  const merchantName = values.merchantAlias ?? transaction.description;
+  const merchantName = editingName
+    ? values.merchantAlias ?? bookingDescription(transaction)
+    : bookingDescription({ ...transaction, merchantAlias: values.merchantAlias });
   const nameMissing = editingName && !merchantName.trim();
   const preview = classify({
     ...transaction,
@@ -211,9 +214,9 @@ export function TransactionForm({
               ) : (
                 error("merchantAlias")
               )}
-              {(editingName || merchantName !== transaction.description) && (
+              {(editingName || merchantName !== bookingDescription({ ...transaction, merchantAlias: undefined })) && (
                 <p className="mt-2 break-words text-xs text-muted-foreground">
-                  {transaction.description}
+                  {bookingDescription({ ...transaction, merchantAlias: undefined })}
                 </p>
               )}
               <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">
@@ -415,7 +418,7 @@ export function BatchAssignmentDialog({
                 <ul className="mt-2 space-y-2 text-xs">
                   {additional.map((row) => (
                     <li key={row.id} className="break-words">
-                      {row.merchantAlias ?? row.description} ·{" "}
+                      {bookingDescription(row)} ·{" "}
                       {dateLabel(row.date)} · {currency(row.amount)} →{" "}
                       {classify(row).category}
                       {!currentById.has(row.id) && (
@@ -439,7 +442,7 @@ export function BatchAssignmentDialog({
                 <li key={booking.id} className="space-y-1 py-3 text-sm">
                   <div className="flex items-start justify-between gap-3">
                     <span className="min-w-0 break-words font-medium">
-                      {booking.merchantAlias ?? booking.description}
+                      {bookingDescription(booking)}
                     </span>
                     <span className="shrink-0 tabular-nums">
                       {currency(booking.amount)}

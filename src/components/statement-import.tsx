@@ -45,6 +45,7 @@ import { isAmexScreenshot } from "@/lib/import/identity";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 import { screenshotReviewMessage } from "@/lib/import/amex-screenshot";
 import { StatementImportStatus } from "@/components/statement-import-status";
+import { bookingDescription } from "@/lib/import/merchant-description";
 import { useAccountWorkspace } from "@/components/account-context";
 import { AutomationStatus } from "@/components/automation-status";
 import { MAX_UPLOAD_BYTES } from "@/lib/automation/schema";
@@ -127,7 +128,7 @@ const BookingReview = memo(function BookingReview({
               ref={nameInput}
               aria-label="Text"
               maxLength={repairOcr ? 1000 : 200}
-              value={repairOcr ? draft.description : draft.merchantAlias ?? draft.description}
+              value={repairOcr ? draft.description : editingName ? draft.merchantAlias ?? bookingDescription(draft) : bookingDescription(draft)}
               readOnly={!repairOcr && !editingName}
               disabled={disabled}
               className={!repairOcr ? "pr-10" : undefined}
@@ -259,10 +260,10 @@ function FixedReview({
                 />
               ) : (
                 <>
-                  <p className="min-w-0 break-words font-medium">{booking.merchantAlias ?? booking.description}</p>
+                  <p className="min-w-0 break-words font-medium">{bookingDescription(booking)}</p>
                   <Button type="button" variant="ghost" size="icon-xs" className="shrink-0"
                     aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
-                    onClick={() => setNames((previous) => ({ ...previous, [booking.id]: booking.merchantAlias ?? booking.description }))}>
+                    onClick={() => setNames((previous) => ({ ...previous, [booking.id]: bookingDescription(booking) }))}>
                     <Pencil className="size-3" aria-hidden="true" />
                   </Button>
                 </>
@@ -274,7 +275,7 @@ function FixedReview({
           {(booking.merchantAlias || names[booking.id] !== undefined) && (
             <details className="mt-1 text-xs text-muted-foreground">
               <summary>Originalbuchung</summary>
-              <p className="break-words">{booking.description}</p>
+              <p className="break-words">{bookingDescription({ ...booking, merchantAlias: undefined })}</p>
             </details>
           )}
           <p className="mt-1 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>

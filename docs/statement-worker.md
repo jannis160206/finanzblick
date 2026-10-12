@@ -6,6 +6,12 @@ in eine private Datei, persistiert den Job und antwortet mit **202 Accepted**.
 Er führt weder Parsing noch OCR aus. Im reinen Browsermodus bleibt der bisherige
 lokale Import erhalten. Lohnabrechnungsimporte sind unverändert.
 
+Buchungsnamen und Verwendungszwecke werden ohne IBAN-/BIC-Felder,
+Mandatsreferenzen und andere technische Bankfelder angezeigt. Das gilt auch
+für ältere und manuell zugeordnete Buchungen. Unveränderte Originaltexte bleiben
+in den privaten Quelldaten erhalten, damit Dublettenerkennung und
+empfängerspezifische Zuordnungen weiterhin dieselbe Bankidentität verwenden.
+
 ## Betrieb
 
 Node.js 22.13+ und `npm ci` genügen. `tsx` und `sharp` sind Produktionsabhängigkeiten.

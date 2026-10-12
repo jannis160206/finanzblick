@@ -417,21 +417,21 @@ const TransactionLedger = memo(function TransactionLedger({
   const displayedRows = table.getRowModel().rows;
   const merchantIds = displayedRows.flatMap(({ original }) =>
     original.merchantId &&
-    shouldShowMerchantMark(original, classifications.get(original)!)
+    shouldShowMerchantMark(original, classifications.get(original)!, true)
       ? [original.merchantId]
       : [],
   );
   const merchantNames = displayedRows.flatMap(({ original }) => {
     const name = merchantLogoName(original);
     return name &&
-      shouldShowMerchantMark(original, classifications.get(original)!)
+      shouldShowMerchantMark(original, classifications.get(original)!, true)
       ? [name]
       : [];
   });
   const bookingIds = displayedRows.flatMap(({ original }) => {
     const id = merchantLogoBookingId(original);
     return id &&
-      shouldShowMerchantMark(original, classifications.get(original)!)
+      shouldShowMerchantMark(original, classifications.get(original)!, true)
       ? [id]
       : [];
   });

@@ -124,7 +124,8 @@ it.each([
   await waitFor(() => expect(view.read().openReviewCount).toBe(0));
   const saved = view.read().state;
   const renamed = actualBookings(saved).find((row) => statementFingerprint(row) === statementFingerprint(original))!;
-  expect(renamed).toMatchObject({ ...original, id: renamed?.id, merchantAlias: "Meine Versicherung" });
+  expect(renamed).toMatchObject({ ...original, description: "SEPA-Lastschrift TEST4711",
+    rawDescription: original.description, id: renamed?.id, merchantAlias: "Meine Versicherung" });
   expect(statementFingerprint(renamed)).toBe(statementFingerprint(original));
   expect(actualBookings(saved)).toHaveLength(2);
   expect(saved.financeRows.find((row) => row.id === "insurance-plan")!.values["2026-10"]).toBe(accept ? 65 : 63.25);

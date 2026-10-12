@@ -8,6 +8,8 @@ import { createSeed } from "@/lib/seed";
 import { prepareStatementImport } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
 import { applyMerchantRules, merchantAliasSourceKey } from "@/lib/import/merchant-rules";
+import { cleanBookingText } from "@/lib/import/bank-description";
+import { recoverMerchant } from "@/lib/import/merchant-description";
 import type { AppState, Transaction } from "@/lib/types";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
@@ -40,7 +42,7 @@ function mount(booking = original, receiptBacked = false) {
   const view = render(<FinanceProvider initialState={state}><Harness /></FinanceProvider>);
   fireEvent.change(screen.getByLabelText("Monat filtern"), { target: { value: "" } });
   const open = () => {
-    fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${booking.description}` }));
+    fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${recoverMerchant(booking).description}` }));
     return within(screen.getByRole("dialog", { name: "Zuordnung ändern" }));
   };
   const savedBooking = () => receiptBacked
@@ -69,15 +71,15 @@ it.each([false, true])("confirms an alias and learns future outgoing assignments
   const before = view.read().state;
   const dialog = view.open();
   expect(dialog.queryByRole("textbox", { name: "Händlername" })).toBeNull();
-  expect(dialog.getByText(original.description)).toBeTruthy();
+  expect(dialog.getByText(cleanBookingText(original.description))).toBeTruthy();
   editName(dialog, "  Hausverwaltung  ");
   fireEvent.click(dialog.getByRole("checkbox", { name: "Als Fixkosten markieren" }));
   fireEvent.change(dialog.getByLabelText("Kategorie"), { target: { value: "Miete" } });
   expect(view.read().state).toBe(before);
-  expect(dialog.getByText(original.description)).toBeTruthy();
+  expect(dialog.getByText(cleanBookingText(original.description))).toBeTruthy();
   await confirm(dialog);
   expect(view.savedBooking()).toMatchObject({
-    ...original, merchantAlias: "Hausverwaltung", category: "Miete",
+    ...original, description: "Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt", merchantAlias: "Hausverwaltung", category: "Miete",
     manualCategory: true, categoryOverride: true, reviewed: true, fixedCost: true, includeInPlan: false,
   });
   expect(statementFingerprint(view.savedBooking())).toBe(statementFingerprint(original));
@@ -104,11 +106,11 @@ it.each([false, true])("confirms an alias and learns future outgoing assignments
   }], loaded.read().state);
   expect(prepared.automatic).toHaveLength(1);
   expect(prepared.automatic[0]).toMatchObject({
-    ...future, merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: true, includeInPlan: false,
+    ...future, description: "Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt", merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: true, includeInPlan: false,
   });
   act(() => loaded.read().appendStatements(prepared.automatic, prepared.duplicates, "future-import", [], prepared.metadata));
   expect(loaded.read().state.transactions.find((row) => row.id === future.id)).toMatchObject({
-    ...future, merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: true, includeInPlan: false,
+    ...future, description: "Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt", merchantAlias: "Hausverwaltung", category: "Miete", fixedCost: true, includeInPlan: false,
   });
   expect(applyMerchantRules(loaded.read().state, [{ ...future, id: "credit", amount: 3 }])[0].merchantAlias).toBeUndefined();
 });
@@ -133,7 +135,7 @@ it("rejects an empty alias and discards unconfirmed edits when cancelled", async
   expect(view.read().state).toBe(before);
   const reopened = view.open();
   expect(reopened.queryByRole("textbox", { name: "Händlername" })).toBeNull();
-  expect(reopened.getByText(original.description)).toBeTruthy();
+  expect(reopened.getByText(cleanBookingText(original.description))).toBeTruthy();
   expect(reopened.getByLabelText<HTMLSelectElement>("Kategorie").value).toBe(before.transactions[0].category);
 });
 
@@ -144,7 +146,8 @@ it.each([false, true])("does not create an alias when the name was not changed (
   fireEvent.change(dialog.getByLabelText("Kategorie"), { target: { value: "Shopping" } });
   await confirm(dialog);
   expect(view.savedBooking().merchantAlias).toBeUndefined();
-  expect(view.savedBooking().description).toBe(original.description);
+  expect(view.savedBooking().description).toBe("Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt");
+  expect(view.savedBooking().rawDescription).toBe(original.rawDescription);
   expect(view.read().state.merchantRules?.every((rule) => rule.merchantAlias === undefined)).toBe(true);
 });
 
@@ -153,7 +156,7 @@ it("retains an existing alias during category-only changes and remembers a subse
   const view = mount(booking);
   const first = view.open();
   expect(first.getByText("Hausverwaltung")).toBeTruthy();
-  expect(first.getByText(original.description)).toBeTruthy();
+  expect(first.getByText(cleanBookingText(original.description))).toBeTruthy();
   fireEvent.change(first.getByLabelText("Kategorie"), { target: { value: "Miete" } });
   await confirm(first);
   expect(view.savedBooking().merchantAlias).toBe("Hausverwaltung");
@@ -167,7 +170,7 @@ it("retains an existing alias during category-only changes and remembers a subse
   expect(input.value).toBe("Wohnservice Neu");
   await confirm(third);
   expect(view.savedBooking()).toMatchObject({
-    ...original, merchantAlias: "Wohnservice Neu", category: "Shopping", fixedCost: false,
+    ...original, description: "Sonstiges Empfaenger: Musterstrasse 15 9020 Klagenfurt", merchantAlias: "Wohnservice Neu", category: "Shopping", fixedCost: false,
   });
   expect(statementFingerprint(view.savedBooking())).toBe(statementFingerprint(original));
   expect(view.read().state.merchantRules).toContainEqual({

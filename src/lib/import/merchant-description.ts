@@ -1,4 +1,5 @@
 import type { Transaction } from "@/lib/types";
+import { cleanBookingText, stripBankMetadata } from "./bank-description";
 
 type MerchantSource = Pick<Transaction, "description"> & Partial<Pick<Transaction, "rawDescription" | "rawDetails">>;
 const clean = (text: string) => text.normalize("NFKC").replace(/\s+/g, " ").trim();
@@ -21,7 +22,7 @@ const leadingLabel = new RegExp(`^(?:verwendungszweck(?:/text)?|zahlungsreferenz
 // Strip only payment metadata. Never use a timestamp, reference, IBAN or
 // currency-only cell as a merchant, nor fabricate a merchant from a POS amount.
 export function merchantText(text: string): string {
-  const labeled = text.replace(leadingLabel, "");
+  const labeled = cleanBookingText(text).replace(leadingLabel, "");
   const value = clean(labeled
     .replace(/\bterminal[-\s]*(?:id|nr|nummer)\.?\s*:?\s*[A-Z\d*-]+/gi, " ")
     .replace(/\b(?:kartenfolge(?:[-\s]*(?:nr|nummer)\.?)?|karten(?:nummer|[-\s]*nr\.?)|terminal(?:[-\s]*(?:id|nr)\.?)?)\s*:?\s*[\d*X-]+/gi, " ")
@@ -49,7 +50,7 @@ export function namedMerchantTexts(row: MerchantSource): string[] {
     .filter(Boolean);
 }
 export function merchantCandidates(row: MerchantSource): string[] {
-  const sources = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""];
+  const sources = [row.description, ...(row.rawDetails ?? []), row.rawDescription ?? ""].map(stripBankMetadata);
   const extract = (pattern: RegExp) => sources.map((text) => pattern.exec(text)?.[1])
     .filter((text): text is string => !!text).map(merchantText).filter(Boolean);
   // Explicit merchant fields outrank purpose/reference text, which may be only payment metadata.
@@ -65,12 +66,22 @@ export function ambiguousMerchant(row: MerchantSource): boolean {
 }
 
 export function recoverMerchant<T extends MerchantSource>(row: T): T {
-  if (!recoverable(row)) return row;
-  const unique = merchantCandidates(row);
-  if (unique.length !== 1) return row;
+  const cleaned = stripBankMetadata(row.description);
+  const sanitized = cleaned && cleaned !== row.description
+    ? { ...row, description: cleaned, rawDescription: row.rawDescription ?? row.description }
+    : row;
+  if (!recoverable(row) && cleaned === row.description) return row;
+  if (!recoverable(sanitized) && cleaned) return sanitized;
+  const unique = merchantCandidates(sanitized);
+  if (unique.length !== 1) return sanitized;
   const description = /\bmartin\s+auer\b/i.test(unique[0]) ? "Martin Auer" : unique[0];
   if (!description || description === row.description) return row;
   return { ...row, description, rawDescription: row.rawDescription ?? row.description };
+}
+
+export function bookingDescription(row: MerchantSource & { merchantAlias?: string }): string {
+  return cleanBookingText(row.merchantAlias ?? recoverMerchant(row).description) ||
+    "Verwendungszweck fehlt";
 }
 
 export function merchantKeyText(description: string): string {

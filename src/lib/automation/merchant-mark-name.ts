@@ -30,9 +30,8 @@ export function merchantLogoBookingId(
   >,
 ) {
   if (
-    booking.merchantId ||
-    booking.merchantAlias?.trim() ||
-    booking.merchantNameConfirmed
+    booking.merchantNameConfirmed ||
+    (!booking.merchantId && booking.merchantAlias?.trim())
   )
     return null;
   return merchantBookingIdSchema.safeParse(booking.id).success

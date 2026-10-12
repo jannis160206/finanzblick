@@ -1,6 +1,7 @@
 import { classify } from "@/lib/calc";
 import { type AppState, type Transaction } from "@/lib/types";
-import { ambiguousMerchant, merchantKeyText, merchantText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
+import { ambiguousMerchant, hasTerminalText, merchantKeyText, merchantText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
+import { stripBankMetadata } from "./bank-description";
 import { payrollCategory } from "@/lib/payroll";
 import { canonicalCategory } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
@@ -11,9 +12,17 @@ import { mergeConfirmedMerchantChoices } from "./merchant-choice";
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
 export function merchantRuleKey(
-  row: Pick<Transaction, "bank" | "description"> & Partial<Pick<Transaction, "merchantAlias">>,
+  row: Pick<Transaction, "bank" | "description"> & Partial<Pick<Transaction, "merchantAlias" | "rawDescription">>,
 ) {
-  const text = merchantKeyText(row.merchantAlias ?? recoverMerchant(row).description);
+  const original = row.rawDescription ?? row.description;
+  // Generic bank descriptors still need recipient/mandate identity for learning,
+  // even though those private identifiers no longer appear in booking names.
+  const bankIdentity = !row.merchantAlias && stripBankMetadata(original) !== original &&
+    !hasTerminalText(original) &&
+    !/\b(?:verwendungszweck(?:\/text)?|zahlungsreferenz|h(?:ä|ae|a)ndler(?:[\s-]*name)?|merchant(?:[\s-]*name)?)\s*:/i.test(original);
+  const text = bankIdentity
+    ? original.normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("de-AT")
+    : merchantKeyText(row.merchantAlias ?? recoverMerchant(row).description);
   const mandate = /mandat(?:sreferenz)?:\s*([^,;\s]+)/i.exec(text)?.[1];
   const merchant = mandate
     ? `mandat:${mandate}`

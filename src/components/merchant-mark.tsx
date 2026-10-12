@@ -97,7 +97,6 @@ export function MerchantMark({
 }) {
   const marks = useMerchantMarks();
   const alias = booking.merchantAlias?.trim();
-  if (!shouldShowMerchantMark(booking, classification)) return null;
 
   const fallback = alias ? initials(alias) : "?";
   const markClassName = cn(
@@ -106,17 +105,31 @@ export function MerchantMark({
   );
   const name = merchantLogoName(booking);
   const bookingId = merchantLogoBookingId(booking);
-  const logo = booking.merchantId
-    ? marks !== null
-      ? marks.get(booking.merchantId)
-      : booking.merchantLogo === true
-        ? { merchantId: booking.merchantId, version: undefined }
-        : null
-    : name && marks !== null
-      ? marks.get(merchantNameMarkKey(name))
-      : bookingId && marks !== null
-        ? marks.get(merchantBookingMarkKey(bookingId))
-        : null;
+  const bookingLogo =
+    bookingId && marks !== null
+      ? marks.get(merchantBookingMarkKey(bookingId))
+      : null;
+  const logo = bookingLogo?.merchantId.startsWith("private-")
+    ? bookingLogo
+    : booking.merchantId
+      ? marks !== null
+        ? marks.get(booking.merchantId)
+        : booking.merchantLogo === true
+          ? { merchantId: booking.merchantId, version: undefined }
+          : null
+      : name && marks !== null
+        ? marks.get(merchantNameMarkKey(name))
+        : bookingId && marks !== null
+          ? bookingLogo
+          : null;
+  if (
+    !shouldShowMerchantMark(
+      booking,
+      classification,
+      logo?.merchantId.startsWith("private-"),
+    )
+  )
+    return null;
   return logo ? (
     <LocalMerchantLogo
       key={`${logo.merchantId}:${logo.version ?? ""}`}

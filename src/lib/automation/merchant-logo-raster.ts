@@ -6,6 +6,7 @@ import sharp from "sharp";
 
 export const MAX_LOGO_INPUT = 2 * 1024 * 1024;
 export const MAX_LOGO_PIXELS = 4_000_000;
+export const MAX_LOCAL_LOGO_PIXELS = 20_000_000;
 export const MAX_LOGO_STORED = 256 * 1024;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 export const logoFilePattern = /^[a-f0-9]{64}\.png$/;
@@ -130,13 +131,34 @@ export function logoRasterMime(bytes: Buffer): string | null {
 
 export async function normalizeLogoRaster(
   bytes: Buffer,
-  options: { mime?: string; commonsThumbnail?: boolean } = {},
+  options: {
+    mime?: string;
+    commonsThumbnail?: boolean;
+    suppliedLocalFile?: boolean;
+  } = {},
 ): Promise<Buffer | null> {
   if (!bytes.length || bytes.length > MAX_LOGO_INPUT) return null;
-  const mime = logoRasterMime(bytes);
+  const fileTypeSize = bytes.length >= 16 ? bytes.readUInt32BE(0) : 0;
+  const avif =
+    options.suppliedLocalFile &&
+    bytes.toString("ascii", 4, 8) === "ftyp" &&
+    fileTypeSize >= 16 &&
+    fileTypeSize <= 256 &&
+    fileTypeSize <= bytes.length &&
+    [
+      bytes.toString("ascii", 8, 12),
+      ...Array.from(
+        { length: Math.floor((fileTypeSize - 16) / 4) },
+        (_, index) => bytes.toString("ascii", 16 + index * 4, 20 + index * 4),
+      ),
+    ].some((brand) => brand === "avif" || brand === "avis");
+  const mime = logoRasterMime(bytes) ?? (avif ? "image/avif" : null);
   if (!mime || (options.mime && mime !== options.mime)) return null;
+  const pixelLimit = options.suppliedLocalFile
+    ? MAX_LOCAL_LOGO_PIXELS
+    : MAX_LOGO_PIXELS;
   const image = sharp(bytes, {
-    limitInputPixels: MAX_LOGO_PIXELS,
+    limitInputPixels: pixelLimit,
     sequentialRead: true,
     failOn: "warning",
   }).timeout({ seconds: 5 });
@@ -145,14 +167,20 @@ export async function normalizeLogoRaster(
     if (
       !info.width ||
       !info.height ||
-      info.width * info.height > MAX_LOGO_PIXELS ||
-      !["png", "jpeg", "webp"].includes(info.format ?? "") ||
+      info.width * info.height > pixelLimit ||
+      !(
+        ["png", "jpeg", "webp"].includes(info.format ?? "") ||
+        (mime === "image/avif" && info.format === "heif")
+      ) ||
       (info.pages ?? 1) !== 1 ||
       (options.commonsThumbnail && (info.width > 512 || info.height > 512))
     )
       return null;
-    const png = await image
-      .rotate()
+    const oriented = image.rotate();
+    // Trim only supplied raster padding, never crop a remote licensed original.
+    if (options.suppliedLocalFile)
+      oriented.trim({ threshold: 24, lineArt: true });
+    const png = await oriented
       .resize(128, 128, { fit: "inside", withoutEnlargement: true })
       .png()
       .toBuffer();
@@ -162,7 +190,7 @@ export async function normalizeLogoRaster(
   } catch (error) {
     if (
       !(error instanceof Error) ||
-      !/^(?:Input buffer (?:has corrupt header|contains unsupported image (?:format|type))|(?:Input image|Image) exceeds pixel limit|(?:png|jpeg|webp)load(?:_buffer)?:|Vips(?:Jpeg|Png|Webp):|timeout:)/i.test(
+      !/^(?:Input buffer (?:has corrupt header|contains unsupported image (?:format|type))|(?:Input image|Image) exceeds pixel limit|(?:png|jpeg|webp|heif)load(?:_buffer)?:|Vips(?:Jpeg|Png|Webp):|timeout:)/i.test(
         error.message,
       )
     )

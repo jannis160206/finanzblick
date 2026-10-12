@@ -65,7 +65,11 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
     expect(
       db.prepare("SELECT count(*) AS count FROM automation_migrations").get()
         ?.count,
-    ).toBe(8);
+    ).toBe(9);
+    expect(
+      db.prepare("SELECT count(*) AS count FROM merchant_authorized_logo_names")
+        .get()?.count,
+    ).toBe(0);
     expect(
       db
         .prepare(

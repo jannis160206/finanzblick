@@ -11,6 +11,7 @@ import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { parseStatementAmount } from "@/lib/import/statements";
+import { bookingDescription } from "@/lib/import/merchant-description";
 import { isSharedHoliday, personalAmount, selectSharedBookings, type AccountedTransaction, type HolidayReceivable } from "@/lib/shared-holiday";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 
@@ -18,7 +19,7 @@ function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; on
   return <ul className="divide-y">
     {items.map((item) => <li key={item.bookingId} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
       <div className="min-w-0 w-full">
-        <p className="truncate font-medium" title={item.description}>{item.description}</p>
+        <p className="truncate font-medium" title={bookingDescription(item)}>{bookingDescription(item)}</p>
         <p className="text-muted-foreground">{dateLabel(item.date)} · Gesamt {currency(item.fullAmount)} · Meine Hälfte {currency(item.ownSpend)}</p>
       </div>
       <span className="text-primary">Offen</span>
@@ -50,7 +51,7 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
         <DialogDescription>Es zählt nur noch die Hälfte.</DialogDescription>
       </DialogHeader>
       <DialogBody className="min-w-0 space-y-2 text-sm">
-        <p className="truncate font-medium" title={booking.description}>{booking.merchantAlias ?? booking.description}</p>
+        <p className="truncate font-medium" title={bookingDescription(booking)}>{bookingDescription(booking)}</p>
         <p className="text-muted-foreground">{dateLabel(booking.date)} · Gesamt {currency(Math.abs(booking.amount))}</p>
         <p>Meine Hälfte: {currency(Math.abs(personalAmount({ ...booking, sharedWithRaphael: true })))}</p>
         {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
@@ -130,7 +131,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
           {filtered.slice(0, limit).map((row) => <label key={row.id} className="flex cursor-pointer items-center gap-3 border-b p-3 text-sm last:border-b-0">
             <input type="checkbox" className="accent-primary" aria-label={`Teilen: ${row.description} ${row.date}`}
               checked={selected.includes(row.id)} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, row.id] : ids.filter((id) => id !== row.id))} />
-            <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={row.description}>{row.merchantAlias ?? row.description}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
+            <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={bookingDescription(row)}>{bookingDescription(row)}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
             <span className="shrink-0 text-right">
               <span className="block text-[10px] text-muted-foreground">Gesamt {currency(Math.abs(row.amount))}</span>
               {selected.includes(row.id) && <span className="block font-mono text-primary">Meine Hälfte (50 %)<br />{currency(Math.abs(personalAmount({ ...row, sharedWithRaphael: true })))}</span>}

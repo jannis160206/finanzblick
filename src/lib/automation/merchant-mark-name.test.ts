@@ -7,17 +7,19 @@ import {
 } from "./merchant-mark-name";
 
 describe("display-only merchant names", () => {
-  it("uses a bounded booking reference only when no identity or confirmed name exists", () => {
+  it("uses bounded references for legacy rows and unconfirmed IDs, protecting confirmed names", () => {
     expect(merchantLogoBookingId({ id: "legacy" })).toBe("legacy");
     expect(merchantBookingMarkKey("legacy")).toBe("booking:legacy");
     for (const row of [
       { id: "legacy", merchantAlias: "Mein Händler" },
-      { id: "legacy", merchantId: "old-id" },
       { id: "legacy", merchantNameConfirmed: true },
       { id: "x".repeat(2001) },
       { id: "private\nid" },
     ])
       expect(merchantLogoBookingId(row)).toBeNull();
+    expect(merchantLogoBookingId({ id: "legacy", merchantId: "old-id" })).toBe(
+      "legacy",
+    );
   });
   it("uses an existing alias, including the legacy subscription annotation", () => {
     expect(merchantLogoName({ merchantAlias: "Audi | Abo" })).toBe("Audi");

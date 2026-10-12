@@ -810,6 +810,8 @@ it.each([false, true])(
           { merchantName: "Mein Händler", logo: null },
         ],
         bookingMarks: [
+          { bookingId: "merchant-mark", logo: null },
+          { bookingId: "repeat", logo: null },
           {
             bookingId: "legacy-locked",
             logo: { merchantId: "muller-licensed", version },
@@ -902,7 +904,7 @@ it.each([false, true])(
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       merchantIds: ["muller"],
       merchantNames: ["Audi", "Mein Händler"],
-      bookingIds: ["legacy-locked"],
+      bookingIds: ["legacy-locked", "merchant-mark", "repeat"],
     });
     for (const image of ledger.querySelectorAll("img")) {
       const audi = image.getAttribute("src")?.includes("/audi/");
@@ -948,14 +950,16 @@ it.each([false, true])(
 
 it("loads only the visible page and reuses the batch when returning to a visited page", async () => {
   const fetch = vi.fn().mockImplementation(async (_url, options) => {
-    const { merchantIds } = JSON.parse(options.body) as {
+    const { merchantIds, bookingIds = [] } = JSON.parse(options.body) as {
       merchantIds: string[];
+      bookingIds?: string[];
     };
     return Response.json({
       marks: merchantIds.map((merchantId) => ({
         merchantId,
         logo: { merchantId, version },
       })),
+      bookingMarks: bookingIds.map((bookingId) => ({ bookingId, logo: null })),
     });
   });
   vi.stubGlobal("fetch", fetch);
@@ -992,6 +996,7 @@ it("loads only the visible page and reuses the batch when returning to a visited
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
     merchantIds: ["muller"],
+    bookingIds: Array.from({ length: 25 }, (_, i) => `booking-${i}`).sort(),
   });
   fireEvent.click(screen.getByRole("button", { name: "Nächste Seite" }));
   await waitFor(() =>
@@ -1002,6 +1007,7 @@ it("loads only the visible page and reuses the batch when returning to a visited
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
     merchantIds: ["next-page"],
+    bookingIds: ["booking-25"],
   });
   fireEvent.click(screen.getByRole("button", { name: "Vorherige Seite" }));
   expect(container.querySelectorAll("img")).toHaveLength(25);
