@@ -34,6 +34,8 @@ import {
   isSpecificMerchantKey,
   rememberMerchants,
   storedMerchantKey,
+  applyMerchantNameRules,
+  rememberMerchantRename,
 } from "./merchant-rules";
 import { recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 import { payrollCategory } from "@/lib/payroll";
@@ -114,6 +116,7 @@ export function openReviewCount(items: ReviewItem[]): number {
 }
 
 export function repairMerchantBookings(state: AppState, candidates: Transaction[] = []): AppState {
+  state = applyMerchantNameRules(state);
   if (state.merchantRules) state = { ...state, merchantRules: state.merchantRules.map((rule) =>
     !rule.identityOnly && isNamedTransfer({ description: rule.key.slice(rule.key.indexOf("|") + 1), merchantAlias: rule.merchantAlias })
       ? { ...rule, category: "Transfer", ...(rule.fixedCost !== undefined ? { fixedCost: false } : {}) } : rule) };
@@ -640,6 +643,16 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  const renames = [...rows, ...decisions.flatMap(({ change }) => change.bookings)]
+    .filter((row) => row.merchantNameConfirmed && row.merchantAlias)
+    .map((row) => ({
+      source: state.transactions.find((item) => item.id === row.id) ??
+        state.fixedReceipts?.find((item) => item.booking?.id === row.id)?.booking ??
+        state.reviewQueue?.flatMap((item) => item.kind === "booking" ? [item.draft] : item.change.bookings)
+          .find((item) => item.id === row.id) ?? { ...row, merchantAlias: undefined },
+      merchantAlias: row.merchantAlias!,
+    }))
+    .filter(({ source, merchantAlias }) => source.merchantAlias !== merchantAlias);
   const previousQueue = state.reviewQueue ?? [];
   if (metadata.resolvedAmexScreenshotIssues?.length && state.reviewQueue) {
     const resolved = new Set(metadata.resolvedAmexScreenshotIssues);
@@ -869,7 +882,8 @@ export function commitStatementImport(
   ));
   return {
     ...appended,
-    state: {
+    state: renames.reduce<AppState>((current, { source, merchantAlias }) =>
+      rememberMerchantRename(current, source, merchantAlias), {
       ...merged,
       ...(pending.length || state.reviewQueue ? { reviewQueue: pending } : {}),
       ...(metadata.issues !== undefined || state.importStatus
@@ -892,7 +906,7 @@ export function commitStatementImport(
             },
           }
         : {}),
-    },
+    }),
     duplicates: appended.duplicates + split.duplicates,
     changes: split.changes,
   };

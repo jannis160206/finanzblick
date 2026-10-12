@@ -13,11 +13,14 @@ export function hasMerchantRefundEvidence(row: Transaction): boolean {
   );
 }
 
-export function isMerchantTransfer(row: Transaction): boolean {
+export function isMerchantTransfer(
+  row: Transaction,
+  classification?: { isTransfer: boolean },
+): boolean {
   const operation = bankOperation(row);
   if (operation?.kind === "fee" || operation?.kind === "interest") return false;
   if (operation?.kind === "internal-transfer" || operation?.kind === "external-transfer") return true;
-  if (classify(row).isTransfer) return true;
+  if ((classification ?? classify(row)).isTransfer) return true;
   if (row.amount > 0 && hasMerchantRefundEvidence(row)) return false;
   return (
     /\b(?:konto(?:[uü]|ue)berweisung|sepa[-\s]*(?:[uü]|ue)berweisung|bank[-\s]*transfer|(?:[uü]|ue)berweisung\s+(?:an|von))\b/i.test(

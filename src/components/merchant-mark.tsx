@@ -12,6 +12,7 @@ import {
 export { shouldShowMerchantMark } from "@/lib/merchant-mark-policy";
 import type { Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { isAtmBooking } from "@/lib/atm-logo";
 import {
   merchantLogoName,
   merchantNameMarkKey,
@@ -109,19 +110,21 @@ export function MerchantMark({
     bookingId && marks !== null
       ? marks.get(merchantBookingMarkKey(bookingId))
       : null;
-  const logo = bookingLogo?.merchantId.startsWith("private-")
+  const logo = isAtmBooking(booking)
     ? bookingLogo
-    : booking.merchantId
-      ? marks !== null
-        ? marks.get(booking.merchantId)
-        : booking.merchantLogo === true
-          ? { merchantId: booking.merchantId, version: undefined }
-          : null
-      : name && marks !== null
-        ? marks.get(merchantNameMarkKey(name))
-        : bookingId && marks !== null
-          ? bookingLogo
-          : null;
+    : bookingLogo?.merchantId.startsWith("private-")
+      ? bookingLogo
+      : booking.merchantId
+        ? marks !== null
+          ? marks.get(booking.merchantId)
+          : booking.merchantLogo === true
+            ? { merchantId: booking.merchantId, version: undefined }
+            : null
+        : name && marks !== null
+          ? marks.get(merchantNameMarkKey(name))
+          : bookingId && marks !== null
+            ? bookingLogo
+            : null;
   if (
     !shouldShowMerchantMark(
       booking,

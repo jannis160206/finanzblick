@@ -1,5 +1,6 @@
 import type { Transaction } from "@/lib/types";
 import { merchantBookingIdSchema } from "./merchant-presentation-schema";
+import { isAtmBooking } from "@/lib/atm-logo";
 
 export const merchantNameMarkKey = (name: string) => `name:${name}`;
 
@@ -27,11 +28,13 @@ export function merchantLogoBookingId(
   booking: Pick<
     Transaction,
     "id" | "merchantId" | "merchantAlias" | "merchantNameConfirmed"
-  >,
+  > &
+    Partial<Pick<Transaction, "description" | "rawDescription" | "rawDetails">>,
 ) {
   if (
-    booking.merchantNameConfirmed ||
-    (!booking.merchantId && booking.merchantAlias?.trim())
+    !isAtmBooking(booking) &&
+    (booking.merchantNameConfirmed ||
+      (!booking.merchantId && booking.merchantAlias?.trim()))
   )
     return null;
   return merchantBookingIdSchema.safeParse(booking.id).success

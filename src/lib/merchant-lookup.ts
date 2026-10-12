@@ -1,6 +1,6 @@
 import { actualBookings, classify, knownMerchantName, merchantName } from "@/lib/calc";
 import { ambiguousMerchant, hasTerminalText, merchantText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
-import { isSpecificMerchantKey, merchantRuleKey, rememberMerchants } from "@/lib/import/merchant-rules";
+import { isSpecificMerchantKey, merchantRuleKey, rememberMerchantRename, rememberMerchants } from "@/lib/import/merchant-rules";
 import { bookingReviewReason } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
 import { merchantLookupQuerySchema, merchantLookupResultSchema, type MerchantLookupResult } from "@/lib/merchant-lookup-schema";
@@ -81,5 +81,9 @@ export function confirmMerchantAlias(state: AppState, selected: Transaction, res
       ? { ...item, change: { ...item.change, bookings: item.change.bookings.map(apply) } }
       : { ...item, draft: apply(item.draft) }) } : {}),
   };
-  return rememberMerchants(updated, [{ ...current, ...merchantAliasAssignment(current, alias) }]);
+  return rememberMerchantRename(
+    rememberMerchants(updated, [{ ...current, ...merchantAliasAssignment(current, alias) }]),
+    current,
+    alias,
+  );
 }

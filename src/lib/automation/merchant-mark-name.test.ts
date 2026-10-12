@@ -28,6 +28,38 @@ describe("display-only merchant names", () => {
       "Audi | Volkswagen",
     );
   });
+  it.each([
+    { description: "BANKOMAT 00092293 Kartenfolge", merchantAlias: "Bargeld" },
+    { description: "Bankautomat", merchantNameConfirmed: true },
+    {
+      rawDescription: "Bankautomat 1234",
+      merchantId: "old-bank",
+      merchantAlias: "Old Bank",
+      merchantNameConfirmed: true,
+    },
+    {
+      rawDetails: ["Verwendungszweck: BANKOMAT 00092293"],
+      merchantAlias: "Mein ATM",
+      merchantNameConfirmed: true,
+    },
+  ])(
+    "requests ATM-specific artwork without weakening other confirmed names: %j",
+    (metadata) => {
+      expect(merchantLogoBookingId({ id: "atm", ...metadata })).toBe("atm");
+      expect(merchantLogoBookingId({ id: "bad\nid", ...metadata })).toBeNull();
+    },
+  );
+  it("does not bypass confirmed names for generic BANKOMAT/POS card-payment metadata", () => {
+    expect(
+      merchantLogoBookingId({
+        id: "shop",
+        description: "BILLA",
+        rawDescription: "BANKOMAT / POS Verwendungszweck: BILLA",
+        merchantAlias: "BILLA",
+        merchantNameConfirmed: true,
+      }),
+    ).toBeNull();
+  });
   it("never guesses from booking text or replaces an existing identity", () => {
     expect(merchantLogoName({})).toBeNull();
     expect(

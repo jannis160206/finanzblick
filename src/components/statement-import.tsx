@@ -91,8 +91,7 @@ const BookingReview = memo(function BookingReview({
   const classification = classify({
     ...draft, amount: draft.amount ?? 0, categoryOverride: true, manualCategory: true, includeInPlan: true, fixedCost: false,
   });
-  const canRememberName = draft.amount !== null && draft.amount < 0 && !classification.isTransfer &&
-    merchantAliasSourceKey(item.draft) !== undefined;
+  const canRememberName = merchantAliasSourceKey(item.draft) !== undefined;
   const canMarkFixed = draft.amount !== null && draft.amount < 0 &&
     !classification.isTransfer && !isIncomeCategory(classification.category);
   const candidate = {
@@ -107,7 +106,7 @@ const BookingReview = memo(function BookingReview({
   return (
     <section
       className="panel space-y-3 p-4"
-      aria-label={`Buchung prüfen: ${item.draft.description}`}
+      aria-label={`Buchung prüfen: ${bookingDescription(item.draft)}`}
     >
       <p id={feedbackId} className="text-xs text-muted-foreground break-words">
         {repairOcr ? screenshotReviewMessage(draft) : item.message}
@@ -150,7 +149,7 @@ const BookingReview = memo(function BookingReview({
           </div>
           {editingName && <p className="text-muted-foreground">
             {nameMissing ? "Bitte einen Händlernamen eingeben." : canRememberName
-              ? "Merkt Name, Kategorie und Fixkosten für Ausgänge dieses Händlers."
+              ? "Ändert den Namen aller passenden bisherigen und künftigen Buchungen."
               : "Unklarer Händlertext: Name gilt nur für diese Buchung."}
           </p>}
         </div>
@@ -245,7 +244,7 @@ function FixedReview({
     <section className="panel space-y-3 p-4" aria-label={`${item.change.category} prüfen`}>
       <p className="text-xs text-muted-foreground">{monthLabel(item.change.month)}</p>
       {item.change.bookings.map((booking, index) => (
-        <div key={booking.id} className="rounded-lg border p-3 text-sm" aria-label={`Erkannte Buchung: ${booking.description}`}>
+        <div key={booking.id} className="rounded-lg border p-3 text-sm" aria-label={`Erkannte Buchung: ${bookingDescription(booking)}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 flex-1 items-start gap-1">
               {names[booking.id] !== undefined ? (
@@ -272,12 +271,6 @@ function FixedReview({
             <span className="shrink-0 font-mono">{currency(booking.amount)}</span>
           </div>
           {!bookings[index].success && <p className="mt-1 text-xs text-destructive">Bitte einen Händlernamen mit 1–200 Zeichen eingeben.</p>}
-          {(booking.merchantAlias || names[booking.id] !== undefined) && (
-            <details className="mt-1 text-xs text-muted-foreground">
-              <summary>Originalbuchung</summary>
-              <p className="break-words">{bookingDescription({ ...booking, merchantAlias: undefined })}</p>
-            </details>
-          )}
           <p className="mt-1 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>
         </div>
       ))}

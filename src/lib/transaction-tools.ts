@@ -3,7 +3,7 @@ import { accountLabel } from "@/lib/accounts";
 import { actualBookings, classify } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
 import { statementFingerprint } from "@/lib/import/identity";
-import { rememberMerchants } from "@/lib/import/merchant-rules";
+import { rememberMerchantRename, rememberMerchants } from "@/lib/import/merchant-rules";
 import { merchantAliasAssignment } from "@/lib/merchant-identity";
 import {
   isSharedHoliday,
@@ -222,5 +222,8 @@ export function assignTransactions(
       : {}),
   };
   // FinanceProvider rebuilds the review queue, just as for the former pencil save.
-  return rememberMerchants(updated, [...learned.values()]);
+  const remembered = rememberMerchants(updated, [...learned.values()]);
+  return choice.merchantAlias !== undefined
+    ? rememberMerchantRename(remembered, targets[0], choice.merchantAlias)
+    : remembered;
 }

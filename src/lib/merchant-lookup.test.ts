@@ -59,7 +59,7 @@ describe("discreet merchant lookup", () => {
     expect(merchantLookupQuery({ ...original, description: "POS 3,50 AT D1 09.09. 11:53", rawDescription: undefined, rawDetails: [] })).toBeUndefined();
   });
 
-  it("writes a separate alias to the selected booking and open twins, never bank text or closed twins", () => {
+  it("writes a separate alias to selected, open and closed twins without changing bank text or closed categories", () => {
     const twin = { ...original, id: "twin", date: "2026-09-11" };
     const closed = { ...original, id: "closed", category: "Shopping" as const, reviewed: true, categoryOverride: true };
     const unrelated = { ...original, id: "unrelated", description: "Anderer Kiosk" };
@@ -68,7 +68,9 @@ describe("discreet merchant lookup", () => {
     const saved = confirmMerchantAlias(state, original, hit);
     expect(saved.transactions).toEqual([{ ...original, merchantAlias: hit.name, merchantNameConfirmed: true },
       { ...twin, merchantAlias: hit.name, merchantMatch: "rule", merchantNameConfirmed: undefined,
-        requires_manual_review: true }, closed, unrelated]);
+        requires_manual_review: true },
+      { ...closed, merchantAlias: hit.name, merchantNameConfirmed: undefined, merchantMatch: "rule" },
+      unrelated]);
     expect(state.transactions[0]).toBe(original);
     expect(statementFingerprint(saved.transactions[0])).toBe(statementFingerprint(original));
     expect(merchantRuleKey(saved.transactions[0])).toBe("raiffeisen|blumenatelier");

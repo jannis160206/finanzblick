@@ -360,9 +360,12 @@ describe("transaction assignments", () => {
       ]) {
         const displayed = actualBookings(state)[0];
         const before = structuredClone(state);
-        expect(assignTransactions(state, [displayed.id], choice)).toEqual(
-          previousSingleSave(state, displayed, choice),
-        );
+        const { merchantNameRules, ...saved } = assignTransactions(state, [displayed.id], choice);
+        expect(saved).toEqual(previousSingleSave(state, displayed, choice));
+        if (choice.merchantAlias)
+          expect(merchantNameRules).toContainEqual({
+            key: merchantRuleKey(displayed), merchantAlias: choice.merchantAlias,
+          });
         expect(state).toEqual(before);
       }
     },

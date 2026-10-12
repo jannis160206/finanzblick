@@ -8,6 +8,7 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { normalizeAccount } from "@/lib/accounts";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 import { mergeConfirmedMerchantChoices } from "./merchant-choice";
+import { merchantAliasAssignment } from "@/lib/merchant-identity";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -58,6 +59,123 @@ export function merchantAliasSourceKey(row: Parameters<typeof merchantRuleKey>[0
   // Normalization can leave just an amount after stripping generic POS words.
   return merchantText(source.description) && isSpecificMerchantKey(key) ? key : undefined;
 }
+
+type NameBooking = Parameters<typeof merchantRuleKey>[0] &
+  Partial<Pick<Transaction, "rawDetails" | "merchantId" | "merchantLogo" | "merchantMatch" | "merchantNameConfirmed">>;
+
+function merchantNameKey(key: string) {
+  const normalized = storedMerchantKey(key);
+  // Recipient and mandate identifiers are scoped to their bank, unlike the
+  // same named merchant paid through different accounts.
+  return /\b(?:iban|bic|mandat)\b/i.test(normalized)
+    ? normalized : normalized.slice(normalized.indexOf("|") + 1);
+}
+
+function merchantNameKeys(row: NameBooking) {
+  return [...new Set([
+    merchantAliasSourceKey(row),
+    row.merchantAlias ? merchantRuleKey(row) : undefined,
+  ].filter((key): key is string => !!key && isSpecificMerchantKey(key)))];
+}
+
+export function createMerchantNameApplier(state: AppState) {
+  if (!state.merchantNameRules?.length)
+    return <T extends NameBooking>(row: T): T => row;
+  const aliases = new Map<string, Set<string>>();
+  for (const rule of state.merchantNameRules ?? []) {
+    if (!isSpecificMerchantKey(rule.key)) continue;
+    const key = merchantNameKey(rule.key);
+    const names = aliases.get(key) ?? new Set<string>();
+    names.add(rule.merchantAlias);
+    aliases.set(key, names);
+  }
+  return <T extends NameBooking>(row: T): T => {
+    const names = new Set(merchantNameKeys(row).flatMap(
+      (key) => [...(aliases.get(merchantNameKey(key)) ?? [])],
+    ));
+    if (names.size !== 1) return row;
+    const merchantAlias = [...names][0];
+    return merchantAlias === row.merchantAlias ? row : {
+      ...row,
+      ...merchantAliasAssignment(row, merchantAlias),
+      merchantNameConfirmed: row.merchantNameConfirmed,
+      merchantMatch: row.merchantNameConfirmed ? undefined : "rule",
+    };
+  };
+}
+
+export function applyMerchantNameRules(state: AppState): AppState {
+  if (!state.merchantNameRules?.length) return state;
+  const apply = createMerchantNameApplier(state);
+  return {
+    ...state,
+    transactions: state.transactions.map(apply),
+    ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((receipt) =>
+      receipt.booking ? { ...receipt, booking: apply(receipt.booking) } : receipt,
+    ) } : {}),
+    ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.map((item) => item.kind === "booking"
+      ? { ...item, draft: apply(item.draft) }
+      : { ...item, change: { ...item.change, bookings: item.change.bookings.map(apply) } },
+    ) } : {}),
+  };
+}
+
+export function rememberMerchantRename(
+  state: AppState,
+  source: NameBooking,
+  merchantAlias: string,
+): AppState {
+  if (!merchantAliasSourceKey(source)) return state;
+  const keys = new Set(merchantNameKeys(source));
+  const links = new Map<string, Set<string>>();
+  const link = (rowKeys: string[]) => {
+    for (const key of rowKeys) {
+      const name = merchantNameKey(key);
+      const linked = links.get(name) ?? new Set<string>();
+      rowKeys.forEach((value) => linked.add(value));
+      links.set(name, linked);
+    }
+  };
+  for (const rule of state.merchantNameRules ?? []) {
+    if (!isSpecificMerchantKey(rule.key)) continue;
+    link([
+      storedMerchantKey(rule.key),
+      merchantRuleKey({
+        bank: rule.key.slice(0, rule.key.indexOf("|")),
+        description: rule.merchantAlias,
+      }),
+    ]);
+  }
+  for (const row of [
+    ...state.transactions,
+    ...(state.fixedReceipts ?? []).flatMap((receipt) => receipt.booking ? [receipt.booking] : []),
+    ...(state.reviewQueue ?? []).flatMap((item) => item.kind === "booking" ? [item.draft] : item.change.bookings),
+  ]) {
+    link(merchantNameKeys(row));
+  }
+  const visited = new Set<string>();
+  for (const key of keys) {
+    const name = merchantNameKey(key);
+    if (visited.has(name)) continue;
+    visited.add(name);
+    for (const linked of links.get(name) ?? []) keys.add(linked);
+  }
+  const identities = new Set([...keys].map(merchantNameKey));
+  const rules = new Map((state.merchantNameRules ?? []).map((rule) => [
+    storedMerchantKey(rule.key),
+    identities.has(merchantNameKey(rule.key)) ? { ...rule, merchantAlias } : rule,
+  ]));
+  for (const key of keys) rules.set(key, { key, merchantAlias });
+  return applyMerchantNameRules({
+    ...state,
+    merchantNameRules: [...rules.values()],
+    ...(state.merchantRules ? { merchantRules: state.merchantRules.map((rule) =>
+      identities.has(merchantNameKey(rule.key)) && rule.merchantAlias
+        ? { ...rule, merchantAlias } : rule,
+    ) } : {}),
+  });
+}
+
 type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
 export type MerchantChoice = Pick<Transaction, "category" | "fixedCost" | "merchantAlias"> & { identityOnly?: boolean };
 
@@ -209,6 +327,7 @@ export function applyMerchantRules(state: AppState, rows: Transaction[]) {
 // Build once per operation, including when repairing several legacy POS rows.
 // No cross-update cache: newly learned choices must take effect immediately.
 export function createMerchantRuleApplier(state: AppState, classifyBooking: ClassifyBooking = classify, applyFixedCost = false) {
+  const applyName = createMerchantNameApplier(state);
   // Inferring rules must not apply them to a discarded copy of the entire ledger.
   const remembered = merchantChoices(state.transactions, classifyBooking);
   const inferred = new Map<string, MerchantChoice | null>();
@@ -239,6 +358,7 @@ export function createMerchantRuleApplier(state: AppState, classifyBooking: Clas
   }
   for (const [key, choice] of explicit) rules.set(key, choice);
   return (source: Transaction): Transaction => {
+    source = applyName(source);
     if (source.is_locked) return source;
     if (source.merchantNameConfirmed) return source;
     let row = recoverMerchant(source);

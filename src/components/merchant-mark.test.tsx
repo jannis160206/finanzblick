@@ -256,6 +256,150 @@ it("prefers an explicitly supplied booking logo over an unconfirmed historical p
   expect(row).toEqual(before);
 });
 
+it.each([
+  { description: "BANKOMAT 00092293 Kartenfolge", merchantAlias: "Bargeld" },
+  {
+    description: "Bankautomat 00092293",
+    merchantAlias: "Revolut",
+    merchantId: "revolut",
+    merchantNameConfirmed: true,
+  },
+  {
+    description: "Bargeld",
+    rawDescription: "BANKOMAT 00092293 Kartenfolge",
+    merchantAlias: "Bargeld",
+    merchantNameConfirmed: true,
+  },
+  {
+    description: "Bargeld",
+    rawDetails: ["Bankautomat 00092293"],
+    merchantAlias: "Bargeld",
+    merchantNameConfirmed: true,
+  },
+])(
+  "uses booking-specific ATM artwork even for stored/confirmed names and transfer classifications: %j",
+  (metadata) => {
+    const row = {
+      ...booking,
+      ...metadata,
+      category: "Transfer" as const,
+      sourceCategory: "SEPA Überweisung",
+      is_locked: true,
+      manualCategory: true,
+    };
+    const before = structuredClone(row);
+    const version = "a".repeat(64);
+    vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+      new Map([
+        ["revolut", { merchantId: "private-revolut", version }],
+        ["name:Bargeld", { merchantId: "private-other", version }],
+        [`booking:${row.id}`, { merchantId: "private-raiffeisen", version }],
+      ]),
+    );
+    const { container } = render(mark(row));
+    expect(container.querySelector("img")!.getAttribute("src")).toBe(
+      `/api/merchants/private-raiffeisen/logo?v=${version}`,
+    );
+    expect(row).toEqual(before);
+  },
+);
+
+it.each(["BANKOMAT/POS", "BANKOMAT / POS"])(
+  "retains a confirmed shop's mark when raw metadata contains generic %s",
+  (terminal) => {
+    const row = {
+      ...booking,
+      description: "BILLA",
+      rawDescription: `${terminal} Verwendungszweck: BILLA`,
+      rawDetails: [`Buchungsart: ${terminal}`],
+      merchantAlias: "BILLA",
+      merchantId: "at-billa",
+      merchantNameConfirmed: true,
+      is_locked: true,
+      manualCategory: true,
+    };
+    const before = structuredClone(row);
+    const version = "a".repeat(64);
+    vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+      new Map([
+        ["at-billa", { merchantId: "private-billa", version }],
+        [`booking:${row.id}`, { merchantId: "private-raiffeisen", version }],
+      ]),
+    );
+    const { container } = render(mark(row));
+    expect(container.querySelector("img")!.getAttribute("src")).toBe(
+      `/api/merchants/private-billa/logo?v=${version}`,
+    );
+    expect(row).toEqual(before);
+  },
+);
+
+it("allows an explicit ATM operator's public logo instead of the stored private Raiffeisen alias", () => {
+  const row = {
+    ...booking,
+    description: "Bankautomat 00092293 Bank Austria",
+    category: "Transfer intern" as const,
+    merchantAlias: "Raiffeisen",
+    merchantId: "raiffeisen",
+    merchantNameConfirmed: true,
+  };
+  const version = "a".repeat(64);
+  vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+    new Map([
+      ["raiffeisen", { merchantId: "private-raiffeisen", version }],
+      [`booking:${row.id}`, { merchantId: "bank-austria", version }],
+    ]),
+  );
+  const { container } = render(mark(row));
+  expect(container.querySelector("img")!.getAttribute("src")).toBe(
+    `/api/merchants/bank-austria/logo?v=${version}`,
+  );
+  fireEvent.error(container.querySelector("img")!);
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByText("R")).toBeTruthy();
+});
+
+it.each([undefined, null])(
+  "keeps an honest fallback when an explicitly named ATM bank has no artwork (%s)",
+  (logo) => {
+    const row = {
+      ...booking,
+      description: "Bankautomat 00092293 Oberbank",
+      merchantAlias: "Raiffeisen",
+      merchantId: "raiffeisen",
+      merchantNameConfirmed: true,
+      merchantLogo: true,
+    };
+    const version = "a".repeat(64);
+    const marks = new Map<
+      string,
+      { merchantId: string; version: string } | null
+    >([
+      ["raiffeisen", { merchantId: "private-raiffeisen", version }],
+      ["name:Raiffeisen", { merchantId: "private-raiffeisen", version }],
+    ]);
+    if (logo === null) marks.set(`booking:${row.id}`, null);
+    vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(marks);
+    const { container } = render(mark(row));
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("R")).toBeTruthy();
+  },
+);
+
+it("does not attach stale stored ATM logos outside the account-scoped provider", () => {
+  const { container } = render(
+    mark({
+      ...booking,
+      description: "Bankautomat 92293",
+      merchantAlias: "Revolut",
+      merchantId: "revolut",
+      merchantLogo: true,
+    }),
+  );
+  expect(container.querySelector("img")).toBeNull();
+  expect(screen.getByText("R")).toBeTruthy();
+});
+
 it("shows income artwork only when an explicitly supplied private booking logo is available", () => {
   const row = { ...booking, category: "Gehalt" as const, amount: 1000 };
   vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
@@ -303,19 +447,27 @@ it.each([
   (patch) => {
     const row = { ...booking, ...patch };
     const version = "a".repeat(64);
-    const marks = vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
-      new Map([[`booking:${row.id}`, { merchantId: "private-issuer", version }]]),
-    );
+    const marks = vi
+      .spyOn(merchantMarks, "useMerchantMarks")
+      .mockReturnValue(
+        new Map([
+          [`booking:${row.id}`, { merchantId: "private-issuer", version }],
+        ]),
+      );
     const { container, rerender } = render(mark(row));
     expect(container.querySelector("img")!.getAttribute("src")).toBe(
       `/api/merchants/private-issuer/logo?v=${version}`,
     );
-    expect(container.querySelector("img")!.className).toContain("object-contain");
+    expect(container.querySelector("img")!.className).toContain(
+      "object-contain",
+    );
     marks.mockReturnValue(new Map());
     rerender(mark(row));
     expect(container.childElementCount).toBe(0);
     marks.mockReturnValue(
-      new Map([[`booking:${row.id}`, { merchantId: "public-issuer", version }]]),
+      new Map([
+        [`booking:${row.id}`, { merchantId: "public-issuer", version }],
+      ]),
     );
     rerender(mark(row));
     expect(container.childElementCount).toBe(0);

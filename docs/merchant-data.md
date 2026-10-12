@@ -26,8 +26,12 @@ Historical display and future matching use the same persisted associations.
 Missing files, ambiguous names and unmatched names retain existing fallbacks.
 Explicit private name bindings can also supply logos for bank fees, interest
 and salary purpose texts. These bindings affect artwork only; they do not
-reclassify a booking or infer an employer for unrelated income. Transfers remain
-without logos.
+reclassify a booking or infer an employer for unrelated income. Ordinary transfers
+remain without logos. BANKOMAT/Bankautomat bookings use the supplied Raiffeisen
+artwork unless the source text explicitly names another bank; that bank's
+available account-authorized artwork takes precedence. The account's own bank,
+card-sequence numbers and confirmed display aliases do not identify the operator.
+Unavailable or ambiguous explicit operators keep the neutral fallback.
 
 Only supplied local files allow up to 20 million input pixels (still at most
 2 MiB); remote image limits are unchanged. Uniform edge padding is trimmed and
@@ -35,6 +39,18 @@ the aspect ratio preserved inside 128×128 PNG storage and 32×32 `object-contai
 booking badges. Source folders `Logo`/`Logos` and private database assets remain
 excluded from Git. Do not imply a public licence from the user's private-use
 declaration.
+
+## Private booking-name changes
+
+An explicitly edited booking name updates matching historical entries, including
+locked/reviewed bookings, fixed receipts and pending drafts. The private
+`merchantNameRules` snapshot field keeps original source/name keys so subsequent
+imports and later renames use the same label. These name-only rules never replace
+another booking's category, amount, fixed-cost choice or source identity, and
+round-trip through JSON and Excel. The UI shows the chosen name, not the old name.
+Exact named merchants can match across banks; private recipient/mandate identities
+stay bank-scoped. Bare payment providers and unnamed terminals do not create
+blanket rename rules.
 
 ## Booking-derived public reference reviews
 

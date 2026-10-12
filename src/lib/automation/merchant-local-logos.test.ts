@@ -1,4 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -412,6 +413,414 @@ it("uses explicit supplied bindings for issuer fees, credits, bank interest and 
     null, null, null,
   ]);
   expect(accounts.getFinance(userId)).toEqual(before);
+});
+
+it("preserves shop artwork for generic BANKOMAT/POS card payments and recovered merchant descriptions", async () => {
+  await supplied("Raiffeisen.png");
+  await supplied("BILLA.png");
+  await importLogos();
+  store.upsertMerchants([
+    merchantSchema.parse({
+      id: "at-billa",
+      canonicalName: "BILLA",
+      aliases: [],
+      defaultCategory: "Lebensmittel",
+      regexPatterns: [],
+      region: "AT",
+      source: "local",
+      updatedAt: 1,
+    }),
+  ]);
+  const base = transactionSchema.parse({
+    id: "shop-card",
+    date: "2026-10-01",
+    bank: "Raiffeisen",
+    pocket: null,
+    description: "BANKOMAT/POS Verwendungszweck: BILLA",
+    amount: -12,
+    category: "Lebensmittel",
+    categoryOverride: true,
+    includeInPlan: true,
+  });
+  const rows = [
+    base,
+    {
+      ...base,
+      id: "spaced-shop",
+      description: "BANKOMAT / POS Verwendungszweck: BILLA",
+    },
+    {
+      ...base,
+      id: "recovered-shop",
+      description: "BILLA",
+      rawDescription: "BANKOMAT/POS Verwendungszweck: BILLA",
+    },
+    {
+      ...base,
+      id: "shop-details",
+      description: "BILLA",
+      rawDetails: ["Buchungsart: BANKOMAT / POS", "Verwendungszweck: BILLA"],
+    },
+    {
+      ...base,
+      id: "confirmed-shop",
+      description: "BILLA",
+      rawDescription: "BANKOMAT / POS Verwendungszweck: BILLA",
+      merchantAlias: "BILLA",
+      merchantId: "at-billa",
+      merchantNameConfirmed: true,
+      manualCategory: true,
+      is_locked: true,
+    },
+  ];
+  accounts.putFinance(userId, { ...blankTestState(), transactions: rows }, 0);
+  const before = accounts.getFinance(userId);
+  const billa = localLogoGrants(store, userId).get("billa")!;
+  const logo = { merchantId: billa.merchantId, version: billa.version };
+  const marks = await accountMerchantBookingPresentations(
+    store,
+    rows.map((row) => row.id),
+    userId,
+  );
+  expect(marks.slice(0, -1).map((mark) => mark.logo)).toEqual(
+    rows.slice(0, -1).map(() => logo),
+  );
+  expect(marks.at(-1)?.logo).toBeNull();
+  expect(
+    (
+      await accountMerchantPresentations(
+        store,
+        { merchantIds: ["at-billa"] },
+        userId,
+      )
+    )[0].logo,
+  ).toEqual(logo);
+  expect(accounts.getFinance(userId)).toEqual(before);
+});
+
+it("does not default an explicitly labelled unknown ATM operator to private Raiffeisen artwork", async () => {
+  await supplied("Raiffeisen.png");
+  await importLogos();
+  const descriptions = [
+    "BANKOMAT 00092293 Betreiber: Unbekannter Dienst",
+    "Bankautomat Operator: Unknown Cash Services",
+    "Bankautomat Bank: Unlisted Institution",
+    "Bankautomat Unlistedbank 00092293",
+    "BANKOMAT 00092293 Betreiber: Raiffeisen",
+    "BANKOMAT 00092293 Kartenfolge",
+  ];
+  const rows = descriptions.map((description, index) =>
+    transactionSchema.parse({
+      id: `operator-${index}`,
+      date: "2026-10-01",
+      bank: "Revolut",
+      pocket: null,
+      description,
+      amount: -100,
+      category: "Transfer",
+      merchantAlias: "Raiffeisen",
+      merchantNameConfirmed: true,
+      is_locked: true,
+      manualCategory: true,
+      includeInPlan: false,
+    }),
+  );
+  accounts.putFinance(userId, { ...blankTestState(), transactions: rows }, 0);
+  const before = accounts.getFinance(userId);
+  const marks = await accountMerchantBookingPresentations(
+    store,
+    rows.map((row) => row.id),
+    userId,
+  );
+  const grant = localLogoGrants(store, userId).get("raiffeisen")!;
+  expect(marks.slice(0, 4).map((mark) => mark.logo)).toEqual([
+    null,
+    null,
+    null,
+    null,
+  ]);
+  expect(marks.slice(4).map((mark) => mark.logo)).toEqual([
+    {
+      merchantId: grant.merchantId,
+      version: grant.version,
+    },
+    {
+      merchantId: grant.merchantId,
+      version: grant.version,
+    },
+  ]);
+  expect(accounts.getFinance(userId)).toEqual(before);
+});
+
+it("shows private Raiffeisen artwork for unnamed ATMs across banks, stored names and historic details without writing finance or associations", async () => {
+  await supplied("Raiffeisen.png");
+  await supplied("Revolut.png");
+  await importLogos();
+  const base = transactionSchema.parse({
+    id: "numeric-atm",
+    date: "2026-10-01",
+    bank: "Revolut",
+    pocket: null,
+    description: "(BANKOMAT 00092293 Kartenfolge)",
+    amount: -100,
+    category: "Transfer",
+    categoryOverride: true,
+    includeInPlan: false,
+    is_locked: true,
+    manualCategory: true,
+  });
+  const rows = [
+    base,
+    {
+      ...base,
+      id: "variant",
+      description: "Bankautomat: 00092293 / Kartenfolge 1",
+      bank: "Raiffeisen Giro",
+    },
+    { ...base, id: "manual-name", merchantAlias: "Bargeld" },
+    {
+      ...base,
+      id: "confirmed-name",
+      merchantAlias: "Revolut",
+      merchantId: "revolut",
+      merchantNameConfirmed: true,
+    },
+    {
+      ...base,
+      id: "raw-atm",
+      description: "Bargeld",
+      rawDescription: "BANKOMAT 00092293 Kartenfolge 1",
+    },
+    {
+      ...base,
+      id: "details-atm",
+      description: "Bargeld",
+      rawDetails: [
+        "Buchungstyp: Überweisung",
+        "Verwendungszweck: BANKOMAT 00092293 Kartenfolge",
+      ],
+      sourceCategory: "SEPA Überweisung",
+    },
+    {
+      ...base,
+      id: "ordinary-transfer",
+      description: "SEPA Überweisung an Raiffeisen",
+      merchantAlias: "Raiffeisen",
+      merchantId: "at-raiffeisen-bank-international",
+    },
+  ];
+  const finance = { ...blankTestState(), transactions: rows };
+  accounts.putFinance(userId, finance, 0);
+  accounts.putFinance("other-logo-account", finance, 0);
+  const before = accounts.getFinance(userId);
+  const namesBefore = localLogoGrants(store, userId);
+  const catalogueBefore = store.loadMerchants();
+  const marks = await accountMerchantBookingPresentations(
+    store,
+    rows.map((row) => row.id),
+    userId,
+  );
+  const raiffeisen = namesBefore.get("raiffeisen")!;
+  expect(marks.slice(0, -1).map((mark) => mark.logo)).toEqual(
+    rows.slice(0, -1).map(() => ({
+      merchantId: raiffeisen.merchantId,
+      version: raiffeisen.version,
+    })),
+  );
+  expect(marks.at(-1)?.logo).toBeNull();
+  expect(
+    (
+      await accountMerchantBookingPresentations(
+        store,
+        rows.map((row) => row.id),
+        "other-logo-account",
+      )
+    ).map((mark) => mark.logo),
+  ).toEqual(rows.map(() => null));
+  expect(accounts.getFinance(userId)).toEqual(before);
+  expect(accounts.getFinance("other-logo-account").state).toEqual(before.state);
+  expect(localLogoGrants(store, userId)).toEqual(namesBefore);
+  expect(store.loadMerchants()).toEqual(catalogueBefore);
+  await rm(
+    join(authorizedLogoDirectory(accounts.path, userId), raiffeisen.logo.file),
+  );
+  expect(
+    (
+      await accountMerchantBookingPresentations(store, ["numeric-atm"], userId)
+    )[0].logo,
+  ).toBeNull();
+});
+
+it("overrides ATM artwork only from explicit exact other-bank text, not account bank, confirmed names or card IDs", async () => {
+  const longBank = "The Very Long Community Bank";
+  for (const name of [
+    "Raiffeisen",
+    "BAWAG",
+    "Bank Austria",
+    "Sparkasse",
+    "Revolut",
+    longBank,
+  ])
+    await supplied(`${name}.png`);
+  await importLogos();
+  const base = transactionSchema.parse({
+    id: "bawag",
+    date: "2026-10-01",
+    bank: "Raiffeisen",
+    pocket: null,
+    description: "BANKOMAT BAWAG00092293 Kartenfolge 0001",
+    amount: -100,
+    category: "Transfer intern",
+    categoryOverride: true,
+    includeInPlan: false,
+    merchantAlias: "Raiffeisen",
+    merchantId: "at-raiffeisen-bank-international",
+    merchantNameConfirmed: true,
+  });
+  const rows = [
+    base,
+    {
+      ...base,
+      id: "bank-austria",
+      description: "Bankautomat UniCredit Bank Austria 00092293",
+      bank: "Revolut",
+    },
+    { ...base, id: "sparkasse", description: "Bankautomat 00092293 Sparkasse" },
+    { ...base, id: "revolut", description: "Bankautomat Revolut 00092293" },
+    {
+      ...base,
+      id: "historic-override",
+      description: "BANKOMAT 00092293",
+      rawDescription: "Raiffeisen BANKOMAT 00092293 BAWAG PSK",
+    },
+    {
+      ...base,
+      id: "details-override",
+      description: "Bankautomat 00092293",
+      rawDetails: ["Bankautomat: Bank Austria; Kartenfolge 1"],
+    },
+    {
+      ...base,
+      id: "long-bank",
+      description: `BANKOMAT 00092293 ${longBank} Kartenfolge 1`,
+    },
+    { ...base, id: "unavailable", description: "BANKOMAT 00092293 Oberbank" },
+    {
+      ...base,
+      id: "unknown",
+      description: "Bankautomat 00092293 Unknown Bank",
+    },
+    {
+      ...base,
+      id: "conflicting",
+      description: "Bankautomat BAWAG und Bank Austria",
+    },
+    {
+      ...base,
+      id: "unavailable-hsbc",
+      description: "Bankautomat HSBC 00092293",
+    },
+  ];
+  accounts.putFinance(userId, { ...blankTestState(), transactions: rows }, 0);
+  const before = accounts.getFinance(userId);
+  const marks = await accountMerchantBookingPresentations(
+    store,
+    rows.map((row) => row.id),
+    userId,
+  );
+  const grants = localLogoGrants(store, userId);
+  expect(marks.slice(0, 7).map((mark) => mark.logo?.merchantId)).toEqual(
+    [
+      "bawag",
+      "bank austria",
+      "sparkasse",
+      "revolut",
+      "bawag",
+      "bank austria",
+      longBank.toLowerCase(),
+    ].map((name) => grants.get(name)!.merchantId),
+  );
+  expect(marks.slice(7).map((mark) => mark.logo)).toEqual([
+    null,
+    null,
+    null,
+    null,
+  ]);
+  expect(accounts.getFinance(userId)).toEqual(before);
+});
+
+it("uses an available public bank reference for explicitly named ATM operators but never as the unnamed ATM default", async () => {
+  await supplied("Raiffeisen.png");
+  await importLogos();
+  const bytes = await sharp(await padded())
+    .resize({ width: 128, height: 128, fit: "inside" })
+    .png()
+    .toBuffer();
+  const file = `${createHash("sha256").update(bytes).digest("hex")}.png`;
+  await mkdir(join(directory, "merchant-logos"));
+  await writeFile(join(directory, "merchant-logos", file), bytes);
+  const logo = {
+    file,
+    license: "CC0-1.0",
+    attribution: "Test-created geometric PNG; CC0-1.0",
+    sourceUrl:
+      "https://commons.wikimedia.org/wiki/File:Test-created-example.png",
+  };
+  store.upsertMerchants(
+    ["bank-austria", "raiffeisen"].map((bank) =>
+      merchantSchema.parse({
+        id:
+          bank === "bank-austria"
+            ? "at-bank-austria"
+            : "at-raiffeisen-bank-international",
+        canonicalName:
+          bank === "bank-austria"
+            ? "Bank Austria"
+            : "Raiffeisen Bank International",
+        aliases: bank === "bank-austria" ? ["UniCredit Bank Austria"] : [],
+        defaultCategory: null,
+        regexPatterns: [],
+        region: "AT",
+        source: "local",
+        updatedAt: 1,
+        logo,
+      }),
+    ),
+  );
+  const base = transactionSchema.parse({
+    id: "public-bank-atm",
+    date: "2026-10-01",
+    bank: "Revolut",
+    pocket: null,
+    description: "BANKOMAT 00092293 UniCredit Bank Austria Kartenfolge 1",
+    amount: -100,
+    category: "Transfer",
+    includeInPlan: true,
+    merchantAlias: "Raiffeisen",
+    merchantNameConfirmed: true,
+  });
+  const rows = [
+    base,
+    { ...base, id: "unnamed-atm", description: "Bankautomat 00092293" },
+  ];
+  for (const id of [userId, "other-logo-account"])
+    accounts.putFinance(id, { ...blankTestState(), transactions: rows }, 0);
+  const marks = await accountMerchantBookingPresentations(
+    store,
+    rows.map((row) => row.id),
+    userId,
+  );
+  expect(marks[0].logo?.merchantId).toBe("at-bank-austria");
+  expect(marks[1].logo?.merchantId).toBe(
+    localLogoGrants(store, userId).get("raiffeisen")!.merchantId,
+  );
+  const other = await accountMerchantBookingPresentations(
+    store,
+    rows.map((row) => row.id),
+    "other-logo-account",
+  );
+  expect(other[0].logo?.merchantId).toBe("at-bank-austria");
+  expect(other[1].logo).toBeNull();
 });
 
 it.each(["png", "jpeg", "webp"] as const)(

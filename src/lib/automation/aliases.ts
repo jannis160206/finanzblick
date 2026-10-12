@@ -4,6 +4,7 @@ import {
   merchantRuleKey,
   storedMerchantKey,
   activeMerchantRules,
+  createMerchantNameApplier,
 } from "@/lib/import/merchant-rules";
 import type { AppState, Transaction } from "@/lib/types";
 import { normalizeMerchantDescriptor } from "./merchants";
@@ -36,6 +37,7 @@ function addChoice(
 
 // These rules live in the tenant snapshot, never in the global merchants table.
 export function createAccountMerchantResolver(state: AppState) {
+  const applyName = createMerchantNameApplier(state);
   const choices = new Map<string, Choice | null>();
   const normalized = new Map<string, Choice | null>();
   for (const rule of activeMerchantRules(state)) {
@@ -46,18 +48,29 @@ export function createAccountMerchantResolver(state: AppState) {
     if (normalizedSource) addChoice(normalized, normalizedSource, rule);
   }
   return (row: Transaction): AccountMerchantMatch => {
+    const renamed = applyName(row);
     const source = { ...row, merchantAlias: undefined };
     const key = merchantAliasSourceKey(source) ?? merchantRuleKey(source);
     if (choices.has(key)) {
       const choice = choices.get(key);
-      return choice ? { kind: "matched", choice } : { kind: "conflict" };
+      return choice ? {
+        kind: "matched",
+        choice: renamed !== row ? { ...choice, merchantAlias: renamed.merchantAlias } : choice,
+      } : { kind: "conflict" };
     }
     const cleaned = normalizedKey(key);
-    if (!cleaned || !normalized.has(cleaned)) return { kind: "none" };
+    if (!cleaned || !normalized.has(cleaned)) return renamed !== row ? {
+      kind: "matched",
+      choice: { key, category: "Prüfen", identityOnly: true, merchantAlias: renamed.merchantAlias },
+    } : { kind: "none" };
     const choice = normalized.get(cleaned);
     if (!choice) return { kind: "conflict" };
     return choice.merchantAlias
-      ? { kind: "matched", choice, normalized: true }
+      ? {
+        kind: "matched",
+        choice: renamed !== row ? { ...choice, merchantAlias: renamed.merchantAlias } : choice,
+        normalized: true,
+      }
       : { kind: "none" };
   };
 }

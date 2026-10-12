@@ -82,8 +82,8 @@ function expectFixedPlan(state: AppState, label: string) {
   return rows[0];
 }
 
-function openAssignment() {
-  fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${booking.description}` }));
+function openAssignment(name = booking.description) {
+  fireEvent.click(screen.getByRole("button", { name: `Zuordnung ändern: ${name}` }));
   return within(screen.getByRole("dialog", { name: "Zuordnung ändern" }));
 }
 
@@ -116,7 +116,7 @@ it("projects a confirmed October Shopping expense into fixed costs, persists it,
   const reloaded = mount(initial);
   expectFixedPlan(reloaded.read().state, "Nordlicht Service");
   expect(fixedRows(reloaded.read().state)[0].id).toBe(fixed.id);
-  const unmark = openAssignment();
+  const unmark = openAssignment("Nordlicht Service");
   expect(unmark.getByRole<HTMLInputElement>("checkbox", { name: "Als Fixkosten markieren" }).checked).toBe(true);
   fireEvent.click(unmark.getByRole("checkbox", { name: "Als Fixkosten markieren" }));
   expect(fixedRows(reloaded.read().state)).toEqual([fixed]);

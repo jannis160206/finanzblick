@@ -150,6 +150,10 @@ export const merchantRuleSchema = z.object({
 }).refine(rule => !rule.identityOnly ||
   (!!rule.merchantAlias && rule.category === "Prüfen" && rule.fixedCost === undefined),
   "Eine reine Namensregel darf keine Kategorie oder Fixkosten setzen.");
+export const merchantNameRuleSchema = z.object({
+  key: z.string().min(1).max(1200),
+  merchantAlias: transactionFieldsSchema.shape.merchantAlias.unwrap(),
+});
 export const fixedReceiptSchema = z.object({
   key: z.string().max(2000).overwrite(normalizeStatementKey),
   merchantKey: z.string().max(1200).optional(),
@@ -373,6 +377,7 @@ export const appStateSchema = z.object({
   ignoredStatementKeys: z.array(z.string().max(2000).overwrite(normalizeStatementKey)).max(100_000).optional(),
   pocketSnapshots: z.array(pocketSnapshotSchema).max(10_000).optional(),
   merchantRules: z.array(merchantRuleSchema).max(100_000).optional(),
+  merchantNameRules: z.array(merchantNameRuleSchema).max(100_000).optional(),
   fixedReceipts: z.array(fixedReceiptSchema).max(100_000).optional(),
   fixedAmountDecisions: z
     .array(

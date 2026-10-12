@@ -153,7 +153,8 @@ export function TransactionForm({
         <DialogHeader>
           <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            Name, Kategorie und Fixkosten ändern · Banktext bleibt erhalten.
+            Name, Kategorie und Fixkosten ändern. Namensänderungen gelten für
+            alle passenden bisherigen und künftigen Buchungen.
           </DialogDescription>
         </DialogHeader>
         <DialogForm onSubmit={form.handleSubmit(save)}>
@@ -213,11 +214,6 @@ export function TransactionForm({
                 </p>
               ) : (
                 error("merchantAlias")
-              )}
-              {(editingName || merchantName !== bookingDescription({ ...transaction, merchantAlias: undefined })) && (
-                <p className="mt-2 break-words text-xs text-muted-foreground">
-                  {bookingDescription({ ...transaction, merchantAlias: undefined })}
-                </p>
               )}
               <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">
                 {currency(transaction.amount)}

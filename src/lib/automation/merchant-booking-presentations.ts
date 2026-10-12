@@ -21,10 +21,25 @@ import {
   availableLocalLogoGrants,
   normalizeLocalLogoName,
 } from "./merchant-local-logos";
+import {
+  atmLogoBank,
+  isAtmBooking,
+  isBankLogoName,
+  type AtmBankReference,
+} from "@/lib/atm-logo";
+import { normalizeAccount } from "@/lib/accounts";
+import {
+  reviewedAustrianBankIds,
+  reviewedAustrianMerchants,
+} from "./austrian-merchant-rules";
 
 const indices = new WeakMap<
   AccountDatabase,
-  { revision: string; index: MerchantIndex }
+  {
+    revision: string;
+    index: MerchantIndex;
+    bankReferences: AtmBankReference[];
+  }
 >();
 
 function displayIndex(store: AutomationStore) {
@@ -36,10 +51,23 @@ function displayIndex(store: AutomationStore) {
     ]),
   );
   const cached = indices.get(store.accounts);
-  if (cached?.revision === revision) return cached.index;
-  const index = new MerchantIndex(store.loadMerchants());
-  indices.set(store.accounts, { revision, index });
-  return index;
+  if (cached?.revision === revision) return cached;
+  const merchants = store.loadMerchants();
+  const entry = {
+    revision,
+    index: new MerchantIndex(merchants),
+    bankReferences: [
+      ...reviewedAustrianMerchants.filter((bank) =>
+        reviewedAustrianBankIds.has(bank.id),
+      ),
+      ...merchants.filter((merchant) => isBankLogoName(merchant.canonicalName)),
+    ].map((bank) => ({
+      name: bank.canonicalName,
+      aliases: bank.aliases,
+    })),
+  };
+  indices.set(store.accounts, entry);
+  return entry;
 }
 
 export async function accountMerchantBookingPresentations(
@@ -87,7 +115,15 @@ export async function accountMerchantBookingPresentations(
           .filter(Boolean)
           .map((name) => ({ name, grant })),
     );
-    const index = displayIndex(store);
+    const { index, bankReferences: publicBanks } = displayIndex(store);
+    const bankReferences: AtmBankReference[] = [...publicBanks];
+    for (const name of supplied.keys())
+      if (isBankLogoName(name)) bankReferences.push({ name, aliases: [] });
+    for (const bank of new Set(state.transactions.map((row) => row.bank)))
+      bankReferences.push({
+        name: normalizeAccount({ bank, pocket: null }).bank,
+        aliases: [bank],
+      });
     function suppliedIdentity(text: string, income: boolean) {
       const exact = supplied.get(normalizeLocalLogoName(text));
       if (exact) return exact.merchantId;
@@ -138,6 +174,20 @@ export async function accountMerchantBookingPresentations(
         !shouldShowMerchantMark(row, classify(row), true)
       )
         continue;
+      if (isAtmBooking(row)) {
+        const bank = atmLogoBank(row, bankReferences);
+        if (!bank) continue;
+        const grants = new Map(
+          [bank.name, ...(bank.aliases ?? [])].flatMap((name) => {
+            const grant = supplied.get(normalizeLocalLogoName(name));
+            return grant ? [[grant.merchantId, grant] as const] : [];
+          }),
+        );
+        if (grants.size === 1) identities.set(id, [...grants.keys()][0]);
+        else if (!grants.size && bank.explicit)
+          confirmedNames.set(id, bank.name);
+        continue;
+      }
       const learned = resolveAccount(row);
       if (learned.kind === "conflict") continue;
       if (learned.kind === "matched" && learned.choice.merchantAlias) {

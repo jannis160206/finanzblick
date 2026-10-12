@@ -786,6 +786,132 @@ it("discards older in-flight responses after the displayed merchant IDs change",
 });
 
 it.each([false, true])(
+  "requests authoritative ATM marks on table/mobile without changing finance or enabling ordinary transfers (mobile: %s)",
+  async (mobile) => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: mobile,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const fetch = vi.fn().mockImplementation(async (_url, options) => {
+      const input = JSON.parse(options.body);
+      return Response.json({
+        marks: input.merchantIds.map((merchantId: string) => ({
+          merchantId,
+          logo: {
+            merchantId:
+              merchantId === "account-bank"
+                ? "private-revolut"
+                : "private-raiffeisen",
+            version,
+          },
+        })),
+        bookingMarks: input.bookingIds.map((bookingId: string) => ({
+          bookingId,
+          logo:
+            bookingId === "unavailable-atm"
+              ? null
+              : {
+                  merchantId:
+                    bookingId === "unnamed-atm"
+                      ? "private-raiffeisen"
+                      : "public-bank-austria",
+                  version,
+                },
+        })),
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const state = createEmptyAccountState();
+    state.settings.asOf = "2026-10-07";
+    state.settings.baselineDate = "2026-10-01";
+    const atm: Transaction = {
+      ...booking,
+      id: "unnamed-atm",
+      description: "(BANKOMAT 00092293 Kartenfolge)",
+      merchantAlias: "Revolut",
+      merchantId: "account-bank",
+      merchantNameConfirmed: true,
+      category: "Transfer",
+      sourceCategory: "SEPA Überweisung",
+    };
+    state.transactions = [
+      atm,
+      {
+        ...atm,
+        id: "explicit-atm",
+        description: "Bankautomat 00092293 Bank Austria",
+        merchantAlias: "Raiffeisen",
+        merchantId: "wrong-bank",
+      },
+      {
+        ...atm,
+        id: "unavailable-atm",
+        description: "Bankautomat 00092293 Oberbank",
+        merchantAlias: "Raiffeisen",
+        merchantId: "wrong-bank",
+      },
+      {
+        ...atm,
+        id: "ordinary-transfer",
+        description: "SEPA Überweisung an Raiffeisen",
+        merchantAlias: "Eigenes Konto",
+        merchantId: "ordinary-transfer-only",
+      },
+    ];
+    const update = vi.fn();
+    vi.mocked(useFinance).mockReturnValue({
+      state,
+      dashboard: calculateDashboard(state),
+      update,
+      replace: vi.fn(),
+      openReviewCount: 0,
+      ready: true,
+      saved: true,
+      storageError: null,
+      retrySave: vi.fn(),
+      appendStatements: vi.fn(),
+      statementImport: undefined,
+    });
+    const before = structuredClone(state);
+    render(
+      <AccountWorkspaceContext.Provider value={account()}>
+        <Transactions />
+      </AccountWorkspaceContext.Provider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Weitere Filter" }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Transfers anzeigen" }),
+    );
+    fireEvent.keyDown(document, { key: "Escape" });
+    const ledger = mobile
+      ? screen.getByRole("list", { name: "Mobile Buchungen" })
+      : screen.getByRole("table", { name: "Buchungen" });
+    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(2));
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      merchantIds: ["account-bank", "wrong-bank"],
+      bookingIds: ["explicit-atm", "unavailable-atm", "unnamed-atm"],
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1].body).not.toContain(atm.description);
+    expect(
+      [...ledger.querySelectorAll("img")].map((image) =>
+        image.getAttribute("src"),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        `/api/merchants/private-raiffeisen/logo?v=${version}`,
+        `/api/merchants/public-bank-austria/logo?v=${version}`,
+      ]),
+    );
+    expect(ledger.querySelector('img[src*="private-revolut"]')).toBeNull();
+    expect(screen.getByText("Eigenes Konto").previousElementSibling).toBeNull();
+    expect(state).toEqual(before);
+    expect(update).not.toHaveBeenCalled();
+  },
+);
+
+it.each([false, true])(
   "shares one current mark batch on table/mobile surfaces and excludes transfers (mobile: %s)",
   async (mobile) => {
     let compact = mobile;
@@ -941,8 +1067,8 @@ it.each([false, true])(
     });
     for (const image of ledger.querySelectorAll("img")) {
       const asset =
-        ["audi", "private-amex", "private-raiffeisen"].find(
-          (id) => image.getAttribute("src")?.includes(`/${id}/`),
+        ["audi", "private-amex", "private-raiffeisen"].find((id) =>
+          image.getAttribute("src")?.includes(`/${id}/`),
         ) ?? "muller-licensed";
       expect(image.getAttribute("src")).toBe(
         `/api/merchants/${asset}/logo?v=${version}`,
@@ -959,9 +1085,7 @@ it.each([false, true])(
         booking.description,
         "MONATSGEBÜHR",
         "Habenzinsen",
-      ]).toContain(
-        image.closest("a")!.nextElementSibling!.textContent,
-      );
+      ]).toContain(image.closest("a")!.nextElementSibling!.textContent);
     }
     expect(
       screen

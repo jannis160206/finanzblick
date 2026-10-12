@@ -8,7 +8,7 @@ import { createSeed } from "@/lib/seed";
 import { prepareStatementImport } from "@/lib/import/review";
 import { statementFingerprint } from "@/lib/import/identity";
 import { cleanBookingText } from "@/lib/import/bank-description";
-import { recoverMerchant } from "@/lib/import/merchant-description";
+import { bookingDescription } from "@/lib/import/merchant-description";
 import type { AppState, Transaction } from "@/lib/types";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
@@ -36,7 +36,7 @@ function mount(stored = true) {
   const view = render(<FinanceProvider initialState={state}><Harness /></FinanceProvider>);
   const open = () => {
     fireEvent.click(screen.getByRole("button", { name: "Prüfung öffnen" }));
-    return within(screen.getByRole("region", { name: `Buchung prüfen: ${recoverMerchant(original).description}` }));
+    return within(screen.getByRole("region", { name: `Buchung prüfen: ${bookingDescription(original)}` }));
   };
   return { ...view, read: () => current, open };
 }

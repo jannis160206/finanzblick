@@ -8,6 +8,7 @@ import {
   financeRowSchema,
   fixedReceiptSchema,
   merchantRuleSchema,
+  merchantNameRuleSchema,
   settingsSchema,
   pocketNames,
   pocketSnapshotSchema,
@@ -527,6 +528,8 @@ export async function parseWorkbook(
           (state.pocketSnapshots ??= []).push(pocketSnapshotSchema.parse(data));
         if (kind === "merchant")
           (state.merchantRules ??= []).push(merchantRuleSchema.parse(data));
+        if (kind === "merchant-name")
+          (state.merchantNameRules ??= []).push(merchantNameRuleSchema.parse(data));
         if (kind === "fixed")
           (state.fixedReceipts ??= []).push(fixedReceiptSchema.parse(data));
         if (kind === "payslip")
@@ -850,6 +853,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
   if (
     state.pocketSnapshots?.length ||
     state.merchantRules?.length ||
+    state.merchantNameRules?.length ||
     state.fixedReceipts?.length ||
     state.planningRepairs?.length ||
     state.accountSnapshots ||
@@ -901,6 +905,9 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     );
     state.merchantRules?.forEach((item) =>
       automation.addRow(["merchant", JSON.stringify(item)]),
+    );
+    state.merchantNameRules?.forEach((item) =>
+      automation.addRow(["merchant-name", JSON.stringify(item)]),
     );
     state.fixedReceipts?.forEach((item) =>
       automation.addRow(["fixed", JSON.stringify(item)]),
