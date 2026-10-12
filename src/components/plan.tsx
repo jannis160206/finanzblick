@@ -6,6 +6,7 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
+import { FinancialData } from "@/components/financial-data";
 import { BudgetCard, BudgetSummary } from "@/components/budget-cards";
 import { round, sum } from "@/lib/calc";
 import { dateLabel, monthLabel } from "@/lib/format";
@@ -30,6 +31,7 @@ export function Plan() {
         eyebrow="BUDGETDETAILS"
         title="Alltagsbudget"
         description={`${monthLabel(plan.currentMonth)} · Ist bis ${dateLabel(state.settings.asOf)}`}
+        sensitiveDescription
       >
         <Button asChild size="sm" variant="outline">
           <Link href="/umsaetze">
@@ -56,7 +58,7 @@ export function Plan() {
                 aria-pressed={!onlyOverBudget}
                 onClick={() => setOnlyOverBudget(false)}
               >
-                Alle ({rows.length})
+                Alle <FinancialData as="span">({rows.length})</FinancialData>
               </Button>
               <Button
                 size="sm"
@@ -64,7 +66,7 @@ export function Plan() {
                 aria-pressed={onlyOverBudget}
                 onClick={() => setOnlyOverBudget(true)}
               >
-                Über Budget ({overBudget.length})
+                Über Budget <FinancialData as="span">({overBudget.length})</FinancialData>
               </Button>
             </div>
           </header>
@@ -75,12 +77,13 @@ export function Plan() {
               ))}
             </div>
           ) : (
-            <p
+            <FinancialData
+              as="p"
               role="status"
               className="panel rounded-2xl p-6 text-sm text-muted-foreground"
             >
               Keine Budgetüberschreitungen bis zum angezeigten Stand.
-            </p>
+            </FinancialData>
           )}
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
             Geteilte Ausgaben zählen mit deinem Eigenanteil. Erstattungen

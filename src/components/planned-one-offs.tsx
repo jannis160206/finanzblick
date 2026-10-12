@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
+import { FinancialData } from "@/components/financial-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,7 +37,7 @@ export function PlannedOneOffLines() {
   }
   return <section className="panel min-w-0 p-4 sm:p-5" aria-label="Geplante Ausgaben">
     <h2 className="mb-4 flex items-center gap-2 text-sm font-medium"><CalendarDays aria-hidden="true" className="size-4 text-muted-foreground" />Geplant</h2>
-    <div className="space-y-4">
+    <FinancialData className="space-y-4">
       {[...groups].map(([month, items]) => <div key={month} className="flex items-start gap-3">
         <time dateTime={month} title={monthLabel(month)} className="inline-flex min-w-10 shrink-0 justify-center rounded-lg bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">
           {shortMonthLabel(`${month}-01`)}
@@ -48,7 +49,7 @@ export function PlannedOneOffLines() {
           </li>)}
         </ul>
       </div>)}
-    </div>
+    </FinancialData>
   </section>;
 }
 

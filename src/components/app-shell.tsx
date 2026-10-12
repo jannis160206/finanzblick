@@ -39,6 +39,7 @@ import { useSecurityMode } from "@/components/security-mode-provider";
 import { useAccountWorkspace } from "@/components/account-context";
 import { AccountSyncTools } from "@/components/account-tools";
 import { AccountSidebarProfile } from "@/components/account-profile";
+import { FinancialData } from "@/components/financial-data";
 
 const navigation = [
   { href: "/", label: "Übersicht", icon: LayoutDashboard },
@@ -89,7 +90,7 @@ export function AppShell({
             <item.icon className="size-[18px]" />
           )}
           {item.label}
-          {item.href === "/umsaetze" && ready && openReviewCount > 0 && <span data-financial-number className="ml-auto" hidden={security.locked}><ReviewCount count={openReviewCount} /></span>}
+          {item.href === "/umsaetze" && ready && openReviewCount > 0 && <FinancialData as="span" className="ml-auto"><ReviewCount count={openReviewCount} /></FinancialData>}
         </Link>
         </div>
       ))}
@@ -177,10 +178,10 @@ export function AppShell({
               variant="ghost"
               size="icon"
               className={cn("size-9", security.locked && "bg-primary/10 text-primary")}
-              disabled={!security.ready}
+              disabled={!security.ready || security.preference === "off"}
               aria-label={security.locked ? "Sicherheitsmodus deaktivieren" : "Sicherheitsmodus aktivieren"}
               aria-pressed={security.locked}
-              title={security.locked ? "Sichtschutz aktiv – Finanzdaten anzeigen" : "Finanzdaten ausblenden"}
+              title={security.preference === "off" ? "Sicherheitsmodus in den Einstellungen deaktiviert" : security.locked ? "Sichtschutz aktiv – Finanzdaten anzeigen" : "Finanzdaten weichzeichnen"}
               onClick={security.toggle}
             >
               {security.locked ? <ShieldCheck className="size-4" /> : <Shield className="size-4" />}
@@ -206,13 +207,15 @@ export function AppShell({
             <p className="min-w-0 flex-1">{security.error}</p>
             <Button variant="outline" size="sm" onClick={security.retry}>Erneut speichern</Button>
           </div>}
-          <section data-security-screen className="min-h-[55vh] flex-col items-center justify-center rounded-2xl border bg-card px-6 py-12 text-center" aria-label="Sichtschutz">
-            <span className="mb-6 flex size-16 items-center justify-center rounded-2xl bg-primary/10 text-primary"><LockKeyhole className="size-7" /></span>
-            <h1 className="text-2xl font-semibold tracking-tight">Sicherheitsmodus aktiv</h1>
-            <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">Zum Anzeigen oben das Schutzschild deaktivieren.</p>
-            <p className="mt-6 text-xs text-muted-foreground">Sichtschutz für deinen Bildschirm, keine Passwortsperre.</p>
-          </section>
-          <div data-financial-content hidden={security.locked} inert={security.locked}>
+          <div data-security-notice role="status" className="mb-5 flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
+            <ShieldCheck aria-hidden="true" className="size-4 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">Sicherheitsmodus aktiv</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">Nur Finanzdaten sind unscharf.<span className="hidden sm:inline"> Navigation und Einstellungen bleiben verfügbar.</span></p>
+            </div>
+            <Button size="sm" variant="outline" className="min-h-11 w-full sm:min-h-9 sm:w-auto" disabled={!security.ready} onClick={security.toggle}>Daten anzeigen</Button>
+          </div>
+          <div data-financial-content>
           <AccountSyncTools visible={!security.locked && ready} />
           {storageError && (
             <div

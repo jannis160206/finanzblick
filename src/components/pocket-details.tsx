@@ -8,6 +8,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
+import { FinancialData } from "@/components/financial-data";
 import { monthsForYear, roundUpTotal, sum, type Dashboard } from "@/lib/calc";
 import { currency, monthLabel } from "@/lib/format";
 import { pocketNames, type AppState, type Pocket } from "@/lib/types";
@@ -19,7 +20,7 @@ function PocketDisclosure({
   children,
 }: {
   title: string;
-  summary: string;
+  summary: ReactNode;
   icon: LucideIcon;
   children: ReactNode;
 }) {
@@ -141,7 +142,7 @@ export function PocketForecast({ dashboard }: { dashboard: Dashboard }) {
                 ))}
               </tr>
             </thead>
-            <tbody>
+            <FinancialData as="tbody">
               {rows.map((row) => (
                 <tr key={row.month}>
                   <th
@@ -160,13 +161,13 @@ export function PocketForecast({ dashboard }: { dashboard: Dashboard }) {
                   ))}
                 </tr>
               ))}
-            </tbody>
+            </FinancialData>
           </table>
         </div>
       ) : (
-        <p className="border-t p-4 text-sm text-muted-foreground">
+        <FinancialData as="p" className="border-t p-4 text-sm text-muted-foreground">
           Für {year} sind keine Planwerte verfügbar.
-        </p>
+        </FinancialData>
       )}
     </PocketDisclosure>
   );
@@ -185,7 +186,9 @@ export function PocketRoundUps({ state }: { state: AppState }) {
   return (
     <PocketDisclosure
       title="Round-ups"
-      summary={`${year} · ${currency(total)}`}
+      summary={
+        <FinancialData as="span">{`${year} · ${currency(total)}`}</FinancialData>
+      }
       icon={Coins}
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 p-4 sm:px-5">
@@ -208,7 +211,7 @@ export function PocketRoundUps({ state }: { state: AppState }) {
               </th>
             </tr>
           </thead>
-          <tbody>
+          <FinancialData as="tbody">
             {rows.map((row) => (
               <tr key={row.month}>
                 <th scope="row" className="text-left text-xs font-normal">
@@ -219,12 +222,12 @@ export function PocketRoundUps({ state }: { state: AppState }) {
                 </td>
               </tr>
             ))}
-          </tbody>
+          </FinancialData>
         </table>
       ) : (
-        <p className="border-t p-4 text-sm text-muted-foreground">
+        <FinancialData as="p" className="border-t p-4 text-sm text-muted-foreground">
           Keine Round-ups für {year} gebucht.
-        </p>
+        </FinancialData>
       )}
     </PocketDisclosure>
   );

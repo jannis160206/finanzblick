@@ -16,6 +16,8 @@ import { AccountProfileSettings } from "@/components/account-profile";
 import { AccountSyncTools } from "@/components/account-tools";
 import { useAccountWorkspace } from "@/components/account-context";
 import { SettingsSection } from "@/components/settings-section";
+import { SecurityModeSettings } from "@/components/security-mode-settings";
+import { FinancialData } from "@/components/financial-data";
 import { latestTRBalance } from "@/lib/calc";
 import { currency, dateLabel, percent } from "@/lib/format";
 import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
@@ -35,11 +37,12 @@ function TradeRepublicSettings() {
     value.date <= state.settings.asOf && Number.isFinite(Number(value.rate)) && Number(value.rate) >= 0 && Number(value.rate) <= 100;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(initial);
   return <SettingsSection id="tr-zinsen" title="Trade Republic" description="Dein Notgroschen und der dazugehörige Jahreszins." icon={Landmark}>
-    <dl className="mb-6 grid gap-4 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:grid-cols-3 sm:p-5">
+    <FinancialData as="dl" className="mb-6 grid gap-4 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:grid-cols-3 sm:p-5">
       <div><dt className="text-xs text-muted-foreground">Gespeicherter Kontostand</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{currency(savedBalance)}</dd></div>
       <div><dt className="text-xs text-muted-foreground">Zinssatz p.a.</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{percent(savedRate)}</dd></div>
       <div><dt className="text-xs text-muted-foreground">Stand vom</dt><dd className="mt-2 text-lg font-medium tabular-nums">{dateLabel(savedDate)}</dd></div>
-    </dl>
+    </FinancialData>
+    <FinancialData>
     <form className="space-y-4" onSubmit={(event) => {
       event.preventDefault(); if (!valid) return;
       update((current) => {
@@ -64,6 +67,7 @@ function TradeRepublicSettings() {
         <div className="flex flex-wrap gap-2"><Button variant="outline" type="button" size="sm" onClick={() => setDraft(null)}>Abbrechen</Button><Button type="submit" size="sm" disabled={!valid}><Save aria-hidden="true" className="size-4" />Trade Republic speichern</Button></div>
       </div>}
     </form>
+    </FinancialData>
   </SettingsSection>;
 }
 
@@ -80,6 +84,7 @@ export function Settings() {
     <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
     <div className="space-y-4">
       <AccountProfileSettings />
+      <SecurityModeSettings />
       <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Deine Farben, dein Komfort. So fühlt sich Finanzblick nach dir an." icon={Palette}>
         <form onSubmit={(event) => {
           event.preventDefault(); const parsed = seasonalPreferenceSchema.safeParse(value); if (!parsed.success) return;
@@ -124,7 +129,7 @@ export function Settings() {
             <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
             <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p></div>
           </div>
-          <ExcelActions compact />
+          <FinancialData><ExcelActions compact /></FinancialData>
         </div>
         <AccountSyncTools manual />
       </SettingsSection>

@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { number } from "@/lib/format";
 import { type Pocket } from "@/lib/types";
+import { FinancialData } from "@/components/financial-data";
 
 export const pocketIcons: Record<Pocket, LucideIcon> = {
   Notgroschen: ShieldCheck,
@@ -30,21 +31,25 @@ export function PageHeading({
   eyebrow,
   title,
   description,
+  sensitiveDescription = false,
   children,
 }: {
   eyebrow: string;
   title: string;
   description?: string;
+  sensitiveDescription?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <div className="mb-7 flex flex-wrap items-end justify-between gap-4">
+    <div data-page-heading className="mb-7 flex flex-wrap items-end justify-between gap-4">
       <div>
         <p className="eyebrow mb-2">{eyebrow}</p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-[34px]">
           {title}
         </h1>
-        {description && <p className="mt-2 text-sm text-muted-foreground">{description}</p>}
+        {description && (sensitiveDescription
+          ? <FinancialData as="p" className="mt-2 text-sm text-muted-foreground">{description}</FinancialData>
+          : <p className="mt-2 text-sm text-muted-foreground">{description}</p>)}
       </div>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
@@ -109,6 +114,7 @@ export function MoneyInput({
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState(false);
   function commit() {
+    if (document.documentElement.dataset.securityMode === "locked") return;
     if (draft === null) return;
     if (nullable && draft.trim() === "") {
       onCommit(null);

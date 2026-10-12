@@ -20,6 +20,7 @@ import { CategorySelect } from "@/components/category-select";
 import { SharedCosts } from "@/components/shared-costs";
 import { HolidayRanges } from "@/components/holiday-ranges";
 import { ReviewCount } from "@/components/review-count";
+import { FinancialData } from "@/components/financial-data";
 import {
   AssignmentSwitch,
   TransactionToolbar,
@@ -158,7 +159,7 @@ export function TransactionFilters({
     <TransactionToolbar
       chips={chips}
       search={
-        <div className="relative min-w-0">
+        <FinancialData className="relative min-w-0">
           <Search className="pointer-events-none absolute top-3.5 left-3 size-4 text-muted-foreground" />
           <Input
             aria-label="Umsätze durchsuchen"
@@ -167,7 +168,7 @@ export function TransactionFilters({
             value={filters.query}
             onChange={(event) => change("query", event.target.value)}
           />
-        </div>
+        </FinancialData>
       }
       actions={
         <>
@@ -181,7 +182,7 @@ export function TransactionFilters({
             >
               <ListChecks className="size-4" />
               Prüfen
-              <ReviewCount count={reviewCount} />
+              <FinancialData as="span"><ReviewCount count={reviewCount} /></FinancialData>
             </Button>
           </Tooltip>
           <SharedCosts bookings={ledger} items={receivables} iconOnly />
@@ -335,6 +336,7 @@ export function TransactionFilters({
             <span className="text-xs font-medium text-muted-foreground">
               Konto / Pocket
             </span>
+            <FinancialData>
             <select
               aria-label="Konto/Pocket filtern"
               className="select-input h-11 w-full min-w-0"
@@ -346,6 +348,7 @@ export function TransactionFilters({
                 <option key={value}>{value}</option>
               ))}
             </select>
+            </FinancialData>
           </label>
         </>
       }

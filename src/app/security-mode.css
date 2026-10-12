@@ -1,9 +1,28 @@
-[data-security-screen] {
+:root {
+  scrollbar-gutter: stable;
+}
+
+[data-security-notice] {
   display: none;
 }
 
-:root:not([data-security-mode="open"]) [data-financial-content],
-:root:not([data-security-mode="open"]) [data-financial-number],
+:root:not([data-security-mode="open"]) [data-financial-data] {
+  user-select: none !important;
+  pointer-events: none !important;
+}
+
+:root:not([data-security-mode="open"]) [data-financial-data]:not([data-financial-data] [data-financial-data]):not([data-financial-workspace]),
+:root:not([data-security-mode="open"]) [data-financial-workspace] > :not([data-page-heading]) {
+  filter: blur(10px) !important;
+  transition: none !important;
+  animation: none !important;
+}
+
+:root:not([data-security-mode="open"]) [data-financial-data] * {
+  user-select: none !important;
+  pointer-events: none !important;
+}
+
 :root:not([data-security-mode="open"]) [data-sonner-toaster],
 :root:not([data-security-mode="open"]) [data-financial-overlay] {
   display: none !important;
@@ -20,12 +39,12 @@
   pointer-events: none !important;
 }
 
-:root:not([data-security-mode="open"]) [data-security-screen] {
+:root:not([data-security-mode="open"]) [data-security-notice] {
   display: flex;
 }
 
 @media print {
-  :root:not([data-security-mode="open"]) [data-financial-content] {
-    display: none !important;
+  :root:not([data-security-mode="open"]) [data-financial-data] {
+    visibility: hidden !important;
   }
 }

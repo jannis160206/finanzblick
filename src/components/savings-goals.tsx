@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { CalendarDays, Check, MoreHorizontal, Pencil, Plus, Target, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
+import { FinancialData } from "@/components/financial-data";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,7 +45,7 @@ export function SavingsGoals() {
           onClick={() => edit({ id: crypto.randomUUID(), name: "", pocket: "", target: 0, date: state.settings.asOf }, "add")}>
           <Plus aria-hidden="true" className="size-4" />Neues Ziel
         </Button>}>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <FinancialData className="grid gap-3 sm:grid-cols-2">
         {goals.map((goal) => {
           const balance = Math.max(0, dashboard.actualGoals[goal.id] ?? 0);
           const progress = Math.min(100, balance / goal.target * 100);
@@ -80,14 +81,14 @@ export function SavingsGoals() {
             {goal.completedAt && <p className="mt-3 flex items-center gap-1.5 text-xs text-primary"><Check aria-hidden="true" className="size-3.5" />Ziel erreicht · keine weitere Rate</p>}
           </article>;
         })}
-      </div>
-      {!goals.length && <div className="flex flex-col items-center rounded-2xl border border-dashed bg-muted/10 px-4 py-8 text-center">
+      </FinancialData>
+      {!goals.length && <FinancialData className="flex flex-col items-center rounded-2xl border border-dashed bg-muted/10 px-4 py-8 text-center">
         <span className="mb-3 flex size-12 items-center justify-center rounded-2xl bg-primary/5 text-primary"><Target aria-hidden="true" className="size-6" /></span>
         <h3 className="text-sm font-medium">Platz für dein nächstes Ziel</h3>
         <p className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">{pauseVacation
         ? "Keine Sparziele. Überschuss ins Sparkonto."
         : "Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub."}</p>
-      </div>}
+      </FinancialData>}
       <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}>
         <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
           <DialogHeader><DialogTitle>Sparziel {goals.some((goal) => goal.id === editing?.id) ? "bearbeiten" : "hinzufügen"}</DialogTitle><DialogDescription>Was möchtest du bis wann ansparen?</DialogDescription></DialogHeader>

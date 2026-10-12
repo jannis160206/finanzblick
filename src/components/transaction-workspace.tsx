@@ -26,6 +26,8 @@ import type {
   HolidayReceivable,
 } from "@/lib/shared-holiday";
 import { cn } from "@/lib/utils";
+import { FinancialData } from "@/components/financial-data";
+import { useSecurityMode } from "@/components/security-mode-provider";
 
 export type AssignmentStatus = "all" | "review" | "assigned";
 export type FilterChip = { id: string; label: string; remove: () => void };
@@ -58,7 +60,7 @@ export function TransactionToolbar({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{filters}</div>
       {status}
       {chips.length > 0 && (
-        <div
+        <FinancialData
           role="group"
           aria-label="Aktive Filter"
           className="flex flex-wrap gap-2"
@@ -77,7 +79,7 @@ export function TransactionToolbar({
               <X className="size-3.5" aria-hidden="true" />
             </Button>
           ))}
-        </div>
+        </FinancialData>
       )}
     </div>
   );
@@ -120,9 +122,9 @@ export function AssignmentSwitch({
           )}
         >
           {option.label}
-          <span className="tabular-nums text-muted-foreground">
+          <FinancialData as="span" className="tabular-nums text-muted-foreground">
             {option.count}
-          </span>
+          </FinancialData>
         </Button>
       ))}
     </div>
@@ -299,8 +301,12 @@ export function MobileTransactionList({
 }: {
   rows: Row<AccountedTransaction>[];
 }) {
+  const { locked } = useSecurityMode();
   return (
     <ol
+      data-financial-data=""
+      aria-hidden={locked || undefined}
+      inert={locked || undefined}
       aria-label="Mobile Buchungen"
       className="divide-y divide-border/70 md:hidden"
     >
@@ -418,7 +424,7 @@ export function LedgerFooter({
 }) {
   return (
     <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 px-4 py-3 text-xs sm:px-5">
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+      <FinancialData className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
         <span>{count.toLocaleString("de-AT")} Treffer</span>
         <span>
           Summe{" "}
@@ -426,12 +432,12 @@ export function LedgerFooter({
             {currency(total)}
           </strong>
         </span>
-      </div>
+      </FinancialData>
       <div className="flex items-center gap-2">
-        <span className="mr-1 text-muted-foreground">
+        <FinancialData as="span" className="mr-1 text-muted-foreground">
           Seite {table.getState().pagination.pageIndex + 1} /{" "}
           {Math.max(1, table.getPageCount())}
-        </span>
+        </FinancialData>
         <Button
           variant="outline"
           size="icon"

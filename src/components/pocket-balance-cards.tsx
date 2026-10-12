@@ -4,6 +4,7 @@ import type { Ref } from "react";
 import { Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { pocketColors, pocketIcons } from "@/components/finance-ui";
+import { FinancialData } from "@/components/financial-data";
 import { latestPocketSnapshot, latestTRBalance } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { pocketNames, type AppState, type PocketAmounts } from "@/lib/types";
@@ -73,7 +74,8 @@ export function PocketBalanceCards({
                 </Button>
               )}
             </div>
-            <p
+            <FinancialData
+              as="p"
               aria-label={`${pocket} Kontostand`}
               className={cn(
                 "mt-5 text-2xl font-semibold tracking-tight break-words tabular-nums",
@@ -81,12 +83,12 @@ export function PocketBalanceCards({
               )}
             >
               {currency(actual[pocket])}
-            </p>
-            <p className="mt-2 text-[11px] text-muted-foreground">
+            </FinancialData>
+            <FinancialData as="p" className="mt-2 text-[11px] text-muted-foreground">
               {snapshot
                 ? `${pocket === "Notgroschen" ? "Stand" : "Auszugbasis"} ${dateLabel(snapshot.date)}`
                 : `Startstand ${dateLabel(state.settings.baselineDate)}`}
-            </p>
+            </FinancialData>
           </article>
         );
       })}
@@ -116,7 +118,7 @@ export function EverydayPocketBalances({ state }: { state: AppState }) {
         <span className="text-xs text-muted-foreground">Auszugssalden</span>
       </div>
       {known.length ? (
-        <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <FinancialData as="dl" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {known.map(({ name, snapshot }) => (
             <div
               key={name}
@@ -136,16 +138,16 @@ export function EverydayPocketBalances({ state }: { state: AppState }) {
               </dd>
             </div>
           ))}
-        </dl>
+        </FinancialData>
       ) : (
-        <p className="text-sm text-muted-foreground">
+        <FinancialData as="p" className="text-sm text-muted-foreground">
           Noch keine Auszugssalden vorhanden.
-        </p>
+        </FinancialData>
       )}
       {!!known.length && !!missing.length && (
-        <p className="mt-3 text-xs text-muted-foreground">
+        <FinancialData as="p" className="mt-3 text-xs text-muted-foreground">
           Ohne Auszugssaldo: {missing.join(" · ")}
-        </p>
+        </FinancialData>
       )}
     </section>
   );

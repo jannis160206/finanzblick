@@ -4,6 +4,7 @@ import { Fragment, useEffect, useRef, type ReactNode } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MoneyInput } from "@/components/finance-ui";
+import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import { financeRowValue, type Dashboard } from "@/lib/calc";
@@ -120,7 +121,7 @@ function MonthPlanCard({
             <th scope="col">Betrag · EUR</th>
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <FinancialData as="tbody">{children}</FinancialData>
       </table>
     </div>
   );
@@ -400,11 +401,11 @@ export function MonthPlanGrid(props: MonthPlanGridProps) {
             ))}
           </tr>
         </thead>
-        <tbody>
-          {groups
-            .filter((group) => area === "all" || area === group.kind)
-            .map((group) => (
-              <Fragment key={group.kind}>
+        {groups
+          .filter((group) => area === "all" || area === group.kind)
+          .map((group) => (
+            <Fragment key={group.kind}>
+              <tbody>
                 <tr className="section-row">
                   <th scope="colgroup" colSpan={months.length + 1}>
                     <span className="sticky left-4 inline-block">
@@ -412,11 +413,15 @@ export function MonthPlanGrid(props: MonthPlanGridProps) {
                     </span>
                   </th>
                 </tr>
+              </tbody>
+              <FinancialData as="tbody">
                 <MonthGroupRows {...props} group={group} />
-              </Fragment>
-            ))}
+              </FinancialData>
+            </Fragment>
+          ))}
+        <FinancialData as="tbody">
           <MonthResultRows {...props} />
-        </tbody>
+        </FinancialData>
       </table>
     </div>
   );

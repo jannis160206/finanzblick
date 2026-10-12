@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputLegend } from "@/components/finance-ui";
+import { FinancialData } from "@/components/financial-data";
 import { monthsForYear } from "@/lib/calc";
 import { monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -168,7 +169,7 @@ export function MonthPlanToolbar({
         </div>
       </div>
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_14rem]">
-        <div className="relative min-w-0">
+        <FinancialData className="relative min-w-0">
           <Search className="pointer-events-none absolute top-3 left-3 size-4 text-muted-foreground" />
           <Input
             aria-label="Positionen suchen"
@@ -177,7 +178,7 @@ export function MonthPlanToolbar({
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
           />
-        </div>
+        </FinancialData>
         <select
           aria-label="Planbereich filtern"
           className="select-input w-full min-w-0"

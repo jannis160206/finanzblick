@@ -6,6 +6,7 @@ import { Pockets } from "@/components/pockets";
 import { Plan } from "@/components/plan";
 import { Settings } from "@/components/settings";
 import { PayrollTaxes } from "@/components/payroll-taxes";
+import { FinancialWorkspace } from "@/components/financial-data";
 
 const views = {
   umsaetze: Transactions,
@@ -29,7 +30,7 @@ export default async function FinancePage({
         <p className="text-sm text-muted-foreground">Ansicht wird geladen …</p>
       }
     >
-      <View />
+      {view === "gehalt-steuern" ? <FinancialWorkspace title="Gehalt & Steuern"><View /></FinancialWorkspace> : <View />}
     </Suspense>
   );
 }

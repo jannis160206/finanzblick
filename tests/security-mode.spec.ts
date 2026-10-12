@@ -1,12 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createSeed } from "../src/lib/seed";
-import { SECURITY_MODE_KEY, SECURITY_FALLBACK_KEY, SECURITY_AUTO_LOCK_KEY } from "../src/lib/security-mode";
+import { SECURITY_MODE_KEY, SECURITY_FALLBACK_KEY, SECURITY_AUTO_LOCK_KEY, SECURITY_ACTIVATION_KEY } from "../src/lib/security-mode";
 import type { AppState } from "../src/lib/types";
 import { focusTest } from "./helpers/real-focus";
 
 const storageKey = "finanzdashboard.v1";
 
-async function seed(page: Page, locked = false, baseURL?: string) {
+async function seed(page: Page, locked = false, baseURL?: string, financeRows?: AppState["financeRows"]) {
   await page.bringToFront();
   const state = createSeed();
   state.settings.asOf = "2026-09-17";
@@ -20,6 +20,7 @@ async function seed(page: Page, locked = false, baseURL?: string) {
     amount: -987.65, bank: "Revolut", pocket: null, category: "Prüfen", includeInPlan: false,
   }];
   state.fixedReceipts = [];
+  if (financeRows) state.financeRows = financeRows;
   await page.clock.setFixedTime(new Date("2026-09-17T12:00:00Z"));
   await page.addInitScript(({ state, storageKey, securityKey, locked }) => {
     if (!localStorage.getItem(storageKey)) localStorage.setItem(storageKey, JSON.stringify(state));
@@ -38,16 +39,22 @@ async function seed(page: Page, locked = false, baseURL?: string) {
 }
 
 async function expectShield(page: Page) {
-  await expect(page.getByRole("heading", { name: "Sicherheitsmodus aktiv", exact: true })).toBeVisible();
-  await expect(page.locator("[data-financial-content]")).toBeHidden();
-  await expect(page.getByRole("textbox")).toHaveCount(0);
+  await expect(page.locator("[data-security-notice]")).toBeVisible();
+  await expect(page.locator("[data-financial-content]")).toBeVisible();
+  await expect(page.locator("[data-security-screen]")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: /Umsätze durchsuchen|Positionen suchen/ })).toHaveCount(0);
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator("[data-sonner-toaster]")).toHaveCount(0);
-  expect(await page.locator(".app-shell").innerText()).not.toMatch(/\d/);
+  const marks = page.locator("[data-financial-data]");
+  for (const mark of await marks.all()) {
+    await expect(mark).toHaveAttribute("aria-hidden", "true");
+    await expect(mark).toHaveAttribute("inert", "");
+  }
+  expect(await page.locator(".app-shell").ariaSnapshot()).not.toMatch(/Privater Beispielkauf|Unbekannter Beispielkauf|1\.234,56|987,65/);
 }
 
-test("header shield covers all screens, persists on reload and never changes financial data", async ({ page }, testInfo) => {
+test("header shield blurs data without replacing the screen, persists on reload and never changes financial data", async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await seed(page);
@@ -55,6 +62,8 @@ test("header shield covers all screens, persists on reload and never changes fin
   await expect(page.getByText("Lokal gespeichert", { exact: true })).toBeVisible();
   const before = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)!) as AppState, storageKey);
   await page.getByLabel("Umsätze durchsuchen").fill("Privater");
+  const rows = page.locator("table[aria-label='Buchungen'] tbody");
+  const beforeBox = await rows.boundingBox();
   const lock = page.getByRole("button", { name: "Sicherheitsmodus aktivieren", exact: true });
   const color = page.getByRole("button", { name: "Farbschema wechseln" });
   const lockBox = (await lock.boundingBox())!;
@@ -64,13 +73,20 @@ test("header shield covers all screens, persists on reload and never changes fin
   await lock.click();
   await expect(page.getByRole("button", { name: "Sicherheitsmodus deaktivieren", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expectShield(page);
+  await expect(rows).toHaveCSS("filter", "blur(10px)");
+  const afterBox = await rows.boundingBox();
+  expect(afterBox?.width).toBe(beforeBox?.width);
+  expect(afterBox?.height).toBe(beforeBox?.height);
+  await expect(page.getByRole("heading", { name: "Umsätze", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Umsätze", exact: true })).toHaveCSS("filter", "none");
   await page.screenshot({ path: testInfo.outputPath("security-desktop.png") });
   await page.getByRole("button", { name: "Sicherheitsmodus deaktivieren", exact: true }).click();
   await expect(page.getByLabel("Umsätze durchsuchen")).toHaveValue("Privater");
   await lock.click();
-  for (const route of ["/", "/monate", "/pockets", "/plan", "/einstellungen", "/umsaetze"]) {
+  for (const route of ["/", "/monate", "/pockets", "/plan", "/gehalt-steuern", "/einstellungen", "/umsaetze"]) {
     await page.goto(route);
     await expectShield(page);
+    if (route === "/") await page.screenshot({ path: testInfo.outputPath("security-overview.png") });
   }
   await page.reload();
   await expectShield(page);
@@ -78,8 +94,9 @@ test("header shield covers all screens, persists on reload and never changes fin
   await page.getByRole("button", { name: "Navigation öffnen" }).click();
   const navigation = page.getByRole("dialog", { name: "Finanzblick", exact: true });
   await expect(navigation.getByRole("link", { name: "Umsätze", exact: true })).toBeVisible();
-  expect(await navigation.innerText()).not.toMatch(/\d/);
+  expect(await navigation.ariaSnapshot()).not.toMatch(/offene Zuordnungen|Umsätze \d/);
   await page.keyboard.press("Escape");
+  await expect(page.locator('[data-variant="navigation"]')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath("security-mobile.png") });
   await page.getByRole("button", { name: "Sicherheitsmodus deaktivieren", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Umsätze", exact: true })).toBeVisible();
@@ -88,6 +105,81 @@ test("header shield covers all screens, persists on reload and never changes fin
   expect(after.financeRows).toEqual(before.financeRows);
   expect(after.settings).toEqual(before.settings);
   expect(errors).toEqual([]);
+});
+
+test("privacy settings stay usable while locked and persist manual and disabled activation without changing finances", async ({ page }, testInfo) => {
+  await seed(page);
+  const before = await page.evaluate((key) => localStorage.getItem(key), storageKey);
+  await page.getByRole("button", { name: "Sicherheitsmodus aktivieren", exact: true }).click();
+  await page.goto("/einstellungen");
+  await expectShield(page);
+  const settings = page.getByRole("region", { name: "Sicherheitsmodus", exact: true });
+  await expect(settings).toHaveCSS("filter", "none");
+  await settings.getByRole("radio", { name: "Nur manuell", exact: true }).check();
+  await expect(settings.getByRole("radio", { name: "Nur manuell", exact: true })).toBeChecked();
+  expect(await page.evaluate((key) => localStorage.getItem(key), SECURITY_ACTIVATION_KEY)).toBe("manual");
+  await page.locator("[data-security-notice]").getByRole("button", { name: "Daten anzeigen" }).click();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(page.locator("html")).toHaveAttribute("data-security-mode", "open");
+  await page.reload();
+  await expect(settings.getByRole("radio", { name: "Nur manuell", exact: true })).toBeChecked();
+  await page.getByRole("button", { name: "Sicherheitsmodus aktivieren", exact: true }).click();
+  await settings.getByRole("radio", { name: "Deaktiviert", exact: true }).check();
+  await expect(page.locator("[data-security-notice]")).toBeHidden();
+  await expect(page.getByRole("button", { name: "Sicherheitsmodus aktivieren", exact: true })).toBeDisabled();
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-security-mode", "open");
+  await expect(settings.getByRole("radio", { name: "Deaktiviert", exact: true })).toBeChecked();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath("security-settings-mobile.png") });
+  expect(await page.evaluate((key) => localStorage.getItem(key), storageKey)).toBe(before);
+});
+
+test("locked financial values stay absent from printed output", async ({ page }) => {
+  await seed(page);
+  await page.getByRole("button", { name: "Sicherheitsmodus aktivieren", exact: true }).click();
+  await page.emulateMedia({ media: "print", reducedMotion: "reduce" });
+  await expect(page.locator("table[aria-label='Buchungen'] tbody")).toHaveCSS("visibility", "hidden");
+  await expect(page.getByRole("heading", { name: "Umsätze", exact: true })).toBeVisible();
+});
+
+test("automatic privacy locking does not save an unfinished amount edit", async ({ page }) => {
+  await seed(page, false, undefined, [{ id: "privacy-income", kind: "income", label: "Beispielgehalt", values: { "2026-09": 3000 } }]);
+  await page.goto("/monate");
+  const shield = page.getByRole("button", { name: /^Sicherheitsmodus (deaktivieren|aktivieren)$/ });
+  await expect(shield).toBeEnabled();
+  if (await shield.getAttribute("aria-pressed") === "true") await shield.click();
+  await page.getByRole("button", { name: "Plan bearbeiten", exact: true }).click();
+  const input = page.locator('input[inputmode="decimal"]').first();
+  await expect(input).toBeVisible();
+  const before = await page.evaluate((key) => localStorage.getItem(key), storageKey);
+  await input.fill("5432");
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expectShield(page);
+  expect(await page.evaluate((key) => localStorage.getItem(key), storageKey)).toBe(before);
+  await page.locator("[data-security-notice]").getByRole("button", { name: "Daten anzeigen" }).click();
+  await expect(input).toHaveValue("5432");
+});
+
+focusTest("manual and disabled preferences ignore real tab changes and survive reload", async ({ focusContext: context, baseURL }) => {
+  const page = await context.newPage();
+  await seed(page, false, baseURL);
+  for (const choice of ["Nur manuell", "Deaktiviert"]) {
+    await page.goto(new URL("/einstellungen", baseURL).href);
+    await page.getByRole("region", { name: "Sicherheitsmodus", exact: true }).getByRole("radio", { name: choice, exact: true }).check();
+    const shield = page.getByRole("button", { name: /^Sicherheitsmodus (deaktivieren|aktivieren)$/ });
+    if (await shield.getAttribute("aria-pressed") === "true") await shield.click();
+    const other = await context.newPage();
+    await other.bringToFront();
+    await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(false);
+    await expect(page.locator("html")).toHaveAttribute("data-security-mode", "open");
+    await page.bringToFront();
+    await page.reload();
+    await expect(page.locator("html")).toHaveAttribute("data-security-mode", "open");
+    await expect(page.getByRole("radio", { name: choice, exact: true })).toBeChecked();
+    await other.close();
+  }
 });
 
 focusTest("leaving the tab locks financial portals until this tab is manually unlocked", async ({ focusContext: context, baseURL }) => {
@@ -200,13 +292,17 @@ focusTest("minimizing the browser locks the hidden page until manually unlocked"
   await expect(page.getByRole("cell", { name: "Privater Beispielkauf", exact: true })).toBeVisible();
   const cdp = await context.newCDPSession(page);
   const { windowId } = await cdp.send("Browser.getWindowForTarget");
-  await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } });
-  await expect.poll(() => page.evaluate(() => document.visibilityState)).toBe("hidden");
+  try {
+    await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "minimized" } });
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.securityMode)).toBe("locked");
+  } finally {
+    await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
+    await page.bringToFront();
+  }
   await expectShield(page);
-  await cdp.send("Browser.setWindowBounds", { windowId, bounds: { windowState: "normal" } });
-  await page.bringToFront();
-  await expectShield(page);
-  await page.getByRole("button", { name: "Sicherheitsmodus deaktivieren", exact: true }).click();
+  // Native CDP windows can suspend animation frames after restore; the shield's
+  // pointer interaction is covered above, so this checks the preserved action.
+  await page.getByRole("button", { name: "Sicherheitsmodus deaktivieren", exact: true }).evaluate((button: HTMLButtonElement) => button.click());
   await expect(page.getByRole("cell", { name: "Privater Beispielkauf", exact: true })).toBeVisible();
 });
 

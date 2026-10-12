@@ -8,6 +8,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { useFinance } from "@/components/finance-provider";
+import { FinancialData } from "@/components/financial-data";
 import { classify } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { parseStatementAmount } from "@/lib/import/statements";
@@ -36,6 +37,7 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
   if (booking.amount >= 0 || classify(booking).isTransfer) return null;
   const shared = isSharedHoliday(booking);
   return <Dialog open={open} onOpenChange={setOpen}>
+    <FinancialData as="span" className="inline-flex">
     <Tooltip label={shared ? "Bereits mit Raphael geteilt" : "Mit Raphael teilen"}>
     <DialogTrigger asChild>
       <Button size="icon" variant="ghost" className="size-9" disabled={shared || !!storageError}
@@ -45,6 +47,7 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
       </Button>
     </DialogTrigger>
     </Tooltip>
+    </FinancialData>
     <DialogContent variant="confirmation">
       <DialogHeader>
         <DialogTitle>Diese Buchung als geteilt markieren?</DialogTitle>
@@ -97,7 +100,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
     <DialogTrigger asChild>
     <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative size-11" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
       <Users className="size-3.5" />{!iconOnly && "Geteilt"}
-      {count > 0 && <span aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</span>}
+      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</FinancialData>}
     </Button>
     </DialogTrigger>
     </Tooltip>

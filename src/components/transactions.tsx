@@ -83,6 +83,8 @@ import {
   matchesTransactionSearch,
 } from "@/lib/transaction-tools";
 import { cn } from "@/lib/utils";
+import { FinancialData } from "@/components/financial-data";
+import { useSecurityMode } from "@/components/security-mode-provider";
 
 export function Transactions() {
   const { state, update, openReviewCount, storageError } = useFinance();
@@ -106,6 +108,7 @@ const TransactionLedger = memo(function TransactionLedger({
   "state" | "update" | "openReviewCount" | "storageError"
 >) {
   "use no memo";
+  const { locked } = useSecurityMode();
   const [reviewRequest, setReviewRequest] = useState(0);
   const mobile = useMobileLedger();
   const ledger = useMemo(() => actualBookings(state), [state]);
@@ -463,8 +466,9 @@ const TransactionLedger = memo(function TransactionLedger({
         eyebrow="BUCHUNGEN"
         title="Umsätze"
         description={`${ledger.length.toLocaleString("de-AT")} Buchungen`}
+        sensitiveDescription
       />
-      <StatementImport reviewRequest={reviewRequest} />
+      <FinancialData><StatementImport reviewRequest={reviewRequest} /></FinancialData>
       <section
         aria-label="Umsatzliste"
         className="min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
@@ -481,13 +485,13 @@ const TransactionLedger = memo(function TransactionLedger({
           count={filtered.length}
           pending={pendingCount}
           reviewCount={openReviewCount}
-          disabled={!!storageError}
-          exportDisabled={!data.length}
+          disabled={locked || !!storageError}
+          exportDisabled={locked || !data.length}
           onReview={() => setReviewRequest((request) => request + 1)}
           onExport={exportView}
         />
         {selected.length > 0 && (
-          <div
+          <FinancialData
             role="group"
             aria-label="Ausgewählte Buchungen"
             className="flex flex-wrap items-center gap-2 border-b border-primary/15 bg-primary/5 px-4 py-3 sm:px-5"
@@ -510,7 +514,7 @@ const TransactionLedger = memo(function TransactionLedger({
             >
               Auswahl zuordnen
             </Button>
-          </div>
+          </FinancialData>
         )}
         <MerchantMarksProvider
           merchantIds={merchantIds}
@@ -578,7 +582,7 @@ const TransactionLedger = memo(function TransactionLedger({
                     </tr>
                   ))}
                 </thead>
-                <tbody>
+                <FinancialData as="tbody">
                   {displayedRows.map((row) => (
                     <tr
                       key={row.id}
@@ -603,7 +607,7 @@ const TransactionLedger = memo(function TransactionLedger({
                       ))}
                     </tr>
                   ))}
-                </tbody>
+                </FinancialData>
               </table>
             </div>
           )}

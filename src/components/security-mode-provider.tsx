@@ -4,22 +4,27 @@ import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNod
 import {
   getSecuritySnapshot,
   getServerSecuritySnapshot,
-  setSecurityMode,
+  retrySecurityMode,
+  setSecurityPreference,
   subscribeSecurityMode,
   toggleSecurityMode,
+  type SecurityActivationPreference,
 } from "@/lib/security-mode";
 
 type SecurityContextValue = ReturnType<typeof getSecuritySnapshot> & {
   toggle: () => void;
   retry: () => void;
+  setPreference: (preference: SecurityActivationPreference) => void;
 };
 
 const SecurityContext = createContext<SecurityContextValue>({
   locked: false,
   ready: true,
   error: null,
+  preference: "automatic",
   toggle: () => { throw new Error("SecurityModeProvider fehlt."); },
   retry: () => { throw new Error("SecurityModeProvider fehlt."); },
+  setPreference: () => { throw new Error("SecurityModeProvider fehlt."); },
 });
 
 export function SecurityModeProvider({ children }: { children: ReactNode }) {
@@ -27,7 +32,8 @@ export function SecurityModeProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({
     ...snapshot,
     toggle: toggleSecurityMode,
-    retry: () => setSecurityMode(true),
+    retry: retrySecurityMode,
+    setPreference: setSecurityPreference,
   }), [snapshot]);
   return <SecurityContext.Provider value={value}>{children}</SecurityContext.Provider>;
 }

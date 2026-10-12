@@ -33,7 +33,7 @@ import {
 } from "recharts";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
-import { useSecurityMode } from "@/components/security-mode-provider";
+import { FinancialData } from "@/components/financial-data";
 import { SeasonalIcon } from "@/components/seasonal-icons";
 import {
   SectionHeading,
@@ -64,7 +64,6 @@ const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function Overview() {
   const { state, dashboard: d } = useFinance();
-  const { locked } = useSecurityMode();
   const [showCashflow, setShowCashflow] = useState(false);
   const monthSplit = d.monthlyFunding.some((item) => item.id === "savings") ? d.monthlyFunding : [
     { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 0, transferred: 0, done: false },
@@ -116,7 +115,7 @@ export function Overview() {
           <p className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <SeasonalIcon slot="overview" className="seasonal-detail size-4" fallback={<CalendarDays aria-hidden="true" className="size-4" />} />
             {monthLabel(d.currentMonth)}
-            <span className="border-l border-border/70 pl-2 text-[11px]">Stand {dateLabel(state.settings.asOf)}</span>
+            <FinancialData as="span" className="border-l border-border/70 pl-2 text-[11px]">Stand {dateLabel(state.settings.asOf)}</FinancialData>
           </p>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-[34px]">Übersicht</h1>
         </div>
@@ -138,10 +137,10 @@ export function Overview() {
                 {kpi.label === "Ausgaben · Ist" ? <SeasonalIcon slot="expense" className="seasonal-detail size-4" fallback={<kpi.icon aria-hidden="true" className="size-4" />} /> : <kpi.icon aria-hidden="true" className="size-4" />}
               </span>
             </div>
-            <p className={cn("mt-4 break-words text-2xl font-semibold tracking-tight tabular-nums sm:text-[28px]", kpi.prominent && cn("text-3xl sm:text-[34px]", kpi.color))}>
+            <FinancialData as="p" className={cn("mt-4 break-words text-2xl font-semibold tracking-tight tabular-nums sm:text-[28px]", kpi.prominent && cn("text-3xl sm:text-[34px]", kpi.color))}>
               {currency(kpi.value)}
-            </p>
-            {kpi.note && <p className="mt-2 text-[11px] text-muted-foreground">{kpi.note}</p>}
+            </FinancialData>
+            {kpi.note && <FinancialData as="p" className="mt-2 text-[11px] text-muted-foreground">{kpi.note}</FinancialData>}
             {kpi.hint && <span id={`overview-metric-${index}-hint`} className="sr-only">{kpi.hint}</span>}
           </section>
         ))}
@@ -158,11 +157,11 @@ export function Overview() {
             return <div key={item.id} className={cn("grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border p-3",
               confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket}>
               <span className="min-w-0 break-words text-sm font-medium">{item.name}</span>
-              <span className={cn("inline-flex items-center gap-2 whitespace-nowrap text-xl font-semibold tracking-tight tabular-nums", confirmedSavings && "text-primary")}>
+              <FinancialData as="span" className={cn("inline-flex items-center gap-2 whitespace-nowrap text-xl font-semibold tracking-tight tabular-nums", confirmedSavings && "text-primary")}>
                 {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
                 <span>{currency(confirmedSavings ? item.transferred : item.amount)}</span>
-              </span>
-              {item.id === "savings" && <span className="col-start-2 mt-1 justify-self-end text-[11px] text-muted-foreground">{item.done ? "Überwiesen" : "Sparempfehlung"}</span>}
+              </FinancialData>
+              {item.id === "savings" && <FinancialData as="span" className="col-start-2 mt-1 justify-self-end text-[11px] text-muted-foreground">{item.done ? "Überwiesen" : "Sparempfehlung"}</FinancialData>}
             </div>;
           })}
           </div>
@@ -197,17 +196,17 @@ export function Overview() {
                     <ArrowUpRight aria-hidden="true" className="size-3 text-muted-foreground transition-colors group-hover:text-primary" />
                   </div>
                   <p className="mb-1 break-words text-xs text-muted-foreground">{pocket}</p>
-                  <p className="break-words text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
+                  <FinancialData as="p" className="break-words text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
                     {currency(d.actual[pocket])}
-                  </p>
+                  </FinancialData>
                   {pocket === "Notgroschen" && <p className="mt-2 text-[11px] text-muted-foreground">Trade Republic</p>}
-                  {pocket === "Sparkonto" && d.currentRoundUp > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Round-up +{currency(d.currentRoundUp)}</p>}
+                  {pocket === "Sparkonto" && d.currentRoundUp > 0 && <FinancialData as="p" className="mt-2 text-[11px] text-muted-foreground">Round-up +{currency(d.currentRoundUp)}</FinancialData>}
                 </Link>
               );
             })}
           </div>
         </section>
-        {motorcycle ? <section className="panel min-w-0 overflow-hidden p-5 sm:p-6">
+        {motorcycle ? <FinancialData as="section" className="panel min-w-0 overflow-hidden p-5 sm:p-6">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-sm font-semibold">
               <span className="flex size-9 items-center justify-center rounded-xl bg-chart-4/10"><Bike aria-hidden="true" className="size-4 text-chart-4" /></span>
@@ -290,9 +289,9 @@ export function Overview() {
           >
             Sparziel anpassen <ArrowRight className="size-3" />
           </Link>
-        </section> : <section className="panel min-w-0 p-5 sm:p-6" aria-label="Sparziele">
+        </FinancialData> : <section className="panel min-w-0 p-5 sm:p-6" aria-label="Sparziele">
           <SectionHeading title="Sparziele"><Target aria-hidden="true" className="size-4 text-primary" /></SectionHeading>
-          <div className="space-y-3">
+          <FinancialData className="space-y-3">
             {d.goals.map((goal) => {
               const progress = Math.max(0, Math.min(100, d.actualGoals[goal.id] / goal.target * 100));
               return <article key={goal.id} aria-label={`Sparziel ${goal.name}`} className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4">
@@ -308,13 +307,13 @@ export function Overview() {
               <Target aria-hidden="true" className="mb-3 size-7 text-primary/70" />
               <p className="text-sm font-medium">Noch kein Sparziel</p>
             </div>}
-          </div>
+          </FinancialData>
           <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
         </section>}
       </div>
       <section className="panel mb-5 p-5 sm:p-6" aria-label="Monatsprognose">
         <SectionHeading title="Die nächsten 90 Tage"><span className="status-pill border text-muted-foreground">Prognose</span></SectionHeading>
-        <div className="grid gap-3 lg:grid-cols-3">
+        <FinancialData className="grid gap-3 lg:grid-cols-3">
           {d.ninetyDays.map((row, index) => <article key={row.month} aria-label={`Prognose ${monthLabel(row.month)}`} className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-medium">{monthLabel(row.month)}</h3>
@@ -332,7 +331,7 @@ export function Overview() {
               </div>)}
             </dl>
           </article>)}
-        </div>
+        </FinancialData>
       </section>
       <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <section className="panel min-w-0 p-5 sm:p-6">
@@ -340,12 +339,12 @@ export function Overview() {
             title="Vermögensentwicklung"
             subtitle={hasAssetForecast ? `Prognose · ${forecast.length} ${forecast.length === 1 ? "Monat" : "Monate"}` : undefined}
           />
-          {hasAssetForecast ? <div
+          {hasAssetForecast ? <FinancialData
             className="h-64"
             role="img"
             aria-label="Prognose des gesamten Pocket-Vermögens"
           >
-            {!locked && <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height="100%">
               <AreaChart
                 data={forecast}
                 margin={{ left: -15, right: 8, top: 10 }}
@@ -383,8 +382,8 @@ export function Overview() {
                   isAnimationActive={false}
                 />
               </AreaChart>
-            </ResponsiveContainer>}
-          </div> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
+            </ResponsiveContainer>
+          </FinancialData> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
             <Link href="/monate" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
           </div>}
         </section>
@@ -393,13 +392,13 @@ export function Overview() {
             title="Ausgaben nach Kategorie"
           ><span className="status-pill border text-muted-foreground">Ist</span></SectionHeading>
           {d.spending.length ? (
-            <div className="flex min-h-64 flex-col items-center gap-3 sm:flex-row">
+            <FinancialData className="flex min-h-64 flex-col items-center gap-3 sm:flex-row">
               <div
                 className="h-52 w-full sm:w-1/2"
                 role="img"
                 aria-label="Aktuelle Ausgaben nach Kategorie"
               >
-                {!locked && <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
                       data={d.spending}
@@ -423,7 +422,7 @@ export function Overview() {
                       formatter={tooltipCurrency}
                     />
                   </PieChart>
-                </ResponsiveContainer>}
+                </ResponsiveContainer>
               </div>
               <div className="w-full space-y-3 sm:w-1/2">
                 {d.spending.map((row, i) => (
@@ -444,7 +443,7 @@ export function Overview() {
                   </div>
                 ))}
               </div>
-            </div>
+            </FinancialData>
           ) : (
             <div className="flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
               <ReceiptText aria-hidden="true" className="mb-3 size-7 text-muted-foreground" />
@@ -458,7 +457,7 @@ export function Overview() {
             <span><span className="block font-semibold tracking-tight">Einnahmen & Ausgaben</span><span className="mt-1 block text-xs text-muted-foreground">Plan · 6 Monate</span></span>
             <ChevronDown aria-hidden="true" className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
           </summary>
-          {showCashflow && !locked && <div className="mt-5">
+          {showCashflow && <FinancialData className="mt-5">
             <div className="mb-4 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
               <span>
                 <i className="mr-1.5 inline-block size-2 rounded-sm bg-chart-1" />
@@ -534,7 +533,7 @@ export function Overview() {
               </BarChart>
             </ResponsiveContainer>
           </div>
-          </div>}
+          </FinancialData>}
         </details>}
       </div>
     </>

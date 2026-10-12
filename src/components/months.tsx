@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
+import { FinancialData } from "@/components/financial-data";
 import { EmptyState, PageHeading } from "@/components/finance-ui";
 import { FixedCostSchedule } from "@/components/fixed-cost-schedule";
 import {
@@ -128,7 +129,8 @@ export function Months() {
               )}
             >
               <h3 className="text-xs text-muted-foreground">{item.label}</h3>
-              <p
+              <FinancialData
+                as="p"
                 className={cn(
                   "text-lg font-semibold tracking-tight tabular-nums sm:mt-2 sm:text-2xl",
                   item.value < 0 && "text-destructive",
@@ -136,7 +138,7 @@ export function Months() {
                 )}
               >
                 {currency(item.value)}
-              </p>
+              </FinancialData>
             </article>
           ))}
         </div>
@@ -168,7 +170,9 @@ export function Months() {
         />
         {filtered && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 text-xs text-muted-foreground sm:px-5">
-            <p>{rows.length} Positionen · Summen bleiben vollständig.</p>
+            <FinancialData as="p">
+              {rows.length} Positionen · Summen bleiben vollständig.
+            </FinancialData>
             <Button
               size="sm"
               variant="ghost"
@@ -183,10 +187,12 @@ export function Months() {
           </div>
         )}
         {filtered && !rows.length ? (
-          <EmptyState
-            title="Keine Positionen gefunden"
-            description="Suche oder Bereich anpassen."
-          />
+          <FinancialData>
+            <EmptyState
+              title="Keine Positionen gefunden"
+              description="Suche oder Bereich anpassen."
+            />
+          </FinancialData>
         ) : (
           <MonthPlanGrid
             months={months}

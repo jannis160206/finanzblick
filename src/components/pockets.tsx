@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
+import { FinancialData } from "@/components/financial-data";
 import {
   PocketBalanceCards,
   EverydayPocketBalances,
@@ -27,15 +28,19 @@ export function Pockets() {
         eyebrow="SPAREN & RESERVEN"
         title="Deine Pockets"
         description={`Stand ${dateLabel(state.settings.asOf)}`}
+        sensitiveDescription
       >
         <div
           aria-label="Reserven gesamt"
           className="min-w-0 rounded-xl border border-border/70 bg-card px-4 py-3"
         >
           <p className="text-xs text-muted-foreground">Reserven gesamt</p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">
+          <FinancialData
+            as="p"
+            className="mt-1 text-2xl font-semibold tracking-tight tabular-nums"
+          >
             {currency(total)}
-          </p>
+          </FinancialData>
         </div>
       </PageHeading>
       <section aria-label="Sparen und Reserven" className="mb-5">

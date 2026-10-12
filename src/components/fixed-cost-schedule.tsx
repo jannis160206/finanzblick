@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { CalendarDays, ChevronDown } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
+import { FinancialData } from "@/components/financial-data";
 import { fixedCostSchedule, type FixedCostScheduleItem } from "@/lib/fixed-cost-schedule";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -47,12 +48,13 @@ export function FixedCostSchedule() {
         className="flex min-h-11 cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 rounded-xl px-4 py-3 text-xs text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
         <CalendarDays className="size-4 shrink-0" aria-hidden="true" />
         <span className="font-medium">Fixkosten · {monthLabel(schedule.month)}</span>
-        <span className="ml-auto whitespace-nowrap tabular-nums">
+        <FinancialData as="span" className="ml-auto whitespace-nowrap tabular-nums">
           {schedule.open.length ? `${currency(schedule.openTotal)} offen` : "Alles abgebucht"}
-        </span>
+        </FinancialData>
         <ChevronDown className="size-3.5 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none" aria-hidden="true" />
       </summary>
       <div className="px-4 pb-4">
+      <FinancialData>
         <p className="mb-3 text-xs text-muted-foreground">
           Stand {dateLabel(schedule.asOf)} · {schedule.open.length} offene Posten
         </p>
@@ -64,6 +66,7 @@ export function FixedCostSchedule() {
       </summary>
       <DebitList items={schedule.booked} />
     </details>}
+      </FinancialData>
     <p className="mt-3 text-xs text-muted-foreground">Termine aus bisherigen Buchungen · offen = noch nicht im Auszug.</p>
       </div>
     </details>

@@ -21,7 +21,11 @@ function Dialog({
   return <DialogPrimitive.Root
     data-slot="dialog"
     open={(allowWhenLocked || !locked) && (open ?? internalOpen)}
-    onOpenChange={(next) => { setInternalOpen(next); onOpenChange?.(next) }}
+    onOpenChange={(next) => {
+      // CSS locks synchronously, before React updates the event closure.
+      if (!allowWhenLocked && (locked || document.documentElement.dataset.securityMode === "locked")) return
+      setInternalOpen(next); onOpenChange?.(next)
+    }}
     {...props}
   />
 }

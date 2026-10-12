@@ -1,4 +1,5 @@
 import type { Dashboard } from "@/lib/calc";
+import { FinancialData } from "@/components/financial-data";
 import { round } from "@/lib/calc";
 import { currency } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -40,7 +41,7 @@ export function BudgetSummary({
                 label === "Budgetrest" && remaining < 0 && "text-destructive",
               )}
             >
-              {currency(value)}
+              <FinancialData as="span">{currency(value)}</FinancialData>
             </dd>
           </div>
         ))}
@@ -77,21 +78,28 @@ export function BudgetCard({ row }: { row: BudgetPosition }) {
           },
         ].map(({ label, name, value }) => (
           <div key={label} className="min-w-0">
-            <dt className="text-muted-foreground">{label}</dt>
+            <dt className="text-muted-foreground">
+              {name === "Plan" || name === "Ist" ? (
+                label
+              ) : (
+                <FinancialData as="span">{label}</FinancialData>
+              )}
+            </dt>
             <dd
-              aria-label={`${row.label} ${name}`}
               className={cn(
                 "mt-1 break-words text-sm font-medium tabular-nums",
                 name !== "Plan" && name !== "Ist" && "font-semibold",
                 name === "Überschreitung" && "text-destructive",
               )}
             >
-              {currency(value)}
+              <FinancialData as="span" aria-label={`${row.label} ${name}`}>
+                {currency(value)}
+              </FinancialData>
             </dd>
           </div>
         ))}
       </dl>
-      <div
+      <FinancialData
         role="progressbar"
         aria-label={`${row.label} Budgetverbrauch`}
         aria-valuemin={0}
@@ -107,7 +115,7 @@ export function BudgetCard({ row }: { row: BudgetPosition }) {
           )}
           style={{ width: `${used}%` }}
         />
-      </div>
+      </FinancialData>
     </article>
   );
 }

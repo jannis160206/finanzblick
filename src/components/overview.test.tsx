@@ -111,7 +111,9 @@ it("expands the six-month cashflow on demand without changing the saved state", 
   expect(rows[0].income).toBe(dashboard.current.income);
   privacy.locked = true;
   rerender(<Overview />);
-  expect(screen.queryByTestId("cashflow-chart")).toBeNull();
+  const maskedChart = screen.getByTestId("cashflow-chart").closest("[data-financial-data]");
+  expect(maskedChart?.getAttribute("aria-hidden")).toBe("true");
+  expect(maskedChart?.hasAttribute("inert")).toBe(true);
   privacy.locked = false;
   rerender(<Overview />);
   expect(screen.getByTestId("cashflow-chart")).toBeTruthy();
