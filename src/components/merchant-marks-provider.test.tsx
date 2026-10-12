@@ -813,6 +813,14 @@ it.each([false, true])(
           { bookingId: "merchant-mark", logo: null },
           { bookingId: "repeat", logo: null },
           {
+            bookingId: "issuer-fee",
+            logo: { merchantId: "private-amex", version },
+          },
+          {
+            bookingId: "bank-interest",
+            logo: { merchantId: "private-raiffeisen", version },
+          },
+          {
             bookingId: "legacy-locked",
             logo: { merchantId: "muller-licensed", version },
           },
@@ -826,6 +834,25 @@ it.each([false, true])(
     state.transactions = [
       booking,
       { ...booking, id: "repeat", date: "2026-10-05" },
+      {
+        ...booking,
+        id: "issuer-fee",
+        bank: "Amex",
+        description: "MONATSGEBÜHR",
+        category: "Bankgebühren",
+        merchantId: undefined,
+        merchantAlias: undefined,
+      },
+      {
+        ...booking,
+        id: "bank-interest",
+        bank: "Raiffeisen",
+        description: "Habenzinsen",
+        category: "Einkommen",
+        amount: 1,
+        merchantId: undefined,
+        merchantAlias: undefined,
+      },
       {
         ...booking,
         id: "legacy-locked",
@@ -899,16 +926,24 @@ it.each([false, true])(
     const ledger = mobile
       ? screen.getByRole("list", { name: "Mobile Buchungen" })
       : screen.getByRole("table", { name: "Buchungen" });
-    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(4));
+    await waitFor(() => expect(ledger.querySelectorAll("img")).toHaveLength(6));
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
       merchantIds: ["muller"],
       merchantNames: ["Audi", "Mein Händler"],
-      bookingIds: ["legacy-locked", "merchant-mark", "repeat"],
+      bookingIds: [
+        "bank-interest",
+        "issuer-fee",
+        "legacy-locked",
+        "merchant-mark",
+        "repeat",
+      ],
     });
     for (const image of ledger.querySelectorAll("img")) {
-      const audi = image.getAttribute("src")?.includes("/audi/");
-      const asset = audi ? "audi" : "muller-licensed";
+      const asset =
+        ["audi", "private-amex", "private-raiffeisen"].find(
+          (id) => image.getAttribute("src")?.includes(`/${id}/`),
+        ) ?? "muller-licensed";
       expect(image.getAttribute("src")).toBe(
         `/api/merchants/${asset}/logo?v=${version}`,
       );
@@ -918,7 +953,13 @@ it.each([false, true])(
       expect(image.closest("a")!.getAttribute("href")).toBe(
         `/api/merchants/${asset}/attribution?v=${version}`,
       );
-      expect(["Audi | Abo", "Möbel Müller", booking.description]).toContain(
+      expect([
+        "Audi | Abo",
+        "Möbel Müller",
+        booking.description,
+        "MONATSGEBÜHR",
+        "Habenzinsen",
+      ]).toContain(
         image.closest("a")!.nextElementSibling!.textContent,
       );
     }
@@ -943,7 +984,7 @@ it.each([false, true])(
     const switchedLedger = mobile
       ? screen.getByRole("table", { name: "Buchungen" })
       : screen.getByRole("list", { name: "Mobile Buchungen" });
-    expect(switchedLedger.querySelectorAll("img")).toHaveLength(4);
+    expect(switchedLedger.querySelectorAll("img")).toHaveLength(6);
     expect(fetch).toHaveBeenCalledTimes(1);
   },
 );

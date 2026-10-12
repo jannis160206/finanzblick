@@ -21,10 +21,14 @@ export function shouldShowMerchantMark(
   classification: MarkClassification,
   suppliedLogo = false,
 ) {
+  const operation = bankOperation(booking);
   return !(
     classification.isTransfer ||
-    bankOperation(booking)?.kind === "fee" ||
-    bankOperation(booking)?.kind === "interest" ||
+    (!suppliedLogo &&
+      (operation?.kind === "fee" ||
+        operation?.kind === "interest" ||
+        classification.category === "Bankgebühren" ||
+        classification.category === "Rücklastschriftgebühren")) ||
     isMerchantTransfer(booking) ||
     transferCategories.includes(booking.category) ||
     transferCategories.includes(classification.category) ||

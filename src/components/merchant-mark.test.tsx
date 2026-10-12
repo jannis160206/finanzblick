@@ -273,6 +273,55 @@ it("shows income artwork only when an explicitly supplied private booking logo i
   expect(container.childElementCount).toBe(0);
 });
 
+it.each([
+  {
+    description: "MONATSGEBÜHR",
+    bank: "Amex",
+    amount: -20,
+    category: "Bankgebühren",
+  },
+  {
+    description: "Kontoführung",
+    bank: "Raiffeisen",
+    amount: -10,
+    category: "Bankgebühren",
+  },
+  {
+    description: "Habenzinsen",
+    bank: "Raiffeisen",
+    amount: 1,
+    category: "Einkommen",
+  },
+  {
+    description: "Sollzinsen",
+    bank: "Raiffeisen",
+    amount: -1,
+    category: "Bankgebühren",
+  },
+] as const)(
+  "shows $description artwork only for an available explicitly supplied private logo",
+  (patch) => {
+    const row = { ...booking, ...patch };
+    const version = "a".repeat(64);
+    const marks = vi.spyOn(merchantMarks, "useMerchantMarks").mockReturnValue(
+      new Map([[`booking:${row.id}`, { merchantId: "private-issuer", version }]]),
+    );
+    const { container, rerender } = render(mark(row));
+    expect(container.querySelector("img")!.getAttribute("src")).toBe(
+      `/api/merchants/private-issuer/logo?v=${version}`,
+    );
+    expect(container.querySelector("img")!.className).toContain("object-contain");
+    marks.mockReturnValue(new Map());
+    rerender(mark(row));
+    expect(container.childElementCount).toBe(0);
+    marks.mockReturnValue(
+      new Map([[`booking:${row.id}`, { merchantId: "public-issuer", version }]]),
+    );
+    rerender(mark(row));
+    expect(container.childElementCount).toBe(0);
+  },
+);
+
 it("uses a neutral fallback for a missing logo with no canonical alias", () => {
   const { container } = render(
     mark({ ...booking, merchantId: "unknown", merchantLogo: true }),

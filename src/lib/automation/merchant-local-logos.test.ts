@@ -354,6 +354,66 @@ it("resolves explicit supplied business labels in payment descriptors without as
   expect(marks[3].logo).toEqual(marks[0].logo);
 });
 
+it("uses explicit supplied bindings for issuer fees, credits, bank interest and a specific salary period without altering finance", async () => {
+  await supplied("American Express.png");
+  await supplied("Teamtalentsolution.png");
+  await supplied("Raiffeisen.png");
+  await importLogos({
+    "American Express.png": ["MONATSGEBÜHR", "Entertainment Gutschrift"],
+    "Teamtalentsolution.png": ["Gehalt 9/2026"],
+    "Raiffeisen.png": [
+      "Anweisungsbearbeitung", "Kontoführung", "Habenzinsen", "Sollzinsen",
+    ],
+  });
+  const cases = [
+    { description: "MONATSGEBÜHR", bank: "Amex", amount: -20, category: "Bankgebühren", source: "american express" },
+    { description: "Entertainment Gutschrift", bank: "Amex", amount: 10, category: "Entertainment", source: "american express" },
+    { description: "Gehalt 9/2026", bank: "Raiffeisen", amount: 1000, category: "Gehalt", source: "teamtalentsolution" },
+    { description: "Anweisungsbearbeitung", bank: "Raiffeisen", amount: -1, category: "Bankgebühren", source: "raiffeisen" },
+    { description: "Kontoführung", bank: "Raiffeisen", amount: -10, category: "Bankgebühren", source: "raiffeisen" },
+    { description: "Habenzinsen", bank: "Raiffeisen", amount: 1, category: "Einkommen", source: "raiffeisen" },
+    { description: "Sollzinsen", bank: "Raiffeisen", amount: -1, category: "Bankgebühren", source: "raiffeisen" },
+  ];
+  const rows = cases.map((row, index) =>
+    transactionSchema.parse({
+      ...row,
+      id: `requested-${index}`,
+      date: "2026-10-01",
+      pocket: null,
+      includeInPlan: false,
+      categoryOverride: true,
+      manualCategory: true,
+    }),
+  );
+  const unrelated = transactionSchema.parse({
+    ...rows[2], id: "unrelated-salary", description: "Gehalt 10/2026",
+  });
+  const transfer = transactionSchema.parse({
+    ...rows[4], id: "transfer", category: "Transfer intern",
+  });
+  const unrelatedFee = transactionSchema.parse({
+    ...rows[4], id: "unrelated-fee", description: "Beleggebühr",
+  });
+  accounts.putFinance(userId, {
+    ...blankTestState(),
+    transactions: [...rows, unrelated, transfer, unrelatedFee],
+  }, 0);
+  const before = accounts.getFinance(userId);
+  const marks = await accountMerchantBookingPresentations(
+    store,
+    [...rows, unrelated, transfer, unrelatedFee].map((row) => row.id),
+    userId,
+  );
+  const grants = localLogoGrants(store, userId);
+  expect(marks.slice(0, rows.length).map((mark) => mark.logo?.merchantId)).toEqual(
+    cases.map((row) => grants.get(row.source)!.merchantId),
+  );
+  expect(marks.slice(rows.length).map((mark) => mark.logo)).toEqual([
+    null, null, null,
+  ]);
+  expect(accounts.getFinance(userId)).toEqual(before);
+});
+
 it.each(["png", "jpeg", "webp"] as const)(
   "trims %s padding, preserving aspect ratio at bounded badge resolution",
   async (format) => {

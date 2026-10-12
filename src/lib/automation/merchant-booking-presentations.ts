@@ -89,6 +89,8 @@ export async function accountMerchantBookingPresentations(
     );
     const index = displayIndex(store);
     function suppliedIdentity(text: string, income: boolean) {
+      const exact = supplied.get(normalizeLocalLogoName(text));
+      if (exact) return exact.merchantId;
       if (income)
         text = text.replace(
           /^(?:lohn\s*[/&]\s*gehalt|lohn\s+und\s+gehalt|lohn|gehalt|salary)(?:\s+von)?\s+/iu,

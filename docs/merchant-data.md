@@ -24,6 +24,10 @@ files unchanged. The existing authenticated logo/attribution endpoints serve
 versioned account-scoped grants; names and files are never public assets.
 Historical display and future matching use the same persisted associations.
 Missing files, ambiguous names and unmatched names retain existing fallbacks.
+Explicit private name bindings can also supply logos for bank fees, interest
+and salary purpose texts. These bindings affect artwork only; they do not
+reclassify a booking or infer an employer for unrelated income. Transfers remain
+without logos.
 
 Only supplied local files allow up to 20 million input pixels (still at most
 2 MiB); remote image limits are unchanged. Uniform edge padding is trimmed and
