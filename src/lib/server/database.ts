@@ -35,6 +35,13 @@ interface UserRow {
   password_hash: string;
 }
 
+interface PreparedFinance {
+  state: AppState;
+  revision: number;
+  serialized: string;
+  stateBytes: number;
+}
+
 export interface AccountSession {
   user: AccountUser;
   token: string;
@@ -294,7 +301,6 @@ export class AccountDatabase {
     token: string | null | undefined,
     now = Date.now(),
   ): AccountUser | null {
-    this.cleanup(now);
     if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
     const row = this.db
       .prepare(
@@ -333,7 +339,8 @@ export class AccountDatabase {
     revision: number,
     now = Date.now(),
   ): FinanceSnapshot {
-    return this.transaction(() => this.writeFinance(userId, state, revision, now));
+    const prepared = this.prepareFinance(state, revision);
+    return this.transaction(() => this.writeFinance(userId, prepared, now));
   }
 
   transformFinance(
@@ -341,55 +348,61 @@ export class AccountDatabase {
     transform: (state: AppState | null) => AppState,
     checkpoint: (database: DatabaseSync) => void,
   ): FinanceSnapshot {
+    // Reconciliation and validation must not hold SQLite's single writer lock.
+    const snapshot = this.getFinance(userId);
+    const prepared = this.prepareFinance(transform(snapshot.state), snapshot.revision);
     return this.transaction(() => {
-      const snapshot = this.getFinance(userId);
-      const result = this.writeFinance(userId, transform(snapshot.state), snapshot.revision, Date.now());
+      const result = this.writeFinance(userId, prepared, Date.now());
       checkpoint(this.db);
       return result;
     });
   }
 
-  private writeFinance(
-    userId: string, state: AppState, revision: number, now: number,
-  ): FinanceSnapshot {
+  private prepareFinance(state: AppState, revision: number): PreparedFinance {
     const validated = financeUpdateSchema.parse({ state: lockManualAssignments(state), revision });
     const serialized = JSON.stringify(validated.state);
     const stateBytes = Buffer.byteLength(serialized);
     if (stateBytes > MAX_FINANCE_BYTES) {
       throw new AccountError(413, "Der Finanzdatenstand überschreitet 20 MiB.");
     }
-      const row = this.db
-        .prepare("SELECT revision, state_bytes FROM finance WHERE user_id = ?")
-        .get(userId) as { revision: number; state_bytes: number } | undefined;
-      if ((row?.revision ?? 0) !== validated.revision) {
-        throw new AccountError(
-          409,
-          "Die Finanzdaten wurden auf einem anderen Gerät geändert. Bitte den aktuellen Stand laden, bevor erneut gespeichert wird.",
-        );
-      }
-      const stored = this.db
-        .prepare("SELECT COALESCE(SUM(state_bytes), 0) AS total FROM finance")
-        .get() as { total: number };
-      if (
-        stored.total - (row?.state_bytes ?? 0) + stateBytes >
-        this.limits.maxStorageBytes
-      ) {
-        throw new AccountError(
-          507,
-          "Der Speicherplatz für Finanzdaten ist ausgeschöpft. Bitte den Administrator kontaktieren.",
-        );
-      }
-      const nextRevision = validated.revision + 1;
-      this.db
-        .prepare(
-          `
-        INSERT INTO finance (user_id, state_json, revision, state_bytes, updated_at) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json,
-          revision = excluded.revision, state_bytes = excluded.state_bytes, updated_at = excluded.updated_at
-      `,
-        )
-        .run(userId, serialized, nextRevision, stateBytes, now);
-      return { state: validated.state, revision: nextRevision };
+    return { ...validated, serialized, stateBytes };
+  }
+
+  private writeFinance(
+    userId: string, prepared: PreparedFinance, now: number,
+  ): FinanceSnapshot {
+    const row = this.db
+      .prepare("SELECT revision, state_bytes FROM finance WHERE user_id = ?")
+      .get(userId) as { revision: number; state_bytes: number } | undefined;
+    if ((row?.revision ?? 0) !== prepared.revision) {
+      throw new AccountError(
+        409,
+        "Die Finanzdaten wurden auf einem anderen Gerät geändert. Bitte den aktuellen Stand laden, bevor erneut gespeichert wird.",
+      );
+    }
+    const stored = this.db
+      .prepare("SELECT COALESCE(SUM(state_bytes), 0) AS total FROM finance")
+      .get() as { total: number };
+    if (
+      stored.total - (row?.state_bytes ?? 0) + prepared.stateBytes >
+      this.limits.maxStorageBytes
+    ) {
+      throw new AccountError(
+        507,
+        "Der Speicherplatz für Finanzdaten ist ausgeschöpft. Bitte den Administrator kontaktieren.",
+      );
+    }
+    const nextRevision = prepared.revision + 1;
+    this.db
+      .prepare(
+        `
+      INSERT INTO finance (user_id, state_json, revision, state_bytes, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET state_json = excluded.state_json,
+        revision = excluded.revision, state_bytes = excluded.state_bytes, updated_at = excluded.updated_at
+    `,
+      )
+      .run(userId, prepared.serialized, nextRevision, prepared.stateBytes, now);
+    return { state: prepared.state, revision: nextRevision };
   }
 
   consumeRateLimit(

@@ -227,6 +227,39 @@ it("rolls back finance writes and checkpoints together when commit fails", () =>
   ).toBe("PROCESSING");
 });
 
+it("retries a concurrent edit conflict without losing the edit or completing a stale import", async () => {
+  await upload(csv);
+  const claimed = store.claim(owner)!;
+  const editor = new AccountDatabase(accounts.path);
+  editor.read((db) => db.exec("PRAGMA busy_timeout = 1"));
+  const transformFinance = accounts.transformFinance.bind(accounts);
+  const changed = { ...blankTestState(), seasonalTheme: { reduceMotion: true } };
+  const intercept = vi.spyOn(accounts, "transformFinance").mockImplementationOnce(
+    (tenant, transform, checkpoint) => transformFinance(
+      tenant,
+      (state) => {
+        const next = transform(state);
+        editor.putFinance(tenant, changed, 0);
+        return next;
+      },
+      checkpoint,
+    ),
+  );
+  try {
+    await expect(worker.process(claimed)).rejects.toMatchObject({ status: 409 });
+    expect(accounts.getFinance(userId)).toEqual({ state: changed, revision: 1 });
+    expect(store.snapshot(userId).jobs[0].status).toBe("PROCESSING");
+    store.fail(owner, claimed, "Concurrent edit", Date.now() - 2000);
+    await worker.process(store.claim(owner)!);
+    expect(accounts.getFinance(userId).state?.seasonalTheme).toEqual(changed.seasonalTheme);
+    expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+    expect(store.snapshot(userId).jobs[0]).toMatchObject({ status: "COMPLETED", attempts: 1 });
+  } finally {
+    intercept.mockRestore();
+    editor.close();
+  }
+});
+
 it("uses persisted exponential backoff and a bounded retry budget", async () => {
   vi.useFakeTimers();
   await upload(csv);

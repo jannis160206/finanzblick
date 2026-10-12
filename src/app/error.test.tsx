@@ -13,12 +13,12 @@ it("keeps the error boundary a client component", () => {
 });
 
 it("renders the existing recovery message and retries when requested", () => {
-  const reset = vi.fn();
-  render(<ErrorPage reset={reset} />);
+  const retry = vi.fn();
+  render(<ErrorPage retry={retry} />);
 
   expect(screen.getByRole("alert").textContent).toContain("Gespeicherte Finanzdaten bleiben erhalten.");
   expect(screen.getByRole("heading").textContent).toBe("Ansicht konnte nicht geladen werden");
-  expect(reset).not.toHaveBeenCalled();
+  expect(retry).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Erneut versuchen" }));
-  expect(reset).toHaveBeenCalledOnce();
+  expect(retry).toHaveBeenCalledOnce();
 });

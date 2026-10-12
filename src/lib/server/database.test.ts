@@ -116,6 +116,64 @@ describe("AccountDatabase", () => {
     });
   });
 
+  it("keeps session and finance reads available while another connection holds the writer lock", async () => {
+    const writer = open();
+    const session = await writer.register("alice", password);
+    const state = blankTestState();
+    writer.putFinance(session.user.id, state, 0);
+    const reader = open();
+    reader.read((db) => db.exec("PRAGMA busy_timeout = 1"));
+
+    writer.transaction(() => {
+      expect(reader.currentUser(session.token)).toEqual(session.user);
+      expect(reader.currentUser("invalid")).toBeNull();
+      expect(reader.currentUser(session.token, session.expiresAt)).toBeNull();
+      expect(reader.getFinance(session.user.id)).toEqual({ state, revision: 1 });
+    });
+  });
+
+  it("allows other writes during finance reconciliation and commits its checkpoint atomically", async () => {
+    const importer = open();
+    const session = await importer.register("alice", password);
+    const uploader = open();
+    uploader.read((db) => db.exec("PRAGMA busy_timeout = 1"));
+    const state = blankTestState();
+
+    const result = importer.transformFinance(
+      session.user.id,
+      () => {
+        uploader.consumeRateLimit("statement:upload:alice", 30, 60_000);
+        return state;
+      },
+      (db) => {
+        expect(db.prepare("SELECT revision FROM finance WHERE user_id = ?").get(session.user.id))
+          .toEqual({ revision: 1 });
+      },
+    );
+    expect(result).toEqual({ state, revision: 1 });
+  });
+
+  it("rejects a stale import without checkpointing or overwriting a concurrent edit", async () => {
+    const importer = open();
+    const session = await importer.register("alice", password);
+    const editor = open();
+    editor.read((db) => db.exec("PRAGMA busy_timeout = 1"));
+    const state = blankTestState();
+    const changed = { ...state, seasonalTheme: { reduceMotion: true } };
+    let checkpointed = false;
+
+    expect(() => importer.transformFinance(
+      session.user.id,
+      () => {
+        editor.putFinance(session.user.id, changed, 0);
+        return state;
+      },
+      () => { checkpointed = true; },
+    )).toThrow(/anderen Gerät/);
+    expect(checkpointed).toBe(false);
+    expect(importer.getFinance(session.user.id)).toEqual({ state: changed, revision: 1 });
+  });
+
   it("reserves the administrator name, validates credentials, and rejects duplicate registrations", async () => {
     const database = open();
     await expect(database.register("AdMiN", password)).rejects.toMatchObject({
