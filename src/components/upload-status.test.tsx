@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { UploadStatus } from "./upload-status";
 import type { AutomationJob } from "@/lib/automation/schema";
+import { useUploadActivity } from "./upload-activity";
 const privacy = vi.hoisted(() => ({ locked: false }));
 vi.mock("./security-mode-provider", () => ({ useSecurityMode: () => privacy }));
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   privacy.locked = false;
   delete document.documentElement.dataset.securityMode;
 });
@@ -56,8 +58,8 @@ it("retains an exclamation badge and explicit connection errors without pretendi
 
 it("does not fabricate a transfer percentage and does not double-count a realtime uploading job", () => {
   render(<UploadStatus activities={[
-    { id: "one", name: "gleich.pdf", phase: "uploading", error: null },
-    { id: "two", name: "gleich.pdf", phase: "waiting", error: null },
+    { id: "one", name: "gleich.pdf", phase: "uploading", error: null, updatedAt: 1 },
+    { id: "two", name: "gleich.pdf", phase: "waiting", error: null, updatedAt: 2 },
   ]} jobs={[{ ...job("one", "UPLOADING"), name: "gleich.pdf" }]} error={null} reviewCount={0} />);
   expect(document.querySelector("[data-upload-badge]")?.textContent).toBe("2");
   fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
@@ -77,4 +79,92 @@ it("conceals an open private upload dialog while screen privacy is locked", () =
   view.rerender(<UploadStatus activities={[]} jobs={[job("private", "PROCESSING")]} error={null} reviewCount={0} />);
   expect(screen.queryByRole("dialog")).toBeNull();
   expect(screen.queryByText("private.pdf")).toBeNull();
+});
+
+it("shows only the latest two finished server imports, including a failed import, without hiding active uploads", () => {
+  render(<UploadStatus activities={[]} jobs={[
+    { ...job("old-failure", "FAILED"), updatedAt: 1 },
+    { ...job("old-success", "COMPLETED"), updatedAt: 2 },
+    { ...job("latest-failure", "FAILED"), updatedAt: 4 },
+    { ...job("latest-success", "COMPLETED"), updatedAt: 3 },
+    { ...job("backfill-done", "COMPLETED", "backfill"), updatedAt: 5 },
+    ...Array.from({ length: 3 }, (_, index) => job(`active-${index}`, "PROCESSING")),
+  ]} error={null} reviewCount={0} />);
+  expect(document.querySelector("[data-upload-badge]")?.textContent).toBe("3");
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  expect(screen.getAllByRole("article")).toHaveLength(5);
+  expect(screen.getByRole("article", { name: "Verarbeitung: latest-failure.pdf" })).toBeTruthy();
+  expect(screen.getByRole("article", { name: "Verarbeitung: latest-success.pdf" })).toBeTruthy();
+  expect(screen.queryByText("old-failure.pdf")).toBeNull();
+  expect(screen.queryByText("old-success.pdf")).toBeNull();
+  expect(screen.queryByText("backfill-done.pdf")).toBeNull();
+  expect(screen.getByRole("alert").textContent).toBe("Datei beschädigt");
+});
+
+it("shares the two-import limit between client and server results rather than allowing two of each", () => {
+  render(<UploadStatus activities={[
+    { id: "old-local", name: "old-local.pdf", phase: "completed", error: null, updatedAt: 1 },
+    { id: "local-failure", name: "local-failure.pdf", phase: "failed", error: "Upload fehlgeschlagen", updatedAt: 4 },
+    { id: "remote-success", name: "remote-success.pdf", phase: "accepted", error: null, updatedAt: 3 },
+  ]} jobs={[
+    { ...job("remote-success", "COMPLETED"), updatedAt: 3 },
+    { ...job("old-remote", "COMPLETED"), updatedAt: 2 },
+  ]} error={null} reviewCount={0} />);
+  expect(document.querySelector("[data-upload-badge]")?.textContent).toBe("!");
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  expect(screen.getAllByRole("article")).toHaveLength(2);
+  expect(screen.getByRole("article", { name: "Verarbeitung: local-failure.pdf" })).toBeTruthy();
+  expect(screen.getByRole("article", { name: "Verarbeitung: remote-success.pdf" })).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toBe("Upload fehlgeschlagen");
+  expect(screen.queryByText("old-local.pdf")).toBeNull();
+  expect(screen.queryByText("old-remote.pdf")).toBeNull();
+});
+
+it("does not retain an error badge for failures older than the latest two imports", () => {
+  render(<UploadStatus activities={[
+    { id: "old", name: "old.pdf", phase: "failed", error: "Alter Fehler", updatedAt: 1 },
+  ]} jobs={[
+    { ...job("latest", "COMPLETED"), updatedAt: 3 },
+    { ...job("second", "COMPLETED"), updatedAt: 2 },
+  ]} error={null} reviewCount={0} />);
+  expect(document.querySelector("[data-upload-badge]")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  expect(screen.getAllByRole("article")).toHaveLength(2);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.queryByText("Alter Fehler")).toBeNull();
+});
+
+it("retains only two local outcomes by completion time while keeping every unfinished file", () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const { result } = renderHook(() => useUploadActivity([]));
+  act(() => result.current.add(["first", "second", "third", "running"].map((id) => ({
+    id, name: `${id}.pdf`, phase: "waiting", error: null, updatedAt: 0,
+  }))));
+  vi.setSystemTime(100);
+  act(() => result.current.change(["third"], "completed"));
+  vi.setSystemTime(200);
+  act(() => result.current.change(["second"], "failed", "Datei nicht lesbar"));
+  vi.setSystemTime(300);
+  act(() => result.current.change(["first"], "completed"));
+  expect(result.current.activities.map((item) => item.id)).toEqual(["first", "second", "running"]);
+  expect(result.current.activities.find((item) => item.id === "second")).toMatchObject({
+    phase: "failed", error: "Datei nicht lesbar", updatedAt: 200,
+  });
+});
+
+it("replaces the older result when a third import finishes while the status window is open", async () => {
+  const initial = [
+    { ...job("first", "COMPLETED"), updatedAt: 1 },
+    { ...job("second", "COMPLETED"), updatedAt: 2 },
+  ];
+  const view = render(<UploadStatus activities={[]} jobs={initial} error={null} reviewCount={0} />);
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  view.rerender(<UploadStatus activities={[]} jobs={[
+    ...initial, { ...job("third", "FAILED"), updatedAt: 3 },
+  ]} error={null} reviewCount={0} />);
+  expect(screen.getAllByRole("article")).toHaveLength(2);
+  expect(screen.getByRole("article", { name: "Verarbeitung: second.pdf" })).toBeTruthy();
+  expect(screen.getByRole("article", { name: "Verarbeitung: third.pdf" })).toBeTruthy();
+  expect(document.querySelector("[data-upload-badge]")?.textContent).toBe("!");
+  await waitFor(() => expect(screen.queryByText("first.pdf")).toBeNull());
 });

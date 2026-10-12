@@ -9,6 +9,7 @@ export type UploadActivity = {
   name: string;
   phase: UploadPhase;
   error: string | null;
+  updatedAt: number;
 };
 
 export function isActiveUpload(activity: UploadActivity) {
@@ -20,7 +21,8 @@ export function isActiveJob(job: AutomationJob) {
 }
 
 function boundedActivities(activities: UploadActivity[]) {
-  const recent = new Set(activities.filter((item) => !isActiveUpload(item)).slice(-20).map((item) => item.id));
+  const recent = new Set(activities.filter((item) => !isActiveUpload(item))
+    .reverse().sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 2).map((item) => item.id));
   return activities.filter((item) => isActiveUpload(item) || recent.has(item.id));
 }
 
@@ -35,8 +37,9 @@ export function useUploadActivity(jobs: AutomationJob[]) {
   }, []);
   const change = useCallback((ids: string[], phase: UploadPhase, error: string | null = null) => {
     const selected = new Set(ids);
+    const updatedAt = Date.now();
     setActivities((current) => boundedActivities(current.map((item) =>
-      selected.has(item.id) ? { ...item, phase, error } : item,
+      selected.has(item.id) ? { ...item, phase, error, updatedAt } : item,
     )));
   }, []);
   return { activities, add, change };

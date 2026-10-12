@@ -440,11 +440,11 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     setUI({ busy: true, dragging: false, ledgerOnly: false });
     const results: StatementResult[] = [];
     const uploads: UploadActivity[] = files.map((file) => ({
-      id: crypto.randomUUID(), name: file.name, phase: "waiting", error: null,
+      id: crypto.randomUUID(), name: file.name, phase: "waiting", error: null, updatedAt: Date.now(),
     }));
     if (workspace && files.length > 5) {
       const message = "Bitte höchstens fünf Auszüge gleichzeitig auswählen.";
-      addActivities([{ id: crypto.randomUUID(), name: "Dateiauswahl", phase: "failed", error: message }]);
+      addActivities([{ id: crypto.randomUUID(), name: "Dateiauswahl", phase: "failed", error: message, updatedAt: Date.now() }]);
       toast.error(message);
       busyRef.current = false;
       setUI({ busy: false });

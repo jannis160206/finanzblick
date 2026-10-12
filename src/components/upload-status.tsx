@@ -35,14 +35,20 @@ export function UploadStatus({
   const local = activities.filter((item) => !remoteIds.has(item.id));
   const activeCount = local.filter(isActiveUpload).length +
     jobs.filter((job) => job.kind === "statement" && isActiveJob(job)).length;
-  const hasIssues = !!error || !!summary?.issues.length ||
-    activities.some((item) => item.phase === "failed") ||
-    jobs.some((job) => job.status === "FAILED" || !!job.error);
   const latestJobs = jobs.map((job) => {
     const failure = activities.find((item) => item.id === job.id && item.phase === "failed");
     return failure ? { ...job, error: job.error ?? failure.error } : job;
   });
-  const empty = !local.length && !jobs.length && !summary && !error;
+  const recentIds = new Set([
+    ...local.filter((item) => !isActiveUpload(item)).reverse(),
+    ...latestJobs.filter((job) => job.kind === "statement" && !isActiveJob(job)),
+  ].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 2).map((item) => item.id));
+  const visibleLocal = local.filter((item) => isActiveUpload(item) || recentIds.has(item.id));
+  const visibleJobs = latestJobs.filter((job) => isActiveJob(job) || recentIds.has(job.id));
+  const hasIssues = !!error || !!summary?.issues.length ||
+    visibleLocal.some((item) => item.phase === "failed") ||
+    visibleJobs.some((job) => job.status === "FAILED" || !!job.error);
+  const empty = !visibleLocal.length && !visibleJobs.length && !summary && !error;
   const announcement = `${activeCount} ${activeCount === 1 ? "Upload" : "Uploads"} in Bearbeitung.${hasIssues ? " Importhinweise vorhanden." : ""}`;
   return (
     <Dialog>
@@ -64,7 +70,7 @@ export function UploadStatus({
         <DialogHeader>
           <DialogTitle>Uploadstatus</DialogTitle>
           <DialogDescription className="whitespace-normal">
-            {activeCount ? announcement : "Aktuelle Uploads, Ergebnisse und Importhinweise."}
+            {activeCount ? announcement : "Die letzten zwei Imports und ihre Hinweise."}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-3 pt-0">
@@ -74,13 +80,13 @@ export function UploadStatus({
             <p className="mt-1 text-xs text-muted-foreground">Neue Kontoauszüge und ihr Fortschritt erscheinen hier.</p>
           </div>}
           <div aria-live="polite" className="space-y-3">
-            {local.map((item) => <AutomationJobCard key={item.id}
+            {visibleLocal.map((item) => <AutomationJobCard key={item.id}
               job={{ id: item.id, name: item.name, status: phases[item.phase].status,
                 progress: item.phase === "completed" ? 100 : 0, error: item.error }}
               label={phases[item.phase].label}
               indeterminate={isActiveUpload(item)} />)}
           </div>
-          <AutomationStatus jobs={latestJobs} error={error} showCompleted />
+          <AutomationStatus jobs={visibleJobs} error={error} showCompleted />
           {summary && <StatementImportStatus imported={summary.imported}
             issues={summary.issues} reviewCount={reviewCount} />}
         </DialogBody>
