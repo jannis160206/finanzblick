@@ -399,6 +399,29 @@ describe("AccountSyncTools", () => {
     expect(loadServer).not.toHaveBeenCalled();
   });
 
+  it("accepts an identically rehydrated device stand instead of blocking recovery on object identity", async () => {
+    finance.storageError = "Synchronisierungskonflikt";
+    const view = mount(<AccountSyncTools />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Serverstand laden" }));
+    finance.state = structuredClone(finance.state);
+    view.rerender(<AccountWorkspaceContext value={workspace("user")}><AccountSyncTools /></AccountWorkspaceContext>);
+    fireEvent.click(screen.getByRole("button", { name: "Übernahme bestätigen" }));
+    await waitFor(() => expect(loadServer).toHaveBeenCalledOnce());
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("offers a separately confirmed data-preserving reconciliation rather than replacing the device stand", async () => {
+    finance.storageError = "Synchronisierungskonflikt";
+    const reconcileServer = vi.fn().mockResolvedValue(undefined);
+    mount(<AccountSyncTools />, { ...workspace("user"), reconcileServer });
+    fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
+    expect(screen.getByText(/ohne Löschen zusammenführen/)).toBeTruthy();
+    expect(reconcileServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+    await waitFor(() => expect(reconcileServer).toHaveBeenCalledOnce());
+    expect(loadServer).not.toHaveBeenCalled();
+  });
+
   it("disables server confirmation and cancellation during the request, avoiding duplicate loads", async () => {
     finance.storageError = "Synchronisierungskonflikt";
     let finish!: () => void;

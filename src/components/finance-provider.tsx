@@ -33,7 +33,8 @@ import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 import { FINANCE_STORAGE_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 import { amexBalanceRecoveryResponseSchema, needsAmexBalanceRecovery, recoverAmexBalance, type AmexBalanceRecovery } from "@/lib/import/amex-balance-recovery";
 import type { AccountUser } from "@/lib/account-schema";
-import { AccountFinanceStorage, AccountSessionError } from "@/lib/account-finance-storage";
+import { AccountFinanceStorage, AccountSessionError, AccountReconciliationError } from "@/lib/account-finance-storage";
+import { sameFinanceData } from "@/lib/account-finance-merge";
 import { AccountWorkspaceContext } from "@/components/account-context";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { AutomationContext } from "@/components/automation-context";
@@ -508,6 +509,20 @@ export function FinanceProvider({
   };
   const workspace = account && cloud ? {
     user: account,
+    reconcileServer: async () => {
+      const expected = latest.current.data;
+      try {
+        const data = await cloud.reconcileServer(expected, () => sameFinanceData(latest.current.data, expected));
+        if (!sameFinanceData(latest.current.data, expected))
+          throw new FinanceStorageError("Während des Abgleichs wurden neue Geräteänderungen vorgenommen. Sie bleiben erhalten; bitte erneut prüfen.");
+        dispatch({ type: "hydrate", data });
+      } catch (error) {
+        if (error instanceof AccountReconciliationError && sameFinanceData(latest.current.data, expected))
+          dispatch({ type: "hydrate", data: error.pendingState, error: error.message });
+        handleCloudError(error);
+        throw error;
+      }
+    },
     loadServer: async () => {
       try {
         const data = await cloud.useServer();

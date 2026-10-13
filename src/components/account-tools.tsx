@@ -14,6 +14,7 @@ import { LegacyAccountNotice, subscribeLegacyNotice, type LegacyNoticeStatus } f
 import { createEmptyAccountState } from "@/lib/account-state";
 import { appStateSchema, type AppState } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { sameFinanceData } from "@/lib/account-finance-merge";
 
 const unavailableLogoutBackupsMessage = "Lokale Sicherungen sind nicht erreichbar. Sie können vor dem Abmelden nicht geprüft oder heruntergeladen werden. Beim Abmelden bleiben diese ungeprüften lokalen Daten auf diesem Gerät erhalten.";
 
@@ -172,7 +173,7 @@ export function AccountSyncTools({ manual = false, visible = true }: { manual?: 
   useEffect(() => {
     if (visible && !storageError && legacyStatus === "available") notice.markShown();
   }, [visible, storageError, legacyStatus, notice]);
-  const [confirm, setConfirm] = useState<"legacy" | "server" | null>(null);
+  const [confirm, setConfirm] = useState<"legacy" | "server" | "reconcile" | null>(null);
   const [serverReview, setServerReview] = useState<{ state: AppState; accountId: string } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -209,9 +210,12 @@ export function AccountSyncTools({ manual = false, visible = true }: { manual?: 
         notice.markHandled();
         setImportedFor(adminId);
       } else {
-        if (!serverReview || serverReview.state !== state || serverReview.accountId !== workspace!.user.id)
+        if (!serverReview || !sameFinanceData(serverReview.state, state) || serverReview.accountId !== workspace!.user.id)
           throw new FinanceStorageError("Der Kontostand wurde zwischenzeitlich geändert. Bitte abbrechen und den Serverstand erneut prüfen.");
-        await workspace!.loadServer();
+        if (confirm === "reconcile") {
+          if (!workspace!.reconcileServer) throw new FinanceStorageError("Der Datenabgleich ist nicht verfügbar. Der Gerätestand bleibt erhalten.");
+          await workspace!.reconcileServer();
+        } else await workspace!.loadServer();
       }
       setConfirm(null);
     } catch (error) {
@@ -233,21 +237,26 @@ export function AccountSyncTools({ manual = false, visible = true }: { manual?: 
   const showTools = legacy || storageError || error || legacyStatus === "unavailable" || legacyStatus === "unsaved";
   if (!showTools) return <AccountConflictRecovery />;
   const content = <section aria-label="Kontodaten übertragen" className="mb-5 rounded-xl border bg-card p-4 text-sm">
-    {storageError ? <p>Dieser Gerätestand bleibt erhalten. Vor dem Laden neuerer Serverdaten bitte eine Sicherung herunterladen.</p>
+    {storageError ? <p>Dieser Gerätestand bleibt erhalten. Vor dem Laden neuerer Serverdaten bitte eine Sicherung herunterladen. Beim Abgleich bleiben lokale und serverseitige Buchungen erhalten; manuelle Zuordnungen sind geschützt.</p>
       : legacy && <p>In diesem Browser liegen noch Daten von vor der Konto-Anmeldung. Nur nach deiner Bestätigung werden sie in dein Admin-Konto übertragen. Daten von localhost zuerst dort als Excel exportieren.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
       <Button variant="outline" size="sm" onClick={download}><Download className="size-4" />{source.raw !== null && source.error ? "Ungeprüftes Geräte-Original herunterladen" : "Gerätestand sichern"}</Button>
-      {storageError && <Button variant="outline" size="sm" onClick={() => { setServerReview({ state, accountId: workspace.user.id }); setConfirm("server"); }}>Serverstand laden</Button>}
+      {storageError && workspace.reconcileServer && !source.error && !source.unavailable && <Button size="sm" disabled={busy} onClick={() => { setServerReview({ state, accountId: workspace.user.id }); setConfirm("reconcile"); }}>Datenstände abgleichen</Button>}
+      {storageError && <Button variant="outline" size="sm" disabled={busy} onClick={() => { setServerReview({ state, accountId: workspace.user.id }); setConfirm("server"); }}>Serverstand laden</Button>}
       {legacy && <Button size="sm" onClick={() => setConfirm("legacy")}>Bisherige Browserdaten übernehmen</Button>}
       {legacy && !manual && <Button variant="ghost" size="sm" disabled={busy} onClick={dismiss}>Hinweis ausblenden</Button>}
     </div>
     {source.raw !== null && source.error && <p role="alert" className="mt-3 text-destructive">Das Geräte-Original ist unlesbar oder ungültig und bleibt unverändert. Der Download enthält nur den ungeprüften Originaltext und ist kein wiederherstellbarer JSON-Kontostand. Beim Laden des Serverstands wird dieser Originaltext zusätzlich als Konfliktsicherung aufbewahrt.</p>}
     {source.unavailable && <p role="alert" className="mt-3 text-destructive">{source.error}</p>}
-    {confirm && (confirm === "server" || legacy) && <div className="mt-4 border-t pt-3">
+    {confirm && (confirm === "server" || confirm === "reconcile" || legacy) && <div className="mt-4 border-t pt-3">
       <p>{confirm === "legacy" ? "Den Kontostand durch die bisherigen Browserdaten ersetzen? Die Originaldaten im Browser bleiben erhalten."
+        : confirm === "reconcile" ? "Geräte- und Serverstand ohne Löschen zusammenführen? Zusätzliche Buchungen bleiben erhalten, manuelle Kategorien bleiben geschützt. Widersprüchliche Beträge oder Einstellungen werden nicht überschrieben; bestehende Konfliktsicherungen bleiben erhalten."
         : "Den Gerätestand durch die Serverdaten ersetzen? Ungesicherte Änderungen werden zusätzlich lokal als Konfliktsicherung aufbewahrt."}</p>
       <div className="mt-3 flex gap-2">
-        <Button size="sm" disabled={busy} onClick={() => void apply()}>Übernahme bestätigen</Button>
+        <Button size="sm" disabled={busy} aria-busy={busy} onClick={() => void apply()}>
+          {confirm === "reconcile" && busy && <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />}
+          {confirm === "reconcile" ? busy ? "Gleicht ab …" : "Abgleich bestätigen" : "Übernahme bestätigen"}
+        </Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirm(null)}>Abbrechen</Button>
       </div>
     </div>}

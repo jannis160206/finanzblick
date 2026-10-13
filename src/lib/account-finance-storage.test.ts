@@ -91,6 +91,23 @@ describe("account finance persistence", () => {
     expect(cached()).toEqual({ state: second, revision: 2, pending: false });
   });
 
+  it("acknowledges an identical new state object during a write without a redundant PUT", async () => {
+    let finish!: (result: Response) => void;
+    const request = vi.fn().mockResolvedValueOnce(response(null, 0))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+    vi.stubGlobal("fetch", request);
+    const { controller, saved } = storage();
+    await controller.load();
+    const first = changed("same"), next = structuredClone(first);
+    controller.save(first);
+    controller.save(next);
+    finish(response(first, 1));
+    await vi.waitFor(() => expect(saved).toHaveBeenCalledWith(next));
+    expect(saved.mock.calls[0][0]).toBe(next);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(cached().pending).toBe(false);
+  });
+
   it("does not generate a write for an unchanged polled snapshot", async () => {
     const state = appStateSchema.parse(changed("same"));
     const request = vi.fn().mockResolvedValue(response(state, 3));
@@ -100,6 +117,134 @@ describe("account finance persistence", () => {
     controller.save(state);
     expect(saved).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledOnce();
+  });
+
+  describe("data-preserving server reconciliation", () => {
+    it("keeps both stands, protected categories and an older conflict copy, then persists the merged revision", async () => {
+      const local = changed("local"), remote = changed("server");
+      local.transactions.push({ ...changed("shared").transactions[0], manualCategory: true, category: "Geschenke & Spenden" });
+      remote.transactions.push(changed("shared").transactions[0]);
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      const older = JSON.stringify({ state: changed("older conflict"), revision: 0, pending: true });
+      localStorage.setItem(accountConflictKey("alice"), older);
+      const request = vi.fn().mockResolvedValueOnce(response(remote, 2)).mockResolvedValueOnce(response(remote, 2))
+        .mockImplementationOnce(async (_url: string, options: RequestInit) => response(JSON.parse(String(options.body)).state, 3));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      const result = await controller.reconcileServer(local);
+      expect(result.transactions.map((row) => row.id)).toEqual(["local", "shared", "server"]);
+      expect(result.transactions.find((row) => row.id === "shared")?.category).toBe("Geschenke & Spenden");
+      expect(cached()).toEqual({ state: result, revision: 3, pending: false });
+      expect(controller.error).toBeNull();
+      expect(localStorage.getItem(accountConflictKey("alice"))).toBe(older);
+      expect(JSON.parse(request.mock.calls[2][1].body).revision).toBe(2);
+    });
+
+    it("retries a worker revision race from fresh server evidence without dropping local or server additions", async () => {
+      const local = changed("local"), first = changed("server-first"), second = changed("server-second");
+      second.transactions.push(...first.transactions);
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      const request = vi.fn().mockResolvedValueOnce(response(first, 2)).mockResolvedValueOnce(response(first, 2))
+        .mockResolvedValueOnce(new Response(null, { status: 409 })).mockResolvedValueOnce(response(second, 3))
+        .mockImplementationOnce(async (_url: string, options: RequestInit) => response(JSON.parse(String(options.body)).state, 4));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      const result = await controller.reconcileServer(local);
+      expect(new Set(result.transactions.map((row) => row.id))).toEqual(new Set(["local", "server-first", "server-second"]));
+      expect(cached().revision).toBe(4);
+      expect(cached().pending).toBe(false);
+      expect(JSON.parse(localStorage.getItem(accountConflictKey("alice"))!).state).toEqual(local);
+    });
+
+    it("stops bounded revision retries explicitly while keeping the complete merged device stand", async () => {
+      const local = changed("local"), remote = changed("server");
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      const request = vi.fn().mockImplementation(async (_url: string, options: RequestInit) =>
+        options.method === "PUT" ? new Response(null, { status: 409 }) : response(remote, 2));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      await expect(controller.reconcileServer(local)).rejects.toThrow(/neuere Änderungen/);
+      expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(3);
+      expect(cached().state.transactions.map((row: { id: string }) => row.id)).toEqual(["local", "server"]);
+      expect(cached().pending).toBe(true);
+    });
+
+    it("does not PUT contradictory money values, and keeps both original local copies unchanged", async () => {
+      const local = changed("shared"), remote = changed("shared");
+      remote.transactions[0].amount = -84;
+      const raw = JSON.stringify({ state: local, revision: 1, pending: true });
+      localStorage.setItem(accountStorageKey("alice"), raw);
+      localStorage.setItem(accountConflictKey("alice"), "older preserved original");
+      const request = vi.fn().mockImplementation(async () => response(remote, 2));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      await expect(controller.reconcileServer(local)).rejects.toThrow(/widersprüchliche/);
+      expect(request.mock.calls.every((call) => call[1].method === "GET")).toBe(true);
+      expect(localStorage.getItem(accountStorageKey("alice"))).toBe(raw);
+      expect(localStorage.getItem(accountConflictKey("alice"))).toBe("older preserved original");
+    });
+
+    it.each(["device", "other tab"])("preserves new %s edits while a reconciliation read is pending", async (source) => {
+      const local = changed("local"), remote = changed("server"), newer = changed("newer device");
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      let finish!: (result: Response) => void;
+      const request = vi.fn().mockResolvedValueOnce(response(remote, 2))
+        .mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; }));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      const pending = controller.reconcileServer(local);
+      if (source === "device") controller.save(newer);
+      else localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: newer, revision: 1, pending: true }));
+      finish(response(remote, 2));
+      await expect(pending).rejects.toThrow(/Gerätestand geändert/);
+      expect(cached().state).toEqual(newer);
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+
+    it("leaves a complete pending merged stand after a failed network acknowledgement", async () => {
+      const local = changed("local"), remote = changed("server");
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      const request = vi.fn().mockResolvedValueOnce(response(remote, 2)).mockResolvedValueOnce(response(remote, 2))
+        .mockRejectedValueOnce(new TypeError("network"));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      await expect(controller.reconcileServer(local)).rejects.toThrow(/Server nicht erreichbar/);
+      expect(cached().state.transactions.map((row: { id: string }) => row.id)).toEqual(["local", "server"]);
+      expect(cached().pending).toBe(true);
+      expect(JSON.parse(localStorage.getItem(accountConflictKey("alice"))!).state).toEqual(local);
+      const puts = request.mock.calls.filter((call) => call[1].method === "PUT").length;
+      request.mockResolvedValue(response(remote, 2));
+      expect((await controller.retry(local))?.transactions.map((row) => row.id)).toEqual(["local", "server"]);
+      controller.save(local);
+      expect(controller.error?.message).toContain("Abgleich ist noch nicht abgeschlossen");
+      expect(cached().reconcileRequired).toBe(true);
+      expect(cached().state.transactions.map((row: { id: string }) => row.id)).toEqual(["local", "server"]);
+      expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(puts);
+    });
+
+    it("never sends a merged stand when its crash-safe local copy or backup cannot be written", async () => {
+      const local = changed("local"), remote = changed("server");
+      const raw = JSON.stringify({ state: local, revision: 1, pending: true });
+      localStorage.setItem(accountStorageKey("alice"), raw);
+      const request = vi.fn().mockImplementation(async () => response(remote, 2));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      const original = Storage.prototype.setItem;
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+        if (key === accountConflictKey("alice")) throw new DOMException("full", "QuotaExceededError");
+        original.call(this, key, value);
+      });
+      await expect(controller.reconcileServer(local)).rejects.toThrow(DOMException);
+      expect(localStorage.getItem(accountStorageKey("alice"))).toBe(raw);
+      expect(request.mock.calls.every((call) => call[1].method === "GET")).toBe(true);
+    });
   });
 
   it("keeps unsynced edits across reload and a failed network connection", async () => {

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { StrictMode, useEffect, type ReactNode } from "react";
-import { act, cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FinanceProvider, useFinance } from "./finance-provider";
 import { createEmptyAccountState } from "@/lib/account-state";
-import { accountStorageKey } from "@/lib/account-finance-storage";
+import { accountStorageKey, accountConflictKey } from "@/lib/account-finance-storage";
 import { appStateSchema, type AppState } from "@/lib/types";
 import { useAutomation } from "./automation-context";
+import { AccountSyncTools } from "./account-tools";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("sonner", () => ({ Toaster: () => null, toast: { success: vi.fn(), error: vi.fn() } }));
@@ -14,7 +15,7 @@ type Finance = ReturnType<typeof useFinance>;
 const account = { id: "admin-test", username: "admin", role: "admin" as const };
 let remote: AppState | null;
 let revision: number;
-let request: ReturnType<typeof vi.fn>;
+let request: ReturnType<typeof vi.fn<(url: string, options: RequestInit) => Promise<Response>>>;
 const sources: EventTarget[] = [];
 class TestEventSource extends EventTarget {
   onerror: (() => void) | null = null;
@@ -40,7 +41,7 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); });
 
-function mount(strict = false) {
+function mount(strict = false, tools = false) {
   let finance!: Finance;
   let automation!: ReturnType<typeof useAutomation>;
   function Observer() {
@@ -49,7 +50,7 @@ function mount(strict = false) {
     useEffect(() => { finance = value; automation = status; }, [value, status]);
     return null;
   }
-  const node = <FinanceProvider initialState={createEmptyAccountState()} account={account}><Observer /></FinanceProvider>;
+  const node = <FinanceProvider initialState={createEmptyAccountState()} account={account}><Observer />{tools && <AccountSyncTools />}</FinanceProvider>;
   const view = render(strict ? <StrictMode>{node}</StrictMode> : node);
   return { ...view, read: () => finance, status: () => automation };
 }
@@ -100,6 +101,102 @@ it("keeps a conflicted device's edits visible and never overwrites the newer ser
   expect(view.read().saved).toBe(false);
   expect(view.read().state.holidayRanges).toEqual([{ from: "2026-10-20", to: "2026-10-22" }]);
   expect(remote?.holidayRanges).toEqual([]);
+});
+
+it("recovers the actual conflict UI without deleting local/server bookings, manual choices or an older backup", async () => {
+  const row = (id: string) => ({
+    id, bank: "Amex", pocket: "Amex", date: "2026-10-06",
+    description: "Public Duty Free", amount: -42, category: "Shopping" as const, includeInPlan: true,
+  });
+  const local = { ...createEmptyAccountState(), transactions: [
+    row("local"), { ...row("shared"), manualCategory: true, category: "Geschenke & Spenden" as const },
+  ] };
+  remote = { ...createEmptyAccountState(), transactions: [row("shared"), row("server")] };
+  revision = 2;
+  localStorage.setItem(accountStorageKey(account.id), JSON.stringify({ state: local, revision: 1, pending: true }));
+  const original = JSON.stringify({ state: local, revision: 0, pending: true });
+  localStorage.setItem(accountConflictKey(account.id), original);
+  const view = mount(false, true);
+  await waitFor(() => expect(view.read().storageError).toContain("Neuere Daten"));
+  fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  expect(new Set(view.read().state.transactions.map((booking) => booking.id))).toEqual(new Set(["local", "shared", "server"]));
+  expect(remote?.transactions.find((booking) => booking.id === "shared")?.category).toBe("Geschenke & Spenden");
+  expect(view.read().storageError).toBeNull();
+  expect(localStorage.getItem(accountConflictKey(account.id))).toBe(original);
+});
+
+it("keeps the merged stand visible after a failed acknowledgement and prevents ordinary retry from dropping server rows", async () => {
+  const view = mount(false, true);
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  remote = { ...remote!, transactions: [{ id: "server", bank: "Amex", pocket: "Amex",
+    date: "2026-10-06", description: "Public Duty Free", amount: -42, category: "Shopping", includeInPlan: true }] };
+  revision++;
+  act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
+  await waitFor(() => expect(view.read().storageError).toContain("anderen Gerät"));
+  const normal = request.getMockImplementation();
+  if (!normal) throw new Error("Finance request fixture missing");
+  let fail = true;
+  request.mockImplementation(async (url: string, options: RequestInit) => {
+    if (options.method === "PUT" && fail) {
+      fail = false;
+      throw new TypeError("Acknowledgement lost");
+    }
+    return normal(url, options);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+  await waitFor(() => expect(view.read().storageError).toContain("Server nicht erreichbar"));
+  expect(new Set(view.read().state.transactions.map((row) => row.id))).toEqual(new Set(["local", "server"]));
+  const writes = request.mock.calls.filter((call) => call[1].method === "PUT").length;
+  act(() => view.read().retrySave());
+  await waitFor(() => expect(view.read().storageError).toContain("Abgleich ist noch nicht abgeschlossen"));
+  expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(writes);
+  expect(new Set(view.read().state.transactions.map((row) => row.id))).toEqual(new Set(["local", "server"]));
+  fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  expect(new Set(remote?.transactions.map((row) => row.id))).toEqual(new Set(["local", "server"]));
+});
+
+it("never hydrates over newer working edits whose cache save failed during reconciliation", async () => {
+    const view = mount(false, true);
+    await waitFor(() => expect(view.read().saved).toBe(true));
+    remote = { ...remote!, transactions: [{ id: "server", bank: "Amex", pocket: "Amex",
+      date: "2026-10-06", description: "Public Duty Free", amount: -42, category: "Shopping", includeInPlan: true }] };
+    revision++;
+    act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
+    await waitFor(() => expect(view.read().storageError).toContain("anderen Gerät"));
+    const normal = request.getMockImplementation();
+    if (!normal) throw new Error("Finance request fixture missing");
+    let finish!: () => void;
+    request.mockImplementation(async (url: string, options: RequestInit) => {
+      if (options.method !== "PUT") return normal(url, options);
+      const sent = JSON.parse(String(options.body));
+      return new Promise<Response>((resolve) => { finish = () => {
+        remote = sent.state;
+        revision++;
+        resolve(Response.json({ state: remote, revision }));
+      }; });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+    await waitFor(() => expect(finish).toBeDefined());
+    act(() => view.read().update((state) => ({ ...state, settings: { ...state.settings, emergencyTarget: 123 } })));
+    await waitFor(() => expect(view.read().storageError).toContain("widersprüchliche"));
+    await act(async () => finish());
+    await waitFor(() => expect(view.read().storageError).toContain("neue Geräteänderungen"));
+    expect(view.read().state.settings.emergencyTarget).toBe(123);
+    expect(view.read().saved).toBe(false);
+    expect(remote?.transactions.map((row) => row.id)).toEqual(["local", "server"]);
+    expect(JSON.parse(localStorage.getItem(accountStorageKey(account.id))!).reconcileRequired).toBe(true);
+    const writes = request.mock.calls.filter((call) => call[1].method === "PUT").length;
+    act(() => view.read().retrySave());
+    await waitFor(() => expect(view.read().storageError).toContain("widersprüchliche"));
+    expect(view.read().state.settings.emergencyTarget).toBe(123);
+    expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(writes);
 });
 
 it("does not show a successful earlier write while a newer change is still unsynchronized", async () => {
