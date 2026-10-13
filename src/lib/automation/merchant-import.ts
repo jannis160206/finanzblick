@@ -118,6 +118,7 @@ const shopCategories: Record<string, Merchant["defaultCategory"]> = {
   mall: "Shopping",
   toys: "Shopping",
   tobacco: "Shopping",
+  duty_free: "Shopping",
   electronics: "Shopping",
   computer: "Shopping",
   stationery: "Shopping",
@@ -186,7 +187,8 @@ export function osmMerchantCategory(
       Object.hasOwn(shopCategories, tags.shop)
         ? shopCategories[tags.shop]
         : null,
-      Object.hasOwn(amenityCategories, tags.amenity)
+      Object.hasOwn(amenityCategories, tags.amenity) &&
+        !(tags.shop && tags.amenity === "parking" && tags.fee !== "yes")
         ? amenityCategories[tags.amenity]
         : null,
       Object.hasOwn(tourismCategories, tags.tourism)
@@ -202,6 +204,21 @@ export function osmMerchantCategory(
 
 const qid = (value: string | undefined): string | null =>
   value && /^Q[1-9]\d{0,11}$/.test(value) ? value : null;
+
+export function mergeOsmBrand(previous: Merchant, next: Merchant): Merchant {
+  if (previous.id !== next.id || !next.id.startsWith("osm-brand-"))
+    throw new Error("Only equivalent OSM brand IDs can be merged");
+  if (!next.matchable) return previous;
+  if (!previous.matchable) return next;
+  const defaultCategory = previous.defaultCategory === next.defaultCategory ? next.defaultCategory : null;
+  return merchantSchema.parse({
+    ...next,
+    aliases: [...new Set([...previous.aliases, ...next.aliases])].slice(0, 32),
+    defaultCategory,
+    requiresCategoryEvidence: defaultCategory === null || previous.requiresCategoryEvidence || next.requiresCategoryEvidence,
+    city: previous.city === next.city ? next.city : null,
+  });
+}
 
 export function parseOsmMerchants(
   input: unknown,
@@ -254,6 +271,9 @@ export function parseOsmMerchants(
       continue;
     }
     const canonicalName = tags.name.trim();
+    const matchable = !!tags.shop || !!tags.tourism || Object.hasOwn(leisureCategories, tags.leisure) ||
+      (Object.hasOwn(amenityCategories, tags.amenity) &&
+        (tags.amenity !== "parking" || tags.fee === "yes"));
     const brandId = qid(tags["brand:wikidata"]);
     const brandEvidence =
       brandId &&
@@ -261,7 +281,7 @@ export function parseOsmMerchants(
       normalizeMerchantText(tags.brand) ===
         normalizeMerchantText(canonicalName);
     // Same names alone never collapse outlets; a brand entity AND matching label do.
-    const id = brandEvidence
+    const id = brandEvidence && matchable
       ? `osm-brand-${brandId}-${createHash("sha256")
           .update(normalizeMerchantText(canonicalName))
           .digest("hex")
@@ -293,6 +313,7 @@ export function parseOsmMerchants(
         defaultCategory === "Tanken" ||
         defaultCategory === "Urlaub" ||
         multipurposeShops.has(tags.shop),
+      matchable,
       region: "AT",
       city,
       source: "osm",
@@ -316,12 +337,7 @@ export function parseOsmMerchants(
         ...new Set([...previous.aliases, ...parsed.data.aliases]),
       ];
       report.aliasSkippedCount += Math.max(0, merged.length - 32);
-      previous.aliases = merged.slice(0, 32);
-      previous.requiresCategoryEvidence ||=
-        parsed.data.requiresCategoryEvidence;
-      if (previous.defaultCategory !== parsed.data.defaultCategory)
-        previous.defaultCategory = null;
-      if (previous.city !== parsed.data.city) previous.city = null;
+      merchants.set(id, mergeOsmBrand(previous, parsed.data));
     } else merchants.set(id, parsed.data);
     const entity = brandEvidence ? brandId : qid(tags.wikidata);
     if (entity) entities.set(id, entity);

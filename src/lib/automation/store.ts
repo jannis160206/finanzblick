@@ -33,6 +33,7 @@ import {
   logoAccountIdSchema,
   type AuthorizedMerchantLogo,
 } from "./merchant-logo-grant-metadata";
+import { merchantCatalogueStatus } from "./catalogue-refresh";
 import {
   automationErrorCodeSchema,
   automationFailure,
@@ -80,7 +81,7 @@ function jobFromRow(row: Record<string, unknown> | undefined): AutomationJob & {
 const merchantColumns = `id, canonical_name AS canonicalName, aliases_json, regex_json,
   default_category AS defaultCategory, region, source, updated_at AS updatedAt,
   city, license, attribution, logo_json, wikidata_id AS wikidataId,
-  requires_category_evidence AS requiresCategoryEvidence`;
+  requires_category_evidence AS requiresCategoryEvidence, matchable`;
 
 function merchantFromRow(row: Record<string, unknown>): Merchant {
   const legacyBrand =
@@ -91,6 +92,7 @@ function merchantFromRow(row: Record<string, unknown>): Merchant {
     ...row,
     wikidataId: row.wikidataId ?? legacyBrand ?? null,
     requiresCategoryEvidence: row.requiresCategoryEvidence === 1,
+    matchable: row.matchable === 1,
     aliases: JSON.parse(String(row.aliases_json)),
     regexPatterns: JSON.parse(String(row.regex_json)),
     logo: row.logo_json === null ? null : JSON.parse(String(row.logo_json)),
@@ -303,7 +305,7 @@ export class AutomationStore {
   enqueueBackfill(
     userId: string,
     now = Date.now(),
-    options: { rerun?: boolean; onceVersion?: string } = {},
+    options: { rerun?: boolean; onceVersion?: string; workerOwner?: string } = {},
   ): AutomationJob {
     if (options.onceVersion !== undefined) {
       z.string()
@@ -316,6 +318,7 @@ export class AutomationStore {
         );
     }
     return this.accounts.transaction((db) => {
+      if (options.workerOwner) this.assertOwner(db, options.workerOwner);
       const existing = db
         .prepare(
           `SELECT ${columns} FROM automation_jobs WHERE user_id = ? AND kind = 'backfill'
@@ -433,7 +436,9 @@ export class AutomationStore {
   }
 
   snapshot(userId: string) {
+    const catalogue = merchantCatalogueStatus(this.accounts);
     return this.accounts.read((db) => ({
+      ...(catalogue ? { catalogue } : {}),
       revision: Number(
         db.prepare("SELECT revision FROM finance WHERE user_id = ?").get(userId)
           ?.revision ?? 0,
@@ -474,7 +479,7 @@ export class AutomationStore {
     });
   }
 
-  private assertOwner(db: DatabaseSync, owner: string, job?: ClaimedJob): void {
+  assertOwner(db: DatabaseSync, owner: string, job?: ClaimedJob): void {
     const lease = db
       .prepare("SELECT owner, expires_at FROM automation_worker WHERE id = 1")
       .get();
@@ -698,16 +703,17 @@ export class AutomationStore {
 
   upsertMerchants(
     merchants: Merchant[],
-    options: { replaceLogos?: boolean } = {},
+    options: { replaceLogos?: boolean; workerOwner?: string; checkpoint?: (db: DatabaseSync) => void } = {},
   ): void {
     const validated = merchants.map((merchant) =>
       merchantSchema.parse(merchant),
     );
     this.accounts.transaction((db) => {
+      if (options.workerOwner) this.assertOwner(db, options.workerOwner);
       const statement = db.prepare(`INSERT INTO merchants
         (id, canonical_name, aliases_json, regex_json, default_category, region, source,
-        updated_at, city, license, attribution, logo_json, wikidata_id, requires_category_evidence)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        updated_at, city, license, attribution, logo_json, wikidata_id, requires_category_evidence, matchable)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET canonical_name = excluded.canonical_name,
         aliases_json = excluded.aliases_json, regex_json = excluded.regex_json,
         default_category = excluded.default_category, region = excluded.region,
@@ -719,7 +725,8 @@ export class AutomationStore {
             AND merchants.region = excluded.region
             AND merchants.wikidata_id IS excluded.wikidata_id THEN merchants.logo_json
           ELSE NULL END,
-        wikidata_id = excluded.wikidata_id, requires_category_evidence = excluded.requires_category_evidence
+        wikidata_id = excluded.wikidata_id, requires_category_evidence = excluded.requires_category_evidence,
+        matchable = excluded.matchable
         WHERE excluded.updated_at > merchants.updated_at`);
       for (const merchant of validated) {
         const previous = db
@@ -742,9 +749,11 @@ export class AutomationStore {
           merchant.logo ? JSON.stringify(merchant.logo) : null,
           merchant.wikidataId,
           merchant.requiresCategoryEvidence ? 1 : 0,
+          merchant.matchable ? 1 : 0,
           options.replaceLogos ? 1 : 0,
         );
       }
+      options.checkpoint?.(db);
     });
   }
 

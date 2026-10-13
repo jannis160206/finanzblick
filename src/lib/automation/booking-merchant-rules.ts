@@ -20,6 +20,15 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
   ...reviewedAustrianMerchants,
   ...reviewedRecurringMerchants,
   {
+    id: "at-sinos-klagenfurt",
+    canonicalName: "Sinos Fusion Cuisine",
+    aliases: ["Fusion Bar Sinos"],
+    category: "Restaurants",
+    wikidataId: null,
+    city: "Klagenfurt am Wörthersee",
+    evidenceUrl: "https://www.fusion-bar-sinos.at/",
+  },
+  {
     id: "zara",
     canonicalName: "Zara",
     aliases: [],
@@ -248,7 +257,7 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
     aliases: ["Salzburger Verkehrsverbund"],
     category: "Öffentliche Verkehrsmittel",
     wikidataId: "Q1254319",
-    evidenceUrl: "https://de.wikipedia.org/wiki/Salzburger_Verkehrsverbund",
+    evidenceUrl: "https://salzburg-verkehr.at/tickets-preise/einzelfahrkarten/einzelfahrt/",
   },
   {
     id: "at-burgarena-finkenstein",
@@ -600,7 +609,7 @@ export const reviewedBookingMerchants: readonly ReviewedBookingMerchant[] = [
     wikidataId: "Q174824",
     requiresCategoryEvidence: true,
     region: "SI",
-    evidenceUrl: "https://en.wikipedia.org/wiki/Petrol_Group",
+    evidenceUrl: "https://www.petrol.eu/petrol-group/about-petrol-group",
   },
   {
     id: "cy-petrolina",

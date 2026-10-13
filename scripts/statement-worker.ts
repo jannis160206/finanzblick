@@ -4,6 +4,7 @@ import { AccountDatabase } from "../src/lib/server/database";
 import { AutomationStore } from "../src/lib/automation/store";
 import { MerchantIndex, seedMerchants } from "../src/lib/automation/merchants";
 import { AutomationWorker } from "../src/lib/automation/worker";
+import { PublicMerchantCatalogue } from "../src/lib/automation/catalogue-refresh";
 import { assertParserRuntimeAvailable } from "../src/lib/automation/parser-runtime";
 
 const config = readAccountConfig();
@@ -20,8 +21,9 @@ try {
   await assertParserRuntimeAvailable();
   store.upsertMerchants(seedMerchants);
   const index = new MerchantIndex(store.loadMerchants());
+  const catalogue = new PublicMerchantCatalogue(store);
   console.info("Statement worker ready (concurrency=1, isolated local parser, budget=120s).");
-  await new AutomationWorker(store, randomUUID(), index).run(stop.signal);
+  await new AutomationWorker(store, randomUUID(), index, {}, (signal, owner) => catalogue.maintain(signal, owner)).run(stop.signal);
 } finally {
   accounts.close();
 }

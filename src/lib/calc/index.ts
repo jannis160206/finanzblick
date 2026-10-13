@@ -30,6 +30,7 @@ import { hasManualCategory } from "@/lib/manual-category";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 import { amexFunding } from "@/lib/amex-balance";
+import { isDutyFreePurchase } from "@/lib/booking-purpose";
 import { applyNamedTransfer, isNamedTransfer, revolutSavingsTransferAmount } from "@/lib/transfers";
 import { bankOperation, bankTransferPurpose } from "@/lib/bank-operation";
 
@@ -124,10 +125,13 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias" | "automaticCategoryEvidence">>,
 ) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
+  const dutyFreeShopping = transaction.categoryOverride &&
+    transaction.automaticCategoryEvidence?.category === "Shopping" &&
+    isDutyFreePurchase(`${description} ${transaction.merchantAlias ?? ""}`);
   if (isNamedTransfer(recovered) || (transaction.holidayReimbursementFor && transaction.sharedRepaymentFor)) {
     return {
       category: "Transfer" as const, planCategory: "Transfer" as const,
@@ -240,6 +244,7 @@ export function classify(
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
   // travel even when an older merchant rule calls a hotel/grocer everyday spend.
   if (!detectedTransfer && !forcedLunch &&
+    !dutyFreeShopping &&
     !(transaction.fixedCost !== false && fixedCategories.includes(category)) &&
     !isFixedExpense({ amount, category, fixedCost: transaction.fixedCost }) &&
     !isIncomeCategory(category) && !isAmazon && !isTravelCategory(category) &&
@@ -263,6 +268,9 @@ export function classify(
   const exclusion =
     isAmazon ||
     isTravelCategory(category) ||
+    transaction.automaticCategoryEvidence?.budgetExcluded === true ||
+    (dutyFreeShopping && (!!transaction.holidayRange || transaction.category === "Urlaub" ||
+      /^urlaub\b/i.test(sourceCategory) || isTravelMerchant(description))) ||
     /amex raphael/i.test(transaction.pocket ?? "") ||
     excluded.test(`${description} ${transaction.sourceCategory ?? ""}`) ||
     savingsPocket(transaction.pocket) === "Urlaub";

@@ -27,8 +27,9 @@ export class AutomationWorker {
   constructor(
     readonly store: AutomationStore,
     readonly owner: string,
-    readonly index: MerchantIndex,
+    public index: MerchantIndex,
     readonly parserOptions: Omit<ParserRuntimeOptions, "signal"> = {},
+    private readonly maintainCatalogue?: (signal: AbortSignal, owner: string) => Promise<MerchantIndex | undefined>,
   ) {}
 
   async process(job: ClaimedJob, signal?: AbortSignal): Promise<void> {
@@ -181,6 +182,10 @@ export class AutomationWorker {
           if (leaseError) throw leaseError;
           await this.cleanup();
           job = this.store.claim(this.owner);
+          if (!job) {
+            const refreshed = await this.maintainCatalogue?.(signal, this.owner);
+            if (refreshed) this.index = refreshed;
+          }
         } catch (error) {
           // Recover only an idle lease; never reclaim one lost during parsing.
           if (!(error instanceof WorkerLeaseError) || signal.aborted || !this.store.acquire(this.owner))

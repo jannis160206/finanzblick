@@ -29,6 +29,7 @@ import {
   bankOperationReviewMessage,
   bankTransferPurpose,
 } from "@/lib/bank-operation";
+import { compatiblePurchaseCategories, isDutyFreePurchase, purchasePurpose } from "@/lib/booking-purpose";
 export { isAutomationLocked } from "./locks";
 
 function withoutMerchantIdentity(row: Transaction): Transaction {
@@ -156,6 +157,7 @@ export function enrichTransaction(
         ].includes(choice.category))
     )
       return { ...row, requires_manual_review: true };
+    const learnedLunch = recurringLunchCategory(evidence.text, row.date, row.amount) === choice.category;
     return transactionSchema.parse({
       ...row,
       ...(choice.merchantAlias || merchant
@@ -168,6 +170,7 @@ export function enrichTransaction(
       merchantMatch: "rule",
       category: refund ? "Rückerstattungen" : choice.category,
       categoryOverride: true,
+      automaticCategoryEvidence: learnedLunch ? { method: "purpose", category: choice.category } : undefined,
       ...(choice.fixedCost !== undefined &&
       !refund &&
       row.fixedCost === undefined
@@ -176,6 +179,7 @@ export function enrichTransaction(
       requires_manual_review: !(
         choice.merchantAlias ||
         merchant ||
+        learnedLunch ||
         operation?.kind === "fee"
       ),
     });
@@ -224,7 +228,14 @@ export function enrichTransaction(
       merchantNameConfirmed: undefined,
     };
   const matchingText = confirmedName ?? evidence.text;
+  const holidayDutyFree = isDutyFreePurchase(matchingText) &&
+    (classified.category === "Urlaub" || row.automaticCategoryEvidence?.budgetExcluded === true);
   const match = index.match(matchingText, original.merchantId);
+  const purpose = purchasePurpose(row, matchingText);
+  if (purpose?.kind === "conflict") return { ...row, requires_manual_review: true };
+  if (unnamedFuelPurpose(matchingText, row.amount) && purpose?.kind === "matched" &&
+    purpose.category !== "Tanken")
+    return { ...row, requires_manual_review: true };
   const lunchPurpose =
     known !== "Prüfen"
       ? recurringLunchCategory(matchingText, row.date, row.amount)
@@ -242,6 +253,7 @@ export function enrichTransaction(
       merchantLogo: false,
       category: unnamedPurpose,
       categoryOverride: true,
+      automaticCategoryEvidence: { method: "purpose", category: unnamedPurpose },
       requires_manual_review: false,
     });
   }
@@ -249,6 +261,40 @@ export function enrichTransaction(
     !match.merchant ||
     (match.method !== "exact" && match.method !== "regex")
   ) {
+    const consensus = match.method === "exact"
+      ? index.categoryConsensus(matchingText, knownMerchantCategory(matchingText, row.amount)) : undefined;
+    const consensusPurpose = lunchPurpose ??
+      (purpose?.kind === "matched" ? purpose.category :
+        consensus?.category === "Tanken" && hasRecurringFuelEvidence(row) ? "Tanken" : undefined);
+    if (consensus && known !== "Prüfen" &&
+      (purpose?.kind !== "matched" || compatiblePurchaseCategories(purpose.category, consensus.category)) &&
+      !consensus.names.some((name) => qualifiedCompany(sourceText, name)) &&
+      (!consensus.needsPurpose || consensusPurpose) &&
+      (!consensusPurpose || compatiblePurchaseCategories(consensusPurpose, consensus.category) ||
+        (lunchPurpose && consensus.category === "Drogerie"))) {
+      const category = refund ? "Rückerstattungen" : consensusPurpose ?? consensus.category;
+      return transactionSchema.parse({
+        ...withoutMerchantIdentity(row), category, categoryOverride: true,
+        automaticCategoryEvidence: {
+          method: purpose?.kind === "matched" ? purpose.method : consensusPurpose ? "purpose" : "merchant",
+          category,
+          ...(purpose?.kind === "matched" && purpose.mcc ? { mcc: purpose.mcc } : {}),
+          ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+        },
+        requires_manual_review: false,
+      });
+    }
+    if (match.method === "none" && purpose?.kind === "matched" && known !== "Prüfen")
+      return transactionSchema.parse({
+        ...withoutMerchantIdentity(row),
+        category: refund ? "Rückerstattungen" : purpose.category,
+        categoryOverride: true,
+        automaticCategoryEvidence: {
+          method: purpose.method, category: refund ? "Rückerstattungen" : purpose.category, mcc: purpose.mcc,
+          ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+        },
+        requires_manual_review: false,
+      });
     return { ...row, requires_manual_review: true };
   }
   if (
@@ -275,6 +321,9 @@ export function enrichTransaction(
     categoryOverride: false,
   }).category;
   const defaultCategory = match.merchant.defaultCategory;
+  if (purpose?.kind === "matched" && defaultCategory &&
+    !compatiblePurchaseCategories(purpose.category, defaultCategory))
+    return { ...row, requires_manual_review: true };
   const amazonIdentity =
     match.merchant.wikidataId === "Q3884" &&
     match.merchant.canonicalName.toLocaleLowerCase("de-AT") === "amazon";
@@ -312,17 +361,18 @@ export function enrichTransaction(
   const purposeCategory =
     lunchPurpose ??
     amazonPurpose ??
-    (recurringFuel ? "Tanken" : defaultCategory);
+    (purpose?.kind === "matched" ? purpose.category : recurringFuel ? "Tanken" : defaultCategory);
   const evidencedPurpose =
     lunchPurpose !== undefined ||
     amazonPurpose !== undefined ||
+    purpose?.kind === "matched" ||
     recurringFuel ||
     (amazonIdentity && known === "Shopping");
   if (
     !refund &&
     ((!evidencedPurpose &&
       (defaultCategory === null || match.merchant.requiresCategoryEvidence)) ||
-      ((defaultCategory === "Tanken" || eniIdentity) && !recurringFuel))
+      ((defaultCategory === "Tanken" || eniIdentity) && !recurringFuel && purpose?.kind !== "matched"))
   )
     return transactionSchema.parse({
       ...row,
@@ -346,7 +396,7 @@ export function enrichTransaction(
     ? "Rückerstattungen"
     : (lunchPurpose ??
       amazonPurpose ??
-      (recurringFuel
+      (purpose?.kind === "matched" ? purpose.category : recurringFuel
         ? "Tanken"
         : specialContext
           ? contextual
@@ -359,6 +409,12 @@ export function enrichTransaction(
     merchantMatch: confirmedName || match.method === "regex" ? "rule" : "alias",
     category,
     categoryOverride: true,
+    automaticCategoryEvidence: {
+      method: purpose?.kind === "matched" ? purpose.method : "merchant",
+      category,
+      ...(purpose?.kind === "matched" && purpose.mcc ? { mcc: purpose.mcc } : {}),
+      ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+    },
     requires_manual_review: false,
   });
 }

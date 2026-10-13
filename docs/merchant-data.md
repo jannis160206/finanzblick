@@ -3,7 +3,64 @@
 The existing `merchants` SQLite table is the sole matching reference. Offline
 curated seeds remain available without network access. Imported reference data
 does not include statements, balances, transactions, account identifiers, or
-learned user categories. Neither the worker nor HTTP requests trigger imports.
+learned user categories. HTTP requests never trigger remote imports. The production
+worker periodically updates bounded public catalogue tiles while idle.
+
+## Source/purpose correction pass (2026-10-13)
+
+New uploads and historical bookings use the same categorization pipeline. Explicit
+purchase purposes (including duty-free retail, supermarkets, pharmacies, dining,
+parking and car washes) and dedicated four-digit bank MCC metadata can establish
+a category without inventing a merchant identity. Conflicting types, malformed or
+contradictory MCC fields, fuzzy identities and unresolved payment fragments remain
+in manual review. Category details show the automatic evidence; manual categories,
+confirmed names and locked receipts retain their authority. Duty free is Shopping,
+even in holiday context, without moving holiday expenditure into everyday budgets.
+Exact duplicate outlet names may establish a category only when all candidate
+types agree and an independently imported, attributed OSM shop type corroborates
+them. This never creates a merchant ID, alias or logo. Fuel/multipurpose candidates
+still require purchase evidence; conflicting candidates remain open.
+Compatible restaurant/cafe subtypes can also use an independently recognized
+dining purpose from the descriptor; conflicting bank MCCs still block assignment.
+Public features are not necessarily payees: free or unproved store car parks and
+unsupported civic amenities remain available as reference metadata but are marked
+non-matchable, preventing a car park called BILLA from poisoning supermarket
+recognition. Paid parking requires explicit OSM `fee=yes`; curated paid-garage
+facts and independent parking-purpose/MCC evidence remain usable.
+
+The worker refreshes fixed public Villach, Klagenfurt and Salzburg tiles from the
+existing bounded Overpass importer, split into twenty smaller tiles to respect the
+1,000-object response limit: one tile per idle maintenance interval,
+24-hour freshness, one-hour failure backoff and a 25-second overall request limit.
+Requests contain only public geography/types, never booking names, descriptions,
+personal names, amounts, account identifiers or user-derived locations. ODbL
+attribution is retained. This is not unrestricted web search or public Nominatim
+geocoding. Older `shop=duty_free` tags map to Shopping; newer specific shop tags
+retain their goods category. Uniqueness safeguards apply to imported outlet names.
+
+Refresh state survives restart in `merchant_catalogue_sources`; the upload-status
+dialog reports unavailable sources explicitly, while verified local facts remain
+usable. Accepted updates replace the in-memory matching index. The worker
+persists bounded per-tile snapshots separately from the matching catalogue.
+After every tile has a validated snapshot, source-managed brand categories are
+rebuilt from the complete regional evidence. Superseded managed matching IDs
+are disabled, not deleted. Merchants, snapshots and source status commit
+atomically. Genuine financial-type conflicts between tiles remain unresolved.
+Pre-existing OSM definitions with unknown source coverage are retained as
+independent evidence: a regional refresh cannot disprove an outside conflict.
+Historical lossy aggregates without verifiable provenance therefore remain
+conservative until confirmed, rather than being silently reset.
+Non-matchable feature metadata and private artwork are preserved.
+The worker automatically queues `source-purpose-v7-2026-10-13` once per account and a dated,
+durable pass for each refreshed source. Existing active passes are never reset.
+The same protected 200-row checkpoint workflow rechecks all existing ledger,
+receipt and review IDs. Pending-only imports still require acceptance.
+
+Public facts were rechecked against the official Cyprus Duty Free, Heinemann,
+Mensen, Salzburg Verkehr, Petrol, Coral Gas and Sinos websites. Petrol's mixed
+retail offering still needs purchase evidence; Coral Gas is not assumed to be
+vehicle fuel. Unverified MYELITE/DBIKE identities are not guessed. Recognition can
+approach completeness only when source evidence exists, not by hiding uncertainty.
 
 ## User-supplied booking logos
 
@@ -123,7 +180,8 @@ After importing reviewed references/logos and restarting the single worker:
 npm run backfill -- --once-version recurring-purpose-v3-2026-10-11
 ```
 
-This is also the version selected by `--merchant-upgrade`. It snapshots all
+This older pass remains available explicitly; `--merchant-upgrade` now selects the
+source/purpose pass above. Each pass snapshots all
 existing ledger, fixed-receipt and review booking IDs, uses the existing atomic
 200-row checkpoint mechanism and never resets the same version. Pending-only
 drafts retain their acceptance requirement; incomplete drafts are preserved.

@@ -37,6 +37,15 @@ afterEach(() => {
   localStorage.clear();
 });
 
+it("surfaces unavailable public sources while keeping local categorization usable", () => {
+  render(<AutomationContext.Provider value={{ jobs: [], error: null, catalogue: {
+    status: "unavailable", checkedAt: 1, sources: 0,
+    warning: "Öffentliche Händlerquelle nicht verfügbar. Lokale Regeln bleiben aktiv.",
+  } }}><AutomationStatus /></AutomationContext.Provider>);
+  expect(screen.getByRole("alert").textContent).toContain("Lokale Regeln bleiben aktiv");
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
 it("uploads the original file in account mode without executing the browser parser", async () => {
   const request = vi.fn<
     (url: string, options: RequestInit) => Promise<Response>

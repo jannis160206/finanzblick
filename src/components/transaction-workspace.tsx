@@ -28,6 +28,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
+import { hasManualCategory } from "@/lib/manual-category";
 
 export type FilterChip = { id: string; label: string; remove: () => void };
 
@@ -146,6 +147,9 @@ export function TransactionCategoryCell({
   explanation: string;
 }) {
   const reviewed = booking.reviewed && booking.categoryOverride;
+  const evidence = !hasManualCategory(booking) && !reason &&
+    booking.automaticCategoryEvidence?.category === category
+      ? booking.automaticCategoryEvidence : undefined;
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
@@ -197,6 +201,11 @@ export function TransactionCategoryCell({
                 : "Für diese Buchung ist keine Prüfung offen.")}
           </p>
           <p>{explanation}</p>
+          {evidence && <p className="leading-relaxed text-muted-foreground">
+            Automatisch erkannt: {evidence.method === "mcc" ? "Händlerkategorie der Bank"
+              : evidence.method === "purpose" ? "eindeutiger Buchungszweck" : "öffentliche Händlerdaten"}
+            {evidence.mcc ? ` · MCC ${evidence.mcc}` : ""}.
+          </p>}
         </PopoverContent>
       </Popover>
     </div>

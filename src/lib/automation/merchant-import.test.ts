@@ -8,6 +8,7 @@ import {
   osmMerchantCategory,
   parseMerchantBbox,
   parseOsmMerchants,
+  mergeOsmBrand,
 } from "./merchant-import";
 
 const element = (
@@ -24,6 +25,47 @@ const json = (value: unknown) => Response.json(value);
 const bbox: [number, number, number, number] = [48.18, 16.33, 48.22, 16.39];
 
 describe("bounded Austrian operator import", () => {
+  it.each([false, true])("never mixes a branded free car park into a shop aggregate (reverse: %s)", (reverse) => {
+    const features = [
+      element(1, { name: "BILLA", brand: "BILLA", "brand:wikidata": "Q537781", shop: "supermarket" }),
+      element(2, { name: "BILLA", brand: "BILLA", "brand:wikidata": "Q537781", amenity: "parking", fee: "no" }),
+    ];
+    const { merchants } = parseOsmMerchants(payload(reverse ? features.reverse() : features));
+    expect(merchants).toHaveLength(2);
+    const shop = merchants.find((merchant) => merchant.matchable)!;
+    expect(shop.defaultCategory).toBe("Lebensmittel");
+    expect(shop.id).toMatch(/^osm-brand-/);
+    expect(merchants.find((merchant) => !merchant.matchable)?.id).toBe("osm-node-2");
+    expect(new MerchantIndex(merchants).match("BILLA").merchant?.defaultCategory).toBe("Lebensmittel");
+    expect(osmMerchantCategory({ shop: "supermarket", amenity: "parking", fee: "no" }))
+      .toBe("Lebensmittel");
+  });
+  it("keeps public feature metadata but never matches a free store car park as that store's merchant", () => {
+    const features = parseOsmMerchants(payload([
+      element(1, { name: "BILLA", amenity: "parking", fee: "no" }),
+      element(2, { name: "Paid Garage", amenity: "parking", fee: "yes" }),
+      element(3, { name: "Local School", amenity: "school" }),
+    ])).merchants;
+    expect(features[0].matchable).toBe(false);
+    expect(features[1].matchable).toBe(true);
+    expect(features[2].matchable).toBe(false);
+    expect(new MerchantIndex(features).match("BILLA").method).toBe("none");
+    expect(new MerchantIndex(features).match("Paid Garage").merchant?.defaultCategory).toBe("Parken & Maut");
+  });
+  it("retains conflicting brand purposes and aliases across independently imported city tiles", () => {
+    const one = parseOsmMerchants(payload([element(1, {
+      name: "Public Brand", brand: "Public Brand", "brand:wikidata": "Q123",
+      shop: "clothes", alt_name: "Public Clothing",
+    })]), 1).merchants[0];
+    const two = parseOsmMerchants(payload([element(2, {
+      name: "Public Brand", brand: "Public Brand", "brand:wikidata": "Q123",
+      shop: "supermarket", alt_name: "Public Grocery",
+    })]), 2).merchants[0];
+    const merged = mergeOsmBrand(one, two);
+    expect(merged).toMatchObject({ defaultCategory: null, requiresCategoryEvidence: true });
+    expect(merged.aliases).toEqual(["Public Clothing", "Public Grocery"]);
+    expect(new MerchantIndex([merged]).match("Public Brand").requiresManualReview).toBe(true);
+  });
   it("requires four numeric coordinates and a small Austrian-envelope tile", () => {
     expect(parseMerchantBbox("48.18,16.33,48.22,16.39")).toEqual(bbox);
     for (const invalid of [

@@ -178,9 +178,7 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (9, unixepoch() * 1000);
     `);
   }
-  if (
-    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 10").get()
-  ) {
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 10").get()) {
     db.exec(`
       ALTER TABLE automation_jobs ADD COLUMN error_code TEXT;
       ALTER TABLE automation_jobs ADD COLUMN outcome_json TEXT
@@ -188,9 +186,7 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (10, unixepoch() * 1000);
     `);
   }
-  if (
-    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 11").get()
-  ) {
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 11").get()) {
     db.exec(`
       CREATE INDEX automation_statement_retention ON automation_jobs(updated_at)
         WHERE kind = 'statement' AND status IN ('COMPLETED', 'FAILED') AND bytes = 0;
@@ -198,7 +194,7 @@ export function migrateAutomation(db: DatabaseSync): void {
     `);
   }
   if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 12").get()) {
-    // An independently deployed migration 10 may not contain job metadata.
+    // Independently deployed migrations 10/11 may not contain job metadata.
     const columns = db.prepare("PRAGMA table_info(automation_jobs)").all();
     if (!columns.some((column) => column.name === "error_code"))
       db.exec("ALTER TABLE automation_jobs ADD COLUMN error_code TEXT");
@@ -209,6 +205,59 @@ export function migrateAutomation(db: DatabaseSync): void {
       CREATE INDEX IF NOT EXISTS automation_statement_retention ON automation_jobs(updated_at)
         WHERE kind = 'statement' AND status IN ('COMPLETED', 'FAILED') AND bytes = 0;
       INSERT INTO automation_migrations VALUES (12, unixepoch() * 1000);
+    `);
+  }
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 13").get()) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS merchant_catalogue_sources (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK(status IN ('current', 'refreshing', 'unavailable')),
+        checked_at INTEGER NOT NULL,
+        next_refresh_at INTEGER NOT NULL,
+        imported INTEGER NOT NULL DEFAULT 0 CHECK(imported >= 0)
+      );
+      INSERT INTO automation_migrations VALUES (13, unixepoch() * 1000);
+    `);
+  }
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 14").get()) {
+    const columns = db.prepare("PRAGMA table_info(merchants)").all();
+    if (!columns.some((column) => column.name === "matchable"))
+      db.exec("ALTER TABLE merchants ADD COLUMN matchable INTEGER NOT NULL DEFAULT 1 CHECK(matchable IN (0, 1))");
+    db.exec(`
+      UPDATE merchant_catalogue_sources SET next_refresh_at = 0;
+      INSERT INTO automation_migrations VALUES (14, unixepoch() * 1000);
+    `);
+  }
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 15").get()) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS merchant_catalogue_snapshots (
+        source_id TEXT PRIMARY KEY REFERENCES merchant_catalogue_sources(id),
+        definitions_json TEXT NOT NULL CHECK(json_valid(definitions_json) AND length(definitions_json) <= 4194304)
+      );
+      UPDATE merchant_catalogue_sources SET next_refresh_at = 0;
+      INSERT INTO automation_migrations VALUES (15, unixepoch() * 1000);
+    `);
+  }
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 16").get()) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS merchant_catalogue_external (
+        merchant_id TEXT PRIMARY KEY,
+        category TEXT,
+        requires_evidence INTEGER NOT NULL CHECK(requires_evidence IN (0, 1)),
+        matchable INTEGER NOT NULL CHECK(matchable IN (0, 1))
+      );
+      INSERT OR IGNORE INTO merchant_catalogue_external
+        SELECT id, default_category, requires_category_evidence, matchable
+        FROM merchants WHERE source = 'osm';
+      INSERT INTO automation_migrations VALUES (16, unixepoch() * 1000);
+    `);
+  }
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 17").get()) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS merchant_catalogue_managed (merchant_id TEXT PRIMARY KEY);
+      INSERT OR IGNORE INTO merchant_catalogue_managed
+        SELECT json_extract(value, '$.id') FROM merchant_catalogue_snapshots, json_each(definitions_json);
+      INSERT INTO automation_migrations VALUES (17, unixepoch() * 1000);
     `);
   }
 }

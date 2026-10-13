@@ -115,6 +115,12 @@ const transactionFieldsSchema = z.object({
   merchantNameConfirmed: z.boolean().optional(),
   is_locked: z.boolean().optional(),
   requires_manual_review: z.boolean().optional(),
+  automaticCategoryEvidence: z.object({
+    method: z.enum(["merchant", "purpose", "mcc"]),
+    category: categorySchema,
+    mcc: z.string().regex(/^\d{4}$/).optional(),
+    budgetExcluded: z.boolean().optional(),
+  }).strict().optional(),
   category: categorySchema.catch("Prüfen"),
   amount: moneySchema.refine(
     (value) => value !== 0,

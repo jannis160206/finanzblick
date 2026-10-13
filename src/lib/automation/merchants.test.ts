@@ -19,6 +19,7 @@ const merchant = (overrides: Partial<Merchant> = {}): Merchant => ({
   source: "local",
   wikidataId: null,
   requiresCategoryEvidence: false,
+  matchable: true,
   city: null,
   license: null,
   attribution: null,

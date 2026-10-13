@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { categories } from "@/lib/categories";
+import { categories, type Category } from "@/lib/categories";
 import { merchantText } from "@/lib/import/merchant-description";
 import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
 import { curatedMerchantIdentities } from "./merchant-identities";
@@ -217,6 +217,7 @@ export const merchantSchema = z
       .nullable()
       .default(null),
     requiresCategoryEvidence: z.boolean().default(false),
+    matchable: z.boolean().default(true),
     city: z.string().trim().min(1).max(150).nullable().default(null),
     license: z.string().trim().min(1).max(200).nullable().default(null),
     attribution: z.string().trim().min(1).max(2000).nullable().default(null),
@@ -758,7 +759,7 @@ function reviewedSeed(
     source: "local",
     license: "Local factual merchant rules; no logo rights asserted",
     attribution: `Reviewed public merchant identity and category: ${review.evidenceUrl}`,
-    updatedAt: Date.UTC(2026, 9, 11, 20, 40),
+    updatedAt: Date.UTC(2026, 9, 13, 10, 0),
   });
 }
 
@@ -872,6 +873,7 @@ export class MerchantIndex {
       if (ids.has(merchant.id))
         throw new Error(`Duplicate merchant ID: ${merchant.id}`);
       ids.add(merchant.id);
+      if (!merchant.matchable) continue;
       const key = merchant.wikidataId
         ? JSON.stringify([
             merchant.wikidataId,
@@ -903,6 +905,7 @@ export class MerchantIndex {
       for (const original of members)
         this.identities.set(original.id, { original, representative });
     for (const source of definitions) {
+      if (!source.matchable) continue;
       const identity = this.identities.get(source.id);
       if (!identity) throw new Error("Merchant identity was not indexed.");
       const merchant = identity.representative;
@@ -928,7 +931,6 @@ export class MerchantIndex {
     for (const entry of this.exact.values()) {
       if (entry.merchants.size > 1) {
         entry.ambiguous = true;
-        entry.merchants.clear();
       }
       if (entry.text.length < 6) continue;
       for (const gram of bigrams(entry.text)) {
@@ -950,6 +952,34 @@ export class MerchantIndex {
     return identity && identity.representative === result.merchant
       ? { ...result, merchant: identity.original }
       : result;
+  }
+
+  categoryConsensus(text: string, diningPurpose?: Category): { category: Category; needsPurpose: boolean; names: string[] } | undefined {
+    if (text.length > MAX_INPUT) return;
+    const normalized = normalizeMerchantDescriptor(text);
+    if (!normalized || normalized.split(" ").length > MAX_TOKENS) return;
+    const candidates = new Set<Merchant>();
+    let leading = false;
+    for (const phrase of windows(normalized.split(" "))) {
+      const entry = this.exact.get(phrase);
+      if (!entry) continue;
+      if (normalized === phrase || normalized.startsWith(`${phrase} `)) leading = true;
+      for (const merchant of entry.merchants) candidates.add(merchant);
+    }
+    for (const { merchant, pattern } of this.regex)
+      if (pattern.test(normalized)) candidates.add(merchant);
+    const matches = [...candidates];
+    let category: Category | null | undefined = matches[0]?.defaultCategory;
+    const dining: readonly Category[] = ["Restaurants", "Cafés & Snacks", "Mittagessen"];
+    const purposeCompatible = diningPurpose && dining.includes(diningPurpose) &&
+      matches.every((merchant) => merchant.defaultCategory && dining.includes(merchant.defaultCategory));
+    if (purposeCompatible) category = diningPurpose;
+    // Public shop-type corroboration can prove a purpose, not an outlet identity.
+    if (!leading || matches.length < 2 || category === null || category === undefined ||
+      !matches.some((merchant) => merchant.source === "osm" && merchant.license === "ODbL-1.0") ||
+      (!purposeCompatible && !matches.every((merchant) => merchant.defaultCategory === category))) return;
+    return { category, needsPurpose: matches.some((merchant) => merchant.requiresCategoryEvidence),
+      names: matches.map((merchant) => merchant.canonicalName) };
   }
 
   match(text: string, preferredId?: string): MerchantMatch {

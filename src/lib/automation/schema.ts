@@ -24,12 +24,20 @@ export const automationJobSchema = z.object({
   result: importResultSchema.nullable().default(null),
   errorCode: automationErrorCodeSchema.nullable().default(null),
 });
-// Legacy job inputs may omit metadata; validated payloads normalize it to null.
+// Legacy jobs may omit result metadata; validated payloads normalize it to null.
 export type AutomationJob = z.input<typeof automationJobSchema>;
 export const statementUploadResponseSchema = z.object({ id: z.string().uuid() });
+export const merchantCatalogueStatusSchema = z.object({
+  status: z.enum(["current", "refreshing", "unavailable"]),
+  checkedAt: z.number().int().nonnegative(),
+  sources: z.number().int().nonnegative().max(20),
+  warning: z.string().max(300).nullable(),
+});
+export type MerchantCatalogueStatus = z.infer<typeof merchantCatalogueStatusSchema>;
 export const automationEventSchema = z.object({
   revision: z.number().int().nonnegative(),
   jobs: z.array(automationJobSchema).max(20),
+  catalogue: merchantCatalogueStatusSchema.optional(),
 }).refine((event) => event.jobs.every((job) => !job.result || job.result.uploadId === job.id), {
   message: "Importergebnis gehört nicht zu diesem Upload.",
   path: ["jobs"],
@@ -40,4 +48,4 @@ export const MAX_QUEUE_BYTES = 128 * 1024 * 1024;
 export const BACKFILL_BATCH = 200;
 export const MAX_ATTEMPTS = 5;
 export const LEASE_MS = 60_000;
-export const MERCHANT_BACKFILL_VERSION = "recurring-purpose-v3-2026-10-11";
+export const MERCHANT_BACKFILL_VERSION = "source-purpose-v7-2026-10-13";

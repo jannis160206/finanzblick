@@ -65,7 +65,7 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
     expect(
       db.prepare("SELECT count(*) AS count FROM automation_migrations").get()
         ?.count,
-    ).toBe(12);
+    ).toBe(17);
     expect(
       db.prepare("SELECT count(*) AS count FROM merchant_authorized_logo_names")
         .get()?.count,
@@ -101,7 +101,7 @@ it("repairs independently deployed migration-10 job metadata without losing queu
     db.exec("COMMIT");
     expect(db.prepare("SELECT status, bytes, error_code, outcome_json FROM automation_jobs WHERE id = 'synthetic-job'").get())
       .toEqual({ status: "QUEUED", bytes: 2, error_code: null, outcome_json: null });
-    expect(db.prepare("SELECT count(*) AS count FROM automation_migrations").get()?.count).toBe(12);
+    expect(db.prepare("SELECT count(*) AS count FROM automation_migrations").get()?.count).toBe(17);
     migrateAutomation(db);
     expect(db.prepare("SELECT count(*) AS count FROM automation_jobs").get()?.count).toBe(1);
   } finally {

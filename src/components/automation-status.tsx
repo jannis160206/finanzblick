@@ -288,9 +288,17 @@ export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, sho
   const jobs = suppliedJobs ?? automation.jobs;
   const error = suppliedError === undefined ? automation.error : suppliedError;
   const cards = useJobCards(jobs, showCompleted);
-  if (!cards.length && !error) return null;
+  if (!cards.length && !error && !automation.catalogue) return null;
   return (
     <section aria-label="Hintergrundverarbeitung" className="mb-4 space-y-3">
+      {automation.catalogue && (
+        <p role={automation.catalogue.warning ? "alert" : "status"}
+          className="rounded-xl border border-border/70 bg-muted/30 px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+          {automation.catalogue.warning ?? (automation.catalogue.status === "refreshing"
+            ? "Öffentliche Händlerquellen werden aktualisiert. Buchungsdaten bleiben lokal."
+            : `Händlererkennung: ${automation.catalogue.sources} öffentliche Kataloggebiete eingelesen · zusätzlich lokale Regeln, Buchungszweck und bestätigte Zuordnungen.`)}
+        </p>
+      )}
       {error && (
         <p
           role="alert"
