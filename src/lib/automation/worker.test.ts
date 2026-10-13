@@ -318,6 +318,50 @@ it("does not reset the retry budget when a running worker expires its own lease"
   });
 });
 
+it("resumes after an idle clock jump without terminating the upload processor", async () => {
+  vi.useFakeTimers();
+  await upload(csv);
+  const stop = new AbortController();
+  const claim = store.claim.bind(store);
+  let interrupted = false;
+  const claiming = vi.spyOn(store, "claim").mockImplementation((workerOwner) => {
+    if (!interrupted) {
+      interrupted = true;
+      vi.setSystemTime(Date.now() + LEASE_MS + 1);
+    } else {
+      stop.abort();
+    }
+    return claim(workerOwner);
+  });
+  try {
+    const running = worker.run(stop.signal);
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(running).resolves.toBeUndefined();
+    expect(claiming).toHaveBeenCalledTimes(2);
+    expect(store.snapshot(userId).jobs[0].status).toBe("COMPLETED");
+    expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+  } finally {
+    claiming.mockRestore();
+  }
+});
+
+it("does not reclaim an idle lease taken over by another processor", async () => {
+  vi.useFakeTimers();
+  const claim = store.claim.bind(store);
+  const claiming = vi.spyOn(store, "claim").mockImplementation((workerOwner) => {
+    vi.setSystemTime(Date.now() + LEASE_MS + 1);
+    expect(store.acquire("replacement")).toBe(true);
+    return claim(workerOwner);
+  });
+  try {
+    await expect(worker.run(new AbortController().signal)).rejects.toThrow("lease lost");
+    expect(claiming).toHaveBeenCalledOnce();
+    expect(() => store.heartbeat("replacement")).not.toThrow();
+  } finally {
+    claiming.mockRestore();
+  }
+});
+
 it("backfills receipt-only historical bookings without creating duplicate ledger rows", async () => {
   const row = transactionSchema.parse({
     id: "receipt-only",

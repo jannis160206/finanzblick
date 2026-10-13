@@ -16,7 +16,7 @@ import {
   enrichTransaction,
   retainLockedAssignments,
 } from "./pipeline";
-import { AutomationStore, type ClaimedJob } from "./store";
+import { AutomationStore, WorkerLeaseError, type ClaimedJob } from "./store";
 import { createAccountMerchantResolver } from "./aliases";
 
 export class AutomationWorker {
@@ -137,9 +137,19 @@ export class AutomationWorker {
     }, 10_000);
     try {
       while (!signal.aborted) {
-        if (leaseError) throw leaseError;
-        await this.cleanup();
-        const job = this.store.claim(this.owner);
+        let job: ClaimedJob | null;
+        try {
+          if (leaseError) throw leaseError;
+          await this.cleanup();
+          job = this.store.claim(this.owner);
+        } catch (error) {
+          // Standby can expire an idle lease; never recover while processing a job.
+          if (!(error instanceof WorkerLeaseError) || !this.store.acquire(this.owner))
+            throw error;
+          leaseError = undefined;
+          console.info("Statement worker resumed after an idle lease interruption.");
+          continue;
+        }
         if (!job) {
           await delay(500);
           continue;

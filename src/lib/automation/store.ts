@@ -39,6 +39,13 @@ const rowSchema = automationJobSchema.extend({
   bytes: z.number().int().nonnegative(),
 });
 export type ClaimedJob = z.infer<typeof rowSchema>;
+export class WorkerLeaseError extends Error {
+  constructor() {
+    super("Worker lease lost");
+    this.name = "WorkerLeaseError";
+  }
+}
+
 const columns = `id, kind, name, status, progress, attempts, cursor, total, error,
   updated_at AS updatedAt, user_id AS userId, bytes`;
 
@@ -431,7 +438,7 @@ export class AutomationStore {
           "UPDATE automation_worker SET expires_at = ? WHERE id = 1 AND owner = ? AND expires_at > ?",
         )
         .run(now + LEASE_MS, owner, now);
-      if (result.changes !== 1) throw new Error("Worker lease lost");
+      if (result.changes !== 1) throw new WorkerLeaseError();
     });
   }
 
@@ -440,7 +447,7 @@ export class AutomationStore {
       .prepare("SELECT owner, expires_at FROM automation_worker WHERE id = 1")
       .get();
     if (lease?.owner !== owner || Number(lease.expires_at) <= Date.now())
-      throw new Error("Worker lease lost");
+      throw new WorkerLeaseError();
     if (
       job &&
       !db
