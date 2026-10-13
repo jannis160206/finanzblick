@@ -21,7 +21,7 @@ import {
   isMerchantTransfer,
 } from "@/lib/merchant-transfer";
 import { isIncomeCategory } from "@/lib/fixed";
-import { knownMerchantCategory } from "@/lib/categories";
+import { allCategories, canonicalCategory, knownMerchantCategory } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { merchantEvidence, qualifiedCompany } from "./evidence";
 import {
@@ -30,6 +30,7 @@ import {
   bankTransferPurpose,
 } from "@/lib/bank-operation";
 import { compatiblePurchaseCategories, isDutyFreePurchase, purchasePurpose } from "@/lib/booking-purpose";
+import { reconcileLedgerReviewQueue } from "@/lib/import/review";
 export { isAutomationLocked } from "./locks";
 
 function withoutMerchantIdentity(row: Transaction): Transaction {
@@ -120,6 +121,8 @@ export function enrichTransaction(
       : sourceText,
     row.amount,
   );
+  const sourceChoice = allCategories.find((category) => category === row.sourceCategory?.trim());
+  const sourcePurpose = sourceChoice ? canonicalCategory(sourceChoice) : undefined;
   const learned = resolveAccount?.(row);
   if (learned?.kind === "conflict")
     return { ...row, requires_manual_review: true };
@@ -186,6 +189,7 @@ export function enrichTransaction(
   }
   if (operation?.kind === "fee" || operation?.kind === "interest") {
     const identity = index.match(evidence.text);
+    const purchase = purchasePurpose(row, evidence.text);
     const bankFeeIdentity =
       identity.method === "exact" &&
       identity.merchant !== undefined &&
@@ -195,7 +199,15 @@ export function enrichTransaction(
       !/\b(?:shop|shopping|handel|kunstforum)\b/i.test(sourceText);
     if (
       known === "Prüfen" ||
-      (identity.method !== "none" && !bankFeeIdentity) ||
+      purchase !== undefined ||
+      (sourcePurpose !== undefined &&
+        !["Prüfen", "Sonstiges", operation.category,
+          ...(operation.kind === "fee" ? ["Bankgebühren", "Rücklastschriftgebühren"] : [])].includes(sourcePurpose)) ||
+      (known !== undefined &&
+        !["Bankgebühren", "Rücklastschriftgebühren", "Rückerstattungen"].includes(known)) ||
+      (identity.method !== "none" &&
+        !(identity.method === "fuzzy" && !identity.merchant) &&
+        !bankFeeIdentity) ||
       (learned?.kind === "matched" && learned.choice.identityOnly)
     )
       return { ...row, requires_manual_review: true };
@@ -203,6 +215,7 @@ export function enrichTransaction(
       ...row,
       category: operation.category,
       categoryOverride: true,
+      automaticCategoryEvidence: { method: "purpose", category: operation.category },
       ...(operation.kind === "interest"
         ? { fixedCost: false, includeInPlan: false }
         : {}),
@@ -240,6 +253,11 @@ export function enrichTransaction(
     known !== "Prüfen"
       ? recurringLunchCategory(matchingText, row.date, row.amount)
       : undefined;
+  if (lunchPurpose && sourcePurpose &&
+    !["Prüfen", "Sonstiges"].includes(sourcePurpose) &&
+    !compatiblePurchaseCategories(lunchPurpose, sourcePurpose) &&
+    ![lunchPurpose, sourcePurpose].every((category) => ["Mittagessen", "Drogerie"].includes(category)))
+    return { ...row, requires_manual_review: true };
   const unnamedPurpose =
     lunchPurpose ??
     (known !== "Prüfen" &&
@@ -262,7 +280,7 @@ export function enrichTransaction(
     (match.method !== "exact" && match.method !== "regex")
   ) {
     const consensus = match.method === "exact"
-      ? index.categoryConsensus(matchingText, knownMerchantCategory(matchingText, row.amount)) : undefined;
+      ? index.categoryConsensus(matchingText, knownMerchantCategory(matchingText, row.amount), lunchPurpose) : undefined;
     const consensusPurpose = lunchPurpose ??
       (purpose?.kind === "matched" ? purpose.category :
         consensus?.category === "Tanken" && hasRecurringFuelEvidence(row) ? "Tanken" : undefined);
@@ -527,12 +545,13 @@ export function backfillBatch(
         "Händlerzuordnung unsicher – bitte prüfen.",
     });
   }
-  return {
+  const result = {
     ...state,
     transactions,
     ...(fixedReceipts ? { fixedReceipts } : {}),
     reviewQueue: queue,
   };
+  return { ...result, reviewQueue: reconcileLedgerReviewQueue(result) };
 }
 
 export function retainLockedAssignments(

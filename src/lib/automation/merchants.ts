@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { categories, type Category } from "@/lib/categories";
+import { compatiblePurchaseCategories } from "@/lib/booking-purpose";
 import { merchantText } from "@/lib/import/merchant-description";
 import { privateMerchantLogoSchema } from "./merchant-logo-metadata";
 import { curatedMerchantIdentities } from "./merchant-identities";
@@ -954,7 +955,7 @@ export class MerchantIndex {
       : result;
   }
 
-  categoryConsensus(text: string, diningPurpose?: Category): { category: Category; needsPurpose: boolean; names: string[] } | undefined {
+  categoryConsensus(text: string, diningPurpose?: Category, recurringPurpose?: Category): { category: Category; needsPurpose: boolean; names: string[] } | undefined {
     if (text.length > MAX_INPUT) return;
     const normalized = normalizeMerchantDescriptor(text);
     if (!normalized || normalized.split(" ").length > MAX_TOKENS) return;
@@ -969,14 +970,25 @@ export class MerchantIndex {
     for (const { merchant, pattern } of this.regex)
       if (pattern.test(normalized)) candidates.add(merchant);
     const matches = [...candidates];
+    if (!leading || matches.length < 2 ||
+      !matches.some((merchant) => merchant.source === "osm" && merchant.license === "ODbL-1.0")) return;
+    const knownPurposes = matches.filter((merchant) => merchant.defaultCategory !== null);
+    const knownCategory = knownPurposes[0]?.defaultCategory;
+    // An absent shop type is not an opposing purpose, but cannot prove one itself.
+    if (recurringPurpose && knownCategory && knownPurposes.length < matches.length &&
+      new Set(matches.map((merchant) => normalizeMerchantText(merchant.canonicalName))).size === 1 &&
+      knownPurposes.every((merchant) => merchant.defaultCategory === knownCategory) &&
+      (compatiblePurchaseCategories(recurringPurpose, knownCategory) ||
+        (recurringPurpose === "Mittagessen" && knownCategory === "Drogerie")))
+      return { category: knownCategory, needsPurpose: true,
+        names: matches.map((merchant) => merchant.canonicalName) };
     let category: Category | null | undefined = matches[0]?.defaultCategory;
     const dining: readonly Category[] = ["Restaurants", "Cafés & Snacks", "Mittagessen"];
     const purposeCompatible = diningPurpose && dining.includes(diningPurpose) &&
       matches.every((merchant) => merchant.defaultCategory && dining.includes(merchant.defaultCategory));
     if (purposeCompatible) category = diningPurpose;
     // Public shop-type corroboration can prove a purpose, not an outlet identity.
-    if (!leading || matches.length < 2 || category === null || category === undefined ||
-      !matches.some((merchant) => merchant.source === "osm" && merchant.license === "ODbL-1.0") ||
+    if (category === null || category === undefined ||
       (!purposeCompatible && !matches.every((merchant) => merchant.defaultCategory === category))) return;
     return { category, needsPurpose: matches.some((merchant) => merchant.requiresCategoryEvidence),
       names: matches.map((merchant) => merchant.canonicalName) };

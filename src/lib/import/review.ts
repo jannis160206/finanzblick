@@ -43,6 +43,7 @@ import { canonicalCategory, groupedContractCategories } from "@/lib/categories";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
+import { isAutomationLocked } from "@/lib/automation/locks";
 import { bankOperationReviewMessage } from "@/lib/bank-operation";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
@@ -241,7 +242,7 @@ export function queueLedgerReview(state: AppState): AppState {
   const rules = indexReviewRules(state);
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" && !item.sourceRepair && transactionSchema.safeParse(item.draft).success ? [item.draft as Transaction] : []);
-  let ledger = actualBookings(state);
+  const ledger = actualBookings(state);
   if (pending.length) {
     const accounted = accountHolidayRanges(reconcileSharedHoliday([...ledger, ...pending], state.settings.asOf, state.plannedOneOffs).bookings, state.holidayRanges, state.settings.asOf);
     const safePending = accounted.slice(accounted.length - pending.length).filter((row) =>
@@ -252,16 +253,42 @@ export function queueLedgerReview(state: AppState): AppState {
         const result = classify(row);
         return { ...row, category: result.category, includeInPlan: result.includeInPlan };
       })).state;
-      ledger = actualBookings(state);
     }
   }
+  const updated = { ...state, reviewQueue: reconcileLedgerReviewQueue(state, { rules, preserveManualDrafts: false }) };
+  return beforeReview.importResults
+    ? { ...updated, importResults: retainImportResults(reconcileImportResultReviews(beforeReview, updated)) }
+    : updated;
+}
+
+// Reconcile review identities without accepting imports or repairing financial facts.
+export function reconcileLedgerReviewQueue(state: AppState, {
+  rules = indexReviewRules(state), preserveManualDrafts = true,
+}: { rules?: ReturnType<typeof indexReviewRules>; preserveManualDrafts?: boolean } = {}): ReviewItem[] {
+  const ledger = actualBookings(state);
   const byId = new Map(ledger.map((row) => [row.id, row]));
+  const receiptAliases = new Map((state.fixedReceipts ?? []).flatMap((receipt) =>
+    receipt.booking && receipt.key !== receipt.booking.id && byId.has(receipt.key) && !byId.has(receipt.booking.id)
+      ? [[receipt.booking.id, receipt.booking] as const] : []));
+  const pinned = new Set<string>();
   const keys = new Set(ledger.map(statementFingerprint));
   const reviewed = ledger.filter((row) => row.reviewed && row.categoryOverride && !bookingReviewReason(state, row, rules));
   const reviewedIds = new Set(reviewed.map((row) => row.id));
   for (const receipt of state.fixedReceipts ?? [])
     if (reviewedIds.has(receipt.key) && receipt.booking) reviewedIds.add(receipt.booking.id);
   const queue = (state.reviewQueue ?? []).flatMap((item): ReviewItem[] => {
+    if (preserveManualDrafts && item.kind === "booking" && isAutomationLocked(item.draft)) {
+      const receiptBooking = receiptAliases.get(item.draft.id);
+      const parsed = transactionSchema.safeParse(item.draft);
+      const generatedAlias = receiptBooking && parsed.success &&
+        JSON.stringify(parsed.data) === JSON.stringify(transactionSchema.parse(receiptBooking)) &&
+        item.message === (bankOperationReviewMessage(receiptBooking) ?? "Händlerzuordnung unsicher – bitte prüfen.") &&
+        !item.sourceRepair && !item.importUploadId && !item.importIssues?.length;
+      if (!generatedAlias) {
+        pinned.add(item.draft.id);
+        return [item];
+      }
+    }
     if (item.kind === "fixed") {
       const bookings = item.change.bookings.filter((row) =>
         !reviewedIds.has(row.id) && !reviewedIds.has(statementFingerprint(row)));
@@ -278,6 +305,7 @@ export function queueLedgerReview(state: AppState): AppState {
       return uploadId ? [[row.id, uploadId] as const] : [];
     })));
   for (const draft of ledger) {
+    if (pinned.has(draft.id)) continue;
     const message = bookingReviewReason(state, draft, rules);
     if (!message) continue;
     const importIssues = linkedIssues.get(draft.id);
@@ -285,10 +313,7 @@ export function queueLedgerReview(state: AppState): AppState {
     queue.push({ kind: "booking", id: draft.id, draft, message, ...(importIssues ? { importIssues } : {}),
       ...(importUploadId ? { importUploadId } : {}) });
   }
-  const updated = { ...state, reviewQueue: queue };
-  return beforeReview.importResults
-    ? { ...updated, importResults: retainImportResults(reconcileImportResultReviews(beforeReview, updated)) }
-    : updated;
+  return queue;
 }
 
 function receipt(row: Transaction, rowId?: string): FixedReceipt {

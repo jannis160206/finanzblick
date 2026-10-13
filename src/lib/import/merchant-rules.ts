@@ -9,6 +9,8 @@ import { normalizeAccount } from "@/lib/accounts";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 import { mergeConfirmedMerchantChoices } from "./merchant-choice";
 import { merchantAliasAssignment } from "@/lib/merchant-identity";
+import { isAutomationLocked } from "@/lib/automation/locks";
+import { recurringLunchCategory } from "@/lib/recurring-purpose";
 
 // Retain merchant words and subscription identifiers. Do not learn a blanket
 // "PayPal" rule that would silently assign unrelated merchants.
@@ -180,7 +182,7 @@ type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
 export type MerchantChoice = Pick<Transaction, "category" | "fixedCost" | "merchantAlias"> & { identityOnly?: boolean };
 
 export function isAutomaticMerchantAssignment(row: Transaction): boolean {
-  return !!(row.merchantId || row.merchantMatch) && !row.merchantNameConfirmed && !row.is_locked && !hasCategoryChoice(row);
+  return !!(row.merchantId || row.merchantMatch || row.automaticCategoryEvidence) && !isAutomationLocked(row);
 }
 
 // Legacy worker imports could learn their own guesses. Keep stored rules, but
@@ -191,12 +193,20 @@ export function activeMerchantRules(state: AppState) {
     assignments: Set<string>;
   }>();
   const confirmed = new Set<string>();
+  const unnamedPurposes = new Map<string, Set<Transaction["category"]>>();
   for (const row of [
     ...state.transactions,
     ...(state.fixedReceipts ?? []).flatMap(item => item.booking ? [item.booking] : []),
   ]) {
     const keys = new Set([merchantRuleKey(row), merchantAliasSourceKey(row)].filter(key => key !== undefined));
+    const unnamedPurpose = /^(?:hotspot|mensa|mensen)$/i.test(merchantText(recoverMerchant(row).description))
+      ? recurringLunchCategory(row.description, row.date, row.amount) : undefined;
     for (const key of keys) {
+      if (unnamedPurpose) {
+        const purposes = unnamedPurposes.get(key) ?? new Set<Transaction["category"]>();
+        purposes.add(unnamedPurpose);
+        unnamedPurposes.set(key, purposes);
+      }
       if (isAutomaticMerchantAssignment(row) || (row.merchantNameConfirmed && !hasCategoryChoice(row))) {
         const choices = automatic.get(key) ?? {
           categories: new Set<Transaction["category"]>(), assignments: new Set<string>(),
@@ -210,6 +220,10 @@ export function activeMerchantRules(state: AppState) {
   return (state.merchantRules ?? []).filter(rule => {
     if (rule.identityOnly) return true;
     const key = storedMerchantKey(rule.key);
+    // Conflicting unnamed purposes stay open as automatic history grows.
+    if (!rule.merchantAlias &&
+      [...(unnamedPurposes.get(key) ?? [])].some((purpose) => purpose !== canonicalCategory(rule.category)))
+      return true;
     const choices = automatic.get(key);
     return confirmed.has(key) || !(rule.merchantAlias
       ? choices?.assignments.has(JSON.stringify([rule.category, rule.merchantAlias]))

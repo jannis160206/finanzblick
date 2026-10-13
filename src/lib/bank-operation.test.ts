@@ -5,15 +5,17 @@ import { isMerchantTransfer } from "./merchant-transfer";
 import { isNamedTransfer } from "./transfers";
 import {
   MerchantIndex,
+  merchantSchema,
   normalizeMerchantDescriptor,
+  normalizeMerchantText,
   seedMerchants,
 } from "./automation/merchants";
-import { enrichTransaction } from "./automation/pipeline";
+import { backfillBatch, enrichTransaction } from "./automation/pipeline";
 import { createAccountMerchantResolver } from "./automation/aliases";
 import { merchantRuleKey } from "./import/merchant-rules";
 import { createSeed } from "./seed";
 import { type Transaction } from "./types";
-import { prepareStatementImport } from "./import/review";
+import { openReviewCount, prepareStatementImport, queueLedgerReview } from "./import/review";
 
 const booking = (
   description: string,
@@ -30,8 +32,83 @@ const booking = (
   ...patch,
 });
 const index = new MerchantIndex(seedMerchants);
+const saturatedOperationIndex = (description: string) => {
+  const text = normalizeMerchantText(description);
+  return new MerchantIndex([
+    ...seedMerchants,
+    ...Array.from({ length: 65 }, (_, id) => merchantSchema.parse({
+      id: `synthetic-fuzzy-${id}`,
+      canonicalName: `${text.slice(0, -1)}${String.fromCharCode(97 + Math.floor(id / 26))}${String.fromCharCode(97 + id % 26)}`,
+      aliases: [], regexPatterns: [], defaultCategory: "Shopping", region: "AT",
+      source: "local", updatedAt: 0,
+    })),
+  ]);
+};
 
 describe("explicit bank operations", () => {
+  it("does not activate legacy automatic fee rules between backfill batches or lose operation evidence", () => {
+    const description = "Kontoführungsgebühr";
+    const first = booking(description, { id: "first", category: "Bankgebühren",
+      merchantId: "legacy-automatic-id", merchantMatch: "alias", categoryOverride: true,
+      requires_manual_review: true });
+    const second = { ...first, id: "second", date: "2026-10-10" };
+    const state = { ...createSeed(), transactions: [first, second], fixedReceipts: [],
+      merchantRules: [{ key: merchantRuleKey(first), category: first.category }],
+      reviewQueue: [first, second].map((draft) => ({
+        kind: "booking" as const, id: draft.id, draft, message: "Review operation",
+      })) };
+    const catalogue = saturatedOperationIndex(description);
+    const complete = backfillBatch(state, new Set([first.id, second.id]), catalogue);
+    const batched = backfillBatch(backfillBatch(state, new Set([first.id]), catalogue),
+      new Set([second.id]), catalogue);
+    expect(batched).toEqual(complete);
+    for (const result of batched.transactions) {
+      expect(result).toMatchObject({
+        category: "Bankgebühren", requires_manual_review: false,
+        automaticCategoryEvidence: { method: "purpose", category: "Bankgebühren" },
+      });
+      expect(result.merchantMatch).toBeUndefined();
+    }
+    expect(openReviewCount(batched.reviewQueue ?? [])).toBe(0);
+    expect(openReviewCount(queueLedgerReview(batched).reviewQueue ?? [])).toBe(0);
+  });
+
+  it.each([
+    ["Kontoführungsgebühr", -30, "Bankgebühren"],
+    ["Zinsgutschrift", 30, "Einkommen"],
+  ])("keeps the proven operation when unrelated fuzzy postings saturate: %s", (description, amount, category) => {
+    const catalogue = saturatedOperationIndex(description);
+    expect(catalogue.match(description)).toEqual({
+      method: "fuzzy", requiresManualReview: true,
+    });
+    const original = booking(description, { amount, merchantId: "stale-automatic-id",
+      merchantAlias: "Stale Automatic Name", merchantMatch: "alias", merchantLogo: true,
+      requires_manual_review: true });
+    const result = enrichTransaction(original, catalogue);
+    expect(result).toMatchObject({
+      category, requires_manual_review: false, merchantLogo: false,
+      automaticCategoryEvidence: { method: "purpose", category },
+      amount, date: original.date, description,
+    });
+    expect(result.merchantId).toBeUndefined();
+    expect(result.merchantAlias).toBeUndefined();
+    expect(result.merchantMatch).toBeUndefined();
+    expect(classify(result).category).toBe(category);
+    expect(enrichTransaction(result, catalogue)).toEqual(result);
+  });
+
+  it.each([
+    { rawDetails: ["MCC: 5411"] },
+    { rawDetails: ["MCC: invalid"] },
+    { sourceCategory: "BILLA" },
+    { sourceCategory: "Shopping" },
+    { rawDetails: ["Merchant Name: BILLA"] },
+  ])("keeps genuine purchase evidence open despite fuzzy saturation: %j", (patch) => {
+    for (const [description, amount] of [["Kontoführungsgebühr", -30], ["Zinsgutschrift", 30]] as const)
+      expect(enrichTransaction(booking(description, { amount, ...patch }),
+        saturatedOperationIndex(description)).requires_manual_review).toBe(true);
+  });
+
   it.each([
     "KONTOFÜHRUNG 01.07.2026 - 30.09.2026",
     "Kontofuehrung",
