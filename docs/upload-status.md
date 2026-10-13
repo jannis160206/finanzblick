@@ -13,6 +13,10 @@ Ohne aktive Importe weist ein `!` auf Fehler oder Importhinweise hin.
   Lokale Importe gelten erst nach erfolgreichem Speichern als abgeschlossen.
 - Eine fehlerhafte Datei stoppt die übrigen Dateien einer Kontoauswahl nicht.
   Höchstens fünf Kontoauszüge je Auswahl und die bestehenden Größenlimits gelten.
+- Bei einer vorübergehend blockierten Datenbank meldet der Upload **503** mit
+  `Retry-After: 5` statt eines allgemeinen Serverfehlers. Kurz warten und die
+  Datei erneut auswählen; Übertragungen werden nicht automatisch wiederholt.
+  Eine unterbrochene Echtzeitverbindung verbindet sich weiterhin automatisch neu.
 - Das Fenster zeigt alle laufenden Vorgänge sowie zusammen höchstens die zwei
   zuletzt beendeten Dateiimporte. Fehlgeschlagene Importe zählen ebenfalls zu
   diesen zwei Ergebnissen und behalten ihre Fehlerdetails. Der letzte

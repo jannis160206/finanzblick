@@ -2,7 +2,7 @@ import { mkdir, open, lstat, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { isAccountMode } from "@/lib/server/config";
-import { AccountError } from "@/lib/server/errors";
+import { AccountError, isSqliteContentionError } from "@/lib/server/errors";
 import {
   accountErrorResponse,
   jsonResponse,
@@ -12,6 +12,14 @@ import {
 import { getAccountRuntime } from "@/lib/server/runtime";
 import { AutomationStore } from "./store";
 import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "./schema";
+
+function isFileRemovalError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error &&
+    "syscall" in error && error.syscall === "unlink" &&
+    "errno" in error && typeof error.errno === "number" && Number.isSafeInteger(error.errno) &&
+    "code" in error && typeof error.code === "string" &&
+    ["ENOENT", "EACCES", "EPERM", "EBUSY", "EIO", "EROFS", "ENOTDIR", "EISDIR"].includes(error.code);
+}
 
 async function authorized(request: Request, stream = false) {
   if (!isAccountMode())
@@ -108,14 +116,26 @@ export async function uploadStatement(request: Request): Promise<Response> {
         throw new AccountError(401, "Bitte erneut anmelden.");
       store.readyUpload(user.id, id);
     } catch (error) {
-      store.failUpload(user.id, id);
       try {
-        await unlink(path);
+        // Never remove a payload unless the reservation is confirmed failed.
+        if (store.failUpload(user.id, id)) {
+          try {
+            await unlink(path);
+          } catch (cleanupError) {
+            if (!isFileRemovalError(cleanupError) || cleanupError.code !== "ENOENT")
+              throw cleanupError;
+          }
+          store.cleaned(id);
+        }
       } catch (cleanupError) {
-        if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT")
-          throw cleanupError;
+        // Preserve the upload diagnosis; secondary failures get fixed, private-safe log categories.
+        if (isSqliteContentionError(cleanupError))
+          console.error("Upload cleanup deferred: database temporarily busy.");
+        else if (isFileRemovalError(cleanupError))
+          console.error("Upload cleanup deferred: file removal unavailable.");
+        else
+          console.error("Unexpected upload cleanup failure.");
       }
-      store.cleaned(id);
       throw error;
     }
     return jsonResponse({ id }, 202);

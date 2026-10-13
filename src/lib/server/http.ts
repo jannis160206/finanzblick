@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import { ZodError } from "zod";
-import { AccountError, isAccountConfigError, isAccountError } from "./errors";
+import { AccountError, isAccountConfigError, isAccountError, isSqliteContentionError } from "./errors";
 import type { AccountConfig } from "./config";
 import { SESSION_SECONDS, type AccountSession } from "./database";
 
@@ -15,6 +15,14 @@ export function jsonResponse(value: unknown, status = 200): Response {
 }
 
 export function accountErrorResponse(error: unknown): Response {
+  if (isSqliteContentionError(error)) {
+    const response = jsonResponse(
+      { error: "Der Server ist vorübergehend ausgelastet. Bitte kurz warten und erneut versuchen." },
+      503,
+    );
+    response.headers.set("Retry-After", "5");
+    return response;
+  }
   if (isAccountConfigError(error)) {
     console.error("Account configuration unavailable:", error.message);
     return jsonResponse(

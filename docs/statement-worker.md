@@ -133,6 +133,15 @@ Ein Finanzstand wird erst bei einer neuen Revision geladen. Offene lokale
 sichtbar. SSE-Verbindungen sind pro Konto begrenzt und nach Abmeldung widerrufen.
 Ein eventuell vorgeschalteter Proxy darf SSE nicht puffern.
 
+SQLite-BUSY/LOCKED nach Ablauf des Schreibwartefensters ergibt HTTP **503** mit
+`Retry-After: 5`, ohne interne Fehlermeldungen. Bei fehlgeschlagenen Übertragungen
+wird die Reservierung vor dem Entfernen der Datei als fehlgeschlagen markiert.
+Blockiert auch die Bereinigung, bleiben Datei und Reservierung für die bestehende
+15-Minuten-Ablaufbereinigung erhalten. Bereits angenommene Queue-Dateien werden
+nicht gelöscht. Sekundäre Bereinigungsfehler ersetzen nicht die ursprüngliche
+Uploaddiagnose; ihre festen Logkategorien enthalten keine Ausnahmeinhalte oder
+Dateipfade.
+
 ## Händlerindex und manuelle Entscheidungen
 
 `merchants.ts` definiert validierte Händler mit ID, kanonischem Namen, Aliasliste,

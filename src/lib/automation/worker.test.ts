@@ -223,6 +223,34 @@ it("imports atomically and idempotently, keeps original facts and isolates tenan
   ).toBe(0);
 });
 
+it("permits a separate uploader to reserve and enqueue during real worker reconciliation without duplicating imports", async () => {
+  await upload(csv);
+  const uploader = new AccountDatabase(accounts.path);
+  uploader.read((db) => db.exec("PRAGMA busy_timeout = 1"));
+  const incoming = new AutomationStore(uploader);
+  const id = randomUUID();
+  await writeFile(incoming.filePath(id), Buffer.from(csv));
+  const transform = accounts.transformFinance.bind(accounts);
+  const hook = vi.spyOn(accounts, "transformFinance").mockImplementation((tenant, reconcile, checkpoint) =>
+    transform(tenant, (state) => {
+      uploader.consumeRateLimit(`statement:upload:${tenant}`, 30, 60_000);
+      incoming.reserveUpload(tenant, id, "concurrent.csv", Buffer.byteLength(csv));
+      incoming.readyUpload(tenant, id);
+      return reconcile(state);
+    }, checkpoint));
+  try {
+    await worker.process(store.claim(owner)!);
+    expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+    expect(store.snapshot(userId).jobs.find((job) => job.id === id)?.status).toBe("QUEUED");
+    hook.mockRestore();
+    await worker.process(store.claim(owner)!);
+    expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+    expect(store.snapshot(userId).jobs.filter((job) => job.status === "COMPLETED")).toHaveLength(2);
+    await worker.cleanup();
+    expect(accounts.read((db) => db.prepare("SELECT sum(bytes) AS bytes FROM automation_jobs").get()?.bytes)).toBe(0);
+  } finally { hook.mockRestore(); uploader.close(); }
+});
+
 it("rolls back finance writes and checkpoints together when commit fails", () => {
   const job = store.enqueueBackfill(userId);
   const claimed = store.claim(owner)!;

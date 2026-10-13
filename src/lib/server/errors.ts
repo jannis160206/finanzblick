@@ -28,3 +28,19 @@ export function isAccountError(error: unknown): error is AccountError {
 export function isAccountConfigError(error: unknown): error is AccountConfigError {
   return isAccountError(error) && configErrorBrand in error && error[configErrorBrand] === true;
 }
+
+export function isSqliteContentionError(error: unknown): boolean {
+  if (
+    !(error instanceof Error) ||
+    !("code" in error) ||
+    error.code !== "ERR_SQLITE_ERROR" ||
+    !("errcode" in error) ||
+    typeof error.errcode !== "number" ||
+    !Number.isSafeInteger(error.errcode) ||
+    error.errcode < 0 ||
+    error.errcode > 0x7fffffff
+  ) return false;
+  // SQLite extended result codes retain the primary result in the low byte.
+  const primary = error.errcode & 0xff;
+  return primary === 5 || primary === 6;
+}

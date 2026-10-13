@@ -6,6 +6,7 @@ import { FinanceProvider, useFinance } from "./finance-provider";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { accountStorageKey } from "@/lib/account-finance-storage";
 import { appStateSchema, type AppState } from "@/lib/types";
+import { useAutomation } from "./automation-context";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("sonner", () => ({ Toaster: () => null, toast: { success: vi.fn(), error: vi.fn() } }));
@@ -18,7 +19,7 @@ const sources: EventTarget[] = [];
 class TestEventSource extends EventTarget {
   onerror: (() => void) | null = null;
   constructor(readonly url: string) { super(); sources.push(this); }
-  close() {}
+  close = vi.fn();
 }
 beforeEach(() => {
   vi.stubGlobal("EventSource", TestEventSource);
@@ -41,14 +42,16 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); localS
 
 function mount(strict = false) {
   let finance!: Finance;
+  let automation!: ReturnType<typeof useAutomation>;
   function Observer() {
     const value = useFinance();
-    useEffect(() => { finance = value; }, [value]);
+    const status = useAutomation();
+    useEffect(() => { finance = value; automation = status; }, [value, status]);
     return null;
   }
   const node = <FinanceProvider initialState={createEmptyAccountState()} account={account}><Observer /></FinanceProvider>;
   const view = render(strict ? <StrictMode>{node}</StrictMode> : node);
-  return { ...view, read: () => finance };
+  return { ...view, read: () => finance, status: () => automation };
 }
 
 it("hydrates and saves an empty account in StrictMode without adding personal seed purchases", async () => {
@@ -177,4 +180,24 @@ it("coalesces overlapping SSE revisions without advancing the cache ahead of the
   act(() => view.read().update((state) => ({ ...state, seasonalTheme: { reduceMotion: true } })));
   await waitFor(() => expect(view.read().saved).toBe(true));
   expect(remote?.holidayRanges).toEqual([{ from: "2026-11-01", to: "2026-11-03" }]);
+});
+
+it("recovers unavailable/error SSE on the existing EventSource and clears its warning on fresh progress without polling or resubmission", async () => {
+  const view = mount();
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  const source = sources.at(-1) as TestEventSource;
+  const before = request.mock.calls.length;
+  act(() => source.dispatchEvent(new MessageEvent("unavailable", { data: "{}" })));
+  expect(view.status().error).toContain("Verbindung wird wiederhergestellt");
+  act(() => source.onerror?.());
+  expect(view.status().error).toContain("Wiederverbindung erfolgt automatisch");
+  expect(source.close).not.toHaveBeenCalled();
+  expect(sources).toHaveLength(1);
+  expect(request).toHaveBeenCalledTimes(before);
+  act(() => source.dispatchEvent(new MessageEvent("progress", {
+    data: JSON.stringify({ revision, jobs: [] }),
+  })));
+  expect(view.status().error).toBeNull();
+  expect(view.read().saved).toBe(true);
+  expect(request).toHaveBeenCalledTimes(before);
 });

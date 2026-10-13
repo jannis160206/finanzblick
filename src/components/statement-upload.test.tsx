@@ -129,6 +129,29 @@ it("reports selection limits and empty files without leaving phantom active entr
   expect(screen.getByText(/muss Daten enthalten/)).toBeTruthy();
 });
 
+it("shows a temporary 503 inside the compact panel and only resubmits with a fresh UUID on deliberate reselection", async () => {
+  const message = "Der Server ist vorübergehend ausgelastet. Bitte kurz warten und erneut versuchen.";
+  const request = vi.fn<(url: string, options: RequestInit) => Promise<Response>>()
+    .mockResolvedValueOnce(Response.json({ error: message }, { status: 503, headers: { "Retry-After": "5" } }))
+    .mockImplementationOnce(async (_url, options) => Response.json({
+      id: new Headers(options.headers).get("X-Upload-Id"),
+    }, { status: 202 }));
+  vi.stubGlobal("fetch", request);
+  mount();
+  await choose([file("erneut.pdf")]);
+  await waitFor(() => expect(badge()).toBe("!"));
+  expect(request).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  expect(screen.getByRole("alert").textContent).toBe(message);
+  expect(screen.getByText("Import fehlgeschlagen")).toBeTruthy();
+  fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Schließen" }));
+  await choose([file("erneut.pdf")]);
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  const ids = request.mock.calls.map(([, options]) => new Headers(options.headers).get("X-Upload-Id"));
+  expect(ids[0]).not.toBe(ids[1]);
+  expect(badge()).toBe("1");
+});
+
 it("aborts an old account's transfer and never exposes its files in the next account", async () => {
   const pending = deferred<Response>();
   const request = vi.fn<(url: string, options: RequestInit) => Promise<Response>>().mockReturnValue(pending.promise);

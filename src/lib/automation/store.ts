@@ -288,12 +288,15 @@ export class AutomationStore {
     });
   }
 
-  failUpload(userId: string, id: string): void {
-    this.accounts.transaction((db) => {
-      db.prepare(
+  failUpload(userId: string, id: string): boolean {
+    return this.accounts.transaction((db) => {
+      const result = db.prepare(
         `UPDATE automation_jobs SET status = 'FAILED', error = 'Upload abgebrochen.',
         updated_at = ? WHERE id = ? AND user_id = ? AND status = 'UPLOADING'`,
       ).run(Date.now(), id, userId);
+      return result.changes === 1 || db.prepare(
+        "SELECT id FROM automation_jobs WHERE id = ? AND user_id = ? AND status = 'FAILED'",
+      ).get(id, userId) !== undefined;
     });
   }
 
