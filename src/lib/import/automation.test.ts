@@ -140,7 +140,8 @@ describe("Revolut closing balances", () => {
     });
     const again = importResult(saved.state, parsed);
     expect(again.added).toBe(0);
-    expect(again.state).toEqual(saved.state);
+    expect({ ...again.state, importResults: undefined }).toEqual({ ...saved.state, importResults: undefined });
+    expect(again.state.importResults).toHaveLength(saved.state.importResults!.length + 1);
   });
   it("uses the last dated running balance, not the sum of pocket shifts", () => {
     const parsed = parseStatementCsv(

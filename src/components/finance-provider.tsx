@@ -52,6 +52,7 @@ type Store = {
   blocked: boolean;
   planCapacityBlocked?: boolean;
   actionError?: { message: string };
+  restoration?: { id: string; error?: string };
   statementImport?: {
     requestId: string;
     added: number;
@@ -69,6 +70,7 @@ type Action =
       blocked?: boolean;
     }
   | { type: "update"; updater: (state: AppState) => AppState }
+  | { type: "restore"; id: string; data: AppState; expected: AppState }
   | { type: "recoverAmexBalance"; recoveries: AmexBalanceRecovery[] }
   | { type: "saved"; data?: AppState }
   | { type: "error"; message: string }
@@ -128,26 +130,33 @@ function reducer(store: Store, action: Action | AppendAction): Store {
         };
       }
     }
+    case "restore":
     case "hydrate": {
+      if (action.type === "restore" && action.expected !== store.data)
+        return { ...store, restoration: { id: action.id, error: "Der Finanzstand wurde zwischenzeitlich geändert. Bitte die Vorschau erneut bestätigen." } };
       try {
         const data = refreshPlanning(
-          queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.reference))),
+          queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.type === "hydrate" ? action.reference : undefined))),
         );
         return {
           data: appStateSchema.parse(synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad))),
           ready: true,
-          error: action.error ?? null,
+          error: action.type === "hydrate" ? action.error ?? null : null,
           saved: false,
-          blocked: action.blocked ?? false,
+          blocked: action.type === "hydrate" ? action.blocked ?? false : false,
+          restoration: action.type === "restore" ? { id: action.id } : store.restoration,
         };
       } catch (error) {
         if (!(error instanceof FixedPlanCapacityError)) throw error;
+        if (action.type === "restore")
+          return { ...store, restoration: { id: action.id, error: error.message } };
         return { data: action.data, ready: true, saved: false, blocked: action.blocked ?? false,
           error: action.error ?? null, planCapacityBlocked: true, actionError: { message: error.message } };
       }
     }
     case "update": {
       const updated = action.updater(store.data);
+      if (updated === store.data) return store;
       try {
         return {
           ...store,
@@ -192,6 +201,8 @@ type FinanceContextValue = {
   statementImport: Store["statementImport"];
 };
 const FinanceContext = createContext<FinanceContextValue | null>(null);
+type FinanceRestoration = (state: AppState, expected: AppState) => Promise<void>;
+const FinanceRestorationContext = createContext<FinanceRestoration | null>(null);
 
 function createDashboardGetter(state: AppState) {
   // Keep each lazy result bound to its state, including across save-status renders.
@@ -235,7 +246,28 @@ export function FinanceProvider({
   const hydrated = useRef(false);
   const amexRecoveryNeeded = useMemo(() => needsAmexBalanceRecovery(store.data), [store.data]);
   const latest = useRef(store);
+  const restoring = useRef<{
+    id: string;
+    resolve: () => void;
+    reject: (error: FinanceStorageError) => void;
+  } | null>(null);
   useEffect(() => { latest.current = store; }, [store]);
+  useEffect(() => {
+    const pending = restoring.current;
+    if (!pending || store.restoration?.id !== pending.id) return;
+    const error = store.restoration.error ?? store.error;
+    if (error) {
+      restoring.current = null;
+      pending.reject(new FinanceStorageError(error));
+    } else if (store.saved) {
+      restoring.current = null;
+      pending.resolve();
+    }
+  }, [store.restoration, store.error, store.saved]);
+  useEffect(() => () => {
+    restoring.current?.reject(new FinanceStorageError("Der Arbeitsbereich wurde geschlossen. Bitte den gespeicherten Stand prüfen."));
+    restoring.current = null;
+  }, []);
   const load = useCallback((fallback: AppState) => {
     try {
       const result = storage.load(fallback);
@@ -420,6 +452,24 @@ export function FinanceProvider({
       dispatch({ type: "appendStatements", rows, duplicates, requestId, decisions, metadata }),
     [],
   );
+  const restore = useCallback<FinanceRestoration>((data, expected) => {
+    const parsed = appStateSchema.parse(data);
+    if (restoring.current) throw new FinanceStorageError("Eine Wiederherstellung läuft bereits.");
+    if (expected !== latest.current.data) throw new FinanceStorageError("Der Finanzstand wurde zwischenzeitlich geändert. Bitte die Vorschau aktualisieren.");
+    if (cloud?.error) throw new FinanceStorageError("Bitte zuerst den Gerätestand sichern und den Serverstand laden. Die Konfliktsicherung bleibt erhalten.");
+    if (!cloud) {
+      try {
+        if (storage.changedElsewhere()) throw new FinanceStorageError("Ein anderer Tab hat die Daten geändert. Bitte den aktuellen Stand laden und die Vorschau erneut prüfen.");
+        storage.prepareReplacement();
+      } catch (error) {
+        throw new FinanceStorageError(financeStorageMessage(error));
+      }
+    }
+    const id = crypto.randomUUID();
+    const pending = new Promise<void>((resolve, reject) => { restoring.current = { id, resolve, reject }; });
+    dispatch({ type: "restore", id, data: parsed, expected });
+    return pending;
+  }, [cloud, storage]);
   const value: FinanceContextValue = {
     state: store.data,
     get dashboard() {
@@ -476,12 +526,14 @@ export function FinanceProvider({
       disableTransitionOnChange
     >
       <FinanceContext.Provider value={value}>
+        <FinanceRestorationContext.Provider value={restore}>
         <AccountWorkspaceContext.Provider value={workspace}>
         <AutomationContext.Provider value={{ jobs: automation.jobs, error: automationError }}>
         {children}
         <FinanceNotifications />
         </AutomationContext.Provider>
         </AccountWorkspaceContext.Provider>
+        </FinanceRestorationContext.Provider>
       </FinanceContext.Provider>
     </ThemeProvider>
   );
@@ -490,4 +542,9 @@ export function useFinance() {
   const context = useContext(FinanceContext);
   if (!context) throw new Error("FinanceProvider is missing");
   return context;
+}
+export function useFinanceRestoration() {
+  const restore = useContext(FinanceRestorationContext);
+  if (!restore) throw new Error("FinanceProvider is missing");
+  return restore;
 }

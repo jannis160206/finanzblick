@@ -126,8 +126,9 @@ describe("Revolut tax export layouts", () => {
     expect(result.rows).toHaveLength(1);
     expect(result.issues).toHaveLength(1);
     expect(result.issues[0]).toMatchObject({
-      message: expect.stringContaining("Fremdwährung USD"), draft: { amount: null },
+      message: expect.stringContaining("Fremdwährung USD"), action: "reupload", reason: "foreign-currency",
     });
+    expect(result.issues[0].draft).toBeUndefined();
   });
 
   it("keeps zero EUR valuations out of the ledger and accepts a reversed labelled pair", () => {
@@ -181,7 +182,7 @@ describe("Revolut tax export layouts", () => {
     expect(classify({ ...row, category: "Prüfen", description: "Umtausch bei Beispielhändler" }).isTransfer).toBe(false);
   });
 });
-describe("file-scoped import error refresh", () => {
+describe("legacy warnings without upload provenance", () => {
   const file = "Jahresauszug.csv";
   const existingIssues = [
     `${file}, Zeile 42: Alter Layoutfehler`,
@@ -197,11 +198,11 @@ describe("file-scoped import error refresh", () => {
     return state;
   };
 
-  it("replaces only reparsed file errors and does not duplicate bookings on re-drop", () => {
+  it("does not erase older warnings by filename and does not duplicate bookings on re-drop", () => {
     const state = initial();
     const prepared = prepareStatementImport([parseStatementCsv(euroAccount, file)], state);
     const saved = commitStatementImport(state, prepared.automatic, [], prepared.metadata);
-    expect(saved.state.importStatus?.issues).toEqual(existingIssues.slice(2));
+    expect(saved.state.importStatus?.issues).toEqual(existingIssues);
     expect(saved.added).toBe(1);
     const again = prepareStatementImport([parseStatementCsv(euroAccount, file)], saved.state);
     const repeated = commitStatementImport(saved.state, again.automatic, [], again.metadata);
@@ -210,12 +211,12 @@ describe("file-scoped import error refresh", () => {
     expect(state.importStatus?.issues).toEqual(existingIssues);
   });
 
-  it("replaces stale errors with remaining current errors", () => {
+  it("retains unknown-origin warnings alongside current upload warnings", () => {
     const state = initial();
     const parsed = parseStatementCsv(`${euroAccount}\n${dollarHeader}\n02.09.2026;Beispielhändler;Händler;-10,00$;;;;;;;;`, file);
     const prepared = prepareStatementImport([parsed], state);
     const saved = commitStatementImport(state, prepared.automatic, [], prepared.metadata);
-    expect(saved.state.importStatus?.issues).toEqual([...existingIssues.slice(2), ...prepared.issues]);
+    expect(saved.state.importStatus?.issues).toEqual([...existingIssues, ...prepared.issues]);
     expect(prepared.issues).toHaveLength(1);
   });
 

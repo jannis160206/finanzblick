@@ -1,6 +1,7 @@
 import type { AppState, Transaction } from "@/lib/types";
 import { personalAmount, type AccountedTransaction } from "@/lib/shared-holiday";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
+import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 
 const cents = (value: number) => Math.round(value * 100);
 const key = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("de-AT");
@@ -38,6 +39,7 @@ type OpenCharge = {
 export function amexFunding(
   state: AppState,
   bookings: AccountedTransaction[],
+  occurrences: PlannedOccurrence[] = matchPlannedOneOffs(state.plannedOneOffs, bookings),
 ) {
   const snapshot = (state.amexBalanceSnapshots ?? []).filter((item) => item.date <= state.settings.asOf)
     .sort((a, b) => b.date.localeCompare(a.date) || b.periodStart.localeCompare(a.periodStart))[0];
@@ -123,8 +125,11 @@ export function amexFunding(
       continue;
     }
     const merchant = merchantAliasSourceKey(row);
-    const matches = merchant ? open.filter((charge) => charge.merchant === merchant &&
-      partner(charge.row) === partner(row) && charge.refundable > 0) : [];
+    const matches = row.holidayRefundFor
+      ? open.filter((charge) => charge.row.id === row.holidayRefundFor && charge.refundable > 0)
+      : merchant && !row.sharedRefundUnlinked && !row.holidayRefundPending
+        ? open.filter((charge) => charge.merchant === merchant &&
+          partner(charge.row) === partner(row) && charge.refundable > 0) : [];
     let unmatched = amount;
     let ownRefund = 0;
     for (const charge of matches) {
@@ -175,7 +180,12 @@ export function amexFunding(
   const ownOutstanding = ownOpen.reduce((total, item) => total + item.amount, 0);
   const reserved = reservedBalance(state);
   const shortfall = Math.max(0, ownOutstanding - reserved);
+  const currentPlans = new Set(occurrences.filter((item) => item.bookingId &&
+    item.date.slice(0, 7) === state.settings.asOf.slice(0, 7)).map((item) => item.bookingId));
+  // A purchase commitment covers its own unpaid portion, never the real card balance.
+  const plannedCoverage = Math.min(shortfall, ownOpen.filter((item) => currentPlans.has(item.row.id))
+    .reduce((total, item) => total + item.amount, 0));
   const balance = { outstanding: outstanding / 100, ownOutstanding: ownOutstanding / 100,
     reserved: reserved / 100, shortfall: shortfall / 100 };
-  return { ...balance, plannedCoverage: 0, additional: shortfall / 100 };
+  return { ...balance, plannedCoverage: plannedCoverage / 100, additional: (shortfall - plannedCoverage) / 100 };
 }

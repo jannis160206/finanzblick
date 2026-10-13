@@ -201,7 +201,7 @@ describe("conservative stale screenshot review reconciliation", () => {
     expect(ids(result.state)).toEqual(["cropped"]);
     expect(result.state.reviewQueue?.[0]).toMatchObject({ draft: { date: "", amount: -100.84 } });
     expect(result.state.importStatus).toEqual({ imported: 3,
-      issues: ["other.csv: Andere Warnung", `synthetic.png, Zeile 1: ${message}`] });
+      issues: ["synthetic.png, Zeile 2: Alte OCR-Warnung", "other.csv: Andere Warnung", `synthetic.png, Zeile 1: ${message}`] });
 
     const again = redrop(result.state, [screenshot(results[0].rows.map((row) => ({ ...row, id: `again-${row.id}` })),
       [{ ...cropped, id: "again-cropped" }])]);

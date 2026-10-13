@@ -14,21 +14,37 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useFinance } from "@/components/finance-provider";
+import { useFinance, useFinanceRestoration } from "@/components/finance-provider";
 import { dateLabel } from "@/lib/format";
 import { type ImportResult } from "@/lib/excel";
 import { MAX_IMPORT_BYTES } from "@/lib/import/limits";
 import { openReviewCount, queueLedgerReview } from "@/lib/import/review";
 import { FinanceStorageError } from "@/lib/finance-storage";
+import { useAccountWorkspace } from "@/components/account-context";
+import { downloadFinanceBackup, parseFinanceBackup } from "@/lib/finance-backup";
+import type { AppState } from "@/lib/types";
 
 export function ExcelActions({ compact = false }: { compact?: boolean }) {
-  const { state, replace } = useFinance();
+  const { state } = useFinance();
+  const restore = useFinanceRestoration();
+  const workspace = useAccountWorkspace();
   const fileInput = useRef<HTMLInputElement>(null);
   const restoreTrigger = useRef<HTMLButtonElement>(null);
-  const [busy, setBusy] = useState<"import" | "export" | null>(null);
-  const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [busy, setBusy] = useState<"import" | "export" | "restore" | null>(null);
+  const [preview, setPreview] = useState<(ImportResult & { expected: AppState }) | null>(null);
   const [filename, setFilename] = useState("");
   const [actionError, setActionError] = useState("");
+  function downloadJSON() {
+    setActionError("");
+    try {
+      downloadFinanceBackup(state, `Finanzblick_${state.settings.asOf}.json`, workspace?.user.id ?? null);
+      toast.success("JSON-Sicherung erstellt");
+    } catch (error) {
+      if (!(error instanceof FinanceStorageError)) throw error;
+      setActionError(error.message);
+      toast.error(error.message);
+    }
+  }
   async function download() {
     setActionError("");
     setBusy("export");
@@ -58,9 +74,9 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
   }
   async function upload(file: File) {
     setActionError("");
-    if (!/\.xlsx$/i.test(file.name)) {
-      setActionError("Bitte eine XLSX-Datei auswählen. Die vorhandenen Daten wurden nicht verändert.");
-      toast.error("Bitte eine XLSX-Datei auswählen.");
+    if (!/\.(xlsx|json)$/i.test(file.name)) {
+      setActionError("Bitte eine JSON- oder XLSX-Sicherung auswählen. Die vorhandenen Daten wurden nicht verändert.");
+      toast.error("Bitte eine JSON- oder XLSX-Sicherung auswählen.");
       return;
     }
     if (file.size > MAX_IMPORT_BYTES) {
@@ -71,8 +87,14 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
     setBusy("import");
     setFilename(file.name);
     try {
-      const { parseWorkbook } = await import("@/lib/excel");
-      setPreview(await parseWorkbook(await file.arrayBuffer()));
+      const result = /\.json$/i.test(file.name)
+        ? { state: parseFinanceBackup(await file.text(), workspace?.user.id ?? null), kind: "backup" as const,
+            source: "Finanzblick JSON", warnings: [], skipped: 0 }
+        : await (await import("@/lib/excel")).parseWorkbook(await file.arrayBuffer());
+      if (result.kind !== "backup") throw new FinanceStorageError(
+        "Diese Datei enthält Buchungen, aber keine vollständige Sicherung. Bitte unter Umsätze importieren; vorhandene Guthaben und Einstellungen bleiben erhalten.",
+      );
+      setPreview({ ...result, expected: state });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Import fehlgeschlagen";
       setActionError(`Die Sicherung konnte nicht eingelesen werden. Vorhandene Daten bleiben erhalten. ${message}`);
@@ -87,8 +109,8 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
         ref={fileInput}
         className="hidden"
         type="file"
-        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        aria-label="Excel-Datei auswählen"
+        accept=".xlsx,.json,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        aria-label="Sicherungsdatei auswählen"
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
@@ -96,9 +118,15 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
         }}
       />
       {compact ? <div className="flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => void download()}>
-          <Download className="size-4" />Exportieren
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild><Button type="button" size="sm" variant="outline" disabled={!!busy}>
+            <Download className="size-4" />Exportieren
+          </Button></DropdownMenuTrigger>
+          <DropdownMenuContent>
+            <DropdownMenuItem onSelect={downloadJSON}>JSON-Sicherung herunterladen</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void download()}>Excel-Sicherung herunterladen</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button ref={restoreTrigger} type="button" size="sm" variant="outline" disabled={!!busy} onClick={() => fileInput.current?.click()}>
           <Upload className="size-4" />Wiederherstellen
         </Button>
@@ -107,6 +135,9 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
           <Button ref={restoreTrigger} type="button" size="sm" variant="outline">Sicherung</Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent>
+          <DropdownMenuItem disabled={!!busy} onSelect={downloadJSON}>
+            <Download className="size-4" />JSON-Sicherung herunterladen
+          </DropdownMenuItem>
           <DropdownMenuItem
             disabled={!!busy}
             onSelect={() => fileInput.current?.click()}
@@ -139,7 +170,7 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
       <Dialog
         open={!!preview}
         onOpenChange={(open) => {
-          if (!open) setPreview(null);
+          if (!open && !busy) setPreview(null);
         }}
       >
         <DialogContent variant="work" onCloseAutoFocus={(event) => { event.preventDefault(); restoreTrigger.current?.focus(); }}>
@@ -171,6 +202,8 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                     label: "Offen",
                     count: openReviewCount(queueLedgerReview(preview.state).reviewQueue ?? []),
                   },
+                  { label: "Finanzzeilen", count: preview.state.financeRows.length },
+                  { label: "Abrechnungen", count: preview.state.payslips?.length ?? 0 },
                 ].map((item) => (
                   <div className="rounded-lg border p-3" key={item.label}>
                     <p className="text-2xl font-semibold">{item.count}</p>
@@ -191,7 +224,8 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                 </div>
               )}
               <p className="text-sm text-muted-foreground">
-                Ersetzt alle lokalen Daten und Einstellungen. Vorher eine Sicherung erstellen.
+                Ersetzt die Finanzdaten und Einstellungen {workspace ? "dieses Kontos" : "dieses Browsermodus"}.
+                Andere Konten bleiben unverändert. Vorher eine Sicherung erstellen.
               </p>
               <Button
                 variant="outline"
@@ -202,29 +236,40 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
                 Aktuelle Daten sichern
               </Button>
               {actionError && <p role="alert" className="text-sm text-destructive">{actionError}</p>}
+              {preview.expected !== state && <div className="space-y-2 rounded-lg border p-3 text-sm">
+                <p role="alert">Seit der Vorschau wurde dein Finanzstand geändert. Bitte den aktuellen Stand sichern und erneut prüfen.</p>
+                <Button variant="outline" disabled={!!busy} onClick={() => {
+                  setPreview({ ...preview, expected: state });
+                  setActionError("");
+                }}>Vorschau auf aktuellen Stand beziehen</Button>
+              </div>}
               </DialogBody>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setPreview(null)}>
+                <Button variant="outline" disabled={!!busy} onClick={() => setPreview(null)}>
                   Abbrechen
                 </Button>
                 <Button
                   variant="destructive"
                   className="h-auto min-h-10 min-w-0 whitespace-normal sm:flex-1"
-                  disabled={!!busy}
-                  onClick={() => {
+                  disabled={!!busy || preview.expected !== state}
+                  onClick={async () => {
+                    setBusy("restore");
+                    setActionError("");
                     try {
-                      replace(preview.state);
+                      await restore(preview.state, preview.expected);
                       toast.success(
-                        `${preview.state.transactions.length} Umsätze importiert`,
+                        "Sicherung wiederhergestellt und gespeichert",
                       );
                       setPreview(null);
                     } catch (error) {
                       if (!(error instanceof FinanceStorageError)) throw error;
                       setActionError(error.message);
+                    } finally {
+                      setBusy(null);
                     }
                   }}
                 >
-                  Sicherung wiederherstellen und aktuelle Daten ersetzen
+                  {busy === "restore" ? "Speichert Wiederherstellung …" : "Sicherung wiederherstellen und aktuelle Daten ersetzen"}
                 </Button>
               </DialogFooter>
             </>

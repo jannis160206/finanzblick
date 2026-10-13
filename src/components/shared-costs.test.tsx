@@ -46,7 +46,7 @@ function openModal() {
   fireEvent.click(screen.getByRole("button", { name: "Geteilt" }));
   return screen.getByRole("dialog", { name: "Geteilt" });
 }
-function switchTab(name: "Suchen" | "Offen") {
+function switchTab(name: "Suchen" | "Offen" | "Erstattungen") {
   const tab = screen.getByRole("tab", { name: new RegExp(`^${name}`) });
   fireEvent.mouseDown(tab, { button: 0, ctrlKey: false });
   expect(tab.getAttribute("aria-selected")).toBe("true");
@@ -59,6 +59,70 @@ function rowShare(row: Transaction) {
 }
 
 describe("Geteilt UI", () => {
+  it("requires an explicit source for ambiguous refunds, preserves it only on save, and reduces both shares", () => {
+    const first = { ...booking("first", -100), description: "SWISS", sharedWithRaphael: true };
+    const second = { ...booking("second", -100), description: "SWISS", sharedWithRaphael: true };
+    const refund = { ...booking("refund", 100), description: "SWISS", date: "2026-09-06" };
+    const view = renderLedger(fixture([first, second, refund]));
+    let dialog = openModal();
+    let panel = switchTab("Erstattungen");
+    expect(within(panel).getByRole("alert").textContent).toContain("Ursprung nicht eindeutig");
+    fireEvent.change(within(panel).getByRole("combobox"), { target: { value: "refund:first" } });
+    expect(view.read().transactions[2].sharedRefundFor).toBeUndefined();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Abbrechen" }));
+    expect(view.read().transactions[2].sharedRefundFor).toBeUndefined();
+    dialog = openModal();
+    panel = switchTab("Erstattungen");
+    fireEvent.change(within(panel).getByRole("combobox"), { target: { value: "refund:first" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Speichern" }));
+    expect(view.read().transactions[2].sharedRefundFor).toBe("first");
+    expect(calculateDashboard(view.read()).current.actualSpending).toBe(50);
+    expect(screen.getByLabelText("1 offene Teilungen")).toBeTruthy();
+  });
+
+  it("shows the amount owed back to Raphael after a fully paid purchase is refunded", () => {
+    const charge = { ...booking("charge", -100), description: "SWISS", sharedWithRaphael: true };
+    const payment = { ...booking("payment", 50), description: "Raphael Piber", categoryOverride: false, date: "2026-09-06" };
+    const refund = { ...booking("refund", 100), description: "SWISS", date: "2026-09-07" };
+    renderLedger(fixture([charge, payment, refund]));
+    openModal();
+    const panel = switchTab("Offen");
+    expect(within(panel).getByText("An Raphael zurückzuzahlen")).toBeTruthy();
+    expect(panel.textContent).toContain(currency(50));
+    expect(within(panel).queryByRole("button", { name: /Als bezahlt markieren/ })).toBeNull();
+  });
+
+  it("does not invent an overpayment when the reduced debt is manually confirmed after a refund", () => {
+    const charge = { ...booking("charge", -100), description: "SWISS", sharedWithRaphael: true };
+    const refund = { ...booking("refund", 40), description: "SWISS", date: "2026-09-06" };
+    const view = renderLedger(fixture([charge, refund]));
+    const dialog = openModal();
+    const panel = switchTab("Offen");
+    fireEvent.click(within(panel).getByRole("button", { name: "Als bezahlt markieren: SWISS" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Speichern" }));
+    expect(view.read().transactions[0].sharedPaidAmount).toBe(30);
+    openModal();
+    expect(within(switchTab("Offen")).queryByText("An Raphael zurückzuzahlen")).toBeNull();
+    view.change((state) => ({ ...state, transactions: [...state.transactions,
+      { ...refund, id: "next-refund", amount: 20, date: "2026-09-07" }] }));
+    expect(within(screen.getByRole("tabpanel")).getByText("An Raphael zurückzuzahlen")).toBeTruthy();
+    expect(screen.getByRole("tabpanel").textContent).toContain(currency(10));
+  });
+
+  it("lets a partial partner payment be linked without treating it as a merchant refund", () => {
+    const charge = { ...booking("charge", -100), sharedWithRaphael: true };
+    const payment = { ...booking("payment", 15), description: "Raphael Piber", categoryOverride: false, date: "2026-09-06" };
+    const view = renderLedger(fixture([charge, payment]));
+    const dialog = openModal();
+    const panel = switchTab("Erstattungen");
+    fireEvent.change(within(panel).getByRole("combobox"), { target: { value: "repayment:charge" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Speichern" }));
+    expect(view.read().transactions[1].sharedRepaymentFor).toBe("charge");
+    expect(personalAmount(actualBookings(view.read())[1])).toBe(0);
+    openModal();
+    expect(switchTab("Offen").textContent).toContain(`Offen ${currency(35)}`);
+  });
+
   it("keeps a planned half in the same open list and confirms its manual payment without a ledger booking", () => {
     const state = fixture([]);
     state.plannedOneOffs = [{ id: "planned", name: "Schrank", date: "2026-09-20", amount: 400,

@@ -54,6 +54,8 @@ export function matchPlannedOneOffs(items: PlannedOneOff[] = [], bookings: Trans
         !used.has(row.id) && Math.abs(cents(-row.amount) - cents(item.amount)) <= 200);
       if (match) {
         item.bookingId = match.id;
+        item.ownAmount = (item.sharedWithRaphael || match.sharedWithRaphael
+          ? Math.round(cents(-match.amount) / 2) : cents(-match.amount)) / 100;
         used.add(match.id);
         break;
       }

@@ -44,6 +44,7 @@ import { currency, dateLabel, monthLabel, number, shortCurrency } from "@/lib/fo
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
+import { goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
 
 const chartTooltip = {
   background: "var(--popover)",
@@ -65,12 +66,16 @@ const tooltipCurrency = (value: unknown) => currency(Number(value));
 export function Overview() {
   const { state, dashboard: d } = useFinance();
   const [showCashflow, setShowCashflow] = useState(false);
+  const allocationBlocked = "allocationBlocked" in d.current && d.current.allocationBlocked === true;
   const monthSplit = d.monthlyFunding.some((item) => item.id === "savings") ? d.monthlyFunding : [
     { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 0, transferred: 0, done: false },
     ...d.monthlyFunding,
   ];
-  const motorcycle = d.goals.find((goal) => goal.pocket === "Motorrad");
-  const bikeSaved = motorcycle ? d.actualGoals[motorcycle.id] : 0;
+  const motorcycle = d.goals.find((goal) => pocketKey(goal.pocket) === "motorrad");
+  const bikeBasis = motorcycle ? goalBalanceStatus(state, motorcycle, d.actual) : undefined;
+  const bikeSaved = bikeBasis?.amount ?? null;
+  const bikeUnknown = bikeBasis?.status === "conflict" ? "Zuordnung offen" : "Kontostand unbekannt";
+  const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
   const bikeExtraLabel = (month: string) => month.slice(5) === "12" ? "Dec" :
     monthLabel(month, true).replace(/\s+\d{4}$/, "").replace(/\.$/, "");
   const kpis = [
@@ -99,6 +104,7 @@ export function Overview() {
     {
       label: "Ersparnisse gesamt",
       value: d.totalAssets,
+      note: incompleteAssets ? "Unvollständig · unbekannte Guthaben nicht enthalten" : undefined,
       icon: PiggyBank,
       color: "text-primary",
     },
@@ -151,17 +157,22 @@ export function Overview() {
           aria-label="Pocket-Verteilung diesen Monat"
         >
           <h2 className="mb-4 flex items-center gap-2 text-sm font-medium"><PiggyBank aria-hidden="true" className="size-4 text-muted-foreground" />Monatsverteilung</h2>
+          {allocationBlocked && <FinancialData as="p" role="status" className="mb-3 text-xs text-muted-foreground">
+            Automatische Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.
+          </FinancialData>}
           <div className="space-y-2">
           {monthSplit.map((item) => {
-            const confirmedSavings = item.id === "savings" && item.done;
+            const combined = "combined" in item && item.combined === true;
+            const confirmedSavings = item.id === "savings" && !combined && item.done;
             return <div key={item.id} className={cn("grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border p-3",
-              confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket}>
+              confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket} data-funding-combined={combined || undefined}>
               <span className="min-w-0 break-words text-sm font-medium">{item.name}</span>
               <FinancialData as="span" className={cn("inline-flex items-center gap-2 whitespace-nowrap text-xl font-semibold tracking-tight tabular-nums", confirmedSavings && "text-primary")}>
                 {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
                 <span>{currency(confirmedSavings ? item.transferred : item.amount)}</span>
               </FinancialData>
-              {item.id === "savings" && <FinancialData as="span" className="col-start-2 mt-1 justify-self-end text-[11px] text-muted-foreground">{item.done ? "Überwiesen" : "Sparempfehlung"}</FinancialData>}
+              {combined ? <FinancialData as="span" className="col-start-2 mt-1 justify-self-end text-[11px] text-muted-foreground">Gemeinsame Überweisung</FinancialData>
+                : item.id === "savings" && <FinancialData as="span" className="col-start-2 mt-1 justify-self-end text-[11px] text-muted-foreground">{item.done ? "Überwiesen" : allocationBlocked ? "Empfehlung pausiert" : "Sparempfehlung"}</FinancialData>}
             </div>;
           })}
           </div>
@@ -183,6 +194,7 @@ export function Overview() {
           <div className="grid grid-cols-2 gap-3">
             {pocketNames.map((pocket) => {
               const Icon = pocketIcons[pocket];
+              const balance = physicalPocketBalance(state, pocket, d.actual);
               return (
                 <Link
                   href="/pockets"
@@ -197,8 +209,9 @@ export function Overview() {
                   </div>
                   <p className="mb-1 break-words text-xs text-muted-foreground">{pocket}</p>
                   <FinancialData as="p" className="break-words text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
-                    {currency(d.actual[pocket])}
+                    {balance.amount === null ? "Kontostand unbekannt" : currency(balance.amount)}
                   </FinancialData>
+                  {balance.source === "opening" && <p className="mt-2 text-[11px] text-muted-foreground">Unabhängiger Startstand</p>}
                   {pocket === "Notgroschen" && <p className="mt-2 text-[11px] text-muted-foreground">Trade Republic</p>}
                   {pocket === "Sparkonto" && d.currentRoundUp > 0 && <FinancialData as="p" className="mt-2 text-[11px] text-muted-foreground">Round-up +{currency(d.currentRoundUp)}</FinancialData>}
                 </Link>
@@ -213,20 +226,20 @@ export function Overview() {
               {motorcycle.name}
             </span>
             <span
-              data-status={d.countdown.onTrack ? "positive" : "warning"}
+              data-status={bikeSaved !== null && d.countdown.onTrack ? "positive" : "warning"}
               className={cn(
                 "status-pill",
-                d.countdown.onTrack
+                bikeSaved !== null && d.countdown.onTrack
                   ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                   : "bg-orange-500/10 text-orange-600 dark:text-orange-300",
               )}
             >
-              {d.countdown.onTrack ? (
+              {bikeSaved !== null && d.countdown.onTrack ? (
                 <Check className="size-3" />
               ) : (
                 <CircleAlert className="size-3" />
               )}
-              {d.countdown.funded
+              {bikeSaved === null ? bikeUnknown : d.countdown.funded
                 ? "Ziel erreicht"
                 : d.countdown.overdue
                   ? "Termin überschritten"
@@ -236,20 +249,21 @@ export function Overview() {
             </span>
           </div>
           <div className="my-5">
-            <p className="break-words text-xs text-muted-foreground"><span className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">{currency(bikeSaved)}</span> angespart</p>
+            <p className="break-words text-xs text-muted-foreground"><span className="text-3xl font-semibold tracking-tight text-foreground tabular-nums">{bikeSaved === null ? bikeUnknown : currency(bikeSaved)}</span>{bikeSaved !== null && " angespart"}</p>
             <p className="mt-1 text-xs text-muted-foreground">Ziel {currency(motorcycle.target)}</p>
           </div>
           <div
             className="h-2 overflow-hidden rounded-full bg-muted"
             role="progressbar"
             aria-label="Motorradziel"
-            aria-valuenow={d.countdown.progress}
+            aria-valuenow={bikeSaved === null ? undefined : d.countdown.progress}
+            aria-valuetext={bikeSaved === null ? bikeUnknown : undefined}
             aria-valuemin={0}
             aria-valuemax={100}
           >
             <div
               className="h-full rounded-full bg-chart-4 transition-all"
-              style={{ width: `${d.countdown.progress}%` }}
+              style={{ width: `${bikeSaved === null ? 0 : d.countdown.progress}%` }}
             />
           </div>
           <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground">
@@ -262,7 +276,7 @@ export function Overview() {
                 Benötigt / Monat
               </p>
               <p className="mt-1 text-lg font-semibold tabular-nums">
-                {currency(d.countdown.required)}
+                {bikeSaved === null ? "—" : currency(d.countdown.required)}
               </p>
             </div>
             <div>
@@ -275,11 +289,11 @@ export function Overview() {
                   d.countdown.onTrack ? "text-primary" : "text-chart-4",
                 )}
               >
-                {currency(d.nextTransfer)}
+                {bikeSaved === null ? "—" : currency(d.nextTransfer)}
               </p>
             </div>
           </div>
-          {motorcycle.funding && d.currentMonth <= motorcycle.date.slice(0, 7) && <p className="mt-4 border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground" aria-label="Motorrad-Finanzierung">
+          {bikeSaved !== null && motorcycle.funding && d.currentMonth <= motorcycle.date.slice(0, 7) && <p className="mt-4 border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground" aria-label="Motorrad-Finanzierung">
             {`Motorrad ${number(bikeSaved, 0)} €${Object.entries(motorcycle.funding.extras).sort(([a], [b]) => a.localeCompare(b))
               .map(([month, amount]) => ` · ${bikeExtraLabel(month)} +${number(amount, 0)}`).join("")} · monatlich ${number(motorcycle.funding.monthly, 0)} €`}
           </p>}
@@ -293,12 +307,14 @@ export function Overview() {
           <SectionHeading title="Sparziele"><Target aria-hidden="true" className="size-4 text-primary" /></SectionHeading>
           <FinancialData className="space-y-3">
             {d.goals.map((goal) => {
-              const progress = Math.max(0, Math.min(100, d.actualGoals[goal.id] / goal.target * 100));
+              const basis = goalBalanceStatus(state, goal, d.actual);
+              const progress = basis.amount === null ? null : Math.max(0, Math.min(100, basis.amount / goal.target * 100));
+              const unavailable = basis.status === "conflict" ? "Zuordnung offen" : "Kontostand unbekannt";
               return <article key={goal.id} aria-label={`Sparziel ${goal.name}`} className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4">
                 <h3 className="break-words text-sm font-medium">{goal.name}</h3>
-                <p className="mt-2 break-words text-xs text-muted-foreground"><span className="text-lg font-semibold text-foreground tabular-nums">{currency(d.actualGoals[goal.id])}</span> von {currency(goal.target)}</p>
-                <div role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100} className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
-                  <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
+                <p className="mt-2 break-words text-xs text-muted-foreground"><span className="text-lg font-semibold text-foreground tabular-nums">{basis.amount === null ? unavailable : currency(basis.amount)}</span> von {currency(goal.target)}</p>
+                <div role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress ?? undefined} aria-valuetext={progress === null ? unavailable : undefined} aria-valuemin={0} aria-valuemax={100} className="mt-3 h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-primary" style={{ width: `${progress ?? 0}%` }} />
                 </div>
                 <p className="mt-3 text-[11px] text-muted-foreground">Bis {dateLabel(goal.date)}</p>
               </article>;
@@ -337,12 +353,12 @@ export function Overview() {
         <section className="panel min-w-0 p-5 sm:p-6">
           <SectionHeading
             title="Vermögensentwicklung"
-            subtitle={hasAssetForecast ? `Prognose · ${forecast.length} ${forecast.length === 1 ? "Monat" : "Monate"}` : undefined}
+            subtitle={hasAssetForecast ? `Prognose · ${forecast.length} ${forecast.length === 1 ? "Monat" : "Monate"}${incompleteAssets ? " · unvollständige Datenbasis" : ""}` : undefined}
           />
           {hasAssetForecast ? <FinancialData
             className="h-64"
             role="img"
-            aria-label="Prognose des gesamten Pocket-Vermögens"
+            aria-label={incompleteAssets ? "Prognose bekannter Pocket-Guthaben" : "Prognose des gesamten Pocket-Vermögens"}
           >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart

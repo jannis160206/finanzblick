@@ -15,13 +15,16 @@ import { TRBalanceDialog } from "@/components/tr-balance-dialog";
 import { sum } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { pocketNames } from "@/lib/types";
+import { bankPocketBalance } from "@/lib/goals";
 
 export function Pockets() {
   const { state, dashboard, storageError } = useFinance();
   const [editing, setEditing] = useState(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const goalsLink = useRef<HTMLAnchorElement>(null);
-  const total = sum(pocketNames.map((pocket) => dashboard.actual[pocket]));
+  const balances = pocketNames.map((pocket) => bankPocketBalance(state, pocket, dashboard.actual));
+  const total = sum(balances.map((amount) => amount ?? 0));
+  const incomplete = balances.some((amount) => amount === null);
   return (
     <>
       <PageHeading
@@ -41,6 +44,7 @@ export function Pockets() {
           >
             {currency(total)}
           </FinancialData>
+          {incomplete && <p className="mt-1 text-xs text-muted-foreground">Unvollständig · unbekannte Kontostände nicht enthalten</p>}
         </div>
       </PageHeading>
       <section aria-label="Sparen und Reserven" className="mb-5">
@@ -65,7 +69,7 @@ export function Pockets() {
       </section>
       <EverydayPocketBalances state={state} />
       <div className="mt-5 grid items-start gap-4 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <PocketForecast dashboard={dashboard} />
+        <PocketForecast dashboard={dashboard} state={state} />
         <PocketRoundUps state={state} />
       </div>
       {editing && (

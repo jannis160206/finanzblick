@@ -181,7 +181,7 @@ it("rechecks assigned rows once in a new pass without resetting the previous ver
 it("imports atomically and idempotently, keeps original facts and isolates tenants", async () => {
   const bob = (await accounts.register("bob", "test-only-password-123")).user
     .id;
-  await upload(csv);
+  const firstId = await upload(csv);
   await worker.process(store.claim(owner)!);
   const first = accounts.getFinance(userId);
   expect(first.state?.transactions).toHaveLength(1);
@@ -193,11 +193,26 @@ it("imports atomically and idempotently, keeps original facts and isolates tenan
   });
   expect(first.state?.transactions[0].description).toContain("4711");
   expect(store.snapshot(userId).jobs[0].status).toBe("COMPLETED");
+  expect(store.snapshot(userId).jobs[0].result).toMatchObject({
+    uploadId: firstId,
+    inserted: 1,
+    updated: 0,
+    duplicates: 0,
+    review: 0,
+  });
   expect(store.snapshot(bob).jobs).toEqual([]);
   expect(accounts.getFinance(bob).state).toBeNull();
-  await upload(csv);
+  const secondId = await upload(csv);
   await worker.process(store.claim(owner)!);
   expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+  expect(
+    store.snapshot(userId).jobs.find((job) => job.id === secondId)?.result,
+  ).toMatchObject({
+    uploadId: secondId,
+    inserted: 0,
+    duplicates: 1,
+    review: 0,
+  });
   await worker.cleanup();
   expect(
     accounts.read(
@@ -233,27 +248,42 @@ it("retries a concurrent edit conflict without losing the edit or completing a s
   const editor = new AccountDatabase(accounts.path);
   editor.read((db) => db.exec("PRAGMA busy_timeout = 1"));
   const transformFinance = accounts.transformFinance.bind(accounts);
-  const changed = { ...blankTestState(), seasonalTheme: { reduceMotion: true } };
-  const intercept = vi.spyOn(accounts, "transformFinance").mockImplementationOnce(
-    (tenant, transform, checkpoint) => transformFinance(
-      tenant,
-      (state) => {
-        const next = transform(state);
-        editor.putFinance(tenant, changed, 0);
-        return next;
-      },
-      checkpoint,
-    ),
-  );
+  const changed = {
+    ...blankTestState(),
+    seasonalTheme: { reduceMotion: true },
+  };
+  const intercept = vi
+    .spyOn(accounts, "transformFinance")
+    .mockImplementationOnce((tenant, transform, checkpoint) =>
+      transformFinance(
+        tenant,
+        (state) => {
+          const next = transform(state);
+          editor.putFinance(tenant, changed, 0);
+          return next;
+        },
+        checkpoint,
+      ),
+    );
   try {
-    await expect(worker.process(claimed)).rejects.toMatchObject({ status: 409 });
-    expect(accounts.getFinance(userId)).toEqual({ state: changed, revision: 1 });
+    await expect(worker.process(claimed)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(accounts.getFinance(userId)).toEqual({
+      state: changed,
+      revision: 1,
+    });
     expect(store.snapshot(userId).jobs[0].status).toBe("PROCESSING");
     store.fail(owner, claimed, "Concurrent edit", Date.now() - 2000);
     await worker.process(store.claim(owner)!);
-    expect(accounts.getFinance(userId).state?.seasonalTheme).toEqual(changed.seasonalTheme);
+    expect(accounts.getFinance(userId).state?.seasonalTheme).toEqual(
+      changed.seasonalTheme,
+    );
     expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
-    expect(store.snapshot(userId).jobs[0]).toMatchObject({ status: "COMPLETED", attempts: 1 });
+    expect(store.snapshot(userId).jobs[0]).toMatchObject({
+      status: "COMPLETED",
+      attempts: 1,
+    });
   } finally {
     intercept.mockRestore();
     editor.close();
@@ -319,25 +349,24 @@ it("does not reset the retry budget when a running worker expires its own lease"
 });
 
 it("resumes after an idle clock jump without terminating the upload processor", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["Date"] });
   await upload(csv);
   const stop = new AbortController();
   const claim = store.claim.bind(store);
-  let interrupted = false;
-  const claiming = vi.spyOn(store, "claim").mockImplementation((workerOwner) => {
-    if (!interrupted) {
-      interrupted = true;
-      vi.setSystemTime(Date.now() + LEASE_MS + 1);
-    } else {
-      stop.abort();
-    }
-    return claim(workerOwner);
-  });
+  let claims = 0;
+  const claiming = vi
+    .spyOn(store, "claim")
+    .mockImplementation((workerOwner) => {
+      if (++claims === 1) {
+        vi.setSystemTime(Date.now() + LEASE_MS + 1);
+      } else if (claims > 2) {
+        stop.abort();
+      }
+      return claim(workerOwner);
+    });
   try {
-    const running = worker.run(stop.signal);
-    await vi.advanceTimersByTimeAsync(500);
-    await expect(running).resolves.toBeUndefined();
-    expect(claiming).toHaveBeenCalledTimes(2);
+    await expect(worker.run(stop.signal)).resolves.toBeUndefined();
+    expect(claiming).toHaveBeenCalledTimes(3);
     expect(store.snapshot(userId).jobs[0].status).toBe("COMPLETED");
     expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
   } finally {
@@ -346,19 +375,53 @@ it("resumes after an idle clock jump without terminating the upload processor", 
 });
 
 it("does not reclaim an idle lease taken over by another processor", async () => {
-  vi.useFakeTimers();
+  vi.useFakeTimers({ toFake: ["Date"] });
   const claim = store.claim.bind(store);
-  const claiming = vi.spyOn(store, "claim").mockImplementation((workerOwner) => {
-    vi.setSystemTime(Date.now() + LEASE_MS + 1);
-    expect(store.acquire("replacement")).toBe(true);
-    return claim(workerOwner);
-  });
+  const claiming = vi
+    .spyOn(store, "claim")
+    .mockImplementation((workerOwner) => {
+      vi.setSystemTime(Date.now() + LEASE_MS + 1);
+      expect(store.acquire("replacement")).toBe(true);
+      return claim(workerOwner);
+    });
   try {
-    await expect(worker.run(new AbortController().signal)).rejects.toThrow("lease lost");
+    await expect(worker.run(new AbortController().signal)).rejects.toThrow(
+      "lease lost",
+    );
     expect(claiming).toHaveBeenCalledOnce();
     expect(() => store.heartbeat("replacement")).not.toThrow();
   } finally {
     claiming.mockRestore();
+  }
+});
+
+it("replaces an idle heartbeat's aborted parser budget before processing the next upload", async () => {
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+  await upload(csv);
+  const stop = new AbortController();
+  const claim = store.claim.bind(store);
+  let claims = 0;
+  const claiming = vi
+    .spyOn(store, "claim")
+    .mockImplementation((workerOwner) => {
+      if (++claims === 1) return null;
+      if (claims > 2) stop.abort();
+      return claim(workerOwner);
+    });
+  const heartbeat = store.heartbeat.bind(store);
+  vi.spyOn(store, "heartbeat").mockImplementationOnce((workerOwner) => {
+    vi.setSystemTime(Date.now() + LEASE_MS + 1);
+    return heartbeat(workerOwner);
+  });
+  try {
+    const running = worker.run(stop.signal);
+    await vi.waitFor(() => expect(claiming).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(running).resolves.toBeUndefined();
+    expect(store.snapshot(userId).jobs[0].status).toBe("COMPLETED");
+    expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+  } finally {
+    stop.abort();
   }
 });
 

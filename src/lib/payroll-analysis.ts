@@ -2,6 +2,7 @@ import {
   payslipKey,
   payslipSchema,
   payrollEmployerKey,
+  payrollContextMessages,
   payrollForecastSchema,
   type Payslip,
   type PayrollForecast,
@@ -66,6 +67,7 @@ export type PayrollAnalysis = {
   latest?: Payslip;
   missingMonths: number[];
   issues: string[];
+  contextIssues: string[];
   actual?: PayrollActual;
   forecast: PayrollForecast;
   projections: PayrollProjection[];
@@ -138,6 +140,7 @@ export function defaultPayrollForecast(
   const selected = selectedPayslips(payslips, year, employer);
   const latest = selected.at(-1);
   const distinctPeriods = new Set(selected.map(payslipKey)).size === selected.length;
+  const contextSupported = !payrollContextMessages(selected).length;
   let previousSpecialGross = cumulativeSpecialSvGross(selected);
   const taxableBase = latest?.monthlyTaxableBase === undefined ? undefined
     : latest.unresolvedSixthBonus
@@ -149,7 +152,7 @@ export function defaultPayrollForecast(
     year,
     employer: employer.trim(),
     standardPayrollConfirmed: false,
-    months: latest && distinctPeriods && payslipSchema.safeParse(latest).success
+    months: latest && distinctPeriods && contextSupported && payslipSchema.safeParse(latest).success
       ? Array.from({ length: 12 - latest.month }, (_, index) => {
         const month = latest.month + index + 1;
         const specialGross = month === 6 || month === 11 ? latest.baseSalary ?? 0 : 0;
@@ -500,7 +503,7 @@ export function analyzePayrollAutomatically(
   const sixthEstimates: AutomaticPayrollAnalysis["sixthEstimates"] = [];
   let estimatedHistoryMonths: number[] = [];
   let unresolvedSixthMonths: number[] = [];
-  if (analysis.latest && !consistencyIssues(entries).length && entries.every((entry) => entry.monthlyPayroll)) {
+  if (analysis.latest && !analysis.contextIssues.length && !consistencyIssues(entries).length && entries.every((entry) => entry.monthlyPayroll)) {
     const latest = analysis.latest;
     const anchor = entries.findLast((entry) => entry.regularGrossYtd !== undefined);
     const uncertain = entries.filter((entry) => entry.month > (anchor?.month ?? 0) && entry.unresolvedSixthBonus);
@@ -548,6 +551,12 @@ export function estimatePayrollBonus(
     month, reservedSpecialGross: sum(forecast.months.map((entry) => entry.specialGross)),
     headroomIssues: [], taxIssues: [],
   };
+  const contextIssues = payrollContextMessages(selectedPayslips(payslips, forecast.year, forecast.employer));
+  if (contextIssues.length) {
+    result.headroomIssues.push(...contextIssues);
+    result.taxIssues.push(...contextIssues);
+    return result;
+  }
   if (!latest || !Number.isInteger(month) || month < latest.month || month > 12 || !sixthEstimates.length) {
     result.headroomIssues.push("Für diesen Auszahlungsmonat fehlen auswertbare volle Abrechnungen.");
     result.taxIssues.push("Ohne auswertbare Monatsgrundlage bleibt das Steuerbeispiel offen.");
@@ -621,6 +630,8 @@ function analyzePayrollScenario(
   const entries = selectedPayslips(payslips, year, employer);
   const latest = entries.at(-1);
   const issues: string[] = [];
+  const contextIssues = payrollContextMessages(entries);
+  issues.push(...contextIssues);
   const forecast = mergeForecast(
     defaultPayrollForecast(payslips, year, employer), savedForecast, issues,
     cumulativeSpecialSvGross(entries),
@@ -632,6 +643,7 @@ function analyzePayrollScenario(
         .filter((month) => !entries.some((entry) => entry.month === month))
       : [],
     issues,
+    contextIssues,
     forecast,
     projections: [],
   };
@@ -658,7 +670,7 @@ function analyzePayrollScenario(
   const beforeFirstRegularPay = regularGrossYtd === 0 && specialGrossYtd !== 0 && latest.reportedSixth === undefined;
   if (beforeFirstRegularPay) issues.push("Vor dem ersten laufenden Bezug ist ein Sechstel ohne bestätigten Abrechnungswert nicht berechenbar.");
   const sixth = latest.reportedSixth
-    ?? (regularGrossYtd !== undefined && monthlyPayroll && !beforeFirstRegularPay ? money(regularGrossYtd / latest.month * 2) : undefined);
+    ?? (regularGrossYtd !== undefined && monthlyPayroll && !contextIssues.length && !beforeFirstRegularPay ? money(regularGrossYtd / latest.month * 2) : undefined);
   if (sixth !== undefined) {
     result.actual = {
       month: latest.month,
@@ -668,11 +680,11 @@ function analyzePayrollScenario(
       source: latest.reportedSixth === undefined ? "calculated" : "reported",
       usedSixth: utilization.used,
       specialTaxableYtd: utilization.taxable,
-      remaining: utilization.used === undefined ? undefined : money(Math.max(0, sixth - utilization.used)),
-      controlSixth: latest.month === 12 && regularGrossYtd !== undefined ? money(regularGrossYtd / 6) : undefined,
+      remaining: utilization.used === undefined || contextIssues.length ? undefined : money(Math.max(0, sixth - utilization.used)),
+      controlSixth: latest.month === 12 && regularGrossYtd !== undefined && !contextIssues.length ? money(regularGrossYtd / 6) : undefined,
     };
   }
-  if (regularGrossYtd === undefined || specialGrossYtd === undefined || !monthlyPayroll || beforeFirstRegularPay) return result;
+  if (regularGrossYtd === undefined || specialGrossYtd === undefined || !monthlyPayroll || contextIssues.length || beforeFirstRegularPay) return result;
 
   let regular = regularGrossYtd;
   let special = specialGrossYtd;

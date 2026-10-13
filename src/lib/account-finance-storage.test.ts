@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AccountFinanceStorage, AccountSessionError, accountStorageKey } from "./account-finance-storage";
+import { AccountFinanceStorage, AccountSessionError, accountStorageKey, accountConflictKey, discardAccountConflictBackup, parseAccountConflictBackup } from "./account-finance-storage";
 import { createEmptyAccountState } from "./account-state";
 import { appStateSchema, type AppState } from "./types";
 
@@ -138,6 +138,105 @@ describe("account finance persistence", () => {
     expect(cached().state).toEqual(remote);
   });
 
+  it("archives the exact pending primary text rather than reserializing a reviewed copy", async () => {
+    const raw = JSON.stringify({ state: changed("pending"), revision: 2, pending: true }, null, 2);
+    localStorage.setItem(accountStorageKey("alice"), raw);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 4)));
+    const { controller } = storage();
+    await controller.load();
+    await controller.useServer();
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBe(raw);
+  });
+
+  it("forgets an old parsed cache when a subsequent load rejects the primary and archives that original", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 4)));
+    const { controller } = storage();
+    await controller.load();
+    const raw = "{malformed newer primary";
+    localStorage.setItem(accountStorageKey("alice"), raw);
+    await expect(controller.retry()).rejects.toThrow(/unlesbar/);
+    expect(controller.cachedState).toBeUndefined();
+    await controller.useServer();
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBe(raw);
+    expect(cached().state).toEqual(changed("remote"));
+  });
+
+  it("never overwrites an unresolved older or malformed conflict copy on a successive server choice", async () => {
+    const key = accountStorageKey("alice");
+    const local = changed("new local");
+    const raw = JSON.stringify({ state: local, revision: 2, pending: true });
+    localStorage.setItem(key, raw);
+    localStorage.setItem(accountConflictKey("alice"), "{older unreadable original");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 4)));
+    const { controller } = storage();
+    await controller.load();
+    await expect(controller.useServer()).rejects.toThrow(/ältere Konfliktsicherung/);
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBe("{older unreadable original");
+    expect(localStorage.getItem(key)).toBe(raw);
+  });
+
+  it("keeps pending data unchanged if the conflict backup cannot be written", async () => {
+    const raw = JSON.stringify({ state: changed("pending"), revision: 1, pending: true });
+    localStorage.setItem(accountStorageKey("alice"), raw);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 3)));
+    const { controller } = storage();
+    await controller.load();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new DOMException("full", "QuotaExceededError"); });
+    await expect(controller.useServer()).rejects.toThrow(DOMException);
+    expect(localStorage.getItem(accountStorageKey("alice"))).toBe(raw);
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBeNull();
+  });
+
+  it.each(["cache", "conflict"])("rejects a %s change in another tab while loading the server", async (target) => {
+    const raw = JSON.stringify({ state: changed("pending"), revision: 1, pending: true });
+    localStorage.setItem(accountStorageKey("alice"), raw);
+    let finish!: (response: Response) => void;
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(response(changed("remote"), 3))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finish = resolve; })));
+    const { controller } = storage();
+    await controller.load();
+    const loading = controller.useServer();
+    const key = target === "cache" ? accountStorageKey("alice") : accountConflictKey("alice");
+    localStorage.setItem(key, "changed in another tab");
+    finish(response(changed("remote"), 3));
+    await expect(loading).rejects.toThrow(/anderer Tab|zwischenzeitlich/);
+    expect(localStorage.getItem(key)).toBe("changed in another tab");
+    if (target === "conflict") expect(localStorage.getItem(accountStorageKey("alice"))).toBe(raw);
+  });
+
+  it("validates historical cache blobs and raw AppState copies without mutating their originals", () => {
+    const state = changed("legacy backup");
+    const raw = JSON.stringify({ state, revision: 2, pending: true });
+    expect(parseAccountConflictBackup(raw, "alice")).toEqual(state);
+    expect(parseAccountConflictBackup(JSON.stringify(state), "alice")).toEqual(state);
+    expect(() => parseAccountConflictBackup("{broken", "alice")).toThrow(/unlesbar/);
+    expect(() => parseAccountConflictBackup(JSON.stringify({ state, revision: -1, pending: true }), "alice")).toThrow(/ungültig/);
+  });
+
+  it("requires exact reviewed raw data to discard and touches only that account", () => {
+    localStorage.setItem(accountConflictKey("alice"), "new copy");
+    localStorage.setItem(accountConflictKey("bob"), "bob private");
+    expect(() => discardAccountConflictBackup("alice", "reviewed old copy")).toThrow(/zwischenzeitlich/);
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBe("new copy");
+    discardAccountConflictBackup("alice", "new copy");
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBeNull();
+    expect(localStorage.getItem(accountConflictKey("bob"))).toBe("bob private");
+  });
+
+  it("keeps another tab's pending cache that changed before the server confirmation", async () => {
+    const request = vi.fn().mockImplementation(async () => response(changed("remote"), 4));
+    localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: changed("own pending"), revision: 1, pending: true }));
+    vi.stubGlobal("fetch", request);
+    const { controller } = storage();
+    await controller.load();
+    const newer = JSON.stringify({ state: changed("other tab pending"), revision: 2, pending: true });
+    localStorage.setItem(accountStorageKey("alice"), newer);
+    await expect(controller.useServer()).rejects.toThrow(/anderer Tab/);
+    expect(localStorage.getItem(accountStorageKey("alice"))).toBe(newer);
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBeNull();
+    expect(request).toHaveBeenCalledOnce();
+  });
+
   it("recognizes a committed write whose acknowledgement was lost", async () => {
     const state = changed("already committed");
     localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state, revision: 2, pending: true }));
@@ -169,6 +268,57 @@ describe("account finance persistence", () => {
     expect(localStorage.getItem(accountStorageKey("alice"))).toBe("{broken");
     localStorage.removeItem(accountStorageKey("alice"));
     await expect(controller.load()).rejects.toThrow(/ungültige/);
+  });
+
+  it.each(["malformed", "duplicate IDs"])("archives the exact rejected %s primary before explicit server replacement", async (kind) => {
+    const local = changed("rejected local");
+    if (kind === "duplicate IDs") local.transactions.push({ ...local.transactions[0] });
+    const raw = kind === "malformed" ? "{unreadable primary" : JSON.stringify({ state: local, revision: 1, pending: true }, null, 2);
+    localStorage.setItem(accountStorageKey("alice"), raw);
+    const remote = changed("remote");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(remote, 4)));
+    const { controller } = storage();
+    await expect(controller.load()).rejects.toThrow(/unlesbar|ungültig/);
+    expect(controller.cachedState).toBeUndefined();
+    expect(await controller.useServer()).toEqual(remote);
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBe(raw);
+    expect(cached().state).toEqual(remote);
+  });
+
+  it.each(["older conflict", "backup write blocked", "server write blocked"])(
+    "preserves a rejected primary when replacement fails: %s", async (reason) => {
+      const raw = "{unreadable primary";
+      const key = accountStorageKey("alice");
+      localStorage.setItem(key, raw);
+      if (reason === "older conflict") localStorage.setItem(accountConflictKey("alice"), "older unresolved copy");
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 4)));
+      const { controller } = storage();
+      await expect(controller.load()).rejects.toThrow(/unlesbar/);
+      if (reason !== "older conflict") {
+        const set = Storage.prototype.setItem;
+        vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, target, value) {
+          if (target === (reason === "backup write blocked" ? accountConflictKey("alice") : key))
+            throw new DOMException("blocked", "QuotaExceededError");
+          set.call(this, target, value);
+        });
+      }
+      await expect(controller.useServer()).rejects.toThrow();
+      expect(localStorage.getItem(key)).toBe(raw);
+      expect(localStorage.getItem(accountConflictKey("alice"))).toBe(
+        reason === "older conflict" ? "older unresolved copy" : reason === "server write blocked" ? raw : null,
+      );
+    },
+  );
+
+  it("preserves a rejected primary even when replacing it with an empty server account", async () => {
+    const raw = "{unreadable primary";
+    localStorage.setItem(accountStorageKey("alice"), raw);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(null, 0)));
+    const { controller } = storage();
+    await expect(controller.load()).rejects.toThrow(/unlesbar/);
+    expect(await controller.useServer()).toBeNull();
+    expect(localStorage.getItem(accountStorageKey("alice"))).toBeNull();
+    expect(localStorage.getItem(accountConflictKey("alice"))).toBe(raw);
   });
 
   it("reports 401 without writing to another account", async () => {

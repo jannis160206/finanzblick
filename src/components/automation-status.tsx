@@ -11,6 +11,8 @@ import {
 import { useAutomation } from "./automation-context";
 import type { AutomationJob } from "@/lib/automation/schema";
 import { cn } from "@/lib/utils";
+import { importResultLabel, type ImportResult } from "@/lib/import/results";
+import { Button } from "@/components/ui/button";
 
 const statuses = {
   UPLOADING: {
@@ -109,22 +111,34 @@ function useJobCards(jobs: AutomationJob[], showCompleted: boolean) {
   return presence.cards;
 }
 
-export function AutomationJobCard({ job, exiting = false, label: customLabel, indeterminate = job.status === "UPLOADING" }: {
-  job: Pick<AutomationJob, "id" | "name" | "status" | "progress" | "error">;
+export function AutomationJobCard({ job, exiting = false, label: customLabel, indeterminate = job.status === "UPLOADING",
+  onReview, onReupload,
+}: {
+  job: Pick<AutomationJob, "id" | "name" | "status" | "progress" | "error"> & {
+    result?: ImportResult | null;
+    errorCode?: AutomationJob["errorCode"];
+  };
   exiting?: boolean;
   label?: string;
   indeterminate?: boolean;
+  onReview?: () => void;
+  onReupload?: () => void;
 }) {
   const errorId = useId();
-  const { label: statusLabel, Icon, animation } = statuses[job.status];
-  const label = customLabel ?? statusLabel;
+  const { label: statusLabel, Icon: StatusIcon, animation } = statuses[job.status];
+  const result = job.status === "COMPLETED" ? job.result : undefined;
+  const label = result ? importResultLabel(result) : customLabel ?? statusLabel;
   const processing = job.status === "PROCESSING";
   const failed = job.status === "FAILED";
   const completed = job.status === "COMPLETED";
+  const warning = completed && result && result.status !== "imported";
+  const Icon = warning ? AlertTriangle : StatusIcon;
   const percentage = Math.round(Math.min(100, Math.max(0, job.progress)));
   const tone = failed
     ? "text-rose-600 dark:text-rose-300"
-    : processing || completed
+    : warning
+      ? "text-amber-700 dark:text-amber-300"
+      : processing || completed
       ? "text-primary"
       : "text-muted-foreground";
   return (
@@ -135,12 +149,13 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
         "rounded-2xl border border-border/70 bg-card bg-linear-to-br from-card to-card/90 p-4 shadow-sm transition-[opacity,transform] duration-300 ease-out sm:p-5 motion-reduce:animate-none motion-reduce:transition-none",
         processing && "border-primary/20 to-primary/5",
         failed && "border-rose-400/20",
+        warning && "border-amber-400/30",
         exiting
           ? "pointer-events-none -translate-y-1 opacity-0"
           : "animate-in fade-in slide-in-from-top-2",
       )}
     >
-      <div className="mb-4 flex items-start gap-3">
+      <div className="mb-4 flex flex-wrap items-start gap-3">
         <span
           className={cn(
             "flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/60 ring-1 ring-inset ring-border/60",
@@ -172,6 +187,45 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
             {label}
           </span>
         </div>
+        {completed && <div className="order-last w-full min-w-0 space-y-2 text-xs">
+          {result ? <>
+            <dl className="flex flex-wrap gap-x-4 gap-y-1" aria-label="Importergebnis">
+              {[
+                ["Neu", result.inserted], ["Aktualisiert", result.updated], ["Duplikate", result.duplicates],
+                ["Prüfung", result.review], ["Übersprungen", result.skipped],
+              ].map(([name, count]) => <div key={name} className="flex gap-1">
+                <dt className="text-muted-foreground">{name}</dt>
+                <dd className="font-semibold tabular-nums">{count}</dd>
+              </div>)}
+            </dl>
+            {result.inserted === 0 && <p className="text-muted-foreground">
+              {result.duplicates > 0 && result.updated === 0 && result.review === 0 && result.skipped === 0
+                ? "Keine neuen Buchungen: Alle erkannten Buchungen waren bereits vorhanden."
+                : result.status === "unsupported"
+                  ? "Keine neuen Buchungen: Dieses Dateiformat wurde nicht unterstützt."
+                  : "Keine neuen Buchungen. Aktualisierungen und offene Prüfungen stehen oben."}
+            </p>}
+            {(result.review > 0 || result.issues.length > 0 || result.status === "unsupported") && <div className="flex flex-wrap gap-2">
+              {result.review > 0 && onReview && <Button size="sm" variant="outline" onClick={onReview}>Buchungen korrigieren</Button>}
+              {(result.status === "unsupported" || result.issues.some((issue) => issue.action === "reupload")) && onReupload &&
+                <Button size="sm" variant="outline" onClick={onReupload}>Auszug erneut auswählen</Button>}
+            </div>}
+            {result.issues.length > 0 && <details className="rounded-lg border p-2">
+              <summary className="cursor-pointer font-medium">Importhinweise ({result.issues.length})</summary>
+              <ul className="mt-2 space-y-2">
+                {result.issues.map((issue) => <li key={issue.id} className="break-words">
+                  {issue.line && <span className="text-muted-foreground">Zeile {issue.line}: </span>}{issue.message}
+                  {issue.evidence && <p className="mt-1 text-muted-foreground">Quellbeleg: {issue.evidence}</p>}
+                  <p className="mt-1 text-muted-foreground">{issue.action === "correct"
+                    ? "Quellbeleg prüfen und Buchung ausdrücklich bestätigen."
+                    : "Vollständigen unterstützten EUR-Auszug erneut auswählen; keine Werte werden geraten."}</p>
+                </li>)}
+              </ul>
+            </details>}
+          </> : <p className="text-muted-foreground">
+            Technisch abgeschlossen. Ergebniszahlen für diesen älteren Import sind nicht verfügbar.
+          </p>}
+        </div>}
         {!indeterminate && <span
           className={cn(
             "w-12 shrink-0 pt-0.5 text-right text-sm font-semibold tabular-nums",
@@ -215,14 +269,20 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
           {job.error}
         </p>
       )}
+      {failed && onReupload && (!job.errorCode || (job.errorCode.startsWith("PARSE_") &&
+        job.errorCode !== "PARSE_INFRASTRUCTURE")) && (
+          <Button className="mt-3" size="sm" variant="outline" onClick={onReupload}>Auszug erneut auswählen</Button>
+        )}
     </article>
   );
 }
 
-export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, showCompleted = false }: {
+export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, showCompleted = false, onReview, onReupload }: {
   jobs?: AutomationJob[];
   error?: string | null;
   showCompleted?: boolean;
+  onReview?: () => void;
+  onReupload?: () => void;
 } = {}) {
   const automation = useAutomation();
   const jobs = suppliedJobs ?? automation.jobs;
@@ -245,7 +305,7 @@ export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, sho
         className="space-y-3"
       >
         {cards.map((card) => (
-          <AutomationJobCard key={card.job.id} {...card} />
+          <AutomationJobCard key={card.job.id} {...card} onReview={onReview} onReupload={onReupload} />
         ))}
       </div>
     </section>

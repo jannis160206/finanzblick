@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { importResultSchema } from "@/lib/import/result-schema";
+import { automationErrorCodeSchema } from "./errors";
 
 export const jobStatusSchema = z.enum([
   "UPLOADING",
@@ -19,12 +21,18 @@ export const automationJobSchema = z.object({
   total: z.number().int().nonnegative(),
   error: z.string().nullable(),
   updatedAt: z.number(),
+  result: importResultSchema.nullable().default(null),
+  errorCode: automationErrorCodeSchema.nullable().default(null),
 });
-export type AutomationJob = z.infer<typeof automationJobSchema>;
-export const statementUploadResponseSchema = automationJobSchema.pick({ id: true });
+// Legacy job inputs may omit metadata; validated payloads normalize it to null.
+export type AutomationJob = z.input<typeof automationJobSchema>;
+export const statementUploadResponseSchema = z.object({ id: z.string().uuid() });
 export const automationEventSchema = z.object({
   revision: z.number().int().nonnegative(),
   jobs: z.array(automationJobSchema).max(20),
+}).refine((event) => event.jobs.every((job) => !job.result || job.result.uploadId === job.id), {
+  message: "Importergebnis gehört nicht zu diesem Upload.",
+  path: ["jobs"],
 });
 export type AutomationEvent = z.infer<typeof automationEventSchema>;
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;

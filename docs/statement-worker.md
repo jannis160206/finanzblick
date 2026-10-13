@@ -15,7 +15,8 @@ empfängerspezifische Zuordnungen weiterhin dieselbe Bankidentität verwenden.
 ## Betrieb
 
 Node.js 22.13+ und `npm ci` genügen. `tsx` und `sharp` sind Produktionsabhängigkeiten.
-HTTP-Server und Worker laufen als **getrennte Prozesse**, unabhängig voneinander:
+HTTP-Server und Worker laufen als **getrennte Prozesse**, unabhängig voneinander.
+Der Worker startet pro Auszug genau einen kurzlebigen, isolierten Node-Parser:
 
 ```sh
 npm run dev
@@ -42,6 +43,59 @@ zusammengeführt und danach gelöscht. PDFs werden seitenweise gelesen (maximal
 100 Seiten / 2 Millionen Textzeichen); Bilder sind auf 12 Megapixel begrenzt.
 Keine CDN-, Cloud-KI- oder Händler-API-Aufrufe erfolgen im Worker.
 
+Das gesamte Auszugsjob-Budget beträgt 120 Sekunden, einschließlich Parserstart,
+Dateilesen, PDF/OCR und Vorbereitung des Commits. Timeout, SIGTERM/SIGINT und
+Lease-Verlust beenden einen aktiven Parserprozess samt dessen Worker-Threads
+hart; erst nach seinem tatsächlichen Ende wird der nächste Job zugelassen.
+Ein unabhängiger Watchdog begrenzt auch Parser, deren Elternprozess abstürzt.
+Temporäre Sprachdaten liegen im privaten Uploadordner und werden nach Parserende
+entfernt. Ein regulärer Shutdown lässt den Job mit sichtbarem Abbruchcode,
+unveränderten Finanzdaten und unverbrauchtem Retry-Budget für den Neustart stehen.
+Der atomare Datenbankcommit wird nicht mittendrin unterbrochen.
+Revisionskonflikte durch zwischenzeitliche Finanzänderungen sind vorübergehend:
+Der Worker versucht denselben Upload mit dem neueren Stand erneut, ohne die
+Änderung zu überschreiben. Eine im Leerlauf abgelaufene eigene Lease darf neu
+erworben werden; aktive Parser werden bei Lease-Verlust weiterhin beendet.
+
+Der Parser verwendet das installierte Node/`tsx` und höchstens 384 MiB JS-Heap;
+Concurrency 1 sowie die bestehende gemeinsame 768-MiB-Servicegrenze bleiben
+unverändert. Das Worker-Deployment benötigt den Projektcheckout inklusive
+`scripts`, `src`, `tsconfig.json` und Produktionsabhängigkeiten. `next build`
+kompiliert/traced Web-Routen, **nicht** diesen separaten Worker-Einstiegspunkt:
+Ein allein kopiertes `.next`/Standalone-Verzeichnis genügt nicht. Beim Start wird
+die Verfügbarkeit des Child-Einstiegspunkts und von `tsx` geprüft.
+
+### Isolierte Webpack-Build- und Paketprüfung
+
+Für eine lokale Buildprüfung nur eine separate Projektkopie mit `src`, `public`,
+`scripts`, Manifesten und Build-/TypeScript-Konfiguration verwenden. Keine
+`.env*`, privaten Originale, Datenbanken, Browserprofile, `.local-data` oder
+bestehenden `.next`-Dateien übernehmen. Den Buildprozess ohne `FINANZBLICK_*`-
+Konfiguration und ohne geerbte `NODE_OPTIONS` starten; Telemetrie und den
+`tsx`-Cache deaktivieren. Vorhandene Abhängigkeiten dürfen für diese Prüfung
+verlinkt werden; ein solches Link-Paket ist kein übertragbares Deployment.
+
+Aus dieser bereinigten Kopie, nicht dem laufenden Projekt:
+
+```powershell
+$env:NEXT_TELEMETRY_DISABLED = "1"
+$env:TSX_DISABLE_CACHE = "1"
+node .\node_modules\next\dist\bin\next build --webpack
+node --import tsx --input-type=module -e "import { join } from 'node:path'; import { pathToFileURL } from 'node:url'; const runtime = await import(pathToFileURL(join(process.cwd(), 'src', 'lib', 'automation', 'parser-runtime.ts')).href); await runtime.assertParserRuntimeAvailable();"
+```
+
+Der zweite Befehl prüft nur Einstiegspunkt und Loader: Er startet weder Worker
+noch Child-Parser und öffnet keine Kontodatenbank. Ein erfolgreicher Web-Build
+beweist allein noch keine Worker-Paketierung. Die `.nft.json`-Traces gehören den
+Web-Routen; die Worker-Sourcen nicht als Webpack-Entry oder Route hinzufügen.
+Für das tatsächliche Worker-Paket die Quelldateien samt `tsconfig.json` und
+Produktionsabhängigkeiten behalten: insbesondere `tsx`, `sharp` mit passenden
+nativen Zielplattform-Binaries, `pdfjs-dist` einschließlich Worker/CMaps/Fonts/WASM,
+Tesseract-Core/-Node-Worker und die lokalen `deu`-/`eng`-Sprachdaten. Ein
+Standalone-Webpaket allein ist kein Worker-Paket. Isolierte synthetische
+Prozesstests prüfen darüber hinaus echtes Parsing, harte Beendigung und
+Concurrency 1; sie sind nicht durch den bloßen Build/Preflight ersetzt.
+
 ## Dauerhafte Queue und Fortschritt
 
 Das bestehende Backend verwendet **Node-SQLite**, kein ORM. Die Lösung bleibt
@@ -52,14 +106,22 @@ WAL-Modus mit Foreign Keys und atomaren `BEGIN IMMEDIATE`-Transaktionen.
 
 Ein globaler, erneuerbarer Datenbank-Lease verhindert einen zweiten aktiven
 Worker; die Verarbeitung ist strikt **Concurrency 1**. Bei einem Absturz wird
-der abgelaufene Job wieder aufgenommen. Maximal fünf fehlgeschlagene Versuche,
+der abgelaufene Job wieder aufgenommen. Vorübergehende Infrastrukturfehler erhalten
+maximal fünf fehlgeschlagene Versuche,
 mit exponentiellem Backoff (1, 2, 4, 8 Sekunden bis zum letzten Versuch), verhindern
-Endlosschleifen. Jobabschluss und Finanzdaten werden gemeinsam committed:
+Endlosschleifen. Beschädigte/verschlüsselte Dateien, nicht unterstützte Formate,
+Ressourcenlimits und Timeouts scheitern dagegen nach einem Versuch mit einem
+sicheren Fehlercode und einer konkreten Korrekturmaßnahme. Jobabschluss,
+upload-ID-bezogenes Importergebnis und Finanzdaten werden gemeinsam committed:
 vorherige vollständige Daten bleiben bei einem Abbruch erhalten. Uploads bleiben
 bis zum Abschluss/letzten Fehler erhalten und werden danach entfernt.
 Es gelten höchstens fünf aktive Jobs pro Konto und 128 MiB reservierte
 Uploadkapazität insgesamt. Abgebrochene Uploads laufen nach 15 Minuten aus;
-Statusdaten von Auszugsjobs werden sieben Tage aufbewahrt.
+Statusdaten und upload-ID-bezogene Ergebnisse abgeschlossener/fehlgeschlagener
+Auszugsjobs werden sieben Tage aufbewahrt. Die Bereinigung läuft höchstens
+einmal pro Minute auch bei leerer Queue und ohne neue Dateilöschungen.
+Aktive Jobs und dauerhafte Backfill-IDs/Prüfpässe bleiben erhalten; Jobmetadaten
+werden erst nach erfolgreicher Löschung der zugehörigen Originaldatei entfernt.
 
 Das Frontend hält eine authentifizierte **SSE-Verbindung** zu
 `/api/statements/events?account=<eigene-Konto-ID>` offen. Status, Prozentwert,
@@ -201,8 +263,9 @@ oder `--merchant-upgrade` kombiniert werden. Auch bereits zugeordnete Umsätze
 und reine Fixkostenbelege werden besucht; manuelle/gesperrte Entscheidungen
 bleiben geschützt.
 
-Der Worker verwendet weiterhin einen einzigen Prozess und einen Händlerindex pro
-Start. Vor dem Vergleich entfernt er POS-/Terminal-IDs, Uhrzeit, IBAN und Referenzen.
+Der Worker verwendet weiterhin eine einzige Verarbeitungsspur und einen Händlerindex
+pro Start; isolierte Parser laufen nie gleichzeitig. Vor dem Vergleich entfernt er
+POS-/Terminal-IDs, Uhrzeit, IBAN und Referenzen.
 Eindeutige führende Kontaktlos-/EC-Kartenmodusangaben und ausdrücklich beschriftete
 `MCC: 5411`-Metadaten stören den Händler-Lookup nicht mehr. Sie sind selbst keine
 Kaufkategorie; ursprüngliche Buchungstexte und widersprüchliche Quellen bleiben

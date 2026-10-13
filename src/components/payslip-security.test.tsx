@@ -10,7 +10,7 @@ const pdf = vi.hoisted(() => ({
   parse: vi.fn(),
   PasswordError: class extends Error {},
 }));
-const update = vi.fn();
+const update = vi.fn((updater: (state: ReturnType<typeof createSeed>) => ReturnType<typeof createSeed>) => updater(createSeed()));
 vi.mock("@/lib/import/payslip", () => ({ parsePayslipPdf: pdf.parse, PayslipPasswordError: pdf.PasswordError }));
 vi.mock("@/components/finance-provider", () => ({
   useFinance: () => ({ state: createSeed(), update, storageError: null }),

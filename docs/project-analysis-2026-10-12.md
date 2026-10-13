@@ -17,6 +17,7 @@ Die Analyse war ausschließlich lesend. Die Empfehlungen sind **keine bereits um
 5. [Umsetzungsfahrplan](#5-umsetzungsfahrplan)
 6. [Erste konkrete Empfehlung](#6-erste-konkrete-empfehlung)
 7. [Analyseabdeckung und Validierung](#7-analyseabdeckung-und-validierung)
+8. [P1-Implementierungsnachtrag](#8-p1-implementierungsnachtrag)
 
 ## 1. Gesamtbild
 
@@ -259,3 +260,78 @@ Private Dateien, Secrets, Originaldatenbanken und Browserdaten wurden nicht gele
 README-Aussagen zu Umsatzstatus-Tabs und Sicherheitsmodus sind teilweise veraltet. Für diese Bereiche existieren bereits spezifischere Dokumente wie `docs\security-mode.md` und `docs\upload-status.md`.
 
 **Während der Analyse wurden keine Codeänderungen, Migrationen, Commits, Pushes oder Änderungen an laufenden Diensten vorgenommen.** Die spätere Ablage dieses Berichts als Markdown ist ein separater Dokumentationsauftrag.
+
+## 8. P1-Implementierungsnachtrag
+
+Dieser Nachtrag gehört zum später ausdrücklich beauftragten gemeinsamen
+Implementierungsauftrag. Die Analyse und ihre damaligen Prüfungen bleiben
+historische Angaben. Offene P2-Befunde sind nicht Teil der Umsetzung.
+
+| Punkt | Korrigierter Vertrag | Gezielte Regressionen |
+| --- | --- | --- |
+| P1.1 | Geplante gebuchte Amex-Eigenanteile und zusätzliche Kartenrücklagen werden abgeglichen. Die tatsächliche Kartenverbindlichkeit bleibt getrennt erkennbar. | `planned-amex-funding.test.ts`, `planned-one-offs.test.ts` |
+| P1.2 | Händlererstattungen haben einen eindeutigen Ursprung oder eine bewusste Nichtzuordnung. Eigenanteil und Forderung ändern sich centgenau; Partnerzahlungen und Überzahlungen bleiben getrennt. | `shared-refunds.test.ts`, `shared-costs.test.tsx` |
+| P1.3 | Physische Guthaben zählen einmal, auch ohne Ziel. Unabhängige Anfangsguthaben überleben das Entfernen eines Ziels. Unbekannte oder widersprüchliche Werte sind keine bekannte Null. | `goal-balances.test.ts`, `goal-projections.test.ts`, `savings-goal-balances.test.tsx` |
+| P1.4 | Eindeutige IDs an Daten-/Importgrenzen verhindern stille Zusammenführungen. Vollständige native Sicherungen und gewöhnliche Buchungsimporte sind getrennt; fehlende Blätter liefern keine persönlichen Seed-Guthaben. | `excel-restoration.test.ts`, Datenbank-/API-Tests |
+| P1.5 | JSON-/XLSX-Wiederherstellung benötigt Vorschau und ausdrückliche Bestätigung. Aktueller Stand wird am Übergang erneut geprüft; Erfolg setzt dauerhafte Speicherung voraus. Konfliktkopien bleiben separat sicherbar. | `finance-restoration.test.tsx`, `account-tools.test.tsx`, `restoration-safety.spec.ts` |
+| P1.6 | BUAG/BUAK, Lehrverhältnis, Austritt und ungeklärte Beschäftigung sperren Nettoprognosen; dokumentierte Abrechnungswerte bleiben erhalten. Kein erweitertes Steuerrechtsmodell. | `payslip-context.test.ts`, `payroll-context-results.test.tsx` |
+| P1.7 | Entfernen und Ersetzen vergleichen den aktuellen Abrechnungsdatensatz mit der bestätigten Vorschau. Veraltete Bestätigungen ändern weder Daten noch Speicherstatus. | `payslip-confirmation.test.tsx`, `payslip-safety.spec.ts` |
+| P1.8 | Upload-UUIDs verbinden Ergebnisse und Quellen. Neue/aktualisierte Buchungen, Duplikate, Prüfentwürfe und verworfene Zeilen bleiben getrennt, auch bei gleichen Dateinamen. | `import-results.test.ts`, `import-results-ui.test.tsx` |
+| P1.9 | Isolierte Parser werden bei Deadline/Abbruch tatsächlich beendet. Permanente Fehler haben einen Versuch, vorübergehende Fehler begrenzte Retries. Ein erfolgreicher Finanzcommit wird bei späterem Dateilöschfehler nicht wiederholt. | Parser-/Worker-/Store-Runtime-Tests |
+
+**Sicherungen:** Über **Sicherung** lassen sich JSON und XLSX herunterladen und
+mit Vorschau wiederherstellen. Zwischenzeitliche Änderungen erfordern eine
+erneute bewusste Prüfung. Ein reines Buchungsworkbook gehört in **Umsätze**.
+Neue JSON-Dateien tragen Format, Version und Kontozuordnung; ältere direkte
+AppState-Downloads bleiben validiert lesbar. XLSX erhält unterstützte Metadaten
+in vollständig prüfbaren begrenzten Teilen. Bestehende IDs werden nicht
+umgeschrieben. Unlesbare Originalkopien sind ausdrücklich unvalidierte
+Diagnosekopien, keine leeren Finanzsicherungen.
+
+**Gemeinsame Pockets:** Bestehende Überschneidungen bleiben ausdrücklich
+unaufgeteilt, ohne neue Prozentregel oder Deadlinepriorität. Bekannte
+Sparanweisungen und unbekannte absolute Guthaben sind unterschiedliche
+Informationen. Ein neues Aufteilungsmodell benötigt eine fachliche Entscheidung.
+Die vorhandene Zielbearbeitung kann Überschneidungen auflösen.
+Bekannte Alltags-Pocket-Guthaben zählen ebenfalls einmal zum Gesamtvermögen.
+Das ändert keine Budget- oder Sparverteilungsregel; Rücklagen bleiben in der
+Pocketansicht separat von Alltagsgeld und unabhängigen Anfangsguthaben sichtbar.
+
+**Betrieb und Datenschutz:** Details zu Worker-Quellen, Deadline und
+Release-Neustart stehen in `docs\statement-worker.md`; Ergebnis-/Entwurfsfristen
+in `docs\upload-status.md`. Private Originaldateien, Datenbanken, Browserprofile
+und laufende Dienste sind nicht Teil der isolierten synthetischen Abnahme.
+
+**Ausgeführte gemeinsame Abnahme:** 54 gezielte Vitest-Dateien: 1.217 bestanden,
+3 ausgelassen; davon ein getrennt nachgewiesener vorbestehender Kategoriefehler
+(`statements.test.ts`, BIPA: erwartet Mittagessen, tatsächlich Drogerie).
+Dieser Fehler wurde auch ohne P1 auf veröffentlichtem Stand `6aa9fd6`
+reproduziert und nicht durch eine neue Finanzregel oder Testerwartung kaschiert.
+Die anderen zwei Auslassungen betreffen private Originalarbeitsmappen und eine
+plattformabhängige Dateiberechtigungsprüfung. Eine weitere unveränderte
+Navigationsprüfung erwartet eine alte React-Komponentenstruktur statt des
+bestehenden Workspace-Wrappers und scheitert ebenfalls schon auf `6aa9fd6`.
+
+Strikter Typecheck, auftragsbezogener ESLint (keine Fehler; bestehender
+`monthKey`-Hinweis), isolierter Next-16-Produktionsbuild mit `--webpack` und
+12 Desktop-/Mobil-Szenarien für Abrechnungsschutz und Wiederherstellung
+bestanden. Webpack ist hier die dokumentierte Prüfung, da Turbopack die
+extern verlinkten Abhängigkeiten der isolierten Kopie nicht auflösen kann.
+Zusätzlich bestanden 80 gezielte Tests und der Typecheck mit erhaltenen
+unveröffentlichten UI-Änderungen. Reale isolierte PDF-/OCR- und Parserprozesse
+prüften harte Beendigung, Shutdown, Wiederanlauf, atomare Commits und
+gemischte gültige/ungültige CSV-Zeilen. Dies ist keine vollständige
+Projekt-Testabnahme und kein Nachweis für den laufenden Produktionsdienst.
+
+Die anschließende Integration erhält die später veröffentlichten
+Standby-/Lease-Fixes. Zusätzlich wurden die kompatible Jobmetadaten-Migration,
+ein echter Revisionskonflikt im laufenden Worker und große Warnungspakete
+geprüft: Eine synthetische CSV mit einer gültigen Buchung und 100 fehlerhaften
+Zeilen wird atomar mit konsistenten Ergebnissen übernommen. Gekürzte
+Hinweisdetails sind sichtbar gekennzeichnet; IDs, Zählwerte und Finanzfakten
+bleiben unverändert. 390 weitere gezielte Fälle mit den inzwischen erweiterten
+unveröffentlichten Benutzeränderungen bestanden. Diese fremden Änderungen
+gehören nicht in den gemeinsamen P1-Commit.
+Nach der sicheren Übernahme in den tatsächlichen Arbeitsbaum bestanden dort
+119 weitere synthetische Fälle, der Typecheck und erneut alle 12
+Desktop-/Mobil-Szenarien. Private Originaldaten wurden dabei nicht eingelesen.

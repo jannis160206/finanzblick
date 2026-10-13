@@ -1,6 +1,5 @@
 import { copyFile, mkdtemp, rm } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { WorkerOptions } from "tesseract.js";
@@ -9,6 +8,7 @@ import { recognizeAmexScreenshot } from "../import/amex-ocr";
 import { parseAmexScreenshotLines } from "../import/amex-screenshot";
 import { assertImportSize } from "../import/limits";
 import { parseStatementFile, type StatementResult } from "../import/statements";
+import { classifyParserError, ParserFailure } from "./errors";
 
 export type { StatementResult } from "../import/statements";
 
@@ -62,6 +62,7 @@ async function copyLanguage(
 async function parseImage(
   bytes: Uint8Array,
   file: string,
+  workspace: string,
 ): Promise<StatementResult> {
   const previous = ocrQueue;
   let release!: () => void;
@@ -80,11 +81,11 @@ async function parseImage(
     });
     const metadata = await image.metadata();
     if (!["png", "jpeg", "webp"].includes(metadata.format ?? ""))
-      throw new Error(
+      throw new ParserFailure("PARSE_UNSUPPORTED",
         "Ungültiges Screenshot-Bild. Bitte PNG, JPEG oder WebP verwenden.",
       );
     if ((metadata.pages ?? 1) !== 1)
-      throw new Error(
+      throw new ParserFailure("PARSE_UNSUPPORTED",
         "Animierte oder mehrseitige Screenshots werden nicht unterstützt.",
       );
     if (
@@ -94,7 +95,7 @@ async function parseImage(
       metadata.height > SERVER_PARSE_LIMITS.imageHeight ||
       metadata.width * metadata.height > SERVER_PARSE_LIMITS.imagePixels
     )
-      throw new Error(
+      throw new ParserFailure("PARSE_RESOURCE_LIMIT",
         "Screenshot zu groß. Höchstens 12 Megapixel und 6000 × 12000 Pixel sind erlaubt.",
       );
     const png = await image
@@ -105,7 +106,7 @@ async function parseImage(
     const { createWorker, OEM } = await import("tesseract.js");
     // Tesseract 7's binary Lang objects are broken during initialization. Its
     // string language API requires a single directory for both local packages.
-    const directory = await mkdtemp(join(tmpdir(), ".automation-ocr-"));
+    const directory = await mkdtemp(join(workspace, ".automation-ocr-"));
     try {
       await copyLanguage("deu", directory);
       await copyLanguage("eng", directory);
@@ -134,7 +135,7 @@ async function parsePdf(
   file: string,
 ): Promise<StatementResult> {
   if (!new TextDecoder().decode(bytes.subarray(0, 1024)).includes("%PDF-"))
-    throw new Error(
+    throw new ParserFailure("PARSE_DAMAGED",
       "PDF-Datei konnte nicht gelesen werden: ungültige PDF-Signatur.",
     );
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -160,7 +161,7 @@ async function parsePdf(
   try {
     const document = await task.promise;
     if (document.numPages > SERVER_PARSE_LIMITS.pdfPages)
-      throw new Error(
+      throw new ParserFailure("PARSE_RESOURCE_LIMIT",
         `Die PDF-Datei enthält mehr als ${SERVER_PARSE_LIMITS.pdfPages} Seiten.`,
       );
     const pages: string[] = [];
@@ -170,13 +171,13 @@ async function parsePdf(
       try {
         const content = await page.getTextContent();
         if (content.items.length > SERVER_PARSE_LIMITS.pdfItemsPerPage)
-          throw new Error("Die PDF-Seite enthält zu viele Textelemente.");
+          throw new ParserFailure("PARSE_RESOURCE_LIMIT", "Die PDF-Seite enthält zu viele Textelemente.");
         const items = content.items
           .flatMap((item) => {
             if (!("str" in item) || !item.str.trim()) return [];
             characters += item.str.length + 1;
             if (characters > SERVER_PARSE_LIMITS.pdfTextCharacters)
-              throw new Error("Die PDF-Datei enthält zu viel Buchungstext.");
+              throw new ParserFailure("PARSE_RESOURCE_LIMIT", "Die PDF-Datei enthält zu viel Buchungstext.");
             return [
               { text: item.str, x: item.transform[4], y: item.transform[5] },
             ];
@@ -224,7 +225,7 @@ async function parsePdf(
       };
     return parseAmexText(pages, file);
   } catch (error) {
-    throw new Error(
+    throw new ParserFailure(classifyParserError(error).code,
       `PDF-Datei konnte nicht gelesen werden: ${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
@@ -242,18 +243,24 @@ async function parsePdf(
 export async function parseServerStatement(
   bytes: Uint8Array,
   name: string,
+  options: { workspace?: string } = {},
 ): Promise<StatementResult> {
-  assertImportSize(bytes.byteLength);
-  if (!bytes.byteLength) throw new Error("Die Kontoauszugsdatei ist leer.");
-  if (/\.pdf$/i.test(name)) return parsePdf(bytes, name);
-  if (/\.(png|jpe?g|webp)$/i.test(name)) return parseImage(bytes, name);
-  if (/\.(csv|xlsx)$/i.test(name))
-    return parseStatementFile({
-      name,
-      size: bytes.byteLength,
-      arrayBuffer: async () => Uint8Array.from(bytes).buffer,
-    });
-  throw new Error(
-    "Nicht unterstütztes Kontoauszugsformat. Bitte CSV, XLSX, PDF, PNG, JPEG oder WebP verwenden.",
-  );
+  try {
+    assertImportSize(bytes.byteLength);
+    if (!bytes.byteLength) throw new ParserFailure("PARSE_DAMAGED", "Die Kontoauszugsdatei ist leer.");
+    if (/\.pdf$/i.test(name)) return await parsePdf(bytes, name);
+    if (/\.(png|jpe?g|webp)$/i.test(name))
+      return await parseImage(bytes, name, options.workspace ?? process.cwd());
+    if (/\.(csv|xlsx)$/i.test(name))
+      return await parseStatementFile({
+        name,
+        size: bytes.byteLength,
+        arrayBuffer: async () => Uint8Array.from(bytes).buffer,
+      });
+    throw new ParserFailure("PARSE_UNSUPPORTED",
+      "Nicht unterstütztes Kontoauszugsformat. Bitte CSV, XLSX, PDF, PNG, JPEG oder WebP verwenden.",
+    );
+  } catch (error) {
+    throw classifyParserError(error);
+  }
 }

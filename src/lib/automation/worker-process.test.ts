@@ -38,7 +38,9 @@ it("processes persisted uploads in an independent, memory-bounded TypeScript pro
       {
         cwd: process.cwd(),
         env: {
-          ...process.env,
+          PATH: process.env.PATH,
+          SYSTEMROOT: process.env.SYSTEMROOT,
+          TSX_DISABLE_CACHE: "1",
           NODE_ENV: "test",
           FINANZBLICK_AUTH: "true",
           FINANZBLICK_DATABASE_PATH: path,

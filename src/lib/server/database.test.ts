@@ -174,6 +174,25 @@ describe("AccountDatabase", () => {
     expect(importer.getFinance(session.user.id)).toEqual({ state: changed, revision: 1 });
   });
 
+  it.each(["transactions", "financeRows"] as const)("rejects duplicate %s IDs without advancing or replacing a saved snapshot", async (kind) => {
+    const database = open();
+    const session = await database.register("alice", password);
+    const initial = blankTestState();
+    database.putFinance(session.user.id, initial, 0);
+    const invalid = structuredClone(initial);
+    if (kind === "financeRows") invalid.financeRows = [
+      { id: "duplicate", label: "Einkommen A", kind: "income", values: { "2026-10": 1000 } },
+      { id: "duplicate", label: "Einkommen B", kind: "income", values: { "2026-10": 2000 } },
+    ];
+    else {
+      const booking = { id: "duplicate", date: "2026-10-01", bank: "Testbank", pocket: null,
+        description: "Test", amount: -10, category: "Shopping" as const, includeInPlan: false };
+      invalid.transactions = [booking, { ...booking, amount: -20 }];
+    }
+    expect(() => database.putFinance(session.user.id, invalid, 1)).toThrow(/Doppelte .*ID/);
+    expect(database.getFinance(session.user.id)).toEqual({ state: initial, revision: 1 });
+  });
+
   it("reserves the administrator name, validates credentials, and rejects duplicate registrations", async () => {
     const database = open();
     await expect(database.register("AdMiN", password)).rejects.toMatchObject({

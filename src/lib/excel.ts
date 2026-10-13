@@ -31,6 +31,7 @@ import { createSeed } from "@/lib/seed";
 import { assertImportSize } from "@/lib/import/limits";
 import { applyVariableBudgets } from "@/lib/variable-budgets";
 import { payslipSchema, payrollForecastSchema } from "@/lib/payslip-schema";
+import { bankPocketBalance, coreBalanceKnown } from "@/lib/goals";
 
 export const sheetNames = [
   "Dashboard",
@@ -41,11 +42,18 @@ export const sheetNames = [
   "Finanzen 2027",
 ] as const;
 const marker = "Finanzdashboard · v1";
+const workbookMetadataSchema = appStateSchema.omit({
+  version: true, settings: true, transactions: true, financeRows: true, months: true,
+}).extend({
+  interestRates: settingsSchema.shape.interestRates,
+  unknownBalances: settingsSchema.shape.unknownBalances,
+});
 export type ImportResult = {
   state: AppState;
   warnings: string[];
   skipped: number;
   source: string;
+  kind: "backup" | "transactions";
 };
 function value(cell: ExcelJS.Cell): string | number | boolean | Date | null {
   const v = cell.value;
@@ -61,6 +69,12 @@ function value(cell: ExcelJS.Cell): string | number | boolean | Date | null {
   return null;
 }
 const text = (cell: ExcelJS.Cell) => String(value(cell) ?? "").trim();
+function nativeIdentifier(cell: ExcelJS.Cell, location: string): string {
+  const id = value(cell);
+  if (typeof id !== "string" || !id.trim())
+    throw new Error(`${location}: ID fehlt oder ist kein Text. Sicherungs-IDs werden nicht neu erzeugt oder umgeschrieben.`);
+  return id;
+}
 function numeric(cell: ExcelJS.Cell): number | null {
   const v = value(cell);
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -142,11 +156,18 @@ export async function parseWorkbook(
       "Die Arbeitsmappe überschreitet die erlaubte Tabellengröße.",
     );
   const state = createSeed();
+  state.settings.balances = emptyPockets();
+  state.financeRows = [];
   const warnings: string[] = [];
   let skipped = 0;
   const dashboard = workbook.getWorksheet("Dashboard");
   const native = dashboard && text(dashboard.getCell("A1")) === marker;
   const transactionSheet = workbook.getWorksheet("Umsätze");
+  const missingSheets = sheetNames.filter((name) => !workbook.getWorksheet(name));
+  const kind = missingSheets.length === 0 ? "backup" : "transactions";
+  if (native && missingSheets.length) throw new Error(
+    `Unvollständige Sicherung: ${missingSheets.join(", ")} fehlen. Einzelne Buchungsdateien bitte unter Umsätze importieren.`,
+  );
   if (
     !dashboard &&
     !transactionSheet &&
@@ -158,7 +179,7 @@ export async function parseWorkbook(
   for (const name of sheetNames)
     if (!workbook.getWorksheet(name))
       warnings.push(
-        `Blatt „${name}“ fehlt; dafür werden Anfangswerte verwendet.`,
+        `Blatt „${name}“ fehlt. Keine zugehörigen Anfangswerte werden übernommen; die Datei ist keine vollständige Sicherung.`,
       );
   if (dashboard && native) {
     dashboard.eachRow((row, index) => {
@@ -167,7 +188,8 @@ export async function parseWorkbook(
       if (
         !(key in state.settings) ||
         key === "balances" ||
-        key === "interestRates"
+        key === "interestRates" ||
+        key === "unknownBalances"
       )
         return;
       const original = state.settings[key as keyof Settings];
@@ -201,12 +223,18 @@ export async function parseWorkbook(
     if (purchase) state.settings.bikePurchaseDate = purchase;
   }
   const pockets = workbook.getWorksheet("Pockets");
+  const importedPockets = new Set<Pocket>();
   pockets?.eachRow((row) => {
     const name = text(row.getCell(1));
     const n = numeric(row.getCell(2));
-    if (pocketNames.includes(name as Pocket) && n !== null)
+    if (pocketNames.includes(name as Pocket) && n !== null) {
+      if (importedPockets.has(name as Pocket)) throw new Error(`Doppelter Pocket-Startstand „${name}“ in der Sicherung.`);
+      importedPockets.add(name as Pocket);
       state.settings.balances[name as Pocket] = n;
+    }
   });
+  if (kind === "backup" && importedPockets.size !== pocketNames.length)
+    throw new Error("Die Sicherung enthält nicht für jeden Pocket einen belegten Startstand. Vorhandene Daten bleiben unverändert.");
   if (transactionSheet) {
     let headerRow = 0;
     const columns: Record<string, number> = {};
@@ -240,7 +268,7 @@ export async function parseWorkbook(
       const manualCategoryCell = text(get("Kategorie ausdrücklich gewählt"));
       const bank = text(get("Bank")) || "Unbekannt";
       const candidate = {
-        id: text(get("ID")) || `xlsx-${index}`,
+        id: native ? nativeIdentifier(get("ID"), `Umsätze, Zeile ${index}`) : text(get("ID")) || `xlsx-${index}`,
         date: isoDate(row.getCell(dateCol), workbook.properties.date1904),
         amount,
         description,
@@ -281,6 +309,15 @@ export async function parseWorkbook(
         ...(native && text(get("Uhrzeit")) ? { time: text(get("Uhrzeit")) } : {}),
         ...(native && text(get("Geteilt mit Raphael")) ? { sharedWithRaphael: /^(ja|true|1)$/i.test(text(get("Geteilt mit Raphael"))) } : {}),
         ...(native && text(get("Geteilt manuell bezahlt")) ? { sharedPaidManually: /^(ja|true|1)$/i.test(text(get("Geteilt manuell bezahlt"))) } : {}),
+        ...(native && value(get("Händlererstattung für")) !== null && value(get("Händlererstattung für")) !== ""
+          ? { sharedRefundFor: value(get("Händlererstattung für")) } : {}),
+        ...(native && text(get("Erstattung nicht geteilt")) ? { sharedRefundUnlinked:
+          /^(ja|true|1)$/i.test(text(get("Erstattung nicht geteilt"))) ? true :
+            /^(nein|false|0)$/i.test(text(get("Erstattung nicht geteilt"))) ? false : text(get("Erstattung nicht geteilt")) } : {}),
+        ...(native && value(get("Partnerzahlung für")) !== null && value(get("Partnerzahlung für")) !== ""
+          ? { sharedRepaymentFor: value(get("Partnerzahlung für")) } : {}),
+        ...(native && text(get("Manuell bezahlter Partneranteil"))
+          ? { sharedPaidAmount: numeric(get("Manuell bezahlter Partneranteil")) } : {}),
         ...(text(get("Originalbeschreibung")) ? { rawDescription: text(get("Originalbeschreibung")) } : {}),
         ...(text(get("Händlerdetails")) ? { rawDetails: text(get("Händlerdetails")).split("\n") } : {}),
         ...(native && text(get("Amex-Quelle")) ? { amexSource: text(get("Amex-Quelle")) } : {}),
@@ -311,6 +348,7 @@ export async function parseWorkbook(
       };
       const parsed = transactionSchema.safeParse(candidate);
       if (parsed.success) state.transactions.push(parsed.data);
+      else if (native) throw new Error(`Umsätze, Zeile ${index}: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
       else skipped++;
     });
     if (
@@ -327,12 +365,21 @@ export async function parseWorkbook(
     if (!sheet) continue;
     const keys = monthsForYear(year);
     if (native) {
+      const sheetIds = new Set<string>();
       sheet.eachRow((row, index) => {
         if (index < 2) return;
         const kind = text(row.getCell(1));
         const label = text(row.getCell(2));
         if (["income", "fixed", "variable"].includes(kind)) {
-          const id = text(row.getCell(16)) || `${kind}-${label}`;
+          const id = nativeIdentifier(row.getCell(16), `Finanzen ${year}, Zeile ${index}`);
+          if (sheetIds.has(id)) throw new Error(
+            `Doppelte Finanzzeilen-ID „${id}“ in Finanzen ${year}, Zeile ${index}. Keine Zeilen wurden zusammengeführt.`,
+          );
+          sheetIds.add(id);
+          const previous = rows.get(id);
+          if (previous && (previous.kind !== kind || previous.label !== label)) throw new Error(
+            `Finanzzeilen-ID „${id}“ bezeichnet in den Jahresblättern unterschiedliche Zeilen.`,
+          );
           const item = rows.get(id) ?? {
             id,
             label,
@@ -493,9 +540,22 @@ export async function parseWorkbook(
   if (rows.size) state.financeRows = [...rows.values()];
   if (native) {
     const automation = workbook.getWorksheet("Import-Abgleich");
+    const metadataParts = new Map<number, string>();
+    let metadataCount: number | undefined;
     automation?.eachRow((row, index) => {
       if (index <= 1) return;
       const kind = text(row.getCell(1));
+      if (kind === "metadata-v1-part") {
+        const part = numeric(row.getCell(3));
+        const count = numeric(row.getCell(4));
+        if (part === null || count === null || !Number.isInteger(part) || !Number.isInteger(count) ||
+          count < 1 || count > 1000 || part < 0 || part >= count ||
+          (metadataCount !== undefined && metadataCount !== count) || metadataParts.has(part))
+          throw new Error("Ungültige oder doppelte Metadaten-Teile in der Excel-Sicherung.");
+        metadataCount = count;
+        metadataParts.set(part, String(value(row.getCell(2)) ?? ""));
+        return;
+      }
       try {
         const data = JSON.parse(text(row.getCell(2)));
         if (kind === "ux") {
@@ -511,6 +571,7 @@ export async function parseWorkbook(
                 importStatus: true,
                 fixedAmountDecisions: true,
                 savingsGoals: true,
+                pocketOpeningBalances: true,
                 bikeOnlyGoalApplied: true,
                 seasonalTheme: true,
                 holidayRanges: true,
@@ -545,6 +606,29 @@ export async function parseWorkbook(
         );
       }
     });
+    if (metadataCount !== undefined) {
+      if (metadataParts.size !== metadataCount)
+        throw new Error("Unvollständige Metadaten in der Excel-Sicherung. Vorhandene Daten bleiben unverändert.");
+      const raw = Array.from({ length: metadataCount }, (_, index) => metadataParts.get(index)).join("");
+      let metadata: unknown;
+      try {
+        metadata = JSON.parse(raw);
+      } catch (error) {
+        if (!(error instanceof SyntaxError)) throw error;
+        throw new Error("Unlesbare Metadaten in der Excel-Sicherung.");
+      }
+      const parsedMetadata = workbookMetadataSchema.safeParse(metadata);
+      if (!parsedMetadata.success) throw new Error(
+        `Ungültige Sicherungsmetadaten: ${parsedMetadata.error.issues.slice(0, 3).map((issue) => issue.message).join("; ")}`,
+      );
+      const { interestRates, unknownBalances, ...stateMetadata } = parsedMetadata.data;
+      Object.assign(state, stateMetadata);
+      if (interestRates !== undefined) state.settings.interestRates = interestRates;
+      if (unknownBalances !== undefined) state.settings.unknownBalances = unknownBalances;
+    }
+    if (dashboard && text(dashboard.getCell("E1")) === "metadata-v1" &&
+      metadataCount !== numeric(dashboard.getCell("F1")))
+      throw new Error("Sicherungsmetadaten fehlen oder sind unvollständig. Vorhandene Daten bleiben unverändert.");
     const decisions = workbook.getWorksheet("Import-Entscheidungen");
     if (decisions) {
       state.ignoredStatementKeys = [];
@@ -562,16 +646,19 @@ export async function parseWorkbook(
         .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
         .join("; ")}`,
     );
+  const normalized = applyVariableBudgets(validated.data);
+  normalized.financeRows = appStateSchema.shape.financeRows.parse(normalized.financeRows);
   return {
-    state: applyVariableBudgets(validated.data),
+    state: normalized,
     warnings,
     skipped,
     source: native ? "Finanzdashboard" : "Excel-Originalmappe",
+    kind,
   };
 }
 
 const settingLabels: Record<
-  Exclude<keyof Settings, "balances" | "interestRates">,
+  Exclude<keyof Settings, "balances" | "interestRates" | "unknownBalances">,
   string
 > = {
   asOf: "Stichtag",
@@ -592,6 +679,7 @@ const settingLabels: Record<
 };
 export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
   state = applyVariableBudgets(appStateSchema.parse(state));
+  state.financeRows = appStateSchema.shape.financeRows.parse(state.financeRows);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Finanzdashboard";
   workbook.created = new Date();
@@ -604,7 +692,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       key,
       label,
       state.settings[
-        key as Exclude<keyof Settings, "balances" | "interestRates">
+        key as Exclude<keyof Settings, "balances" | "interestRates" | "unknownBalances">
       ],
     ]);
   dashboard.addRow([]);
@@ -637,18 +725,23 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Pocket",
     "Ist-Basis",
     "Aktueller Ist",
+    "Ist-Basis belegt",
+    "Aktueller Ist belegt",
     ...d.timeline.filter((row) => row.available).map((row) => row.month),
   ]);
-  pocketNames.forEach((pocket) =>
+  pocketNames.forEach((pocket) => {
+    const actual = bankPocketBalance(state, pocket, d.actual);
     pockets.addRow([
       pocket,
       state.settings.balances[pocket],
-      d.actual[pocket],
+      actual,
+      coreBalanceKnown(state, pocket) ? "Ja" : "Unbekannt",
+      actual !== null ? "Ja" : "Unbekannt",
       ...d.timeline
         .filter((row) => row.available)
         .map((row) => row.end[pocket]),
-    ]),
-  );
+    ]);
+  });
   pockets.addRow([]);
   pockets.addRow(["Monat", "Round-up"]);
   [...new Set(state.transactions.map((row) => monthKey(row.date)))]
@@ -698,6 +791,10 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Händlerlogo vorhanden",
     "Händler-Treffertyp",
     "Händlername bestätigt",
+    "Händlererstattung für",
+    "Erstattung nicht geteilt",
+    "Partnerzahlung für",
+    "Manuell bezahlter Partneranteil",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -742,6 +839,10 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.merchantLogo === undefined ? "" : row.merchantLogo ? "Ja" : "Nein",
       row.merchantMatch ?? "",
       row.merchantNameConfirmed === undefined ? "" : row.merchantNameConfirmed ? "Ja" : "Nein",
+      row.sharedRefundFor ?? "",
+      row.sharedRefundUnlinked === undefined ? "" : row.sharedRefundUnlinked ? "Ja" : "Nein",
+      row.sharedRepaymentFor ?? "",
+      row.sharedPaidAmount ?? "",
     ]);
   });
   for (const year of [2026, 2027]) {
@@ -850,79 +951,26 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     decisions.addRow(["Bereits geprüfte Fixkostenbuchungen"]);
     state.ignoredStatementKeys.forEach((key) => decisions.addRow([key]));
   }
-  if (
-    state.pocketSnapshots?.length ||
-    state.merchantRules?.length ||
-    state.merchantNameRules?.length ||
-    state.fixedReceipts?.length ||
-    state.planningRepairs?.length ||
-    state.accountSnapshots ||
-    state.amexBalanceSnapshots ||
-    state.amexScreenshotValidation ||
-    state.trBalances ||
-    state.reviewQueue ||
-    state.importStatus ||
-    state.settings.interestRates ||
-    state.fixedAmountDecisions || state.savingsGoals || state.bikeOnlyGoalApplied || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth ||
-    state.payslips?.length || state.payrollForecasts?.length
-  ) {
+  const metadata = workbookMetadataSchema.parse({
+    ...state, interestRates: state.settings.interestRates, unknownBalances: state.settings.unknownBalances,
+  });
+  if (Object.keys(metadata).length) {
     const automation = workbook.addWorksheet("Import-Abgleich", {
       state: "hidden",
     });
-    automation.addRow(["Typ", "Auszugsdaten"]);
-    if (
-      state.accountSnapshots ||
-      state.amexBalanceSnapshots ||
-      state.amexScreenshotValidation ||
-      state.trBalances ||
-      state.reviewQueue ||
-      state.importStatus ||
-      state.settings.interestRates ||
-      state.fixedAmountDecisions || state.savingsGoals || state.bikeOnlyGoalApplied || state.seasonalTheme || state.holidayRanges || state.plannedOneOffs || state.plannedOneOffsSeeded || state.annualSixth
-    )
-      automation.addRow([
-        "ux",
-        JSON.stringify({
-          accountSnapshots: state.accountSnapshots,
-          amexBalanceSnapshots: state.amexBalanceSnapshots,
-          amexScreenshotValidation: state.amexScreenshotValidation,
-          trBalances: state.trBalances,
-          reviewQueue: state.reviewQueue,
-          importStatus: state.importStatus,
-          interestRates: state.settings.interestRates,
-          fixedAmountDecisions: state.fixedAmountDecisions,
-          savingsGoals: state.savingsGoals,
-          bikeOnlyGoalApplied: state.bikeOnlyGoalApplied,
-          seasonalTheme: state.seasonalTheme,
-          holidayRanges: state.holidayRanges,
-          plannedOneOffs: state.plannedOneOffs,
-          plannedOneOffsSeeded: state.plannedOneOffsSeeded,
-          annualSixth: state.annualSixth,
-        }),
-      ]);
-    state.pocketSnapshots?.forEach((item) =>
-      automation.addRow(["pocket", JSON.stringify(item)]),
-    );
-    state.merchantRules?.forEach((item) =>
-      automation.addRow(["merchant", JSON.stringify(item)]),
-    );
-    state.merchantNameRules?.forEach((item) =>
-      automation.addRow(["merchant-name", JSON.stringify(item)]),
-    );
-    state.fixedReceipts?.forEach((item) =>
-      automation.addRow(["fixed", JSON.stringify(item)]),
-    );
-    state.payslips?.forEach((item) =>
-      automation.addRow(["payslip", JSON.stringify(item)]),
-    );
-    state.payrollForecasts?.forEach((item) =>
-      automation.addRow(["payroll-forecast", JSON.stringify(item)]),
-    );
-    if (state.planningRepairs?.length)
-      automation.addRow([
-        "planning-repairs",
-        JSON.stringify(state.planningRepairs),
-      ]);
+    automation.addRow(["Typ", "Sicherungsdaten", "Teil", "Anzahl"]);
+    const raw = JSON.stringify(metadata);
+    const parts: string[] = [];
+    for (let start = 0; start < raw.length;) {
+      let end = Math.min(start + 30_000, raw.length);
+      const last = raw.charCodeAt(end - 1);
+      if (end < raw.length && last >= 0xd800 && last <= 0xdbff) end--;
+      parts.push(raw.slice(start, end));
+      start = end;
+    }
+    parts.forEach((part, index) => automation.addRow(["metadata-v1-part", part, index, parts.length]));
+    dashboard.getCell("E1").value = "metadata-v1";
+    dashboard.getCell("F1").value = parts.length;
   }
   workbook.eachSheet((sheet) => {
     sheet.views = [

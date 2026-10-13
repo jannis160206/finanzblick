@@ -295,11 +295,11 @@ describe("Amex funding gap", () => {
     ]);
     state.financeRows.push({ id: "fee", kind: "fixed", label: "AMEX Monatsgebühr", planCategory: "AMEX Monatsgebühr", values: { "2026-10": 65 } });
     state.plannedOneOffs = [{ id: "cabinet", name: "Schrank", date: "2026-10-02", amount: 400, pocket: "Giro", installments: 1, sharedWithRaphael: true }];
-    expect(funding(state)).toMatchObject({ ownOutstanding: 265, plannedCoverage: 0, additional: 265 });
+    expect(funding(state)).toMatchObject({ outstanding: 465, ownOutstanding: 265, plannedCoverage: 200, additional: 65 });
     const d = calculateDashboard(state);
     expect(d.current.fixed).toBe(65);
     expect(d.current.plannedOneOffs).toBe(200);
-    expect(d.current.amexOpen).toBe(265);
+    expect(d.current.amexOpen).toBe(65);
   });
 
   it("includes Amex fixed receipts in the liability exactly once when their ledger booking is also present", () => {

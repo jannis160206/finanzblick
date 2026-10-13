@@ -18,7 +18,7 @@ import {
   statementFingerprint,
 } from "@/lib/import/identity";
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
-import { allocateGoals, goalBalance, goalExtraIncome, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
+import { allocateGoals, corePocket, goalBalance, goalBalanceStatus, goalExtraIncome, goalProjectionBalances, physicalAssetTotal, physicalPocketBalances, physicalProjectionTotal, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
 import { isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasRecurringFuelEvidence, merchantPurposeSourceCategory, recurringAmazonCategory, recurringLunchCategory, unnamedFuelPurpose } from "@/lib/recurring-purpose";
 import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
@@ -124,11 +124,11 @@ export function classify(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias">>,
 ) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
-  if (isNamedTransfer(recovered)) {
+  if (isNamedTransfer(recovered) || (transaction.holidayReimbursementFor && transaction.sharedRepaymentFor)) {
     return {
       category: "Transfer" as const, planCategory: "Transfer" as const,
       pocket: savingsPocket(transaction.pocket),
@@ -415,7 +415,8 @@ export function calculatePlan(transactions: Transaction[], asOf: string, holiday
       seen: Set<string>;
     }
   >();
-  for (const transaction of accountHolidayRanges(reconcileSharedHoliday(transactions, asOf).bookings, holidayRanges, asOf)) {
+  for (const transaction of reconcileSharedHoliday(accountHolidayRanges(transactions, holidayRanges, asOf), asOf, [],
+    (row) => classify(row).category).bookings) {
     const result = classify(transaction);
     const key = monthKey(transaction.date);
     if (
@@ -764,7 +765,7 @@ export function calculateMonthTotals(
   bookings: AccountedTransaction[] = actualBookings(state),
   actuals = indexMonthlyActuals(bookings, state.settings.asOf),
   occurrences: PlannedOccurrence[] = matchPlannedOneOffs(state.plannedOneOffs, bookings),
-  amex = amexFunding(state, bookings),
+  amex = amexFunding(state, bookings, occurrences),
 ) {
   const goalExtras = sum(savingsGoals(state).map((goal) => goalExtraIncome(goal, month)));
   const income = round(goalExtras + sum(
@@ -792,7 +793,10 @@ export function calculateMonthTotals(
   const variablePlan = round(variableBudget + amexOpen);
   const { actualSpending, received, salaryReceived } = actuals.get(month) ??
     { actualSpending: 0, received: 0, salaryReceived: 0 };
-  const plannedOneOffs = sum(occurrences.filter((item) => monthKey(item.date) === month).map((item) => item.ownAmount));
+  const plannedIds = new Set(occurrences.filter((item) => item.bookingId).map((item) => item.bookingId));
+  const plannedOneOffs = round(sum(occurrences.filter((item) => monthKey(item.date) === month).map((item) => item.ownAmount)) -
+    sum(bookings.filter((row) => row.date <= state.settings.asOf && monthKey(row.date) === month &&
+      row.holidayRefundFor && plannedIds.has(row.holidayRefundFor)).map(personalAmount)));
   return {
     income,
     goalExtras,
@@ -808,8 +812,9 @@ export function calculateMonthTotals(
   };
 }
 export function actualBookings(state: AppState): AccountedTransaction[] {
-  const account = (rows: Transaction[]) => accountHolidayRanges(
-    reconcileSharedHoliday(reconcileLeasingSources(reconcilePayrollSources(rows.map(recoverMerchant)), (row) => classify(row).category), state.settings.asOf, state.plannedOneOffs).bookings, state.holidayRanges, state.settings.asOf);
+  const account = (rows: Transaction[]) => reconcileSharedHoliday(accountHolidayRanges(
+    reconcileLeasingSources(reconcilePayrollSources(rows.map(recoverMerchant)), (row) => classify(row).category),
+    state.holidayRanges, state.settings.asOf), state.settings.asOf, state.plannedOneOffs, (row) => classify(row).category).bookings;
   if (!state.fixedReceipts?.length) return account(state.transactions);
   const known = new Set(
     numberStatementRows(state.transactions).flatMap((row) => [
@@ -836,15 +841,16 @@ export function actualBookings(state: AppState): AccountedTransaction[] {
   }
   return account([...state.transactions, ...receipts]);
 }
-export function incomingPocketTransfers(state: AppState, pocket: string, month: string, aliases: string[] = []): number {
+export function incomingPocketTransfers(state: AppState, pocket: string, month: string, aliases: string[] = [], through = state.settings.asOf): number {
   const keys = new Set([pocket, ...aliases].map(pocketKey));
-  return sum(state.transactions.filter((row) => row.date.slice(0, 7) === month && row.date <= state.settings.asOf && row.amount > 0 && keys.has(pocketKey(row.pocket ?? "")) && classify(row).isTransfer).map((row) => row.amount));
+  return sum(state.transactions.filter((row) => row.bank === "Revolut" && row.date.slice(0, 7) === month && row.date <= through && row.amount > 0 && keys.has(pocketKey(row.pocket ?? "")) && classify(row).isTransfer).map((row) => row.amount));
 }
 export function synchronizeGoals(state: AppState): AppState {
   const actual = actualPockets(state);
   return { ...state, savingsGoals: savingsGoals(state).map((goal) => {
-    const reached = goalBalance(state, goal, actual) >= goal.target;
-    const snapshot = (state.accountSnapshots ?? []).filter((item) => item.bank === "Revolut" && [goal.pocket, goal.name].some((name) => pocketKey(name) === pocketKey(item.name)) && item.balance >= goal.target && item.date <= state.settings.asOf).sort((a, b) => a.date.localeCompare(b.date))[0];
+    const balance = goalBalanceStatus(state, goal, actual);
+    const reached = balance.status === "known" && balance.amount !== null && balance.amount >= goal.target;
+    const snapshot = balance.status === "known" ? (state.accountSnapshots ?? []).filter((item) => item.bank === "Revolut" && pocketKey(goal.pocket) === pocketKey(item.name) && item.balance >= goal.target && item.date <= state.settings.asOf).sort((a, b) => a.date.localeCompare(b.date))[0] : undefined;
     return { ...goal, completedAt: goal.completedAt ?? snapshot?.date ?? (reached ? state.settings.asOf : undefined) };
   }) };
 }
@@ -854,7 +860,7 @@ export function calculateDashboard(state: AppState) {
   const bookings = actualBookings(state);
   const actuals = indexMonthlyActuals(bookings, state.settings.asOf);
   const plannedOneOffs = matchPlannedOneOffs(state.plannedOneOffs, bookings);
-  const amex = amexFunding(state, bookings);
+  const amex = amexFunding(state, bookings, plannedOneOffs);
   const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs, amex);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);
@@ -865,69 +871,110 @@ export function calculateDashboard(state: AppState) {
   const goals = savingsGoals(state);
   const motorcycle = goals.find((goal) => pocketKey(goal.pocket) === "motorrad");
   const actualGoals = Object.fromEntries(goals.map((goal) => [goal.id, goalBalance(state, goal, actual)]));
-  let projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, pocketKey(goal.pocket) === "motorrad" ? previous.Motorrad : 0]));
+  const goalStatuses = Object.fromEntries(goals.map((goal) => [goal.id, goalBalanceStatus(state, goal, actual)]));
+  const physical = physicalPocketBalances(state, actual);
+  let projectedPhysical: Record<string, number | null> = {};
+  const projectedCompletions = new Map<string, string>();
   const timeline = [...monthsForYear(2026), ...monthsForYear(2027)].map((month) => {
     const totals = totalsForMonth(month);
     const input = state.months[month] ?? emptyMonth();
     const historical = month < baselineMonth;
     const available = !historical || !!historicalOpening;
     const start = { ...(month === currentMonth ? actual : month === baselineMonth ? state.settings.balances : previous) };
-    if (motorcycle?.openingBalance) {
-      if (month === currentMonth && state.settings.asOf >= motorcycle.openingBalance.date)
-        start.Motorrad = actualGoals[motorcycle.id];
-      else if (month === motorcycle.openingBalance.date.slice(0, 7)) {
-        start.Motorrad = motorcycle.openingBalance.amount;
-        projectedGoals[motorcycle.id] = motorcycle.openingBalance.amount;
-      }
-    }
     const from = month === baselineMonth ? state.settings.baselineDate : `${addMonths(month, -1)}-${daysInMonth(addMonths(month, -1))}`;
     const monthEnd = `${month}-${daysInMonth(month)}`;
     const snapshotDate = monthEnd < state.settings.asOf ? monthEnd : state.settings.asOf;
+    const observed = physicalPocketBalances(state, actualPockets(state, snapshotDate), snapshotDate);
+    if (month <= currentMonth) projectedPhysical = Object.fromEntries(Object.entries(observed).map(([key, balance]) => [key, balance.amount]));
+    for (const pocket of pocketNames) {
+      const key = pocketKey(pocket);
+      if (observed[key]?.amount !== null && observed[key]?.amount !== undefined) {
+        if (month === currentMonth) start[pocket] = observed[key].amount;
+        projectedPhysical[key] = start[pocket];
+      } else projectedPhysical[key] = null;
+    }
     const movement = !historical ? pocketMovements(state.transactions, from, monthEnd, month === baselineMonth) : emptyPockets();
     for (const pocket of pocketNames) {
       if (latestPocketSnapshot(state, pocket, snapshotDate) && month > currentMonth)
         movement[pocket] = revolutMovement(state, pocket, from, monthEnd);
     }
     const interest = available ? monthlyInterest(month === currentMonth && latestTRBalance(state, snapshotDate) ? latestTRBalance(state, snapshotDate)!.balance : start.Notgroschen, month, state.settings) : 0;
-    if (month === currentMonth) projectedGoals = Object.fromEntries(goals.map((goal) => [goal.id, Math.max(0, actualGoals[goal.id] - incomingPocketTransfers(state, goal.pocket, month, [goal.name]))]));
-    // Preserve goal instructions, but fund savings only from surplus after purchases.
-    const allocation = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs - totals.goalExtras, goals, projectedGoals, month);
-    const remaining = round(totals.surplus - sum(Object.values(allocation.goals)));
-    const savings = Math.min(allocation.savings, Math.max(0, remaining));
-    const split = { ...emptyPockets(), Sparkonto: savings,
-      Urlaub: round(Math.min(allocation.vacation, Math.max(0, remaining - savings))) };
+    let projectedGoals = goalProjectionBalances(goals, projectedPhysical);
+    if (month === currentMonth) projectedGoals = Object.fromEntries(goals.map((goal) => [
+      goal.id, projectedGoals[goal.id] === null ? null :
+        Math.max(0, projectedGoals[goal.id]! - incomingPocketTransfers(state, goal.pocket, month)),
+    ]));
+    const allocationBlocked = goals.some((goal) => projectedGoals[goal.id] === null);
     for (const goal of goals) {
-      if (pocketKey(goal.pocket) === "motorrad") split.Motorrad += allocation.goals[goal.id];
-      projectedGoals[goal.id] = round(Math.max(projectedGoals[goal.id] + allocation.goals[goal.id], month === currentMonth ? actualGoals[goal.id] : 0));
+      const balance = projectedGoals[goal.id];
+      if (balance !== null && balance >= goal.target && !projectedCompletions.has(goal.id))
+        projectedCompletions.set(goal.id, `${addMonths(month, -1)}-01`);
+    }
+    // Preserve goal instructions, but fund savings only from surplus after purchases.
+    const funded = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs - totals.goalExtras,
+      goals.map((goal) => ({ ...goal, completedAt: goal.completedAt ?? projectedCompletions.get(goal.id) })), projectedGoals, month);
+    const allocation = { ...funded, goals: Object.fromEntries(goals.map((goal) => [goal.id, funded.goals[goal.id] ?? 0])) };
+    const remaining = round(totals.surplus - sum(Object.values(allocation.goals)));
+    const savings = allocationBlocked ? 0 : Math.min(allocation.savings, Math.max(0, remaining));
+    const split = { ...emptyPockets(), Sparkonto: savings,
+      Urlaub: allocationBlocked ? 0 : round(Math.min(allocation.vacation, Math.max(0, remaining - savings))) };
+    for (const goal of goals) {
+      const pocket = corePocket(goal.pocket);
+      if (pocket) split[pocket] += allocation.goals[goal.id];
+    }
+    if (month >= currentMonth) {
+      for (const [key, balance] of Object.entries(projectedPhysical)) {
+        if (corePocket(key) || balance === null) continue;
+        const rate = sum(goals.filter((goal) => pocketKey(goal.pocket) === key).map((goal) => allocation.goals[goal.id]));
+        const settled = incomingPocketTransfers(state, key, month, [], monthEnd);
+        const movements = sum(state.transactions.filter((row) => row.bank === "Revolut" &&
+          pocketKey(row.pocket) === key && row.date > (month === currentMonth ? state.settings.asOf : from) &&
+          row.date <= monthEnd).map((row) => row.amount));
+        projectedPhysical[key] = round(balance + rate - Math.min(rate, settled) + movements);
+      }
     }
     const end = { ...start };
     const rates = emptyPockets();
+    const remainingMovement = month === currentMonth
+      ? pocketMovements(state.transactions, state.settings.asOf, monthEnd) : movement;
     for (const pocket of pocketNames) {
       rates[pocket] = round(historical ? input.pocketIn[pocket] : split[pocket]);
-      const settled = month === currentMonth ? pocket === "Sparkonto" ? savingsTransferred : incomingPocketTransfers(state, pocket, month) : 0;
-      end[pocket] = available ? round(start[pocket] + rates[pocket] - Math.min(rates[pocket], settled) + (month === currentMonth ? 0 : movement[pocket]) - input.pocketOut[pocket] + (pocket === "Notgroschen" ? interest : 0)) : start[pocket];
+      const settled = month >= currentMonth ? pocket === "Sparkonto"
+        ? goals.some((goal) => corePocket(goal.pocket) === "Sparkonto")
+          ? Math.max(revolutSavingsTransferAmount(state.transactions, month, monthEnd), incomingPocketTransfers(state, pocket, month, [], monthEnd))
+          : revolutSavingsTransferAmount(state.transactions, month, monthEnd)
+        : incomingPocketTransfers(state, pocket, month, [], monthEnd) : 0;
+      end[pocket] = available ? round(start[pocket] + rates[pocket] - Math.min(rates[pocket], settled) + remainingMovement[pocket] - input.pocketOut[pocket] + (pocket === "Notgroschen" ? interest : 0)) : start[pocket];
       if (month < currentMonth && latestPocketSnapshot(state, pocket, monthEnd)) end[pocket] = actualPockets(state, monthEnd)[pocket];
       if (pocket === "Notgroschen" && month <= currentMonth && latestTRBalance(state, snapshotDate)) end[pocket] = latestTRBalance(state, snapshotDate)!.balance;
+      if (month < currentMonth && observed[pocketKey(pocket)]?.amount !== null && observed[pocketKey(pocket)]?.amount !== undefined)
+        end[pocket] = observed[pocketKey(pocket)].amount!;
     }
-    if (motorcycle?.openingBalance && month < currentMonth && monthEnd >= motorcycle.openingBalance.date)
-      end.Motorrad = goalBalance(state, motorcycle, actualPockets(state, monthEnd), monthEnd);
+    for (const pocket of pocketNames) {
+      if (projectedPhysical[pocketKey(pocket)] !== null) projectedPhysical[pocketKey(pocket)] = end[pocket];
+    }
+    projectedGoals = goalProjectionBalances(goals, projectedPhysical);
     if (available) previous = end;
-    return { month, ...totals, start, rates, goalRates: allocation.goals, goalEnd: { ...projectedGoals }, out: input.pocketOut, movement, end, interest, bikeTransfer: rates.Motorrad, available,
+    return { month, ...totals, start, rates, goalRates: allocation.goals, goalEnd: { ...projectedGoals }, physicalEnd: { ...projectedPhysical }, out: input.pocketOut, movement, end, interest, bikeTransfer: rates.Motorrad, available, allocationBlocked,
       remaining, roundUp: roundUpTotal(state.transactions, month),
-      total: sum([...Object.values(end), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => projectedGoals[goal.id])]),
+      total: physicalProjectionTotal(Object.fromEntries(pocketNames.map((pocket) =>
+        [pocket, projectedPhysical[pocketKey(pocket)] === null ? 0 : end[pocket]])), projectedPhysical),
       warning: !historical && (Object.values(end).some((value) => value < 0) || sum(Object.values(input.pocketIn)) > Math.max(0, totals.surplus)),
     };
   });
   const current = timeline.find((row) => row.month === currentMonth) ?? { ...totalsForMonth(currentMonth), month: currentMonth, bikeTransfer: 0, remaining: 0 };
   const allocationMonth = currentMonth;
   const nextTransfer = timeline.find((row) => row.month === allocationMonth)?.bikeTransfer ?? 0;
-  const countdown = bikeCountdown(motorcycle ? actualGoals[motorcycle.id] : actual.Motorrad, nextTransfer, motorcycle ? { ...state.settings, bikeTarget: motorcycle.target, bikePurchaseDate: motorcycle.date } : state.settings);
+  const bikeBalance = motorcycle ? actualGoals[motorcycle.id] : actual.Motorrad;
+  const countdown = { ...bikeCountdown(bikeBalance ?? 0, nextTransfer, motorcycle ? { ...state.settings, bikeTarget: motorcycle.target, bikePurchaseDate: motorcycle.date } : state.settings),
+    known: bikeBalance !== null };
+  if (!countdown.known) { countdown.onTrack = false; countdown.funded = false; }
   if (motorcycle?.funding) {
     const futureExtras = sum(Object.keys(motorcycle.funding.extras).filter((month) => month >= currentMonth)
       .map((month) => Math.max(0, goalExtraIncome(motorcycle, month) -
-        (month === currentMonth ? incomingPocketTransfers(state, motorcycle.pocket, month, [motorcycle.name]) : 0))));
+        (month === currentMonth ? incomingPocketTransfers(state, motorcycle.pocket, month) : 0))));
     countdown.required = state.settings.asOf > motorcycle.date ? 0 : round(Math.max(0, countdown.remaining - futureExtras) / countdown.months);
-    countdown.onTrack = countdown.funded || (!countdown.overdue && motorcycle.funding.monthly >= countdown.required);
+    countdown.onTrack = countdown.known && (countdown.funded || (!countdown.overdue && motorcycle.funding.monthly >= countdown.required));
   }
   const ninetyDays = [0, 1, 2].map((offset) => {
     const month = addMonths(currentMonth, offset);
@@ -947,18 +994,32 @@ export function calculateDashboard(state: AppState) {
     if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - personalAmount(transaction));
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);
-  return { plan: { ...plan, rows: plan.rows.map((row) => ({ ...row, actual: round(budgetSpending.get(row.id) ?? 0) })) }, goals, actualGoals,
-    monthlyFunding: [
-      { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: currentRow?.rates.Sparkonto ?? 0 },
-      ...[...goals].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)).map((goal) => ({ ...goal, amount: currentRow?.goalRates[goal.id] ?? 0 })),
-      { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: currentRow?.rates.Urlaub ?? 0 },
-    ].filter((item) => item.amount > 0 || (item.id === "savings" && savingsTransferred > 0)).map((item) => {
-      const transferred = item.id === "savings" ? savingsTransferred : incomingPocketTransfers(state, item.pocket, currentMonth, [item.name]);
-      return { ...item, transferred, done: item.id === "savings" ? transferred > 0 : transferMatches(item.amount, transferred) };
-    }),
+  const fundingInstructions = [
+    { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: round((currentRow?.rates.Sparkonto ?? 0) -
+      sum(goals.filter((goal) => corePocket(goal.pocket) === "Sparkonto").map((goal) => currentRow?.goalRates[goal.id] ?? 0))) },
+    ...[...goals].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)).map((goal) => ({ ...goal, amount: currentRow?.goalRates[goal.id] ?? 0 })),
+    { id: "vacation", name: "Urlaub", pocket: "Urlaub", amount: round((currentRow?.rates.Urlaub ?? 0) -
+      sum(goals.filter((goal) => corePocket(goal.pocket) === "Urlaub").map((goal) => currentRow?.goalRates[goal.id] ?? 0))) },
+  ].filter((item) => item.amount > 0 || (item.id === "savings" && savingsTransferred > 0));
+  const instructionGroups = new Map<string, typeof fundingInstructions>();
+  for (const item of fundingInstructions) {
+    const key = pocketKey(item.pocket);
+    instructionGroups.set(key, [...(instructionGroups.get(key) ?? []), item]);
+  }
+  const monthlyFunding = [...instructionGroups.values()].map((items) => {
+    const item = items[0];
+    const amount = sum(items.map((entry) => entry.amount));
+    const onlySavings = items.length === 1 && item.id === "savings";
+    const transferred = onlySavings ? savingsTransferred
+      : Math.max(item.id === "savings" ? savingsTransferred : 0, incomingPocketTransfers(state, item.pocket, currentMonth));
+    return { ...item, name: items.map((entry) => entry.name).join(" + "), amount,
+      ...(items.length > 1 ? { memberIds: items.map((entry) => entry.id), combined: true } : {}),
+      transferred, done: onlySavings ? transferred > 0 : transferMatches(amount, transferred) };
+  });
+  return { plan: { ...plan, rows: plan.rows.map((row) => ({ ...row, actual: round(budgetSpending.get(row.id) ?? 0) })) }, goals, actualGoals, goalStatuses, physical,
+    monthlyFunding,
     currentMonth, current, amex, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
-    totalAssets: sum([...Object.values(actual), ...goals.filter((goal) => pocketKey(goal.pocket) !== "motorrad").map((goal) => actualGoals[goal.id]),
-      motorcycle?.openingBalance ? actualGoals[motorcycle.id] - actual.Motorrad : 0]),
+    totalAssets: physicalAssetTotal(physical),
     countdown, nextTransfer, allocationMonth, ninetyDays,
     currentRoundUp: roundUpTotal(state.transactions.filter((t) => t.date <= state.settings.asOf), currentMonth),
     spending: [...categorySpending].map(([name, value]) => ({ name, value: round(value) })).sort((a, b) => b.value - a.value),

@@ -4,6 +4,7 @@ import { AccountDatabase } from "../src/lib/server/database";
 import { AutomationStore } from "../src/lib/automation/store";
 import { MerchantIndex, seedMerchants } from "../src/lib/automation/merchants";
 import { AutomationWorker } from "../src/lib/automation/worker";
+import { assertParserRuntimeAvailable } from "../src/lib/automation/parser-runtime";
 
 const config = readAccountConfig();
 const accounts = new AccountDatabase(config.databasePath);
@@ -16,9 +17,10 @@ const stop = new AbortController();
 process.once("SIGTERM", () => stop.abort());
 process.once("SIGINT", () => stop.abort());
 try {
+  await assertParserRuntimeAvailable();
   store.upsertMerchants(seedMerchants);
   const index = new MerchantIndex(store.loadMerchants());
-  console.info("Statement worker ready (concurrency=1, local processing).");
+  console.info("Statement worker ready (concurrency=1, isolated local parser, budget=120s).");
   await new AutomationWorker(store, randomUUID(), index).run(stop.signal);
 } finally {
   accounts.close();

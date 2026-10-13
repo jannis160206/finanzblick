@@ -178,4 +178,37 @@ export function migrateAutomation(db: DatabaseSync): void {
       INSERT INTO automation_migrations VALUES (9, unixepoch() * 1000);
     `);
   }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 10").get()
+  ) {
+    db.exec(`
+      ALTER TABLE automation_jobs ADD COLUMN error_code TEXT;
+      ALTER TABLE automation_jobs ADD COLUMN outcome_json TEXT
+        CHECK(outcome_json IS NULL OR (json_valid(outcome_json) AND length(outcome_json) <= 262144));
+      INSERT INTO automation_migrations VALUES (10, unixepoch() * 1000);
+    `);
+  }
+  if (
+    !db.prepare("SELECT 1 FROM automation_migrations WHERE version = 11").get()
+  ) {
+    db.exec(`
+      CREATE INDEX automation_statement_retention ON automation_jobs(updated_at)
+        WHERE kind = 'statement' AND status IN ('COMPLETED', 'FAILED') AND bytes = 0;
+      INSERT INTO automation_migrations VALUES (11, unixepoch() * 1000);
+    `);
+  }
+  if (!db.prepare("SELECT 1 FROM automation_migrations WHERE version = 12").get()) {
+    // An independently deployed migration 10 may not contain job metadata.
+    const columns = db.prepare("PRAGMA table_info(automation_jobs)").all();
+    if (!columns.some((column) => column.name === "error_code"))
+      db.exec("ALTER TABLE automation_jobs ADD COLUMN error_code TEXT");
+    if (!columns.some((column) => column.name === "outcome_json"))
+      db.exec(`ALTER TABLE automation_jobs ADD COLUMN outcome_json TEXT
+        CHECK(outcome_json IS NULL OR (json_valid(outcome_json) AND length(outcome_json) <= 262144))`);
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS automation_statement_retention ON automation_jobs(updated_at)
+        WHERE kind = 'statement' AND status IN ('COMPLETED', 'FAILED') AND bytes = 0;
+      INSERT INTO automation_migrations VALUES (12, unixepoch() * 1000);
+    `);
+  }
 }

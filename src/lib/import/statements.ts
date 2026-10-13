@@ -1,8 +1,10 @@
+import type { z } from "zod";
 import { classifyStatementRows, round, savingsPocket } from "@/lib/calc";
 import { isRaiffeisenBank, normalizeAccount, RAIFFEISEN_ACCOUNT } from "@/lib/accounts";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import {
   dateSchema,
+  statementRepairDraftSchema,
   transactionSchema,
   type AppState,
   type PocketSnapshot,
@@ -11,17 +13,19 @@ import {
 import { assertImportSize, MAX_STATEMENT_ROWS } from "@/lib/import/limits";
 import { amexBookingKey, isAmexScreenshot, numberStatementRows, statementBaseKey, statementFingerprint } from "./identity";
 import { hasTerminalText, recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
+import type { ImportResult } from "./result-schema";
 export { statementFingerprint } from "./identity";
 
 export type StatementSource = "Raiffeisen" | "Revolut" | "Amex";
-export type StatementDraft = Omit<Transaction, "amount"> & {
-  amount: number | null;
-};
+export type StatementDraft = z.infer<typeof statementRepairDraftSchema>;
 export type StatementIssue = {
   file: string;
   line?: number;
   message: string;
   draft?: StatementDraft;
+  action?: ImportResult["issues"][number]["action"];
+  reason?: ImportResult["issues"][number]["reason"];
+  evidence?: string;
 };
 export type StatementResult = {
   source: StatementSource | null;
@@ -49,6 +53,25 @@ export type StatementPreview = {
   issues: StatementIssue[];
   files: string[];
 };
+
+export function admitStatementRepairDrafts<T extends StatementResult>(result: T): T {
+  return { ...result, issues: result.issues.map((issue): StatementIssue => {
+    const parsed = issue.draft ? statementRepairDraftSchema.safeParse(issue.draft) : undefined;
+    const invalid = parsed && !parsed.success;
+    const reupload = issue.action === "reupload" || issue.reason !== undefined || invalid;
+    const { draft, ...details } = issue;
+    const evidence = issue.evidence ?? (draft && reupload ? [
+      draft.date, draft.description, draft.pocket,
+      draft.amount === null ? "" : String(draft.amount), ...(draft.rawDetails ?? []),
+    ].filter(Boolean).join(" · ") : undefined);
+    return { ...details, file: issue.file.slice(0, 200), message: issue.message.slice(0, 2000),
+      action: reupload || !parsed ? "reupload" : "correct",
+      ...(invalid && !issue.reason ? { reason: "invalid-repair-draft" } : {}),
+      ...(evidence ? { evidence: evidence.slice(0, 2000) } : {}),
+      ...(!reupload && parsed?.success ? { draft: parsed.data } : {}),
+    };
+  }) };
+}
 type TableRow = { line: number; cells: string[] };
 type Header = {
   date: number;
@@ -384,9 +407,10 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
     skipped: 0,
     issues: [],
   };
-  const report = (line: number, message: string, draft?: StatementDraft) => {
+  const report = (line: number, message: string, draft?: StatementDraft,
+    details: Pick<StatementIssue, "action" | "reason" | "evidence"> = {}) => {
     result.skipped++;
-    result.issues.push({ file, line, message, ...(draft ? { draft } : {}) });
+    result.issues.push({ file, line, message, ...(draft ? { draft } : {}), ...details });
   };
   for (const table of tables) {
     const hasTransactionBlocks = table.some((row) =>
@@ -613,7 +637,9 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         report(
           row.line,
           `Fremdwährung ${currency}: nicht als Euro importiert.`,
-          { ...draft, amount: null },
+          draft,
+          { action: "reupload", reason: "foreign-currency",
+            evidence: `Quellwährung ${currency}: ${row.cells.join(" · ")}`.slice(0, 2000) },
         );
         continue;
       }
@@ -669,7 +695,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
     throw new Error(
       "Format erkannt, aber keine lesbaren Transaktionszeilen gefunden. Bitte den vollständigen CSV- oder XLSX-Kontoauszug verwenden.",
     );
-  return result;
+  return admitStatementRepairDrafts(result);
 }
 
 function readRevolutBalances(

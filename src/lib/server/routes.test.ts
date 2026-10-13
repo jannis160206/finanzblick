@@ -219,6 +219,21 @@ describe("account and finance routes", () => {
     ).toEqual({ state, revision: 1 });
   });
 
+  it("rejects duplicate finance identities at the authenticated HTTP boundary without changing data", async () => {
+    const alice = await registerUser();
+    const state = blankTestState();
+    const saved = await putFinance(request("/api/finance", "PUT", { state, revision: 0 }, alice.cookie));
+    expect(saved.status).toBe(200);
+    const invalid = structuredClone(state);
+    invalid.financeRows = [
+      { id: "same", label: "Einkommen A", kind: "income", values: { "2026-10": 1000 } },
+      { id: "same", label: "Einkommen B", kind: "income", values: { "2026-10": 2000 } },
+    ];
+    const rejected = await putFinance(request("/api/finance", "PUT", { state: invalid, revision: 1 }, alice.cookie));
+    expect(rejected.status).toBe(400);
+    expect(await (await getFinance(request("/api/finance", "GET", undefined, alice.cookie))).json()).toEqual({ state, revision: 1 });
+  });
+
   it("logs in, rotates cookies, reports session users, and revokes on logout", async () => {
     const registered = await registerUser();
     const wrong = await login(

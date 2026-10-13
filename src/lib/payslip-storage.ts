@@ -1,5 +1,44 @@
 import { payslipKey, payslipSchema, type Payslip } from "@/lib/payslip-schema";
 
+export type PayslipReview = { key: string; expected: Payslip | null }[];
+
+export function capturePayslipReview(existing: Payslip[], incoming: Payslip[]): PayslipReview {
+  return [...new Set(incoming.map(payslipKey))].map((key) => {
+    const entry = existing.find((value) => payslipKey(value) === key);
+    return { key, expected: entry ? payslipSchema.parse(entry) : null };
+  });
+}
+
+export class PayslipMutationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PayslipMutationError";
+  }
+}
+
+export class PayslipChangedError extends PayslipMutationError {
+  constructor() {
+    super("Abrechnung inzwischen geändert oder entfernt. Bitte abbrechen und die aktuelle Abrechnung erneut prüfen bzw. die PDF erneut hochladen.");
+    this.name = "PayslipChangedError";
+  }
+}
+
+export function assertPayslipReview(existing: Payslip[], review: PayslipReview): void {
+  for (const { key, expected } of review) {
+    const matches = existing.filter((entry) => payslipKey(entry) === key);
+    if (expected === null ? matches.length > 0
+      : matches.length !== 1 ||
+        JSON.stringify(payslipSchema.parse(matches[0])) !== JSON.stringify(expected))
+      throw new PayslipChangedError();
+  }
+}
+
+export function removeReviewedPayslip(existing: Payslip[], expected: Payslip): Payslip[] {
+  const key = payslipKey(expected);
+  assertPayslipReview(existing, [{ key, expected: payslipSchema.parse(expected) }]);
+  return existing.filter((entry) => payslipKey(entry) !== key);
+}
+
 export function preparePayslipMerge(existing: Payslip[], incoming: Payslip[]) {
   const byKey = new Map(existing.map((entry) => [payslipKey(entry), entry]));
   const unique = new Map<string, Payslip>();
@@ -12,7 +51,7 @@ export function preparePayslipMerge(existing: Payslip[], incoming: Payslip[]) {
     const earlier = unique.get(key);
     if (earlier) {
       if (JSON.stringify(earlier) !== JSON.stringify(entry))
-        throw new Error("Mehrere unterschiedliche Abrechnungen für denselben Arbeitgeber und Monat. Bitte nur die gültige Fassung übernehmen.");
+        throw new PayslipMutationError("Mehrere unterschiedliche Abrechnungen für denselben Arbeitgeber und Monat. Bitte nur die gültige Fassung übernehmen.");
       duplicates++;
       continue;
     }
@@ -26,6 +65,6 @@ export function preparePayslipMerge(existing: Payslip[], incoming: Payslip[]) {
     byKey.set(key, entry);
     changed.push(entry);
   }
-  if (byKey.size > 240) throw new Error("Es können höchstens 240 Lohnabrechnungen gespeichert werden.");
+  if (byKey.size > 240) throw new PayslipMutationError("Es können höchstens 240 Lohnabrechnungen gespeichert werden.");
   return { entries: [...byKey.values()].sort((a, b) => payslipKey(a).localeCompare(payslipKey(b))), duplicates, conflicts, changed };
 }

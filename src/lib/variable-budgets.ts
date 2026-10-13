@@ -62,13 +62,20 @@ export function applyVariableBudgets(state: AppState): AppState {
   const months = [2026, 2027].flatMap((year) => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`))
     .filter((month) => month >= currentMonth);
   const used = new Set<string>();
+  const reservedIds = new Set(state.financeRows.map((row) => row.id));
   const variableRows: FinanceRow[] = variableBudgetLines.map((line) => {
     const old = state.financeRows.find((row) => !used.has(row.id) && matches(row, line));
     if (old) used.add(old.id);
     const values = { ...old?.values };
     const overrides = Object.fromEntries(Object.entries(old?.overrides ?? {}).filter(([month]) => month < currentMonth));
     for (const month of months) values[month] = amountFor(line, month, state.holidayRanges ?? []);
-    return { id: old?.id ?? `budget-${line.id}`, label: line.label, kind: "variable",
+    let id = old?.id ?? `budget-${line.id}`;
+    if (!old) {
+      let suffix = 1;
+      while (reservedIds.has(id)) id = `budget-${line.id}-${suffix++}`;
+      reservedIds.add(id);
+    }
+    return { id, label: line.label, kind: "variable",
       ...(line.category ? { planCategory: line.category } : {}), values,
       ...(Object.keys(overrides).length ? { overrides } : {}),
     };

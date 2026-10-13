@@ -1,6 +1,7 @@
 "use client";
 
 import { Clock3 } from "lucide-react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader,
@@ -11,6 +12,8 @@ import { StatementImportStatus } from "@/components/statement-import-status";
 import { isActiveJob, isActiveUpload, type UploadActivity, type UploadPhase } from "@/components/upload-activity";
 import type { AutomationJob } from "@/lib/automation/schema";
 import { cn } from "@/lib/utils";
+import { retainImportResults, type ImportResult } from "@/lib/import/results";
+import { automationFailure } from "@/lib/automation/errors";
 
 const phases: Record<UploadPhase, { status: AutomationJob["status"]; label: string }> = {
   waiting: { status: "QUEUED", label: "Wartet auf Übertragung" },
@@ -23,21 +26,38 @@ const phases: Record<UploadPhase, { status: AutomationJob["status"]; label: stri
 };
 
 export function UploadStatus({
-  activities, jobs, error, summary, reviewCount,
+  activities, jobs, error, summary, reviewCount, results = [], onReview, onReupload,
 }: {
   activities: UploadActivity[];
   jobs: AutomationJob[];
   error: string | null;
   summary?: { imported: number; issues: string[] };
   reviewCount: number;
+  results?: ImportResult[];
+  onReview?: () => void;
+  onReupload?: () => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const retainedResults = retainImportResults(results);
+  const resultById = new Map(retainedResults.map((result) => [result.uploadId, result]));
   const remoteIds = new Set(jobs.map((job) => job.id));
-  const local = activities.filter((item) => !remoteIds.has(item.id));
+  const activityIds = new Set(activities.map((item) => item.id));
+  const local = [
+    ...activities.filter((item) => !remoteIds.has(item.id)).map((item) => ({
+      ...item, result: resultById.get(item.id) ?? item.result,
+    })),
+    ...retainedResults.filter((result) => !remoteIds.has(result.uploadId) && !activityIds.has(result.uploadId))
+      .map((result): UploadActivity => ({ id: result.uploadId, name: result.name,
+        phase: result.status === "failed" ? "failed" : "completed",
+        error: result.status === "failed" && result.errorCode ? automationFailure(result.errorCode).message : null,
+        errorCode: result.errorCode, updatedAt: result.completedAt, result })),
+  ];
   const activeCount = local.filter(isActiveUpload).length +
     jobs.filter((job) => job.kind === "statement" && isActiveJob(job)).length;
   const latestJobs = jobs.map((job) => {
     const failure = activities.find((item) => item.id === job.id && item.phase === "failed");
-    return failure ? { ...job, error: job.error ?? failure.error } : job;
+    return { ...job, result: resultById.get(job.id) ?? job.result,
+      error: job.error ?? failure?.error ?? null };
   });
   const recentIds = new Set([
     ...local.filter((item) => !isActiveUpload(item)).reverse(),
@@ -45,13 +65,14 @@ export function UploadStatus({
   ].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 2).map((item) => item.id));
   const visibleLocal = local.filter((item) => isActiveUpload(item) || recentIds.has(item.id));
   const visibleJobs = latestJobs.filter((job) => isActiveJob(job) || recentIds.has(job.id));
-  const hasIssues = !!error || !!summary?.issues.length ||
-    visibleLocal.some((item) => item.phase === "failed") ||
-    visibleJobs.some((job) => job.status === "FAILED" || !!job.error);
+  const hasResults = retainedResults.length > 0 || latestJobs.some((job) => job.result);
+  const hasIssues = !!error || (!hasResults && !!summary?.issues.length) ||
+    visibleLocal.some((item) => item.phase === "failed" || (item.result && item.result.status !== "imported")) ||
+    visibleJobs.some((job) => job.status === "FAILED" || !!job.error || (job.result && job.result.status !== "imported"));
   const empty = !visibleLocal.length && !visibleJobs.length && !summary && !error;
   const announcement = `${activeCount} ${activeCount === 1 ? "Upload" : "Uploads"} in Bearbeitung.${hasIssues ? " Importhinweise vorhanden." : ""}`;
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button type="button" variant="outline" size="icon" className="relative size-11 shrink-0"
           aria-label="Uploadstatus" title={`Uploadstatus · ${announcement}`}>
@@ -82,12 +103,17 @@ export function UploadStatus({
           <div aria-live="polite" className="space-y-3">
             {visibleLocal.map((item) => <AutomationJobCard key={item.id}
               job={{ id: item.id, name: item.name, status: phases[item.phase].status,
-                progress: item.phase === "completed" ? 100 : 0, error: item.error }}
+                progress: item.phase === "completed" ? 100 : 0, error: item.error,
+                result: item.result, errorCode: item.errorCode }}
               label={phases[item.phase].label}
-              indeterminate={isActiveUpload(item)} />)}
+              indeterminate={isActiveUpload(item)}
+              onReview={onReview ? () => { setOpen(false); onReview(); } : undefined}
+              onReupload={onReupload ? () => { setOpen(false); onReupload(); } : undefined} />)}
           </div>
-          <AutomationStatus jobs={visibleJobs} error={error} showCompleted />
-          {summary && <StatementImportStatus imported={summary.imported}
+          <AutomationStatus jobs={visibleJobs} error={error} showCompleted
+            onReview={onReview ? () => { setOpen(false); onReview(); } : undefined}
+            onReupload={onReupload ? () => { setOpen(false); onReupload(); } : undefined} />
+          {summary && !hasResults && <StatementImportStatus imported={summary.imported}
             issues={summary.issues} reviewCount={reviewCount} />}
         </DialogBody>
       </DialogContent>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
-import { preparePayslipMerge } from "@/lib/payslip-storage";
+import { assertPayslipReview, capturePayslipReview, preparePayslipMerge, removeReviewedPayslip } from "@/lib/payslip-storage";
 import { payslipSchema, type Payslip, type PayrollForecast } from "@/lib/payslip-schema";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema } from "@/lib/types";
@@ -63,7 +63,7 @@ describe("local payroll records", () => {
 
   it("round-trips payroll and forecasts through JSON and Excel without replacing earlier manual sixth values", async () => {
     const state = appStateSchema.parse({
-      ...createSeed(), payslips: [january, { ...january, month: 2, unresolvedSixthBonus: 1000, specialSv: 141.2 }], payrollForecasts: [forecast],
+      ...createSeed(), payslips: [january, { ...january, month: 2, unresolvedSixthBonus: 1000, specialSv: 141.2, payrollContextIssues: ["buag", "apprentice", "employment-ended", "context-unknown"] }], payrollForecasts: [forecast],
       annualSixth: [{
         year: 2026, month: 1, employer: "Manuell", regularGross: 1000, specialGross: 0,
         plannedSpecialGross: 0, monthlyPayroll: true,
@@ -82,5 +82,38 @@ describe("local payroll records", () => {
 
   it.each([-1, 0.001, 1_000_000_000.01])("rejects invalid separate bonus amounts: %s", (unresolvedSixthBonus) => {
     expect(payslipSchema.safeParse({ ...january, unresolvedSixthBonus }).success).toBe(false);
+  });
+
+  it("captures reviewed records independently of subsequent mutation and object field order", () => {
+    const record = { ...january };
+    const review = capturePayslipReview([record], [january]);
+    const { employer, ...fields } = january;
+    assertPayslipReview([{ employer, ...fields }], review);
+    record.regularGross = 3200;
+    expect(() => assertPayslipReview([record], review)).toThrow("erneut prüfen");
+    expect(review[0].expected?.regularGross).toBe(3000);
+  });
+
+  it.each<{ current: Payslip[] }>([
+    { current: [] },
+    { current: [{ ...january, regularGross: 3200 }] },
+    { current: [{ ...january, payrollContextIssues: ["buag"] }] },
+  ])("rejects removal of a record changed since preview: %j", ({ current }) => {
+    const before = structuredClone(current);
+    expect(() => removeReviewedPayslip(current, january)).toThrow("inzwischen geändert");
+    expect(current).toEqual(before);
+  });
+
+  it("checks all reviewed periods atomically, including newly inserted incoming months", () => {
+    const incoming = [{ ...january, regularGross: 3100 }, { ...january, month: 2 }];
+    const review = capturePayslipReview([january], incoming);
+    expect(() => assertPayslipReview([january, { ...january, month: 2, specialGross: 100 }], review)).toThrow("erneut hochladen");
+    assertPayslipReview([january, { ...january, month: 3 }], review);
+    expect(removeReviewedPayslip([january, { ...january, month: 3 }], january)).toEqual([{ ...january, month: 3 }]);
+  });
+
+  it("validates compact whitelisted context reasons", () => {
+    expect(payslipSchema.safeParse({ ...january, payrollContextIssues: ["raw sensitive text"] }).success).toBe(false);
+    expect(payslipSchema.safeParse({ ...january, payrollContextIssues: ["buag", "buag"] }).success).toBe(false);
   });
 });

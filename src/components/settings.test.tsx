@@ -10,7 +10,7 @@ import { calculateDashboard } from "@/lib/calc";
 import type { AppState } from "@/lib/types";
 
 const seasonal = vi.hoisted(() => ({ setPreview: vi.fn(), setTestTheme: vi.fn() }));
-vi.mock("./finance-provider", () => ({ useFinance: vi.fn() }));
+vi.mock("./finance-provider", () => ({ useFinance: vi.fn(), useFinanceRestoration: () => vi.fn() }));
 vi.mock("./seasonal-theme-provider", () => ({ useSeasonalTheme: () => ({ ...seasonal, testTheme: null }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 

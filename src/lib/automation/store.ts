@@ -33,10 +33,22 @@ import {
   logoAccountIdSchema,
   type AuthorizedMerchantLogo,
 } from "./merchant-logo-grant-metadata";
+import {
+  automationErrorCodeSchema,
+  automationFailure,
+  type AutomationErrorCode,
+  type AutomationFailure,
+} from "./errors";
+import {
+  IMPORT_RESULT_RETENTION_MS,
+  importResultSchema,
+  type ImportResult,
+} from "@/lib/import/result-schema";
 
-const rowSchema = automationJobSchema.extend({
+const rowSchema = automationJobSchema.safeExtend({
   userId: z.string(),
   bytes: z.number().int().nonnegative(),
+  errorCode: automationErrorCodeSchema.nullable().default(null),
 });
 export type ClaimedJob = z.infer<typeof rowSchema>;
 export class WorkerLeaseError extends Error {
@@ -47,7 +59,23 @@ export class WorkerLeaseError extends Error {
 }
 
 const columns = `id, kind, name, status, progress, attempts, cursor, total, error,
+  error_code AS errorCode,
+  outcome_json AS result,
   updated_at AS updatedAt, user_id AS userId, bytes`;
+
+function jobFromRow(row: Record<string, unknown> | undefined): AutomationJob & { errorCode: AutomationErrorCode | null } {
+  if (!row) throw new Error("Automation job missing");
+  const job = automationJobSchema.parse({
+    ...row,
+    result: typeof row.result === "string" ? JSON.parse(row.result) : row.result ?? null,
+  });
+  if (job.result && (job.kind !== "statement" || job.result.uploadId !== job.id))
+    throw new Error("Import result/job mismatch");
+  return {
+    ...job,
+    errorCode: automationErrorCodeSchema.nullable().parse(row.errorCode ?? null),
+  };
+}
 
 const merchantColumns = `id, canonical_name AS canonicalName, aliases_json, regex_json,
   default_category AS defaultCategory, region, source, updated_at AS updatedAt,
@@ -239,7 +267,7 @@ export class AutomationStore {
         (id, user_id, kind, name, status, bytes, available_at, updated_at, created_at)
         VALUES (?, ?, 'statement', ?, 'UPLOADING', ?, ?, ?, ?)`,
       ).run(id, userId, name, bytes, now, now, now);
-      return automationJobSchema.parse(
+      return jobFromRow(
         db
           .prepare(`SELECT ${columns} FROM automation_jobs WHERE id = ?`)
           .get(id),
@@ -291,7 +319,7 @@ export class AutomationStore {
           ORDER BY (status NOT IN ('COMPLETED', 'FAILED')) DESC, created_at DESC, rowid DESC LIMIT 1`,
         )
         .get(userId);
-      let previous = existing ? automationJobSchema.parse(existing) : null;
+      let previous = existing ? jobFromRow(existing) : null;
       if (options.onceVersion) {
         const pass = db
           .prepare(
@@ -299,7 +327,7 @@ export class AutomationStore {
               (SELECT job_id FROM automation_backfill_passes WHERE user_id = ? AND version = ?)`,
           )
           .get(userId, userId, options.onceVersion);
-        if (pass) return automationJobSchema.parse(pass);
+        if (pass) return jobFromRow(pass);
         if (
           previous &&
           previous.status !== "COMPLETED" &&
@@ -336,7 +364,8 @@ export class AutomationStore {
       if (previous) {
         db.prepare(
           `UPDATE automation_jobs SET status = 'QUEUED', progress = 0,
-          attempts = 0, cursor = 0, total = 0, error = NULL, owner = NULL,
+          attempts = 0, cursor = 0, total = 0, error = NULL, error_code = NULL,
+          outcome_json = NULL, owner = NULL,
           available_at = ?, updated_at = ?, created_at = ?
           WHERE id = ? AND user_id = ? AND kind = 'backfill'`,
         ).run(now, now, now, id, userId);
@@ -381,7 +410,7 @@ export class AutomationStore {
         db.prepare(
           "INSERT INTO automation_backfill_passes (user_id, version, job_id) VALUES (?, ?, ?)",
         ).run(userId, options.onceVersion, id);
-      return automationJobSchema.parse(
+      return jobFromRow(
         db
           .prepare(`SELECT ${columns} FROM automation_jobs WHERE id = ?`)
           .get(id),
@@ -412,7 +441,7 @@ export class AutomationStore {
         ORDER BY (status NOT IN ('COMPLETED', 'FAILED')) DESC, created_at DESC, id DESC LIMIT 20`,
         )
         .all(userId)
-        .map((row) => automationJobSchema.parse(row)),
+        .map(jobFromRow),
     }));
   }
 
@@ -478,10 +507,12 @@ export class AutomationStore {
           attempts >= MAX_ATTEMPTS ? "FAILED" : "RETRYING",
           attempts,
           now + 1000 * 2 ** Math.min(attempts - 1, 6),
-          "Worker unterbrochen; Verarbeitung wird fortgesetzt.",
+          automationFailure("WORKER_INTERRUPTED").message,
           now,
           String(row.id),
         );
+        db.prepare("UPDATE automation_jobs SET error_code = ? WHERE id = ?")
+          .run("WORKER_INTERRUPTED", String(row.id));
       }
       db.prepare(
         `UPDATE automation_jobs SET status = 'FAILED', error = 'Upload abgebrochen.', updated_at = ?
@@ -502,12 +533,14 @@ export class AutomationStore {
         .get(now);
       if (!row) return null;
       db.prepare(
-        `UPDATE automation_jobs SET status = 'PROCESSING', owner = ?, error = NULL, updated_at = ? WHERE id = ?`,
+        `UPDATE automation_jobs SET status = 'PROCESSING', owner = ?, error = NULL, error_code = NULL, updated_at = ? WHERE id = ?`,
       ).run(owner, now, String(row.id));
       return rowSchema.parse({
         ...row,
+        result: jobFromRow(row).result,
         status: "PROCESSING",
         error: null,
+        errorCode: null,
         updatedAt: now,
       });
     });
@@ -548,11 +581,19 @@ export class AutomationStore {
     job: ClaimedJob,
     cursor: number,
     completed: boolean,
+    result?: ImportResult,
   ): void {
     this.assertOwner(db, owner, job);
+    if (result) {
+      const validated = importResultSchema.parse(result);
+      if (!completed || job.kind !== "statement" || validated.uploadId !== job.id)
+        throw new Error("Import result/job mismatch");
+      db.prepare("UPDATE automation_jobs SET outcome_json = ? WHERE id = ? AND user_id = ?")
+        .run(JSON.stringify(validated), job.id, job.userId);
+    }
     db.prepare(
       `UPDATE automation_jobs SET cursor = ?, progress = ?, status = ?, owner = NULL,
-      error = NULL, updated_at = ? WHERE id = ? AND user_id = ?`,
+      error = NULL, error_code = NULL, updated_at = ? WHERE id = ? AND user_id = ?`,
     ).run(
       cursor,
       completed ? 100 : Math.floor((100 * cursor) / Math.max(1, job.total)),
@@ -574,19 +615,21 @@ export class AutomationStore {
   fail(
     owner: string,
     job: ClaimedJob,
-    message: string,
+    failure: string | AutomationFailure,
     now = Date.now(),
   ): void {
     this.accounts.transaction((db) => {
       this.assertOwner(db, owner, job);
       const attempts = job.attempts + 1;
+      const retryable = typeof failure === "string" || failure.retryable;
       db.prepare(
         `UPDATE automation_jobs SET attempts = ?, status = ?, owner = NULL,
-        error = ?, available_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
+        error = ?, error_code = ?, available_at = ?, updated_at = ? WHERE id = ? AND user_id = ?`,
       ).run(
         attempts,
-        attempts >= MAX_ATTEMPTS ? "FAILED" : "RETRYING",
-        message,
+        !retryable || attempts >= MAX_ATTEMPTS ? "FAILED" : "RETRYING",
+        typeof failure === "string" ? failure : failure.message,
+        typeof failure === "string" ? null : failure.code,
         now + 1000 * 2 ** Math.min(attempts - 1, 6),
         now,
         job.id,
@@ -602,9 +645,22 @@ export class AutomationStore {
         .get(owner);
       if (graceful && lease && Number(lease.expires_at) > Date.now())
         db.prepare(
-          `UPDATE automation_jobs SET status = 'QUEUED', owner = NULL WHERE owner = ? AND status = 'PROCESSING'`,
-        ).run(owner);
+          `UPDATE automation_jobs SET status = 'QUEUED', owner = NULL,
+            error = ?, error_code = 'WORKER_ABORTED', updated_at = ?
+            WHERE owner = ? AND status = 'PROCESSING'`,
+        ).run(automationFailure("WORKER_ABORTED").message, Date.now(), owner);
       db.prepare("DELETE FROM automation_worker WHERE owner = ?").run(owner);
+    });
+  }
+
+  cancel(owner: string, job: ClaimedJob): void {
+    this.accounts.transaction((db) => {
+      this.assertOwner(db, owner, job);
+      db.prepare(
+        `UPDATE automation_jobs SET status = 'QUEUED', owner = NULL,
+          error = ?, error_code = 'WORKER_ABORTED', updated_at = ?
+          WHERE id = ? AND user_id = ?`,
+      ).run(automationFailure("WORKER_ABORTED").message, Date.now(), job.id, job.userId);
     });
   }
 
@@ -625,10 +681,15 @@ export class AutomationStore {
       db.prepare(
         "UPDATE automation_jobs SET bytes = 0 WHERE id = ? AND status IN ('COMPLETED', 'FAILED')",
       ).run(id);
+    });
+  }
+
+  pruneCompletedStatements(now = Date.now()): void {
+    this.accounts.transaction((db) => {
       db.prepare(
         `DELETE FROM automation_jobs WHERE status IN ('COMPLETED', 'FAILED')
-        AND kind = 'statement' AND bytes = 0 AND updated_at < ?`,
-      ).run(Date.now() - 7 * 86_400_000);
+        AND kind = 'statement' AND bytes = 0 AND updated_at <= ?`,
+      ).run(now - IMPORT_RESULT_RETENTION_MS);
     });
   }
 

@@ -32,6 +32,11 @@ function upload(state: AppState, results: StatementResult[]) {
   const preview = prepareStatementImport(results, state);
   return commitStatementImport(state, preview.automatic, [], preview.metadata).state;
 }
+function financialState(state: AppState) {
+  const financial = { ...state };
+  delete financial.importResults;
+  return financial;
+}
 
 describe("Amex screenshot validation and final PDF reconciliation", () => {
   it("corrects unique old amounts once, preserving identity, categories, aliases and sharing", () => {
@@ -46,7 +51,9 @@ describe("Amex screenshot validation and final PDF reconciliation", () => {
     expect(saved.transactions.some((row) => row.id === "new")).toBe(false);
     expect(saved.amexScreenshotValidation).toEqual({ version: 1, date: "2026-10-06" });
     expect(saved.amexBalanceSnapshots?.at(-1)).toMatchObject({ balance: 1489.69 });
-    expect(upload(saved, [result])).toEqual(saved);
+    const repeated = upload(saved, [result]);
+    expect(financialState(repeated)).toEqual(financialState(saved));
+    expect(repeated.importResults).toHaveLength(saved.importResults!.length + 1);
     const later = reconcileAmexImports(saved, { rows: [booking("again", { amount: -220 })], validationDate: "2026-10-07" });
     expect(later.state.transactions.find((row) => row.id === "old")?.amount).toBe(-207.82);
   });
@@ -77,7 +84,9 @@ describe("Amex screenshot validation and final PDF reconciliation", () => {
       sharedWithRaphael: true, merchantAlias: "Urlaub", manualCategory: true, fixedCost: false,
     });
     expect(saved.transactions).toHaveLength(2);
-    expect(upload(saved, [pdf])).toEqual(saved);
+    const repeated = upload(saved, [pdf]);
+    expect(financialState(repeated)).toEqual(financialState(saved));
+    expect(repeated.importResults).toHaveLength(saved.importResults!.length + 1);
     const reimport = upload(saved, [screenshot([old])]);
     expect(reimport.transactions).toEqual(saved.transactions);
   });
@@ -101,7 +110,9 @@ describe("Amex screenshot validation and final PDF reconciliation", () => {
     expect(saved.transactions[0]).toMatchObject({ id: "pending", amount: -6.9, amexSource: "pdf", amexStatus: "posted" });
     expect(saved.amexBalanceSnapshots?.[0].pendingBalance).toBe(6.9);
     expect(amexFunding(saved, actualBookings(saved)).outstanding).toBe(1496.59);
-    expect(upload(saved, [pdf])).toEqual(saved);
+    const repeated = upload(saved, [pdf]);
+    expect(financialState(repeated)).toEqual(financialState(saved));
+    expect(repeated.importResults).toHaveLength(saved.importResults!.length + 1);
     const redropped = upload(saved, [screenshot([old])]);
     expect(redropped.transactions).toEqual(saved.transactions);
     expect(amexFunding(redropped, actualBookings(redropped)).outstanding).toBe(1496.59);

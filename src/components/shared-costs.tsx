@@ -13,7 +13,7 @@ import { classify } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { parseStatementAmount } from "@/lib/import/statements";
 import { bookingDescription } from "@/lib/import/merchant-description";
-import { isSharedHoliday, personalAmount, selectSharedBookings, type AccountedTransaction, type HolidayReceivable } from "@/lib/shared-holiday";
+import { decideSharedSettlement, isRaphaelPayment, isSharedHoliday, personalAmount, selectSharedBookings, type AccountedTransaction, type HolidayReceivable } from "@/lib/shared-holiday";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 
 function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; onPaid: (id: string) => void; disabled: boolean }) {
@@ -23,7 +23,8 @@ function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; on
         <p className="truncate font-medium" title={bookingDescription(item)}>{bookingDescription(item)}</p>
         <p className="text-muted-foreground">{dateLabel(item.date)} · Gesamt {currency(item.fullAmount)} · Meine Hälfte {currency(item.ownSpend)}</p>
       </div>
-      <span className="text-primary">Offen</span>
+      <span className="text-primary">Offen {currency(item.outstanding)}</span>
+      {item.refundedAmount > 0 && <span className="text-muted-foreground">Händlererstattung {currency(item.refundedAmount)}</span>}
       <Button size="sm" variant="ghost" disabled={disabled}
         aria-label={`Als bezahlt markieren: ${item.description}`}
         onClick={() => onPaid(item.bookingId)}>Als bezahlt markieren</Button>
@@ -79,10 +80,17 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
   const [amount, setAmount] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [paid, setPaid] = useState<string[]>([]);
+  const [settlements, setSettlements] = useState<Record<string, string>>({});
   const [limit, setLimit] = useState(50);
   const count = items.filter((item) => item.status === "Offen").length;
   const openItems = items.filter((item) => item.status === "Offen" && !paid.includes(item.bookingId));
-  const pending = selected.length > 0 || paid.length > 0;
+  const pending = selected.length > 0 || paid.length > 0 || Object.keys(settlements).length > 0;
+  const incoming = open ? bookings.filter((row) => row.amount > 0 &&
+    (row.holidayRefundFor || row.holidayRefundPending || row.sharedRefundFor || row.sharedRefundUnlinked ||
+      row.sharedRepaymentFor || isRaphaelPayment(row) ||
+      (!classify(row).isTransfer && !["Gehalt", "Rufbereitschaft"].includes(classify(row).category) &&
+        items.some((item) => !item.bookingId.startsWith("planned:") && item.date <= row.date && item.fullAmount >= row.amount)))) : [];
+  const overpaidItems = items.filter((item) => item.overpaid > 0);
   const candidates = useMemo(() => open
     ? bookings.filter((row) => row.amount < 0 && !isSharedHoliday(row) && !classify(row).isTransfer)
     : [], [bookings, open]);
@@ -93,7 +101,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
       .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
   }, [candidates, query, month, amount]);
   const invalidAmount = !!amount && parseStatementAmount(amount) === null;
-  const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setLimit(50); };
+  const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setSettlements({}); setLimit(50); };
   return <>
     <Dialog open={open} onOpenChange={changeOpen}>
     <Tooltip label="Geteilte Buchungen und offene Beträge">
@@ -110,9 +118,10 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
           <DialogTitle>Geteilt</DialogTitle>
           <DialogDescription>Meine Hälfte 50 % · Raphael 50 %</DialogDescription>
           <Button size="icon" variant="ghost" className="absolute top-3 right-3 size-11 rounded-full text-muted-foreground hover:text-foreground sm:top-4 sm:right-4" aria-label="Geteilt schließen" onClick={() => changeOpen(false)}><X className="size-4" /></Button>
-        <Tabs.List aria-label="Geteilt-Ansicht" className="mt-3 grid grid-cols-2 gap-1 rounded-md bg-muted p-1">
+        <Tabs.List aria-label="Geteilt-Ansicht" className="mt-3 grid grid-cols-3 gap-1 rounded-md bg-muted p-1">
           <Tabs.Trigger value="search" className="min-h-10 rounded px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Suchen</Tabs.Trigger>
           <Tabs.Trigger value="open" className="min-h-10 rounded px-3 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Offen · {openItems.length}</Tabs.Trigger>
+          <Tabs.Trigger value="refunds" className="min-h-10 rounded px-2 py-2 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:shadow-sm">Erstattungen{incoming.some((row) => row.holidayRefundPending) ? " · Prüfen" : ""}</Tabs.Trigger>
         </Tabs.List>
         </DialogHeader>
         <DialogBody aria-label="Buchungslisten">
@@ -149,6 +158,32 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
           <p className="text-xs text-muted-foreground">Bezahlmarkierungen erst mit „Speichern“ übernehmen.</p>
           <ShareRows items={openItems} disabled={!!storageError} onPaid={(id) => setPaid((ids) => [...ids, id])} />
           {!openItems.length && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Teilungen.</p>}
+          {overpaidItems.length > 0 && <section className="space-y-2">
+            <h3 className="text-sm font-medium">An Raphael zurückzuzahlen</h3>
+            <p className="text-xs text-muted-foreground">Partnerzahlungen bleiben erhalten, auch wenn der Händler den Kauf erstattet. Keine automatische Verrechnung mit anderen Käufen.</p>
+            {overpaidItems.map((item) => <p key={item.bookingId} className="text-sm">{item.description} · {currency(item.overpaid)}</p>)}
+          </section>}
+        </Tabs.Content>
+        <Tabs.Content value="refunds" className="space-y-3">
+          <p className="text-xs text-muted-foreground">Eindeutige Händlererstattungen werden anteilig zurückgenommen. Bei mehreren möglichen Käufen ist Ihre Zuordnung erforderlich. Partnerzahlungen sind keine Händlererstattungen.</p>
+          {incoming.map((row) => <div key={row.id} className="space-y-2 rounded-md border p-3 text-sm">
+            <p className="font-medium">{bookingDescription(row)} · {currency(row.amount)}</p>
+            {row.holidayRefundPending && <p role="alert" className="text-xs text-destructive">Ursprung nicht eindeutig. Bis zur Entscheidung bleibt die ursprüngliche Buchungsrechnung bestehen.</p>}
+            {row.holidayRefundFor && <p className="text-xs text-muted-foreground">Eigene Erstattung {currency(personalAmount(row))} · Partneranteil wird ebenfalls reduziert.</p>}
+            <label className="block text-xs">Ursprung und Zahlungsart
+              <select className="mt-1 block min-h-10 w-full rounded border bg-background p-2" aria-label={`Zuordnung: ${row.description} ${row.date}`}
+                value={settlements[row.id] ?? (row.sharedRepaymentFor ? `repayment:${row.sharedRepaymentFor}` : row.sharedRefundUnlinked ? "unlinked" : row.sharedRefundFor || row.holidayRefundFor ? `refund:${row.sharedRefundFor ?? row.holidayRefundFor}` : "")}
+                onChange={(event) => setSettlements((values) => ({ ...values, [row.id]: event.target.value }))}>
+                <option value="">Bitte ausdrücklich auswählen</option>
+                <option value="unlinked">Keine geteilte Erstattung oder Partnerzahlung</option>
+                {items.filter((item) => !item.bookingId.startsWith("planned:") && item.date <= row.date && item.fullAmount >= row.amount).map((item) =>
+                  <option key={`refund:${item.bookingId}`} value={`refund:${item.bookingId}`}>Händlererstattung: {item.description} · {dateLabel(item.date)} · {currency(item.fullAmount)}</option>)}
+                {isRaphaelPayment(row) && items.map((item) =>
+                  <option key={`repayment:${item.bookingId}`} value={`repayment:${item.bookingId}`}>Partnerzahlung: {item.description} · {dateLabel(item.date)}</option>)}
+              </select>
+            </label>
+          </div>)}
+          {!incoming.length && <p className="text-xs text-muted-foreground">Keine geteilten Erstattungen oder Partnerzahlungen.</p>}
         </Tabs.Content>
         {storageError && <p role="alert" className="mt-4 text-sm text-destructive">{storageError}</p>}
         </DialogBody>
@@ -159,7 +194,12 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
           <Button disabled={!pending || !!storageError} onClick={() => {
             const ids = selected.filter((id) => candidates.some((row) => row.id === id));
             const paidIds = paid.filter((id) => items.some((item) => item.bookingId === id && item.status === "Offen"));
-            update((state) => selectSharedBookings(selectSharedBookings(state, ids), paidIds, true));
+            update((state) => Object.entries(settlements).reduce((next, [id, decision]) => {
+              if (!decision) return next;
+              if (decision === "unlinked") return decideSharedSettlement(next, id, null);
+              const separator = decision.indexOf(":");
+              return decideSharedSettlement(next, id, decision.slice(separator + 1), decision.startsWith("repayment:") ? "repayment" : "refund");
+            }, selectSharedBookings(selectSharedBookings(state, ids), paidIds, true)));
             changeOpen(false);
           }}>Speichern</Button>
           </> : <Button variant="outline" onClick={() => changeOpen(false)}>Schließen</Button>}

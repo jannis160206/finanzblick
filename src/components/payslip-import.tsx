@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { parsePayslipPdf, PayslipPasswordError } from "@/lib/import/payslip";
 import { payslipKey, payslipSchema, payrollEmployerKey, type Payslip, type PayslipDraft, type PayslipImport } from "@/lib/payslip-schema";
-import { preparePayslipMerge } from "@/lib/payslip-storage";
+import { assertPayslipReview, capturePayslipReview, PayslipMutationError, preparePayslipMerge, removeReviewedPayslip, type PayslipReview } from "@/lib/payslip-storage";
+import { isPayslipMutationRejection, usePayslipMutation } from "@/components/payslip-mutation";
+import { FinanceStorageError } from "@/lib/finance-storage";
 import { currency, monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PayslipRecords } from "@/components/payslip-records";
@@ -41,7 +43,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const [password, setPassword] = useState("");
   const [filesToRetry, setFilesToRetry] = useState<File[]>([]);
   const [report, setReport] = useState<PayslipImport | null>(null);
-  const [replacement, setReplacement] = useState<Payslip[] | null>(null);
+  const [replacement, setReplacement] = useState<{ entries: Payslip[]; review: PayslipReview } | null>(null);
   const [deleting, setDeleting] = useState<Payslip | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -53,29 +55,56 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const inFlight = useRef(false);
   const request = useRef(0);
   const live = useRef({ state, update, storageError, onImported });
+  const mutate = usePayslipMutation(state, update);
   useEffect(() => { live.current = { state, update, storageError, onImported }; }, [state, update, storageError, onImported]);
   useEffect(() => () => { request.current++; }, []);
 
-  function storeEntries(entries: Payslip[], allowReplace: boolean) {
+  function storeEntries(entries: Payslip[], allowReplace: boolean, review?: PayslipReview) {
     const currentFinance = live.current;
-    if (currentFinance.storageError) throw new Error(currentFinance.storageError);
-    const merged = preparePayslipMerge(currentFinance.state.payslips ?? [], entries);
-    if (merged.conflicts.length && !allowReplace) throw new Error("Ersetzen abweichender Abrechnungen bestätigen.");
-    currentFinance.update((current) => {
+    if (currentFinance.storageError)
+      throw new FinanceStorageError(currentFinance.storageError);
+    const merged = preparePayslipMerge(
+      currentFinance.state.payslips ?? [],
+      entries,
+    );
+    if (merged.conflicts.length && !allowReplace)
+      throw new PayslipMutationError("Ersetzen abweichender Abrechnungen bestätigen.");
+    const expected = review ?? capturePayslipReview(currentFinance.state.payslips ?? [], entries);
+    assertPayslipReview(currentFinance.state.payslips ?? [], expected);
+    mutate((current) => {
+      assertPayslipReview(current.payslips ?? [], expected);
       const next = preparePayslipMerge(current.payslips ?? [], entries);
-      if (next.conflicts.length && !allowReplace) throw new Error("Abrechnungen inzwischen geändert. PDFs erneut hochladen.");
-      return { ...current, payslips: next.entries,
-        payrollForecasts: current.payrollForecasts?.map((forecast) => next.changed.some((entry) =>
-          entry.year === forecast.year && payrollEmployerKey(entry.employer) === payrollEmployerKey(forecast.employer))
-          ? { ...forecast, standardPayrollConfirmed: false } : forecast),
+      if (next.conflicts.length && !allowReplace)
+        throw new PayslipMutationError(
+          "Abrechnungen inzwischen geändert. PDFs erneut hochladen.",
+        );
+      if (!next.changed.length) return current;
+      return {
+        ...current,
+        payslips: next.entries,
+        payrollForecasts: current.payrollForecasts?.map((forecast) =>
+          next.changed.some(
+            (entry) =>
+              entry.year === forecast.year &&
+              payrollEmployerKey(entry.employer) ===
+                payrollEmployerKey(forecast.employer),
+          )
+            ? { ...forecast, standardPayrollConfirmed: false }
+            : forecast,
+        ),
       };
-    });
-    currentFinance.onImported(entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0]);
-    const message = merged.changed.length
-      ? `${merged.changed.length} Abrechnung(en) automatisch übernommen.`
-      : "Abrechnungen bereits vorhanden – nicht doppelt übernommen.";
-    setNotice(message);
-    toast.success(message);
+    }, () => {
+      currentFinance.onImported(
+        entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0],
+      );
+      const message = merged.changed.length
+        ? `${merged.changed.length} Abrechnung(en) automatisch übernommen.`
+        : "Abrechnungen bereits vorhanden – nicht doppelt übernommen.";
+      setNotice(message);
+      toast.success(message);
+      setReplacement(null);
+      setError("");
+    }, (cause) => setError(cause.message));
   }
 
   async function readFiles(files: File[]) {
@@ -93,6 +122,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     setReplacement(null);
     setFilesToRetry([]);
     const current = ++request.current;
+    let entries: Payslip[];
     try {
       const combined: PayslipImport = { drafts: [], issues: [] };
       for (const [fileIndex, file] of files.entries()) {
@@ -105,7 +135,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       }
       if (!combined.drafts.length) throw new Error("Keine Lohnabrechnung erkannt. Vollständige Original-PDF mit lesbarem Text nötig.");
       setReport(combined);
-      const entries = combined.drafts.flatMap((draft) => {
+      entries = combined.drafts.flatMap((draft) => {
         const parsed = payslipSchema.safeParse(draft);
         return parsed.success ? [parsed.data] : [];
       });
@@ -113,19 +143,25 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         setError("Keine Abrechnung übernommen; siehe Importhinweise.");
         return;
       }
-      const merged = preparePayslipMerge(live.current.state.payslips ?? [], entries);
-      if (merged.conflicts.length) {
-        setReplacement(entries);
-        setNotice("Abweichende Abrechnungen: Ersetzen bestätigen.");
-      } else storeEntries(entries, false);
     } catch (cause) {
       if (current !== request.current) return;
       setError(cause instanceof Error ? cause.message : "Die PDF konnte nicht gelesen werden.");
       if (cause instanceof PayslipPasswordError) setFilesToRetry(files);
+      return;
     } finally {
       inFlight.current = false;
       if (current === request.current) setBusy(false);
       if (fileInput.current) fileInput.current.value = "";
+    }
+    try {
+      const merged = preparePayslipMerge(live.current.state.payslips ?? [], entries);
+      if (merged.conflicts.length) {
+        setReplacement({ entries, review: capturePayslipReview(live.current.state.payslips ?? [], entries) });
+        setNotice("Abweichende Abrechnungen: Ersetzen bestätigen.");
+      } else storeEntries(entries, false);
+    } catch (cause) {
+      if (!isPayslipMutationRejection(cause)) throw cause;
+      setError(cause.message);
     }
   }
 
@@ -192,7 +228,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         </details>
       </div>}
       <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Kontoumsätze bleiben unverändert.</p>
-      <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setDeleting(record); }} />
+      <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {
       if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }
@@ -203,7 +239,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           <DialogDescription>Abweichende Werte für gespeicherte Monate. Überschreiben nur nach Bestätigung.</DialogDescription>
         </DialogHeader>
         <DialogBody>
-          {replacement?.map((entry) => <p key={payslipKey(entry)} className="mb-2 text-sm">
+          {replacement?.entries.map((entry) => <p key={payslipKey(entry)} className="mb-2 text-sm">
             {draftLabel(entry, 0)} · {entry.employer}: laufend {currency(entry.regularGross)}, Sonderzahlungen {currency(entry.specialGross)}
             {!!entry.unresolvedSixthBonus && <>; weitere Prämie {currency(entry.unresolvedSixthBonus)} mit offener Sechstelzuordnung</>}
           </p>)}
@@ -214,11 +250,10 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           <Button disabled={!!storageError} onClick={() => {
             if (!replacement) return;
             try {
-              storeEntries(replacement, true);
-              setReplacement(null);
-              setError("");
+              storeEntries(replacement.entries, true, replacement.review);
             } catch (cause) {
-              setError(cause instanceof Error ? cause.message : "Die Abrechnungen konnten nicht ersetzt werden.");
+              if (!isPayslipMutationRejection(cause)) throw cause;
+              setError(cause.message);
             }
           }}>Abrechnungen ersetzen</Button>
         </DialogFooter>
@@ -232,22 +267,28 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         else importer.current?.focus();
       }}>
         <DialogHeader><DialogTitle>Lohnabrechnung entfernen?</DialogTitle><DialogDescription>Nur gespeicherte Rechenwerte entfernen; Original-PDF und Kontoumsätze bleiben unverändert.</DialogDescription></DialogHeader>
+        <DialogBody>
+          {deleting && <p className="mb-2 text-sm">{draftLabel(deleting, 0)} · {deleting.employer}</p>}
+          {(error || storageError) && <p role="alert" className="text-sm text-destructive">{storageError || error}</p>}
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => setDeleting(null)}>Abbrechen</Button>
           <Button variant="destructive" disabled={!!storageError} onClick={() => {
             if (!deleting) return;
-            const key = payslipKey(deleting);
-            update((current) => {
-              const payslips = current.payslips?.filter((entry) => payslipKey(entry) !== key);
+            if (live.current.storageError) { setError(live.current.storageError); return; }
+            mutate((current) => {
+              const payslips = removeReviewedPayslip(current.payslips ?? [], deleting);
               const matches = (entry: { year: number; employer: string }) => entry.year === deleting.year &&
                 payrollEmployerKey(entry.employer) === payrollEmployerKey(deleting.employer);
               return { ...current, payslips,
                 payrollForecasts: current.payrollForecasts?.filter((forecast) => !matches(forecast) || payslips?.some(matches))
                   .map((forecast) => matches(forecast) ? { ...forecast, standardPayrollConfirmed: false } : forecast),
               };
-            });
-            setDeleting(null);
-            toast.success("Lohnabrechnung entfernt");
+            }, () => {
+              setDeleting(null);
+              setError("");
+              toast.success("Lohnabrechnung entfernt");
+            }, (cause) => setError(cause.message));
           }}>Entfernen</Button>
         </DialogFooter>
       </DialogContent>

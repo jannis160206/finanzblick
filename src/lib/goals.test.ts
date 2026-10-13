@@ -41,15 +41,15 @@ describe("automatic savings floor and goals", () => {
     expect(dashboard.current).toMatchObject({ end: { Sparkonto: 1300.56 } });
   });
   it.each([-100, 0, 0.01, 175, 180, 200, 1000, 10000])("always protects Sparkonto for surplus %s", (surplus) => {
-    const split = allocateGoals(surplus, [goal("Motorrad")], {}, "2026-09");
+    const split = allocateGoals(surplus, [goal("Motorrad")], { Motorrad: 0 }, "2026-09");
     expect(split.savings).toBe(Math.min(180, Math.max(0, surplus)));
     expect(split.savings + split.goals.Motorrad + split.vacation).toBeCloseTo(Math.max(0, surplus), 2);
     if (surplus <= 180) expect(split.goals.Motorrad).toBe(0);
   });
   it("fills in deadline order, caps targets and sends the remainder to Urlaub", () => {
     const goals = [goal("Later", 500, "2027-05-01"), goal("Sooner", 300, "2026-10-01")];
-    expect(allocateGoals(1000, goals, { Later: 100 }, "2026-09")).toEqual({ savings: 180, goals: { Sooner: 300, Later: 400 }, vacation: 120 });
-    expect(allocateGoals(400, goals, {}, "2026-09")).toEqual({ savings: 180, goals: { Sooner: 220, Later: 0 }, vacation: 0 });
+    expect(allocateGoals(1000, goals, { Later: 100, Sooner: 0 }, "2026-09")).toEqual({ savings: 180, goals: { Sooner: 300, Later: 400 }, vacation: 120 });
+    expect(allocateGoals(400, goals, { Later: 0, Sooner: 0 }, "2026-09")).toEqual({ savings: 180, goals: { Sooner: 220, Later: 0 }, vacation: 0 });
   });
   it("does not revive a removed legacy goal or require an open goal", () => {
     const state = stateFor(); delete state.savingsGoals;
@@ -96,7 +96,7 @@ describe("automatic savings floor and goals", () => {
   });
   it.each([["2026-09", 0], ["2026-10", 820], ["2027-04", 820], ["2027-05", 0]] as const)("limits motorcycle funding in %s without changing the floor", (month, amount) => {
     const bike = goal("Motorrad", 100000, "2027-04-01");
-    expect(allocateGoals(1000, [bike], {}, month)).toEqual({ savings: 180, goals: { Motorrad: amount }, vacation: 820 - amount });
+    expect(allocateGoals(1000, [bike], { Motorrad: 0 }, month)).toEqual({ savings: 180, goals: { Motorrad: amount }, vacation: 820 - amount });
   });
   it("uses the saved goal deadline and shows only positive funding instructions", () => {
     const state = stateFor();

@@ -80,11 +80,16 @@ it("shows actual balances and source dates without presenting goal opening credi
   expect(screen.getByLabelText("Motorrad Kontostand").textContent).toBe(
     currency(0),
   );
+  expect(dashboard.physical.mittagessen.amount).toBe(20);
+  expect(dashboard.physical.lebensmittel.amount).toBe(30);
+  expect(dashboard.physical.motorrad).toMatchObject({ source: "opening", amount: 2445 });
+  expect(dashboard.actual.Motorrad).toBe(0);
   const total = sum(pocketNames.map((pocket) => dashboard.actual[pocket]));
   expect(screen.getByLabelText("Reserven gesamt").textContent).toContain(
     currency(total),
   );
-  expect(dashboard.totalAssets).toBe(total + 2445);
+  // P1.3: total pocket assets include everyday cash once; reserve cards still show core bank cash only.
+  expect(dashboard.totalAssets).toBe(total + 2445 + 50);
   expect(screen.getByLabelText("Reserven gesamt").textContent).not.toContain(
     currency(dashboard.totalAssets),
   );

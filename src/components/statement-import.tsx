@@ -28,7 +28,6 @@ import {
   parseStatementFile,
   parseStatementAmount,
   type StatementDraft,
-  type StatementResult,
 } from "@/lib/import/statements";
 import {
   prepareStatementImport,
@@ -50,6 +49,8 @@ import { useAutomation } from "@/components/automation-context";
 import { useUploadActivity, type UploadActivity } from "@/components/upload-activity";
 import { UploadStatus } from "@/components/upload-status";
 import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "@/lib/automation/schema";
+import { type UploadedStatementResult } from "@/lib/import/results";
+import { automationFailure, classifyParserError } from "@/lib/automation/errors";
 
 type Pending = {
   requestId: string;
@@ -57,6 +58,7 @@ type Pending = {
   rows: Transaction[];
   decisions: FixedDecision[];
   uploadIds?: string[];
+  resultIds?: string[];
 };
 type ImportUI = {
   review: ReviewItem[];
@@ -73,6 +75,7 @@ const BookingReview = memo(function BookingReview({
   draft,
   changeDraft,
   disabled,
+  reuploadOnly,
   save,
   skip,
 }: {
@@ -80,10 +83,14 @@ const BookingReview = memo(function BookingReview({
   draft: StatementDraft;
   changeDraft: (id: string, draft: StatementDraft) => void;
   disabled: boolean;
+  reuploadOnly: boolean;
   save: (row: Transaction, id: string) => void;
   skip: () => void;
 }) {
   const repairOcr = isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:");
+  const repairSource = item.sourceRepair === true;
+  const repairFacts = repairOcr || repairSource;
+  const [sourceConfirmed, setSourceConfirmed] = useState(false);
   const feedbackId = useId();
   const [editingName, setEditingName] = useState(false);
   const nameInput = useRef<HTMLInputElement>(null);
@@ -112,15 +119,16 @@ const BookingReview = memo(function BookingReview({
     >
       <p id={feedbackId} className="text-xs text-muted-foreground break-words">
         {repairOcr ? screenshotReviewMessage(draft) : item.message}
-        {repairOcr && item.draft.amount === null && " Ausgaben −, Gutschriften +."}
+        {repairFacts && item.draft.amount === null && " Ausgaben −, Gutschriften +."}
+        {repairSource && " Quellwerte bleiben bis zur ausdrücklichen Bestätigung unverbucht."}
       </p>
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
         <label className="space-y-1 text-xs">
           Datum
-          <Input aria-label="Datum" type="date" value={draft.date} readOnly={!repairOcr}
-            aria-invalid={repairOcr && !transactionSchema.shape.date.safeParse(draft.date).success}
-            aria-describedby={repairOcr ? feedbackId : undefined}
-            onChange={repairOcr ? (event) => changeDraft(item.id, { ...draft, date: event.target.value }) : undefined} />
+          <Input aria-label="Datum" type="date" value={draft.date} readOnly={!repairFacts || reuploadOnly}
+            aria-invalid={repairFacts && !transactionSchema.shape.date.safeParse(draft.date).success}
+            aria-describedby={repairFacts ? feedbackId : undefined}
+            onChange={repairFacts && !reuploadOnly ? (event) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft, date: event.target.value }); } : undefined} />
         </label>
         <div className="space-y-1 text-xs">
           <p>Text</p>
@@ -128,16 +136,18 @@ const BookingReview = memo(function BookingReview({
             <Input
               ref={nameInput}
               aria-label="Text"
-              maxLength={repairOcr ? 1000 : 200}
-              value={repairOcr ? draft.description : editingName ? draft.merchantAlias ?? bookingDescription(draft) : bookingDescription(draft)}
-              readOnly={!repairOcr && !editingName}
+              maxLength={repairFacts ? 1000 : 200}
+              value={repairFacts ? draft.description : editingName ? draft.merchantAlias ?? bookingDescription(draft) : bookingDescription(draft)}
+              readOnly={reuploadOnly || (!repairFacts && !editingName)}
               disabled={disabled}
-              className={!repairOcr ? "pr-10" : undefined}
+              className={!repairFacts ? "pr-10" : undefined}
               aria-invalid={nameMissing}
-              onChange={(event) => changeDraft(item.id, { ...draft,
-                ...(repairOcr ? { description: event.target.value } : merchantAliasAssignment(draft, event.target.value)) })}
+              onChange={(event) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft,
+                ...(repairFacts ? { description: event.target.value,
+                  ...(repairSource && item.draft.description ? { rawDescription: draft.rawDescription ?? item.draft.description } : {}) }
+                  : merchantAliasAssignment(draft, event.target.value)) }); }}
             />
-            {!repairOcr && (
+            {!repairFacts && (
               <Button type="button" variant="ghost" size="icon-xs" className="absolute right-2 top-2"
                 aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
                 onClick={() => {
@@ -159,10 +169,10 @@ const BookingReview = memo(function BookingReview({
           Betrag (€)
           <Input
             aria-label="Betrag"
-            {...(repairOcr ? {
+            {...(repairFacts && !reuploadOnly ? {
               defaultValue: draft.amount === null ? "" : String(draft.amount).replace(".", ","),
               inputMode: "decimal" as const,
-              onChange: (event: React.ChangeEvent<HTMLInputElement>) => changeDraft(item.id, { ...draft, amount: parseStatementAmount(event.target.value) }),
+              onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft, amount: parseStatementAmount(event.target.value) }); },
             } : { value: draft.amount === null ? "" : currency(draft.amount), readOnly: true })}
           />
         </label>
@@ -195,6 +205,13 @@ const BookingReview = memo(function BookingReview({
         disabled={disabled}
         eligible={canMarkFixed}
       />
+      {repairSource && (reuploadOnly ? <p className="text-xs text-muted-foreground">
+        Bitte einen belegten EUR-Kontoauszug erneut auswählen. Diese Quellwerte können nicht als EUR-Buchung bestätigt werden.
+      </p> : <label className="flex items-start gap-2 text-xs">
+        <input type="checkbox" checked={sourceConfirmed} disabled={disabled}
+          onChange={(event) => setSourceConfirmed(event.target.checked)} />
+        Datum, Text und EUR-Betrag anhand des Originalbelegs geprüft
+      </label>)}
       <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
         <Button variant="ghost" size="sm" disabled={disabled} onClick={skip}>
           Später prüfen
@@ -203,6 +220,8 @@ const BookingReview = memo(function BookingReview({
           size="sm"
           disabled={
             disabled ||
+            reuploadOnly ||
+            (repairSource && !sourceConfirmed) ||
             !parsed.success ||
             !choices.some((category) => category === draft.category)
           }
@@ -375,10 +394,20 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
       if (ui.pending.uploadIds) changeActivities(ui.pending.uploadIds, "completed");
       const remaining = new Set(ui.review.map((item) => item.id));
       const removeId = ui.pending.removeId;
-      toast.success(
+      const resultIds = ui.pending.resultIds ?? ui.pending.uploadIds;
+      const outcomes = (state.importResults ?? []).filter((result) => resultIds?.includes(result.uploadId));
+      if (outcomes.some((result) => result.status === "failed"))
+        toast.error("Ein Import ist fehlgeschlagen – Details im Uploadstatus.");
+      else if (outcomes.some((result) => result.status === "unsupported"))
+        toast.error("Datei nicht unterstützt – vollständigen Auszug erneut auswählen. Details im Uploadstatus.");
+      else if (outcomes.some((result) => result.status === "with-warnings"))
+        toast.error("Import mit Hinweisen abgeschlossen – offene Buchungen prüfen. Details im Uploadstatus.");
+      else toast.success(
         ui.pending.decisions.length
           ? "Monatsbetrag geprüft – keine doppelte Buchung"
-          : `${statementImport.added} neu, ${statementImport.duplicates} Duplikate ignoriert`,
+          : outcomes.length
+            ? `${outcomes.reduce((total, result) => total + result.inserted, 0)} neu, ${outcomes.reduce((total, result) => total + result.updated, 0)} aktualisiert, ${outcomes.reduce((total, result) => total + result.duplicates, 0)} Duplikate`
+            : `${statementImport.added} neu, ${statementImport.duplicates} Duplikate ignoriert`,
       );
       setUI((previous) => ({
         drafts: Object.fromEntries(Object.entries(previous.drafts).filter(([id]) =>
@@ -390,7 +419,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         pending: null,
       }));
     }
-  }, [statementImport, ui.pending, ui.review, localUI.open, saved, storageError, changeActivities]);
+  }, [statementImport, ui.pending, ui.review, localUI.open, saved, storageError, changeActivities, state.importResults]);
 
   const commit = useCallback((
     rows: Transaction[],
@@ -398,22 +427,23 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     removeId?: string,
     decisions: FixedDecision[] = [],
     uploadIds?: string[],
+    resultIds?: string[],
   ) => {
     if (pendingRef.current || !ready || storageError) return;
     pendingRef.current = true;
     const requestId = crypto.randomUUID();
     const metadata = importMetadata.current;
     importMetadata.current = {};
-    setUI({ pending: { requestId, rows, removeId, decisions, uploadIds } });
+    setUI({ pending: { requestId, rows, removeId, decisions, uploadIds, resultIds } });
     // Let React display the disabled controls/progress before the synchronous
     // reducer runs. The reducer still applies to the latest state, not a copy.
     commitTimer.current = setTimeout(() => appendStatements(rows, duplicates, requestId, decisions, metadata), 0);
   }, [appendStatements, ready, storageError]);
   const saveBooking = useCallback((row: Transaction, id: string) => {
     const original = latestState.current.reviewQueue?.find((item) => item.id === id);
-    if (original?.kind === "booking" && (original.draft.date !== row.date ||
+    if (original?.kind === "booking" && (original.importUploadId || original.sourceRepair || original.draft.date !== row.date ||
       original.draft.amount !== row.amount || original.draft.description !== row.description)) {
-      // Corrected bank facts need full reconciliation, not category-only approval.
+      // Imported reviews also update their UUID outcome, not only the ledger.
       importMetadata.current = { ...importMetadata.current, reviewQueue: [{ ...original, draft: row }] };
     }
     if (row.amexSource || isAmexScreenshot(row))
@@ -438,7 +468,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     const controller = new AbortController();
     importController.current = controller;
     setUI({ busy: true, dragging: false, ledgerOnly: false });
-    const results: StatementResult[] = [];
+    const results: UploadedStatementResult[] = [];
     const uploads: UploadActivity[] = files.map((file) => ({
       id: crypto.randomUUID(), name: file.name, phase: "waiting", error: null, updatedAt: Date.now(),
     }));
@@ -497,22 +527,21 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         try {
           const result = await parseStatementFile(file);
           if (controller.signal.aborted) return;
-          results.push(result);
-          if (!result.rows.length && result.issues.length)
-            changeActivities([id], "failed", result.issues.map((issue) => issue.message).join(" "));
-          else {
-            parsedIds.push(id);
-            changeActivities([id], "saving");
-          }
+          results.push({ ...result, uploadId: id });
+          parsedIds.push(id);
+          changeActivities([id], "saving");
         } catch (error) {
           if (controller.signal.aborted) return;
-          const message = error instanceof Error ? error.message : "Datei konnte nicht gelesen werden.";
-          changeActivities([id], "failed", message);
+          const failure = automationFailure(classifyParserError(error).code);
+          const message = failure.message;
+          changeActivities([id], "failed", message, failure.code);
           results.push({
+            uploadId: id,
             file: file.name,
             source: null,
             rows: [],
-            skipped: 1,
+            skipped: 0,
+            failureCode: failure.code,
             issues: [
               {
                 file: file.name,
@@ -528,7 +557,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         ? prepared.issues[0]
         : `${prepared.issues.length} Importhinweise – Details im Uploadstatus.`);
       setUI({ review: prepared.review, open: prepared.review.length > 0 });
-      commit(prepared.automatic, prepared.duplicates, undefined, [], parsedIds);
+      commit(prepared.automatic, prepared.duplicates, undefined, [], parsedIds, uploads.map((item) => item.id));
     } catch (error) {
       if (controller.signal.aborted) return;
       const message = error instanceof Error ? error.message : "Import fehlgeschlagen.";
@@ -605,7 +634,9 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
           <UploadStatus activities={activities} jobs={workspace ? automation.jobs : []}
             error={workspace ? automation.error : null} summary={state.importStatus}
-            reviewCount={openReviewCount} />
+            reviewCount={openReviewCount} results={state.importResults}
+            onReview={() => { if (openReviewCount) setUI({ open: true, ledgerOnly: false }); }}
+            onReupload={() => fileInput.current?.click()} />
           {fileButton}
         </div>
       </section>
@@ -641,6 +672,8 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
                   draft={ui.drafts[item.id] ?? item.draft}
                   changeDraft={changeDraft}
                   disabled={ui.pending?.removeId === item.id}
+                  reuploadOnly={(state.importResults ?? []).some((result) =>
+                    result.issues.some((issue) => issue.reviewId === item.id && issue.action === "reupload"))}
                   save={saveBooking}
                   skip={skip}
                 />

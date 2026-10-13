@@ -3,14 +3,15 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountWorkspaceContext, type AccountWorkspace } from "./account-context";
 import { AccountLogout, AccountSyncTools } from "./account-tools";
-import { AccountFinanceStorage, accountStorageKey } from "@/lib/account-finance-storage";
+import { AccountFinanceStorage, accountStorageKey, accountConflictKey } from "@/lib/account-finance-storage";
 import { createEmptyAccountState } from "@/lib/account-state";
-import { FINANCE_BACKUP_KEY, FINANCE_STORAGE_KEY } from "@/lib/finance-storage";
+import { FINANCE_BACKUP_KEY, FINANCE_STORAGE_KEY, FinanceStorageError } from "@/lib/finance-storage";
 import { appStateSchema, type AppState } from "@/lib/types";
 import { legacyNoticeKey } from "@/lib/legacy-account-notice";
+import { parseFinanceBackup } from "@/lib/finance-backup";
 
-const { useFinanceMock } = vi.hoisted(() => ({ useFinanceMock: vi.fn() }));
-vi.mock("./finance-provider", () => ({ useFinance: useFinanceMock }));
+const { useFinanceMock, restoreMock } = vi.hoisted(() => ({ useFinanceMock: vi.fn(), restoreMock: vi.fn() }));
+vi.mock("./finance-provider", () => ({ useFinance: useFinanceMock, useFinanceRestoration: () => restoreMock }));
 
 type FinanceFixture = {
   state: AppState;
@@ -73,6 +74,8 @@ beforeEach(() => {
   assign.mockReset();
   loadServer.mockReset();
   loadServer.mockResolvedValue(undefined);
+  restoreMock.mockReset();
+  restoreMock.mockResolvedValue(undefined);
   vi.stubGlobal("fetch", fetchMock);
   const browser = window;
   const mockWindow = Object.create(browser) as Window;
@@ -263,7 +266,7 @@ describe("AccountSyncTools", () => {
       throw new DOMException("Storage blocked", "SecurityError");
     });
     mount();
-    expect(screen.getByRole("alert").textContent).toContain("Bisherige Browserdaten sind nicht erreichbar.");
+    expect(screen.getAllByRole("alert").map((alert) => alert.textContent).join(" ")).toContain("Bisherige Browserdaten sind nicht erreichbar.");
     expect(screen.queryByRole("button", { name: "Bisherige Browserdaten übernehmen" })).toBeNull();
     expect(finance.replace).not.toHaveBeenCalled();
   });
@@ -312,11 +315,65 @@ describe("AccountSyncTools", () => {
     expect(captured?.type).toBe("application/json");
     expect(download?.href).toBe("blob:account-backup");
     expect(download?.download).toBe(`Finanzblick_my.account_${finance.state.settings.asOf}.json`);
-    expect(JSON.parse(await readBlob(captured!))).toEqual(appStateSchema.parse(finance.state));
+    const raw = await readBlob(captured!);
+    expect(JSON.parse(raw)).toMatchObject({ format: "finanzblick-backup", version: 1, accountId: "own-account" });
+    expect(parseFinanceBackup(raw, "own-account")).toEqual(appStateSchema.parse(finance.state));
     expect(loadServer).not.toHaveBeenCalled();
     expect(finance.replace).not.toHaveBeenCalled();
     expect(revokeObjectURL).not.toHaveBeenCalled();
     await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledExactlyOnceWith("blob:account-backup"), { timeout: 2000 });
+  });
+
+  it.each(["malformed", "duplicate IDs"])("downloads only the unvalidated own primary source after rejected %s hydration", async (kind) => {
+    const original = fixture("Rejected own-cache original");
+    if (kind === "duplicate IDs") original.transactions.push({ ...original.transactions[0] });
+    const raw = kind === "malformed" ? "{unreadable original" : JSON.stringify({ state: original, revision: 1, pending: false }, null, 2);
+    localStorage.setItem(accountStorageKey("own-account"), raw);
+    localStorage.setItem(accountStorageKey("another-account"), "other private original");
+    finance.state = createEmptyAccountState();
+    finance.storageError = "Die lokale Kontosicherung ist ungültig und bleibt unverändert.";
+    let captured!: Blob;
+    let filename = "";
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { captured = blob; return "blob:rejected-original"; }), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { filename = this.download; });
+    mount(<AccountSyncTools />, workspace("user"));
+    const button = screen.getByRole("button", { name: "Ungeprüftes Geräte-Original herunterladen" });
+    expect(screen.getByText(/kein wiederherstellbarer JSON-Kontostand/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Gerätestand sichern" })).toBeNull();
+    fireEvent.click(button);
+    expect(await readBlob(captured)).toBe(raw);
+    expect(filename).toBe("Finanzblick_Geraet_Original_ungeprueft.json");
+    expect(localStorage.getItem(accountStorageKey("own-account"))).toBe(raw);
+    expect(localStorage.getItem(accountStorageKey("another-account"))).toBe("other private original");
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(finance.replace).not.toHaveBeenCalled();
+    expect(loadServer).not.toHaveBeenCalled();
+  });
+
+  it("routes a rejected own primary through source export and confirmed server replacement without losing its original", async () => {
+    const raw = "{preserved rejected primary";
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, raw);
+    const remote = fixture("Server after rejected primary");
+    fetchMock.mockImplementation(async () => Response.json({ state: remote, revision: 4 }));
+    const controller = new AccountFinanceStorage("own-account", vi.fn(), vi.fn());
+    await expect(controller.load()).rejects.toThrow(/unlesbar/);
+    finance.state = createEmptyAccountState();
+    finance.storageError = "Die lokale Kontosicherung ist unlesbar und bleibt unverändert.";
+    let captured!: Blob;
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { captured = blob; return "blob:original"; }), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    mount(<AccountSyncTools />, { ...workspace("user"), loadServer: async () => { finance.replace(await controller.useServer()); } });
+    fireEvent.click(screen.getByRole("button", { name: "Ungeprüftes Geräte-Original herunterladen" }));
+    expect(await readBlob(captured)).toBe(raw);
+    expect(localStorage.getItem(key)).toBe(raw);
+    fireEvent.click(screen.getByRole("button", { name: "Serverstand laden" }));
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Übernahme bestätigen" }));
+    await waitFor(() => expect(finance.replace).toHaveBeenCalledWith(appStateSchema.parse(remote)));
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    expect(JSON.parse(localStorage.getItem(key)!).state).toEqual(remote);
+    expect(restoreMock).not.toHaveBeenCalled();
   });
 
   it("requires a separate confirmation before choosing the server snapshot and allows cancellation", () => {
@@ -329,6 +386,17 @@ describe("AccountSyncTools", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
     expect(loadServer).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Übernahme bestätigen" })).toBeNull();
+  });
+
+  it("rejects a changed account stand between server preview and confirmation", async () => {
+    finance.storageError = "Synchronisierungskonflikt";
+    const view = mount(<AccountSyncTools />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Serverstand laden" }));
+    finance.state = fixture("New edit after preview");
+    view.rerender(<AccountWorkspaceContext value={workspace("user")}><AccountSyncTools /></AccountWorkspaceContext>);
+    fireEvent.click(screen.getByRole("button", { name: "Übernahme bestätigen" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("zwischenzeitlich geändert");
+    expect(loadServer).not.toHaveBeenCalled();
   });
 
   it("disables server confirmation and cancellation during the request, avoiding duplicate loads", async () => {
@@ -407,7 +475,549 @@ describe("AccountSyncTools", () => {
   });
 });
 
+describe("account conflict restoration", () => {
+  function seedConflict(state = fixture("Original conflict"), id = "own-account") {
+    const raw = JSON.stringify({ state, revision: 1, pending: true });
+    localStorage.setItem(accountConflictKey(id), raw);
+    return raw;
+  }
+  function openRecovery() {
+    mount(<AccountSyncTools />, workspace("user"));
+    fireEvent.click(screen.getByText("Lokale Konfliktsicherung", { exact: true }));
+  }
+  function reviewRestore() {
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung wiederherstellen" }));
+  }
+  it("offers recovery with no sync/legacy error and previews complete replacement without writing", () => {
+    const raw = seedConflict();
+    openRecovery();
+    expect(screen.getByText(/1 Buchungen/)).toBeTruthy();
+    expect(screen.getByText(/Einstellungen, Salden/)).toBeTruthy();
+    reviewRestore();
+    expect(screen.getByText(/gesamten aktuellen Kontostand/)).toBeTruthy();
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+  });
+  it("exports the preserved conflict, not current state, in a parseable identity-bound envelope", async () => {
+    const original = fixture("Original conflict");
+    const raw = seedConflict(original);
+    let captured!: Blob;
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { captured = blob; return "blob:conflict"; }), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    openRecovery();
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung herunterladen" }));
+    const exported = await readBlob(captured);
+    expect(parseFinanceBackup(exported, "own-account")).toEqual(appStateSchema.parse(original));
+    expect(parseFinanceBackup(exported, "own-account")).not.toEqual(finance.state);
+    expect(() => parseFinanceBackup(exported, "other-account")).toThrow(/anderen Konto/);
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+  });
+  it("restores valid legacy raw state only after confirmation and keeps its copy until persistence resolves", async () => {
+    const original = fixture("Legacy conflict");
+    const raw = JSON.stringify(original);
+    localStorage.setItem(accountConflictKey("own-account"), raw);
+    let finish!: () => void;
+    restoreMock.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    openRecovery();
+    reviewRestore();
+    const expected = finance.state;
+    fireEvent.click(screen.getByRole("button", { name: "Wiederherstellung bestätigen" }));
+    expect(restoreMock).toHaveBeenCalledExactlyOnceWith(appStateSchema.parse(original), expected);
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    expect((screen.getByRole("button", { name: "Abbrechen" }) as HTMLButtonElement).disabled).toBe(true);
+    await act(async () => finish());
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBeNull();
+    expect(finance.replace).not.toHaveBeenCalled();
+  });
+  it.each(["Server nicht erreichbar", "Browserspeicher voll oder gesperrt", "Finanzstand wurde zwischenzeitlich geändert"])(
+    "keeps the exact backup when restoration fails: %s", async (message) => {
+      const raw = seedConflict();
+      restoreMock.mockRejectedValue(new FinanceStorageError(message));
+      openRecovery();
+      reviewRestore();
+      fireEvent.click(screen.getByRole("button", { name: "Wiederherstellung bestätigen" }));
+      expect((await screen.findByRole("alert")).textContent).toContain(message);
+      expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    },
+  );
+  it("rejects a stale reviewed backup before restoring or explicitly discarding", async () => {
+    seedConflict();
+    openRecovery();
+    reviewRestore();
+    const newer = seedConflict(fixture("Changed elsewhere"));
+    fireEvent.click(screen.getByRole("button", { name: "Wiederherstellung bestätigen" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("zwischenzeitlich geändert");
+    expect(restoreMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(newer);
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    act(() => window.dispatchEvent(new Event("storage")));
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung verwerfen" }));
+    const latest = seedConflict(fixture("Changed again"));
+    fireEvent.click(screen.getByRole("button", { name: "Verwerfen bestätigen" }));
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(latest);
+  });
+  it("does not delete a newer backup that appeared while restoration was being saved", async () => {
+    seedConflict();
+    let finish!: () => void;
+    restoreMock.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    openRecovery();
+    reviewRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Wiederherstellung bestätigen" }));
+    const newer = seedConflict(fixture("Newer pending recovery"));
+    await act(async () => finish());
+    expect(screen.getByRole("alert").textContent).toContain("zwischenzeitlich geändert");
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(newer);
+  });
+  it("shows malformed copies, exports the exact original, and requires informed explicit discard", async () => {
+    const raw = "{unreadable preserved source";
+    localStorage.setItem(accountConflictKey("own-account"), raw);
+    let captured!: Blob;
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { captured = blob; return "blob:raw"; }), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    openRecovery();
+    expect(screen.getByRole("alert").textContent).toContain("unlesbar");
+    expect(screen.queryByRole("button", { name: "Konfliktsicherung wiederherstellen" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ungeprüftes Original herunterladen" }));
+    expect(await readBlob(captured)).toBe(raw);
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung verwerfen" }));
+    expect(screen.getByText(/unwiderruflich löschen/)).toBeTruthy();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    fireEvent.click(screen.getByRole("button", { name: "Verwerfen bestätigen" }));
+    await waitFor(() => expect(localStorage.getItem(accountConflictKey("own-account"))).toBeNull());
+    expect(restoreMock).not.toHaveBeenCalled();
+  });
+  it("does not inspect or expose another account's conflict copy", () => {
+    const raw = seedConflict(fixture("Other account secret"), "other-account");
+    const read = vi.spyOn(Storage.prototype, "getItem");
+    mount(<AccountSyncTools />, workspace("user"));
+    expect(screen.queryByText("Lokale Konfliktsicherung", { exact: true })).toBeNull();
+    expect(read).not.toHaveBeenCalledWith(accountConflictKey("other-account"));
+    expect(localStorage.getItem(accountConflictKey("other-account"))).toBe(raw);
+  });
+  it("surfaces inaccessible conflict storage even without sync or legacy errors", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    openRecovery();
+    expect(screen.getByRole("alert").textContent).toContain("Konfliktsicherung ist nicht erreichbar");
+    expect(screen.queryByRole("button", { name: "Konfliktsicherung verwerfen" })).toBeNull();
+    expect(restoreMock).not.toHaveBeenCalled();
+  });
+  it("retains the copy and reports blocked storage when explicit discard fails", async () => {
+    const raw = seedConflict();
+    openRecovery();
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung verwerfen" }));
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    fireEvent.click(screen.getByRole("button", { name: "Verwerfen bestätigen" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Browserspeicher voll oder gesperrt");
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+  });
+  it("clears a prior account's confirmation on an account switch", () => {
+    const raw = seedConflict();
+    seedConflict(fixture("Second account copy"), "second-account");
+    const view = mount(<AccountSyncTools />, workspace("user"));
+    fireEvent.click(screen.getByText("Lokale Konfliktsicherung", { exact: true }));
+    reviewRestore();
+    view.rerender(<AccountWorkspaceContext value={{ ...workspace("user"), user: { ...workspace("user").user, id: "second-account" } }}><AccountSyncTools /></AccountWorkspaceContext>);
+    expect(screen.queryByRole("button", { name: "Wiederherstellung bestätigen" })).toBeNull();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    expect(restoreMock).not.toHaveBeenCalled();
+  });
+  it("keeps the original conflict if the account switches while restoration persistence is pending", async () => {
+    const raw = seedConflict();
+    const otherRaw = seedConflict(fixture("Other account recovery"), "other-account");
+    let finish!: () => void;
+    restoreMock.mockReturnValue(new Promise<void>((resolve) => { finish = resolve; }));
+    const view = mount(<AccountSyncTools />, workspace("user"));
+    fireEvent.click(screen.getByText("Lokale Konfliktsicherung", { exact: true }));
+    reviewRestore();
+    fireEvent.click(screen.getByRole("button", { name: "Wiederherstellung bestätigen" }));
+    view.rerender(<AccountWorkspaceContext value={{ ...workspace("user"), user: { ...workspace("user").user, id: "other-account" } }}><AccountSyncTools /></AccountWorkspaceContext>);
+    await act(async () => finish());
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    expect(localStorage.getItem(accountConflictKey("other-account"))).toBe(otherRaw);
+    expect(restoreMock).toHaveBeenCalledOnce();
+  });
+});
+
 describe("AccountLogout", () => {
+  function confirmDiscard() {
+    fireEvent.click(screen.getByRole("checkbox", { name: /bewusst ohne Sicherung verwerfen/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Ohne Sicherung abmelden" }));
+  }
+  it.each(["Abbrechen", "Escape"])("cancels logout with %s without requests or storage changes", (action) => {
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, "own cached state");
+    localStorage.setItem(accountConflictKey("own-account"), "own preserved conflict");
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    if (action === "Escape") fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    else fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe("own cached state");
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe("own preserved conflict");
+  });
+  it("offers downloads of both current state and preserved conflict before deleting local copies", async () => {
+    const conflictState = fixture("Preserved conflict");
+    const raw = JSON.stringify({ state: conflictState, revision: 1, pending: true });
+    localStorage.setItem(accountConflictKey("own-account"), raw);
+    const blobs: Blob[] = [];
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { blobs.push(blob); return "blob:logout"; }), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect(blobs).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung herunterladen" }));
+    expect(blobs).toHaveLength(2);
+    expect(parseFinanceBackup(await readBlob(blobs[0]), "own-account")).toEqual(finance.state);
+    expect(parseFinanceBackup(await readBlob(blobs[1]), "own-account")).toEqual(conflictState);
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBeNull();
+  });
+  it("requires the closed failed-sync tab's newer cache separately from the older saved tab's memory", async () => {
+    const older = fixture("Tab A saved memory");
+    const newer = fixture("Tab B pending after failed sync");
+    const key = accountStorageKey("own-account");
+    fetchMock.mockImplementation(async (_url, options) => {
+      if (options?.method === "PUT") throw new TypeError("synthetic offline tab");
+      return Response.json({ state: older, revision: 2 });
+    });
+    const tabA = new AccountFinanceStorage("own-account", vi.fn(), vi.fn());
+    const failed = vi.fn();
+    const tabB = new AccountFinanceStorage("own-account", vi.fn(), failed);
+    await tabA.load();
+    await tabB.load();
+    tabB.save(newer);
+    await waitFor(() => expect(failed).toHaveBeenCalledOnce());
+    tabB.dispose();
+    const raw = localStorage.getItem(key);
+    finance.state = older;
+    finance.saved = true;
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    const blobs: Blob[] = [];
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { blobs.push(blob); return "blob:separate"; }), revokeObjectURL: vi.fn() });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: /Kontostand.*herunterladen/ }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(blobs).toHaveLength(1);
+    expect(parseFinanceBackup(await readBlob(blobs[0]), "own-account")).toEqual(older);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(raw);
+    fireEvent.click(screen.getByRole("button", { name: "Lokalen Kontocache herunterladen" }));
+    expect(blobs).toHaveLength(2);
+    expect(click).toHaveBeenCalledTimes(2);
+    expect(parseFinanceBackup(await readBlob(blobs[1]), "own-account")).toEqual(newer);
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
+    expect(localStorage.getItem(key)).toBeNull();
+    tabA.dispose();
+  });
+  function captureDownloads() {
+    const blobs: Blob[] = [];
+    const filenames: string[] = [];
+    vi.stubGlobal("URL", { createObjectURL: vi.fn((blob: Blob) => { blobs.push(blob); return "blob:logout"; }), revokeObjectURL: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { filenames.push(this.download); });
+    return { blobs, filenames };
+  }
+  it.each(["pending same state", "different nonpending state"])("requires a separate cache download for %s", async (kind) => {
+    const cacheState = kind === "pending same state" ? finance.state : fixture("Other tab saved cache");
+    const raw = JSON.stringify({ state: cacheState, revision: 3, pending: kind === "pending same state" });
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, raw);
+    const { blobs } = captureDownloads();
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    expect(screen.getByText(/Sicherung des angezeigten Kontostands enthält diesen Cache nicht/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Lokalen Kontocache herunterladen" }));
+    expect(blobs).toHaveLength(2);
+    const exported = await readBlob(blobs[1]);
+    expect(parseFinanceBackup(exported, "own-account")).toEqual(appStateSchema.parse(cacheState));
+    expect(() => parseFinanceBackup(exported, "another-account")).toThrow(/anderen Konto/);
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(localStorage.getItem(key)).toBe(raw);
+  });
+  it("does not require an additional cache download for the exact synchronized displayed state", async () => {
+    localStorage.setItem(accountStorageKey("own-account"), JSON.stringify({ state: finance.state, revision: 3, pending: false }));
+    const { blobs } = captureDownloads();
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect(blobs).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
+  });
+  it.each(["malformed", "duplicate IDs"])("requires and exports the exact unvalidated %s cache original, never an empty replacement", async (kind) => {
+    const rejected = fixture("Rejected own original");
+    if (kind === "duplicate IDs") rejected.transactions.push({ ...rejected.transactions[0] });
+    const raw = kind === "malformed" ? "{unreadable newer cache" : JSON.stringify({ state: rejected, revision: 3, pending: true }, null, 2);
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, raw);
+    localStorage.setItem(accountStorageKey("another-account"), "other private cache");
+    finance.state = createEmptyAccountState();
+    const { blobs, filenames } = captureDownloads();
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    expect(screen.getByText(/keinen wiederherstellbaren JSON-Kontostand/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Ungeprüftes Cache-Original herunterladen" }));
+    expect(blobs).toHaveLength(2);
+    expect(await readBlob(blobs[1])).toBe(raw);
+    expect(filenames[1]).toBe("Finanzblick_Cache_Original_ungeprueft.json");
+    expect(localStorage.getItem(key)).toBe(raw);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(localStorage.getItem(accountStorageKey("another-account"))).toBe("other private cache");
+  });
+  it.each([
+    ["Aktuellen Kontostand herunterladen", "Lokalen Kontocache herunterladen", "Konfliktsicherung herunterladen"],
+    ["Konfliktsicherung herunterladen", "Lokalen Kontocache herunterladen", "Aktuellen Kontostand herunterladen"],
+  ])("downloads one file per action and waits for every distinct required source: %s first", (first, second, third) => {
+    localStorage.setItem(accountStorageKey("own-account"), JSON.stringify({ state: fixture("Pending cache"), revision: 1, pending: true }));
+    localStorage.setItem(accountConflictKey("own-account"), "{malformed preserved conflict");
+    const { blobs, filenames } = captureDownloads();
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    for (const [index, name] of [first, second, third].entries()) {
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(blobs).toHaveLength(index + 1);
+      expect(filenames).toHaveLength(index + 1);
+      expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(index !== 2);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("retains informed discard without downloads for pending cache and malformed conflict", async () => {
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, JSON.stringify({ state: fixture("Pending cache"), revision: 1, pending: true }));
+    localStorage.setItem(accountConflictKey("own-account"), "{malformed preserved conflict");
+    const { blobs } = captureDownloads();
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    confirmDiscard();
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
+    expect(blobs).toHaveLength(0);
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBeNull();
+  });
+  it("does not mark a failed cache download as secured", () => {
+    localStorage.setItem(accountStorageKey("own-account"), "{malformed primary");
+    captureDownloads();
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => { throw new DOMException("Download blocked", "SecurityError"); });
+    fireEvent.click(screen.getByRole("button", { name: "Ungeprüftes Cache-Original herunterladen" }));
+    expect(screen.getByRole("alert").textContent).toContain("Browserspeicher voll oder gesperrt");
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("never substitutes repeated memory downloads for required cache and resets approvals on a fresh review", () => {
+    localStorage.setItem(accountStorageKey("own-account"), JSON.stringify({ state: fixture("Pending cache"), revision: 1, pending: true }));
+    captureDownloads();
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Lokalen Kontocache herunterladen" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each(["before download", "after download"])("rejects a cache raw change %s before logout POST", async (when) => {
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, JSON.stringify({ state: finance.state, revision: 1, pending: false }));
+    const { blobs } = captureDownloads();
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    if (when === "after download") fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    const newer = JSON.stringify({ state: fixture("New unreviewed tab cache"), revision: 2, pending: true });
+    localStorage.setItem(key, newer);
+    if (when === "before download") fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    else fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("zwischenzeitlich geändert");
+    expect(blobs).toHaveLength(when === "before download" ? 0 : 1);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(newer);
+  });
+  it("rechecks exact raw after a download before marking that source as secured", () => {
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, JSON.stringify({ state: finance.state, revision: 1, pending: false }));
+    captureDownloads();
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => { localStorage.setItem(key, "new unreviewed original"); });
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect(screen.getByRole("alert").textContent).toContain("zwischenzeitlich geändert");
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(localStorage.getItem(key)).toBe("new unreviewed original");
+  });
+  it.each(["cache", "unsaved memory", "saved memory", "account"])("preserves both reviewed sources if %s changes during logout POST", async (target) => {
+    const key = accountStorageKey("own-account");
+    const raw = JSON.stringify({ state: finance.state, revision: 1, pending: false });
+    localStorage.setItem(key, raw);
+    localStorage.setItem(accountConflictKey("own-account"), "reviewed conflict");
+    localStorage.setItem(accountStorageKey("another-account"), "other private cache");
+    let finish!: (response: Response) => void;
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finish = resolve; }));
+    const view = mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    confirmDiscard();
+    if (target === "cache") localStorage.setItem(key, "new unreviewed cache");
+    if (target === "unsaved memory") {
+      finance.saved = false;
+      view.rerender(<AccountWorkspaceContext value={workspace("user")}><AccountLogout /></AccountWorkspaceContext>);
+    }
+    if (target === "saved memory") {
+      finance.state = fixture("Changed already-saved memory");
+      view.rerender(<AccountWorkspaceContext value={workspace("user")}><AccountLogout /></AccountWorkspaceContext>);
+    }
+    if (target === "account") {
+      view.rerender(<AccountWorkspaceContext value={{ ...workspace("user"), user: { ...workspace("user").user, id: "another-account" } }}><AccountLogout /></AccountWorkspaceContext>);
+    }
+    await act(async () => finish(Response.json({ ok: true })));
+    expect(assign).toHaveBeenCalledWith("/login?cache=unavailable");
+    expect(localStorage.getItem(key)).toBe(target === "cache" ? "new unreviewed cache" : raw);
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe("reviewed conflict");
+    expect(localStorage.getItem(accountStorageKey("another-account"))).toBe("other private cache");
+  });
+  it("rejects a stale logout review before POST and leaves the changed copy intact", async () => {
+    const key = accountConflictKey("own-account");
+    localStorage.setItem(key, "reviewed copy");
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    localStorage.setItem(key, "new unreviewed copy");
+    confirmDiscard();
+    expect((await screen.findByRole("alert")).textContent).toContain("zwischenzeitlich geändert");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe("new unreviewed copy");
+  });
+  it("keeps logout guarded if unsaved edits arise after opening its confirmation", () => {
+    const view = mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    finance.saved = false;
+    finance.state = fixture("Unsaved edit");
+    view.rerender(<AccountWorkspaceContext value={workspace("user")}><AccountLogout /></AccountWorkspaceContext>);
+    confirmDiscard();
+    expect((screen.getByRole("button", { name: "Ohne Sicherung abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+  });
+  it("requires informed discard if backup storage is inaccessible and preserves unreviewed data", async () => {
+    const key = accountConflictKey("own-account");
+    localStorage.setItem(key, "preserved inaccessible copy");
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    expect(screen.getByRole("alert").textContent).toContain("nicht erreichbar");
+    expect((screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    confirmDiscard();
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?cache=unavailable"));
+    read.mockRestore();
+    expect(localStorage.getItem(key)).toBe("preserved inaccessible copy");
+  });
+  it("exports valid RAM despite a storage SecurityError without clearing its privacy warning or approving unknown backups", async () => {
+    const key = accountStorageKey("own-account");
+    const raw = JSON.stringify({ state: fixture("Unknown newer local cache"), revision: 2, pending: true });
+    localStorage.setItem(key, raw);
+    localStorage.setItem(accountConflictKey("own-account"), "unknown conflict original");
+    localStorage.setItem(accountStorageKey("another-account"), "other private cache");
+    const { blobs, filenames } = captureDownloads();
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    const remove = vi.spyOn(Storage.prototype, "removeItem");
+    fetchMock.mockResolvedValue(Response.json({ ok: true }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    expect(blobs).toHaveLength(0);
+    expect(screen.getByRole("alert").textContent).toContain("nicht erreichbar");
+    const readsBeforeDownload = read.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect(blobs).toHaveLength(1);
+    expect(filenames).toEqual([`Finanzblick_my.account_${finance.state.settings.asOf}.json`]);
+    expect(parseFinanceBackup(await readBlob(blobs[0]), "own-account")).toEqual(appStateSchema.parse(finance.state));
+    expect(read).toHaveBeenCalledTimes(readsBeforeDownload);
+    expect(screen.getByRole("alert").textContent).toContain("auf diesem Gerät erhalten");
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Gesichert abmelden" }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    read.mockRestore();
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    confirmDiscard();
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?cache=unavailable"));
+    expect(remove).not.toHaveBeenCalled();
+    expect(localStorage.getItem(key)).toBe(raw);
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe("unknown conflict original");
+    expect(localStorage.getItem(accountStorageKey("another-account"))).toBe("other private cache");
+  });
+  it("requires a fresh readable review and all required downloads after storage access returns", () => {
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, JSON.stringify({ state: fixture("Newer pending cache"), revision: 2, pending: true }));
+    localStorage.setItem(accountConflictKey("own-account"), "preserved conflict original");
+    const { blobs } = captureDownloads();
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new DOMException("blocked", "SecurityError"); });
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect(blobs).toHaveLength(1);
+    read.mockRestore();
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Lokalen Kontocache herunterladen" }));
+    fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung herunterladen" }));
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Aktuellen Kontostand herunterladen" }));
+    expect(blobs).toHaveLength(4);
+    expect((screen.getByRole("button", { name: "Gesichert abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
+  });
+  it("keeps copies changed during logout and still clears signed-out in-memory data", async () => {
+    const key = accountStorageKey("own-account");
+    localStorage.setItem(key, "reviewed cache");
+    localStorage.setItem(accountConflictKey("own-account"), "reviewed conflict");
+    let finish!: (response: Response) => void;
+    fetchMock.mockReturnValue(new Promise<Response>((resolve) => { finish = resolve; }));
+    mount(<AccountLogout />, workspace("user"));
+    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    confirmDiscard();
+    localStorage.setItem(accountConflictKey("own-account"), "new unreviewed conflict");
+    await act(async () => finish(Response.json({ ok: true })));
+    expect(assign).toHaveBeenCalledWith("/login?cache=unavailable");
+    expect(localStorage.getItem(accountConflictKey("own-account"))).toBe("new unreviewed conflict");
+    expect(localStorage.getItem(key)).toBe("reviewed cache");
+  });
   it("blocks logout while changes are not yet synchronized", () => {
     finance.saved = false;
     mount(<AccountLogout />, workspace("user"));
@@ -432,6 +1042,7 @@ describe("AccountLogout", () => {
     const remove = vi.spyOn(Storage.prototype, "removeItem");
     mount(<AccountLogout />, workspace("user"));
     fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    confirmDiscard();
     await waitFor(() => expect(assign).toHaveBeenCalledExactlyOnceWith("/login"));
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/auth/logout", {
       method: "POST",
@@ -458,6 +1069,7 @@ describe("AccountLogout", () => {
     mount(<AccountLogout />, workspace("user"));
     const button = screen.getByRole("button", { name: "Abmelden" });
     fireEvent.click(button);
+    confirmDiscard();
     fireEvent.click(button);
     expect(fetchMock).toHaveBeenCalledOnce();
     expect((button as HTMLButtonElement).disabled).toBe(true);
@@ -473,12 +1085,13 @@ describe("AccountLogout", () => {
     fetchMock.mockRejectedValue(new TypeError("Network unavailable"));
     mount(<AccountLogout />, workspace("user"));
     fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    confirmDiscard();
     expect((await screen.findByRole("alert")).textContent).toContain("Der Server ist nicht erreichbar. Du wurdest nicht abgemeldet.");
     expect(localStorage.getItem(key)).toBe("cached account state");
     expect(assign).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: "Abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Ohne Sicherung abmelden" }) as HTMLButtonElement).disabled).toBe(false);
     fetchMock.mockResolvedValue(Response.json({ ok: true }));
-    fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ohne Sicherung abmelden" }));
     await waitFor(() => expect(assign).toHaveBeenCalledExactlyOnceWith("/login"));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).toBeNull();
@@ -490,11 +1103,12 @@ describe("AccountLogout", () => {
     fetchMock.mockResolvedValue(Response.json({ error: "internal details" }, { status: 503 }));
     mount(<AccountLogout />, workspace("user"));
     fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    confirmDiscard();
     expect((await screen.findByRole("alert")).textContent).toContain("Abmelden ist derzeit nicht möglich.");
     expect(screen.getByRole("alert").textContent).not.toContain("internal details");
     expect(localStorage.getItem(key)).toBe("cached account state");
     expect(assign).not.toHaveBeenCalled();
-    expect((screen.getByRole("button", { name: "Abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Ohne Sicherung abmelden" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("clears the signed-out in-memory page and reports a cache removal failure on login", async () => {
@@ -506,6 +1120,7 @@ describe("AccountLogout", () => {
     });
     mount(<AccountLogout />, workspace("user"));
     fireEvent.click(screen.getByRole("button", { name: "Abmelden" }));
+    confirmDiscard();
     await waitFor(() => expect(assign).toHaveBeenCalledExactlyOnceWith("/login?cache=unavailable"));
     expect(localStorage.getItem(otherKey)).toBe("another account's cached state");
   });

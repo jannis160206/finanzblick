@@ -9,13 +9,7 @@ import { latestPocketSnapshot, latestTRBalance } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { pocketNames, type AppState, type PocketAmounts } from "@/lib/types";
 import { cn } from "@/lib/utils";
-
-const everydayNames = [
-  "Mittagessen",
-  "Lebensmittel",
-  "Entertainment & Haushalt",
-  "Tanken",
-] as const;
+import { bankPocketBalance, everydayPocketNames, physicalPocketBalance } from "@/lib/goals";
 
 export function PocketBalanceCards({
   state,
@@ -39,6 +33,8 @@ export function PocketBalanceCards({
           pocket === "Notgroschen"
             ? latestTRBalance(state)
             : latestPocketSnapshot(state, pocket);
+        const basis = physicalPocketBalance(state, pocket, actual);
+        const bankBalance = bankPocketBalance(state, pocket, actual);
         return (
           <article
             key={pocket}
@@ -79,15 +75,15 @@ export function PocketBalanceCards({
               aria-label={`${pocket} Kontostand`}
               className={cn(
                 "mt-5 text-2xl font-semibold tracking-tight break-words tabular-nums",
-                actual[pocket] < 0 && "text-destructive",
+                bankBalance !== null && bankBalance < 0 && "text-destructive",
               )}
             >
-              {currency(actual[pocket])}
+              {bankBalance === null ? "Kontostand unbekannt" : currency(bankBalance)}
             </FinancialData>
             <FinancialData as="p" className="mt-2 text-[11px] text-muted-foreground">
-              {snapshot
+              {bankBalance === null ? "Kein eindeutiger belegter Startstand" : snapshot
                 ? `${pocket === "Notgroschen" ? "Stand" : "Auszugbasis"} ${dateLabel(snapshot.date)}`
-                : `Startstand ${dateLabel(state.settings.baselineDate)}`}
+                : basis.source === "snapshot" ? "Auszugssaldo" : `Startstand ${dateLabel(state.settings.baselineDate)}`}
             </FinancialData>
           </article>
         );
@@ -103,11 +99,11 @@ export function EverydayPocketBalances({ state }: { state: AppState }) {
       .sort((a, b) => a.date.localeCompare(b.date))
       .map((item) => [item.name, item]),
   );
-  const known = everydayNames.flatMap((name) => {
+  const known = everydayPocketNames.flatMap((name) => {
     const snapshot = snapshots.get(name);
     return snapshot ? [{ name, snapshot }] : [];
   });
-  const missing = everydayNames.filter((name) => !snapshots.has(name));
+  const missing = everydayPocketNames.filter((name) => !snapshots.has(name));
   return (
     <section
       aria-label="Revolut Alltagspockets"

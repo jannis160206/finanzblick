@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { savingsGoalSchema, type SavingsGoal } from "@/lib/types";
-import { pocketKey, savingsGoals, vacationSavingPaused } from "@/lib/goals";
+import { goalBalanceStatus, pocketKey, preserveGoalOpeningBalances, savingsGoals, vacationSavingPaused } from "@/lib/goals";
 import { currency, dateLabel } from "@/lib/format";
 
 export function SavingsGoals() {
@@ -25,6 +25,7 @@ export function SavingsGoals() {
   const returnTarget = useRef<{ id: string; action: "edit" | "menu" } | null>(null);
   const goals = savingsGoals(state);
   const pauseVacation = vacationSavingPaused(state.settings.asOf.slice(0, 7));
+  const allocationBlocked = "allocationBlocked" in dashboard.current && dashboard.current.allocationBlocked === true;
   function edit(goal: SavingsGoal, origin: "add" | "edit" | "menu" = "edit") {
     returnTarget.current = origin === "add" ? null : { id: goal.id, action: origin };
     setError(""); setErrorField(null); setEditing({ ...goal });
@@ -45,10 +46,15 @@ export function SavingsGoals() {
           onClick={() => edit({ id: crypto.randomUUID(), name: "", pocket: "", target: 0, date: state.settings.asOf }, "add")}>
           <Plus aria-hidden="true" className="size-4" />Neues Ziel
         </Button>}>
+      {allocationBlocked && <FinancialData as="p" role="status" className="mb-4 text-xs text-muted-foreground">
+        Automatische Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.
+      </FinancialData>}
       <FinancialData className="grid gap-3 sm:grid-cols-2">
         {goals.map((goal) => {
-          const balance = Math.max(0, dashboard.actualGoals[goal.id] ?? 0);
-          const progress = Math.min(100, balance / goal.target * 100);
+          const basis = goalBalanceStatus(state, goal, dashboard.actual);
+          const balance = basis.amount;
+          const progress = balance === null ? null : Math.max(0, Math.min(100, balance / goal.target * 100));
+          const unavailable = basis.status === "conflict" ? "Zuordnung offen" : "Kontostand unbekannt";
           return <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4 sm:p-5" key={goal.id} aria-label={`Sparziel ${goal.name}`}>
             <div className="flex items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2.5">
@@ -69,11 +75,13 @@ export function SavingsGoals() {
                 </DropdownMenu>
               </div>
             </div>
-            <p className="mt-5 text-xs text-muted-foreground"><span className="text-xl font-semibold tracking-tight text-foreground tabular-nums">{currency(balance)}</span> von {currency(goal.target)}</p>
-            <div className="mb-2 mt-4 flex items-center justify-between text-[11px] text-muted-foreground"><span>Angespart</span><span className="font-medium tabular-nums text-primary">{Math.round(progress)} %</span></div>
-            <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
-              <div className="h-full rounded-full bg-primary" style={{ width: `${progress}%` }} />
+            <p className="mt-5 text-xs text-muted-foreground"><span className="text-xl font-semibold tracking-tight text-foreground tabular-nums">{balance === null ? unavailable : currency(balance)}</span> von {currency(goal.target)}</p>
+            <div className="mb-2 mt-4 flex items-center justify-between text-[11px] text-muted-foreground"><span>Pocket-Guthaben</span><span className="font-medium tabular-nums text-primary">{progress === null ? "—" : `${Math.round(progress)} %`}</span></div>
+            <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress ?? undefined} aria-valuetext={progress === null ? unavailable : undefined} aria-valuemin={0} aria-valuemax={100}>
+              <div className="h-full rounded-full bg-primary" style={{ width: `${progress ?? 0}%` }} />
             </div>
+            {basis.status === "conflict" && <p className="mt-3 text-xs text-muted-foreground">Pocket-Zuordnung oder widersprüchliche Salden klären. Das Guthaben ist nicht mehrfach verfügbar.</p>}
+            {basis.status === "unknown" && <p className="mt-3 text-xs text-muted-foreground">Ohne belegten Startstand oder Auszugssaldo ist der Fortschritt nicht bekannt.</p>}
             <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
               <span className="inline-flex items-center gap-1.5"><CalendarDays aria-hidden="true" className="size-3.5 shrink-0" />Bis {dateLabel(goal.date)}</span>
               <span className="inline-flex min-w-0 items-center gap-1.5"><Wallet aria-hidden="true" className="size-3.5 shrink-0" /><span className="break-all">{goal.pocket}</span></span>
@@ -121,8 +129,9 @@ export function SavingsGoals() {
             setError("");
             setErrorField(null);
             const value = { ...parsed.data };
-            if (value.target > (dashboard.actualGoals[value.id] ?? 0) && value.target !== goals.find((goal) => goal.id === value.id)?.target) delete value.completedAt;
-            update((current) => ({ ...current,
+            const balance = goalBalanceStatus(state, value, dashboard.actual).amount;
+            if (balance !== null && value.target > balance && value.target !== goals.find((goal) => goal.id === value.id)?.target) delete value.completedAt;
+            update((current) => ({ ...preserveGoalOpeningBalances(current),
               savingsGoals: [...savingsGoals(current).filter((goal) => goal.id !== value.id), value],
               settings: pocketKey(value.pocket) === "motorrad" ? { ...current.settings, bikeTarget: value.target, bikePurchaseDate: value.date } : current.settings,
             }));
@@ -149,7 +158,7 @@ export function SavingsGoals() {
             {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
           </DialogBody>
           <DialogFooter><Button variant="outline" onClick={() => setRemoving(null)}>Abbrechen</Button><Button variant="destructive" disabled={!!storageError} onClick={() => {
-            update((current) => ({ ...current, savingsGoals: savingsGoals(current).filter((goal) => goal.id !== removing?.id) }));
+            update((current) => ({ ...preserveGoalOpeningBalances(current), savingsGoals: savingsGoals(current).filter((goal) => goal.id !== removing?.id) }));
             setRemoving(null);
           }}>Entfernen</Button></DialogFooter>
         </DialogContent>

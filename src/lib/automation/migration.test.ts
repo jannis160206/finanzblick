@@ -65,7 +65,7 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
     expect(
       db.prepare("SELECT count(*) AS count FROM automation_migrations").get()
         ?.count,
-    ).toBe(9);
+    ).toBe(12);
     expect(
       db.prepare("SELECT count(*) AS count FROM merchant_authorized_logo_names")
         .get()?.count,
@@ -77,6 +77,33 @@ it("migrates legacy merchants atomically, preserves their data and permits unkno
         )
         .get(),
     ).toMatchObject({ name: "merchants_logo_entity" });
+  } finally {
+    db.close();
+  }
+});
+
+it("repairs independently deployed migration-10 job metadata without losing queued uploads", () => {
+  const db = new DatabaseSync(":memory:");
+  try {
+    db.exec("CREATE TABLE users (id TEXT PRIMARY KEY)");
+    migrateAutomation(db);
+    db.exec(`
+      ALTER TABLE automation_jobs DROP COLUMN error_code;
+      ALTER TABLE automation_jobs DROP COLUMN outcome_json;
+      DELETE FROM automation_migrations WHERE version >= 11;
+      DROP INDEX automation_statement_retention;
+      INSERT INTO users VALUES ('alice');
+      INSERT INTO automation_jobs (id, user_id, kind, name, status, bytes, available_at, updated_at, created_at)
+      VALUES ('synthetic-job', 'alice', 'statement', 'test.csv', 'QUEUED', 2, 0, 0, 0);
+      BEGIN IMMEDIATE;
+    `);
+    migrateAutomation(db);
+    db.exec("COMMIT");
+    expect(db.prepare("SELECT status, bytes, error_code, outcome_json FROM automation_jobs WHERE id = 'synthetic-job'").get())
+      .toEqual({ status: "QUEUED", bytes: 2, error_code: null, outcome_json: null });
+    expect(db.prepare("SELECT count(*) AS count FROM automation_migrations").get()?.count).toBe(12);
+    migrateAutomation(db);
+    expect(db.prepare("SELECT count(*) AS count FROM automation_jobs").get()?.count).toBe(1);
   } finally {
     db.close();
   }

@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 import type { AutomationJob } from "@/lib/automation/schema";
+import type { ImportResult } from "@/lib/import/results";
+import type { AutomationErrorCode } from "@/lib/automation/errors";
 
 export type UploadPhase = "waiting" | "uploading" | "reading" | "saving" | "accepted" | "completed" | "failed";
 export type UploadActivity = {
@@ -10,6 +12,8 @@ export type UploadActivity = {
   phase: UploadPhase;
   error: string | null;
   updatedAt: number;
+  result?: ImportResult;
+  errorCode?: AutomationErrorCode | null;
 };
 
 export function isActiveUpload(activity: UploadActivity) {
@@ -35,11 +39,12 @@ export function useUploadActivity(jobs: AutomationJob[]) {
   const add = useCallback((items: UploadActivity[]) => {
     setActivities((current) => boundedActivities([...current, ...items]));
   }, []);
-  const change = useCallback((ids: string[], phase: UploadPhase, error: string | null = null) => {
+  const change = useCallback((ids: string[], phase: UploadPhase, error: string | null = null,
+    errorCode: AutomationErrorCode | null = null) => {
     const selected = new Set(ids);
     const updatedAt = Date.now();
     setActivities((current) => boundedActivities(current.map((item) =>
-      selected.has(item.id) ? { ...item, phase, error, updatedAt } : item,
+      selected.has(item.id) ? { ...item, phase, error, errorCode, updatedAt } : item,
     )));
   }, []);
   return { activities, add, change };

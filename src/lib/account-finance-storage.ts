@@ -2,6 +2,7 @@ import { z } from "zod";
 import { appStateSchema, type AppState } from "@/lib/types";
 import { financeSnapshotSchema } from "@/lib/account-schema";
 import { FinanceStorageError } from "@/lib/finance-storage";
+import { parseFinanceBackup } from "@/lib/finance-backup";
 
 const cacheSchema = z.object({
   revision: z.number().int().nonnegative(),
@@ -10,6 +11,54 @@ const cacheSchema = z.object({
 });
 type Cache = z.infer<typeof cacheSchema>;
 export const accountStorageKey = (id: string) => `finanzblick.account.${id}.v1`;
+export const accountConflictKey = (id: string) => `${accountStorageKey(id)}.conflict-backup`;
+export const ACCOUNT_CONFLICT_EVENT = "finanzblick-account-conflict";
+
+function parseCache(raw: string): Cache {
+  let value: unknown;
+  try { value = JSON.parse(raw); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new FinanceStorageError("Die lokale Kontosicherung ist unlesbar und bleibt unverändert.");
+  }
+  const parsed = cacheSchema.safeParse(value);
+  if (!parsed.success) throw new FinanceStorageError("Die lokale Kontosicherung ist ungültig und bleibt unverändert.");
+  return parsed.data;
+}
+
+export function parseAccountCache(raw: string): Cache {
+  return parseCache(raw);
+}
+
+export function parseAccountCacheState(raw: string): AppState {
+  return parseAccountCache(raw).state;
+}
+
+export function parseAccountConflictBackup(raw: string, accountId: string): AppState {
+  let value: unknown;
+  try { value = JSON.parse(raw); }
+  catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new FinanceStorageError("Die Konfliktsicherung ist unlesbar und bleibt unverändert. Das Original kann trotzdem heruntergeladen werden.");
+  }
+  if (value && typeof value === "object" && "pending" in value && !("format" in value)) {
+    const parsed = cacheSchema.strict().safeParse(value);
+    if (!parsed.success) throw new FinanceStorageError("Die Konfliktsicherung ist ungültig und bleibt unverändert. Das Original kann trotzdem heruntergeladen werden.");
+    return parsed.data.state;
+  }
+  return parseFinanceBackup(raw, accountId);
+}
+
+export function assertAccountConflictUnchanged(accountId: string, expectedRaw: string | null) {
+  if (localStorage.getItem(accountConflictKey(accountId)) !== expectedRaw)
+    throw new FinanceStorageError("Die Konfliktsicherung wurde zwischenzeitlich geändert. Bitte erneut prüfen; die neue Sicherung bleibt erhalten.");
+}
+
+export function discardAccountConflictBackup(accountId: string, expectedRaw: string | null) {
+  assertAccountConflictUnchanged(accountId, expectedRaw);
+  localStorage.removeItem(accountConflictKey(accountId));
+  window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
+}
 
 export class AccountSessionError extends FinanceStorageError {}
 
@@ -41,16 +90,7 @@ export class AccountFinanceStorage {
     const raw = localStorage.getItem(this.key);
     this.baseline = raw;
     if (raw === null) return;
-    let value: unknown;
-    try {
-      value = JSON.parse(raw);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      throw new FinanceStorageError("Die lokale Kontosicherung ist unlesbar und bleibt unverändert.");
-    }
-    const parsed = cacheSchema.safeParse(value);
-    if (!parsed.success) throw new FinanceStorageError("Die lokale Kontosicherung ist ungültig und bleibt unverändert.");
-    return parsed.data;
+    return parseCache(raw);
   }
 
   private writeCache(cache: Cache) {
@@ -108,6 +148,7 @@ export class AccountFinanceStorage {
     if (this.busy) throw new FinanceStorageError("Die Synchronisierung läuft bereits.");
     this.busy = true;
     try {
+      this.cache = undefined;
       let local = this.readCache();
       this.cache = local;
       let remote: z.infer<typeof financeSnapshotSchema>;
@@ -221,12 +262,29 @@ export class AccountFinanceStorage {
   async useServer(): Promise<AppState | null> {
     if (this.busy) throw new FinanceStorageError("Bitte warten, bis die laufende Synchronisierung beendet ist.");
     const selected = this.cache;
+    const selectedRaw = localStorage.getItem(this.key);
+    if (this.baseline !== undefined && selectedRaw !== this.baseline)
+      throw new FinanceStorageError("Ein anderer Tab hat diesen Kontostand geändert. Bitte deinen Stand sichern und die Seite neu laden, bevor du den Serverstand bestätigst.");
+    const conflictKey = accountConflictKey(this.userId);
+    const conflictRaw = localStorage.getItem(conflictKey);
     this.busy = true;
     try {
       const remote = await this.request("GET");
+      if (this.disposed) throw new AccountSessionError("Das Konto wurde gewechselt. Der Gerätestand bleibt erhalten.");
       if (selected !== this.cache) throw new FinanceStorageError("Während des Ladens wurden neue Änderungen vorgenommen. Dein Stand bleibt erhalten; bitte erneut sichern und bestätigen.");
-      if (this.cache?.pending) localStorage.setItem(`${this.key}.conflict-backup`, JSON.stringify(this.cache));
-      this.baseline = localStorage.getItem(this.key);
+      if (localStorage.getItem(this.key) !== selectedRaw)
+        throw new FinanceStorageError("Ein anderer Tab hat diesen Kontostand während des Ladens geändert. Bitte erneut prüfen.");
+      assertAccountConflictUnchanged(this.userId, conflictRaw);
+      const recoveryRaw = selected?.pending || !selected ? selectedRaw : null;
+      if (recoveryRaw !== null) {
+        if (conflictRaw !== null && conflictRaw !== recoveryRaw)
+          throw new FinanceStorageError("Eine ältere Konfliktsicherung ist noch vorhanden. Bitte zuerst wiederherstellen oder sichern und ausdrücklich verwerfen; sie wird nicht überschrieben.");
+        if (conflictRaw === null) {
+          localStorage.setItem(conflictKey, recoveryRaw);
+          window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
+        }
+      }
+      this.baseline = selectedRaw;
       if (remote.state) this.writeCache({ ...remote, state: remote.state, pending: false });
       else {
         localStorage.removeItem(this.key);

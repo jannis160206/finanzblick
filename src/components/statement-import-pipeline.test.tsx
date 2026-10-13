@@ -56,6 +56,7 @@ function mount() {
 const persisted = (): AppState => JSON.parse(localStorage.getItem("finanzdashboard.v1")!);
 async function drop(view: ReturnType<typeof mount>, bookings: ScreenshotLine[], name = "screen.jpeg") {
   await waitFor(() => expect(view.read().ready).toBe(true));
+  await waitFor(() => expect(screen.getByRole<HTMLButtonElement>("button", { name: "Dateien auswählen" }).disabled).toBe(false));
   const worker = pixelWorker(bookings);
   ocr.createWorker.mockResolvedValueOnce(worker);
   const previous = view.read().statementImport?.requestId;

@@ -50,10 +50,18 @@ import { reconcileAmexImports, screenshotPendingBalance, type AmexReconciliation
 import { groupedScreenshotIssueKey, resolveGroupedScreenshotIssues } from "./amex-screenshot-reconciliation";
 import {
   appendStatementRows,
+  admitStatementRepairDrafts,
   deduplicateStatements,
   statementFingerprint,
-  type StatementResult,
 } from "./statements";
+import {
+  completeImportResults,
+  reconcileImportResultReviews,
+  retainImportResults,
+  reviewUploadId,
+  type ImportSource,
+  type UploadedStatementResult,
+} from "./results";
 
 export type ImportMetadata = {
   pocketSnapshots?: PocketSnapshot[];
@@ -68,8 +76,29 @@ export type ImportMetadata = {
   amexReconciliation?: AmexReconciliation;
   resolvedAmexScreenshotIssues?: string[];
   amexPendingRows?: { date: string; rows: Transaction[] };
+  imports?: ImportSource[];
 };
 export type FixedDecision = { change: FixedChange; accept: boolean };
+
+function fixedReviewSubset(item: Extract<ReviewItem, { kind: "fixed" }>, bookings: Transaction[]): ReviewItem {
+  return { ...item, change: { ...item.change, bookings },
+    ...(item.importUploadIds ? { importUploadIds: Object.fromEntries(bookings.flatMap((row) => {
+      const uploadId = reviewUploadId(item, row.id);
+      return uploadId ? [[row.id, uploadId]] : [];
+    })) } : {}),
+  };
+}
+
+function settlementPatch(row?: Transaction) {
+  if (!row || (row.sharedRefundFor === undefined && row.sharedRefundUnlinked === undefined &&
+    row.sharedRepaymentFor === undefined && row.sharedPaidAmount === undefined)) return {};
+  return {
+    sharedRefundFor: row.sharedRefundFor,
+    sharedRefundUnlinked: row.sharedRefundUnlinked,
+    sharedRepaymentFor: row.sharedRepaymentFor,
+    sharedPaidAmount: row.sharedPaidAmount,
+  };
+}
 
 function indexReviewRules(state: AppState) {
   const index = new Map<string, Set<string>>();
@@ -158,12 +187,13 @@ export function repairMerchantBookings(state: AppState, candidates: Transaction[
     transactions: state.transactions.map(repair),
     ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.flatMap((item): ReviewItem[] => {
       if (item.kind === "booking")
-        return [{ ...item, draft: item.draft.amount === null ? applyNamedTransfer(recoverMerchant(item.draft)) : repair(item.draft as Transaction) }];
+        return item.sourceRepair ? [item] : [{ ...item, draft: item.draft.amount === null ? applyNamedTransfer(recoverMerchant(item.draft)) : repair(item.draft as Transaction) }];
       const transfers = item.change.bookings.filter(isNamedTransfer);
       const bookings = item.change.bookings.filter((row) => !isNamedTransfer(row));
       return [
-        ...(bookings.length ? [{ ...item, change: { ...item.change, bookings } }] : []),
-        ...transfers.map((row): ReviewItem => ({ kind: "booking", id: row.id, draft: applyNamedTransfer(row), message: "Transfer erkannt" })),
+        ...(bookings.length ? [fixedReviewSubset(item, bookings)] : []),
+        ...transfers.map((row): ReviewItem => ({ kind: "booking", id: row.id, draft: applyNamedTransfer(row),
+          message: "Transfer erkannt", ...(reviewUploadId(item, row.id) ? { importUploadId: reviewUploadId(item, row.id) } : {}) })),
       ];
     }) } : {}),
     ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => {
@@ -194,8 +224,9 @@ function repairPayrollBookings(state: AppState): AppState {
     }) } : {}),
     ...(state.reviewQueue ? { reviewQueue: state.reviewQueue.flatMap((item): ReviewItem[] => {
       if (item.kind === "fixed" && ["Gehalt", "Rufbereitschaft"].includes(item.change.category))
-        return item.change.bookings.map((row) => ({ kind: "booking", id: row.id, draft: repair(row), message: "Einkommenszuordnung prüfen." }));
-      if (item.kind === "booking" && item.draft.amount !== null)
+        return item.change.bookings.map((row) => ({ kind: "booking", id: row.id, draft: repair(row),
+          message: "Einkommenszuordnung prüfen.", ...(reviewUploadId(item, row.id) ? { importUploadId: reviewUploadId(item, row.id) } : {}) }));
+      if (item.kind === "booking" && !item.sourceRepair && item.draft.amount !== null)
         return [{ ...item, draft: repair(item.draft as Transaction) }];
       return [item];
     }) } : {}),
@@ -203,12 +234,13 @@ function repairPayrollBookings(state: AppState): AppState {
 }
 
 export function queueLedgerReview(state: AppState): AppState {
+  const beforeReview = state;
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, actualBookings(state)) };
   state = repairPayrollBookings(repairMerchantBookings(state));
   const rules = indexReviewRules(state);
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
-    item.kind === "booking" && transactionSchema.safeParse(item.draft).success ? [item.draft as Transaction] : []);
+    item.kind === "booking" && !item.sourceRepair && transactionSchema.safeParse(item.draft).success ? [item.draft as Transaction] : []);
   let ledger = actualBookings(state);
   if (pending.length) {
     const accounted = accountHolidayRanges(reconcileSharedHoliday([...ledger, ...pending], state.settings.asOf, state.plannedOneOffs).bookings, state.holidayRanges, state.settings.asOf);
@@ -233,20 +265,30 @@ export function queueLedgerReview(state: AppState): AppState {
     if (item.kind === "fixed") {
       const bookings = item.change.bookings.filter((row) =>
         !reviewedIds.has(row.id) && !reviewedIds.has(statementFingerprint(row)));
-      return bookings.length ? [{ ...item, change: { ...item.change, bookings } }] : [];
+      return bookings.length ? [fixedReviewSubset(item, bookings)] : [];
     }
-    return !byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction))) ? [item] : [];
+    return item.sourceRepair || (!byId.has(item.draft.id) && (item.draft.amount === null || !keys.has(statementFingerprint(item.draft as Transaction)))) ? [item] : [];
   });
   const linkedIssues = new Map((state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" && item.importIssues ? [[item.draft.id, item.importIssues] as const] : [],
   ));
+  const linkedUploads = new Map((state.reviewQueue ?? []).flatMap((item) =>
+    (item.kind === "booking" ? [item.draft] : item.change.bookings).flatMap((row) => {
+      const uploadId = reviewUploadId(item, row.id);
+      return uploadId ? [[row.id, uploadId] as const] : [];
+    })));
   for (const draft of ledger) {
     const message = bookingReviewReason(state, draft, rules);
     if (!message) continue;
     const importIssues = linkedIssues.get(draft.id);
-    queue.push({ kind: "booking", id: draft.id, draft, message, ...(importIssues ? { importIssues } : {}) });
+    const importUploadId = linkedUploads.get(draft.id);
+    queue.push({ kind: "booking", id: draft.id, draft, message, ...(importIssues ? { importIssues } : {}),
+      ...(importUploadId ? { importUploadId } : {}) });
   }
-  return { ...state, reviewQueue: queue };
+  const updated = { ...state, reviewQueue: queue };
+  return beforeReview.importResults
+    ? { ...updated, importResults: retainImportResults(reconcileImportResultReviews(beforeReview, updated)) }
+    : updated;
 }
 
 function receipt(row: Transaction, rowId?: string): FixedReceipt {
@@ -440,10 +482,19 @@ export function splitFixedBookings(state: AppState, candidates: Transaction[]) {
 }
 
 export function prepareStatementImport(
-  results: StatementResult[],
+  results: UploadedStatementResult[],
   state: AppState,
 ) {
-  const candidates = results.flatMap((result) => numberStatementRows(result.rows.map(recoverMerchant)));
+  results = results.map((result) => ({ ...admitStatementRepairDrafts(result), uploadId: result.uploadId ?? crypto.randomUUID(),
+    rows: numberStatementRows(result.rows.map(recoverMerchant)) }));
+  const candidates = results.flatMap((result) => result.rows);
+  const sources: ImportSource[] = results.map((result) => ({
+    uploadId: result.uploadId!, name: result.file, source: result.source,
+    rows: result.rows, skipped: result.skipped, issues: [], repairDraftIds: [],
+    ...(result.failureCode ? { failureCode: result.failureCode } : {}),
+  }));
+  const sourceByRow = new Map(sources.flatMap((source) =>
+    source.rows.map((row) => [row.id, source.uploadId] as const)));
   const grouped = results.filter((result) => result.amexScreenshot?.layout === "grouped");
   const groupedIssues = resolveGroupedScreenshotIssues(results);
   const capture = grouped.map((result) => result.amexScreenshot!).filter((item) => item.balance !== undefined)
@@ -490,9 +541,11 @@ export function prepareStatementImport(
   );
   const automatic: Transaction[] = [];
   const review: ReviewItem[] = [...reconciled.review, ...split.changes.map((change): ReviewItem => ({
-    kind: "fixed",
-    id: change.id,
-    change,
+    kind: "fixed", id: change.id, change,
+    importUploadIds: Object.fromEntries(change.bookings.flatMap((row) => {
+      const uploadId = sourceByRow.get(row.id);
+      return uploadId ? [[row.id, uploadId]] : [];
+    })),
   }))];
   const rules = indexReviewRules(state);
   for (const row of split.rows) {
@@ -516,12 +569,32 @@ export function prepareStatementImport(
   const legacyIssues = legacyScreenshotIssues(state.reviewQueue ?? [], state.importStatus?.issues ?? []);
   const confirmedDate = confirmedScreenshotDateMatcher(actualBookings(state));
   const issues: string[] = [];
-  for (const result of results) for (const issue of result.issues) {
+  for (const [resultIndex, result] of results.entries()) for (const [issueIndex, issue] of result.issues.entries()) {
     if (issue.draft && groupedIssues.ids.has(issue.draft.id)) continue;
     if (issue.draft && isAmexScreenshot(issue.draft) && confirmedDate(issue.draft)) continue;
     const sourceIssue = `${issue.file}${issue.line ? `, Zeile ${issue.line}` : ""}: ${issue.message}`;
     issues.push(sourceIssue);
-    if (!issue.draft || !isAmexScreenshot(issue.draft)) continue;
+    const source = sources[resultIndex];
+    const structured = {
+      id: `${source.uploadId}:${issueIndex}`, ...(issue.line ? { line: issue.line } : {}),
+      message: issue.message.slice(0, 2000),
+      action: issue.action ?? (issue.draft ? "correct" as const : "reupload" as const),
+      ...(issue.reason ? { reason: issue.reason } : {}),
+      ...(issue.evidence ? { evidence: issue.evidence } : {}),
+    };
+    if (!issue.draft) {
+      source.issues.push(structured);
+      continue;
+    }
+    if (!isAmexScreenshot(issue.draft)) {
+      const id = `${source.uploadId}:${issue.draft.id}`;
+      review.push({ kind: "booking", id, draft: { ...issue.draft, id },
+        message: issue.message, sourceRepair: true, importUploadId: source.uploadId,
+        importIssues: [sourceIssue] });
+      source.issues.push({ ...structured, reviewId: id });
+      source.repairDraftIds.push(id);
+      continue;
+    }
     const key = screenshotIssueKey(issue.draft);
     const existing = screenshotIssues.get(key);
     if (existing) {
@@ -530,14 +603,27 @@ export function prepareStatementImport(
       ])] };
       screenshotIssues.set(key, updated);
       updatedReviews.set(updated.id, updated);
+      source.issues.push({ ...structured, reviewId: updated.id });
+      source.repairDraftIds.push(updated.id);
       continue;
     }
     const item: Extract<ReviewItem, { kind: "booking" }> = {
-      kind: "booking", id: issue.draft.id, draft: issue.draft, message: issue.message, importIssues: [sourceIssue],
+      kind: "booking", id: issue.draft.id, draft: issue.draft, message: issue.message,
+      importIssues: [sourceIssue], importUploadId: source.uploadId,
     };
     screenshotIssues.set(key, item);
     review.push(item);
+    source.issues.push({ ...structured, reviewId: item.id });
+    source.repairDraftIds.push(item.id);
   }
+  for (let index = 0; index < review.length; index++) {
+    const item = review[index];
+    if (item.kind === "fixed") continue;
+    const row = item.draft;
+    const importUploadId = item.importUploadId ?? (row && sourceByRow.get(row.id));
+    if (importUploadId) review[index] = { ...item, importUploadId };
+  }
+  for (const source of sources) source.issues = source.issues.slice(0, 100);
   return {
     automatic,
     review,
@@ -561,6 +647,7 @@ export function prepareStatementImport(
         (result) => result.pocketSnapshots ?? [],
       ),
       fixedReceipts: split.receipts,
+      imports: sources,
     } satisfies ImportMetadata,
   };
 }
@@ -643,6 +730,8 @@ export function commitStatementImport(
   decisions: FixedDecision[] = [],
   metadata: ImportMetadata = {},
 ) {
+  const beforeImport = state;
+  let matchedIds = new Map<string, string>();
   const renames = [...rows, ...decisions.flatMap(({ change }) => change.bookings)]
     .filter((row) => row.merchantNameConfirmed && row.merchantAlias)
     .map((row) => ({
@@ -664,6 +753,7 @@ export function commitStatementImport(
   if (metadata.amexReconciliation) {
     const evidence = metadata.amexReconciliation;
     const reconciled = reconcileAmexImports(state, evidence);
+    matchedIds = reconciled.matchedIds;
     state = reconciled.state;
     if (metadata.amexPendingRows) {
       const pending = metadata.amexPendingRows;
@@ -693,7 +783,23 @@ export function commitStatementImport(
   const queueMap = new Map(
     (state.reviewQueue ?? []).map((item) => [item.id, item]),
   );
-  for (const item of metadata.reviewQueue ?? []) queueMap.set(item.id, item);
+  for (const item of metadata.reviewQueue ?? []) {
+    const previous = queueMap.get(item.id);
+    const inherited = previous?.importUploadId && !item.importUploadId
+      ? { ...item, importUploadId: previous.importUploadId } : item;
+    const mergedBookings = inherited.kind === "fixed" && previous?.kind === "fixed"
+      ? [...new Map([...inherited.change.bookings, ...previous.change.bookings].map((row) => [row.id, row])).values()]
+      : undefined;
+    queueMap.set(item.id, inherited.kind === "fixed" && previous?.kind === "fixed"
+      ? fixedReviewSubset({ ...inherited, importUploadIds: {
+        ...inherited.importUploadIds,
+        ...Object.fromEntries(previous.change.bookings.flatMap((row) => {
+          const uploadId = reviewUploadId(previous, row.id);
+          return uploadId ? [[row.id, uploadId]] : [];
+        })),
+      } }, mergedBookings!)
+      : inherited);
+  }
   const queue = reconcileScreenshotReviews([...queueMap.values()], screenshotRepairs);
   const related = queue.flatMap((item) => {
     if (item.kind !== "fixed") return [];
@@ -716,6 +822,19 @@ export function commitStatementImport(
       [...related, ...decisions].map((item) => [item.change.id, item]),
     ).values(),
   ];
+  const settlements = [...rows, ...decisions.flatMap(({ change }) => change.bookings)]
+    .filter((row) => Object.keys(settlementPatch(row)).length > 0);
+  const settlementById = new Map(settlements.map((row) => [row.id, row]));
+  const settlementByKey = new Map(numberStatementRows(settlements).map((row) => [statementFingerprint(row), row]));
+  const preserveSettlement = (row: Transaction) => {
+    const choice = settlementById.get(row.id) ?? settlementByKey.get(statementFingerprint(row));
+    return choice ? { ...row, ...settlementPatch(choice) } : row;
+  };
+  if (settlements.length) state = { ...state,
+    transactions: state.transactions.map(preserveSettlement),
+    ...(state.fixedReceipts ? { fixedReceipts: state.fixedReceipts.map((item) => item.booking
+      ? { ...item, booking: preserveSettlement(item.booking) } : item) } : {}),
+  };
   const aliases = new Map(decisions.flatMap(({ change }) => change.bookings.flatMap((row) =>
     row.merchantAlias ? [[statementFingerprint(row), row.merchantAlias] as const] : [])));
   if (aliases.size) {
@@ -745,6 +864,7 @@ export function commitStatementImport(
   for (const item of queue) {
     if (item.kind !== "booking" || item.draft.amount === null || !transactionSchema.safeParse(item.draft).success) continue;
     const direct = directChoices.get(item.draft.id);
+    if (item.sourceRepair && !direct) continue;
     if (hasCategoryChoice(item.draft) && !direct) continue;
     if (!direct && isAmexScreenshot(item.draft) && item.draft.rawDetails?.includes("OCR-Händler unklar") &&
       !(item.draft.reviewed && (item.draft.manualCategory || item.draft.categoryOverride))) continue;
@@ -752,6 +872,7 @@ export function commitStatementImport(
     if (category) {
       const row = {
         ...item.draft,
+        ...settlementPatch(settlementById.get(item.draft.id)),
         amount: item.draft.amount,
         category,
         categoryOverride: true,
@@ -848,15 +969,28 @@ export function commitStatementImport(
   const resolved = new Set(rows.map(statementFingerprint));
   const resolvedIds = new Set(rows.map((row) => row.id));
   const resolvedChanges = new Set(decisions.map(({ change }) => change.id));
-  const pending = queue.filter((item) =>
-    item.kind === "fixed"
-      ? !resolvedChanges.has(item.id)
-      : !resolvedIds.has(item.draft.id) && (item.draft.amount === null ||
-        !resolved.has(statementFingerprint(item.draft as Transaction))),
-  );
+  const pending = queue.flatMap((item): ReviewItem[] => {
+    if (item.kind === "fixed") {
+      if (resolvedChanges.has(item.id)) return [];
+      const bookings = item.change.bookings.filter((row) => !resolvedIds.has(row.id) && !resolved.has(statementFingerprint(row)));
+      return bookings.length ? [fixedReviewSubset(item, bookings)] : [];
+    }
+    return !resolvedIds.has(item.draft.id) && (item.draft.amount === null ||
+      !resolved.has(statementFingerprint(item.draft as Transaction))) ? [item] : [];
+  });
+  const uploadByBooking = new Map(queue.flatMap((item) =>
+    (item.kind === "booking" ? [item.draft] : item.change.bookings).flatMap((row) => {
+      const uploadId = reviewUploadId(item, row.id);
+      return uploadId ? [[row.id, uploadId] as const] : [];
+    })));
   for (const change of split.changes)
     if (!pending.some((item) => item.id === change.id))
-      pending.push({ kind: "fixed", id: change.id, change });
+      pending.push({ kind: "fixed", id: change.id, change,
+        importUploadIds: Object.fromEntries(change.bookings.flatMap((row) => {
+          const uploadId = uploadByBooking.get(row.id);
+          return uploadId ? [[row.id, uploadId]] : [];
+        })),
+      });
   const merged = mergeMetadata(appended.state, {
     ...metadata,
     fixedReceipts: [
@@ -880,11 +1014,16 @@ export function commitStatementImport(
     item.kind === "booking" && !pendingIds.has(item.id)
       ? [...(item.importIssues ?? []), ...(legacyIssues.get(item.id) ?? [])].filter((issue) => !pendingIssues.has(issue)) : [],
   ));
+  const importResults = retainImportResults([
+    ...reconcileImportResultReviews(beforeImport, { ...merged, reviewQueue: pending }),
+    ...completeImportResults(beforeImport, { ...merged, reviewQueue: pending }, metadata.imports ?? [], matchedIds),
+  ]);
   return {
     ...appended,
     state: renames.reduce<AppState>((current, { source, merchantAlias }) =>
       rememberMerchantRename(current, source, merchantAlias), {
       ...merged,
+      ...(importResults.length || beforeImport.importResults ? { importResults } : {}),
       ...(pending.length || state.reviewQueue ? { reviewQueue: pending } : {}),
       ...(metadata.issues !== undefined || state.importStatus
         ? {
@@ -895,10 +1034,7 @@ export function commitStatementImport(
               issues: [
                 ...new Set([
                   ...(state.importStatus?.issues ?? []).filter((issue) =>
-                    !resolvedIssues.has(issue) && !(metadata.reparsedFiles ?? []).some((file) =>
-                      issue.startsWith(`${file}: `) ||
-                      (issue.startsWith(`${file}, Zeile `) && /^\d+: /.test(issue.slice(file.length + 8))),
-                    ),
+                    !resolvedIssues.has(issue),
                   ),
                   ...(metadata.issues ?? []).filter((issue) => !resolvedIssues.has(issue)),
                 ]),

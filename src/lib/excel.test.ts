@@ -36,6 +36,7 @@ describe("Excel import/export", () => {
     await workbook.xlsx.load(buffer);
     expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual([
       ...sheetNames,
+      "Import-Abgleich",
     ]);
     const result = await parseWorkbook(buffer);
     expect(result.skipped).toBe(0);

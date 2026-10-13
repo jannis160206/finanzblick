@@ -12,6 +12,7 @@ import { FinancialData } from "@/components/financial-data";
 import { monthsForYear, roundUpTotal, sum, type Dashboard } from "@/lib/calc";
 import { currency, monthLabel } from "@/lib/format";
 import { pocketNames, type AppState, type Pocket } from "@/lib/types";
+import { pocketKey } from "@/lib/goals";
 
 function PocketDisclosure({
   title,
@@ -72,7 +73,7 @@ function PocketYearSelect({
   );
 }
 
-export function PocketForecast({ dashboard }: { dashboard: Dashboard }) {
+export function PocketForecast({ dashboard }: { dashboard: Dashboard; state?: AppState }) {
   const compact = useCompactLayout();
   const [selectedYear, setYear] = useState<number | null>(null);
   const [selectedPocket, setPocket] = useState<Pocket | "all" | null>(null);
@@ -156,7 +157,7 @@ export function PocketForecast({ dashboard }: { dashboard: Dashboard }) {
                       key={name}
                       className="text-right text-xs whitespace-nowrap tabular-nums"
                     >
-                      {currency(row.end[name])}
+                      {row.physicalEnd[pocketKey(name)] === null ? "Unbekannt" : currency(row.end[name])}
                     </td>
                   ))}
                 </tr>

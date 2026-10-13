@@ -1,4 +1,4 @@
-import type { PayslipDraft, PayslipImport } from "@/lib/payslip-schema";
+import { payrollContextMessages, type PayrollContextIssue, type PayslipDraft, type PayslipImport } from "@/lib/payslip-schema";
 import { assertImportSize } from "./limits";
 
 export type PayslipTextItem = { x: number; text: string; width?: number };
@@ -140,6 +140,57 @@ function payrollDays(lines: readonly PayslipLine[]): boolean | undefined {
   return undefined;
 }
 
+const EMPLOYMENT_LABEL = /^(?:dienstverhältnis|beschäftigungsverhältnis|beschäftigungsart|personengruppe|versicherungsgruppe|sv[- ]?gruppe)$/i;
+const EXIT_LABEL = /^(?:austritt(?:sdatum)?|dienstaustritt|beschäftigungsende|dienstverhältnisende)$/i;
+const IDENTITY_LABEL = /^(?:arbeitgeber|dienstgeber|firma|arbeitnehmer|dienstnehmer|name|personalnummer)$/i;
+const HEADER_FIELD = /(?:^|[\s;|])((?:austritt(?:sdatum)?|dienstaustritt|beschäftigungsende|dienstverhältnisende|dienstverhältnis|beschäftigungsverhältnis|beschäftigungsart|personengruppe|versicherungsgruppe|sv[- ]?gruppe|eintritt(?:sdatum)?)(?=\s|:|\d|$)|[\p{L}][\p{L}\d/-]*(?=\s*:))(?:\s*:)?/giu;
+
+function payrollContext(rendered: readonly string[], headerEnd: number): PayrollContextIssue[] {
+  const reasons = new Set<PayrollContextIssue>();
+  for (const [index, value] of rendered.entries()) {
+    const matches = index < headerEnd ? [...value.matchAll(HEADER_FIELD)] : [];
+    const fields: RegExpExecArray[] = [];
+    for (const [fieldIndex, field] of matches.entries()) {
+      const previous = fields.at(-1);
+      if (previous && IDENTITY_LABEL.test(previous[1]) && !field[0].includes(":")) {
+        const nextLabelled = matches.slice(fieldIndex + 1).find((match) => match[0].includes(":"));
+        const identity = value.slice(previous.index + previous[0].length, nextLabelled?.index ?? value.length).trim();
+        if (CORPORATION.test(identity)) continue;
+      }
+      fields.push(field);
+    }
+    if (CORPORATION.test(value) && !fields.some((field) =>
+      (EMPLOYMENT_LABEL.test(field[1]) || EXIT_LABEL.test(field[1])) && field[0].includes(":"))) continue;
+    // Bound values at the next header column, not at the end of the visual row.
+    const parts = [
+      { label: "", value: value.slice(0, fields[0]?.index ?? value.length) },
+      ...fields.map((field, fieldIndex) => ({
+        label: field[1],
+        value: value.slice(field.index! + field[0].length, fields[fieldIndex + 1]?.index ?? value.length).trim(),
+      })),
+    ];
+    for (const part of parts) {
+      if (IDENTITY_LABEL.test(part.label)) continue;
+      if (/\b(?:buag|buak)\b/i.test(part.value)) reasons.add("buag");
+      if (/\b(?:lehrling(?:e|s(?:entschädigung|entgelt))?|lehrverhältnis|lehrvertrag)\b/i.test(part.value))
+        reasons.add("apprentice");
+      if (EXIT_LABEL.test(part.label) && !/^(?:|-|kein(?:er)?|00\.00\.(?:0000|00))$/i.test(part.value)) {
+        const date = part.value.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}|\d{2})?)?$/);
+        const year = date?.[3] ? Number(date[3]) + (date[3].length === 2 ? 2000 : 0) : 2026;
+        const parsed = date && new Date(Date.UTC(year, Number(date[2]) - 1, Number(date[1])));
+        reasons.add(parsed && parsed.getUTCDate() === Number(date![1]) &&
+          parsed.getUTCMonth() === Number(date![2]) - 1
+          ? "employment-ended" : "context-unknown");
+      }
+      if (EMPLOYMENT_LABEL.test(part.label) &&
+        !/^(?:angestellte[ rn]?|angestellter|arbeiter(?:in)?|arbeitnehmer(?:in)?|lehrling)$/i.test(part.value) &&
+        !/\b(?:buag|buak|lehrling|lehrverhältnis|lehrvertrag)\b/i.test(part.value))
+        reasons.add("context-unknown");
+    }
+  }
+  return [...reasons];
+}
+
 const SPECIAL_TAXABLE_YTD = /^steuerpflichtige\s+sonderzahlungen\s+(?:kumuliert|ytd)\s+innerhalb\s+(?:des\s+)?jahressechstels?\s+nach\s+sv\s+vor\s+620(?:[,.]00)?(?:\s*(?:€|eur))?(?:[- ]?freibetrag)?$/i;
 const REPORTED_FIELDS = [
   ["reportedSixth", /^(?:jahressechstel|jahres[- ]?sechstel)$/i],
@@ -206,6 +257,11 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     draft.employer = findEmployer(lines.slice(0, tableIndex < 0 ? undefined : tableIndex));
     if (!draft.employer) issue("Arbeitgeber nicht eindeutig erkannt; eine vollständige Abrechnung mit lesbarem Firmenkopf wird benötigt.");
     draft.monthlyPayroll = payrollDays(lines);
+    const contextIssues = payrollContext(rendered, tableIndex < 0 ? lines.length : tableIndex);
+    if (contextIssues.length) {
+      draft.payrollContextIssues = contextIssues;
+      payrollContextMessages([draft]).forEach(issue);
+    }
     if (draft.monthlyPayroll === false) issue("Teilmonat erkannt; die automatische Standardhochrechnung ist dafür nicht verfügbar.");
     if (draft.monthlyPayroll === undefined) issue("Voller Abrechnungsmonat nicht bestätigt; die Abrechnungstage sind nicht eindeutig lesbar.");
 

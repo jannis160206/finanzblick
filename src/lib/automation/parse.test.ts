@@ -255,6 +255,21 @@ describe("server statement parsing", () => {
     expect(state.destroy).toHaveBeenCalledOnce();
   });
 
+  it("classifies encrypted, damaged, oversized and infrastructure failures without retrying permanent input", async () => {
+    await fakePdf({ failure: Object.assign(new Error("Password required"), { name: "PasswordException" }) });
+    await expect(parseServerStatement(pdfHeader(), "encrypted.pdf")).rejects.toMatchObject({ code: "PARSE_ENCRYPTED" });
+    await fakePdf({ failure: new Error("Invalid PDF structure") });
+    await expect(parseServerStatement(pdfHeader(), "damaged.pdf")).rejects.toMatchObject({ code: "PARSE_DAMAGED" });
+    await fakePdf({ pages: SERVER_PARSE_LIMITS.pdfPages + 1 });
+    await expect(parseServerStatement(pdfHeader(), "huge.pdf")).rejects.toMatchObject({ code: "PARSE_RESOURCE_LIMIT" });
+    await fakePdf({ failure: Object.assign(new Error("Local read failed"), { code: "EIO" }) });
+    await expect(parseServerStatement(pdfHeader(), "local-error.pdf")).rejects.toMatchObject({ code: "PARSE_INFRASTRUCTURE" });
+    await fakePdf({ failure: Object.assign(new Error("Missing local runtime asset"), { code: "MODULE_NOT_FOUND" }) });
+    await expect(parseServerStatement(pdfHeader(), "local-error.pdf")).rejects.toMatchObject({ code: "PARSE_INFRASTRUCTURE" });
+    await fakePdf({ failure: new Error("Operation timed out") });
+    await expect(parseServerStatement(pdfHeader(), "slow.pdf")).rejects.toMatchObject({ code: "PARSE_TIMEOUT" });
+  });
+
   it("rejects excessive PDF text and still cleans up", async () => {
     const state = await fakePdf();
     const page = await state.getPage();

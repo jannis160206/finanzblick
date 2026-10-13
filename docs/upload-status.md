@@ -24,3 +24,33 @@ Ohne aktive Importe weist ein `!` auf Fehler oder Importhinweise hin.
 
 Die frühere Zuordnungs-Filterleiste entfällt. **Prüfen**, einzelne
 Zuordnungsdetails und die übrigen Umsatzfilter bleiben erhalten.
+
+## Fachliche Ergebnisse
+
+Ergebnisse sind einer Upload-UUID zugeordnet, nicht dem Dateinamen. Neue,
+aktualisierte, doppelte, zu prüfende und verworfene Buchungen werden getrennt
+gezählt. Reine Duplikatimporte sind kein Fehler; ältere Ergebnisse erhalten
+keine erfundenen Zählwerte. Technischer Abschluss ist von **mit Hinweisen** und
+**nicht unterstützt** zu unterscheiden.
+
+Reparierbare Quellen bleiben als kompakte Entwürfe in **Prüfen** erhalten und
+benötigen eine bewusste Freigabe. Nicht unterstützte Währungen und unbrauchbare
+Entwürfe benötigen einen erneuten Upload; sie werden nicht als Euro oder mit
+gekürzten Finanzinformationen übernommen.
+Fremdwährungsprobleme haben ausdrücklich die Maßnahme **erneut auswählen** und
+keinen editierbaren EUR-Prüfentwurf. Begrenzte Quellbelege bleiben im Ergebnis
+sichtbar. Nicht speicherbare Entwürfe (etwa mehr als 1.000 Zeichen Buchungstext)
+werden einzeln übersprungen; gültige Buchungen derselben Datei bleiben erhalten.
+Browser und Worker prüfen Entwürfe gegen dasselbe Schema, der Worker bereits
+vor der Child-IPC-Antwort.
+
+Zusammengefasste Fixkostenprüfungen behalten die Upload-UUID jeder Buchung, auch
+bei späteren Uploads oder Teilentscheidungen. Eine entfernte Prüfung ohne
+tatsächlich gespeicherte passende Buchung zählt als **übersprungen**, nicht als
+Duplikat.
+
+Die Anzeige und spätere Schreibvorgänge begrenzen Ergebnisse auf sieben Tage
+und 20 Einträge. Ruhende gespeicherte Finanzstände können ältere Metadaten bis
+zum nächsten Schreibvorgang enthalten. Der Worker bereinigt beendete
+Jobmetadaten unabhängig, sobald die Originaldatei entfernt ist. Noch benötigte
+Prüfentwürfe bleiben bis zur ausdrücklichen Bearbeitung erhalten.

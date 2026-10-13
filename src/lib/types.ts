@@ -4,6 +4,8 @@ import { isAmexScreenshot, normalizeStatementKey } from "@/lib/import/identity";
 import { seasonalModes, seasonalThemes } from "@/lib/seasonal-theme";
 import { payslipKey, payslipSchema, payrollEmployerKey, payrollForecastSchema } from "@/lib/payslip-schema";
 import { allCategories, categories, canonicalCategory, type Category } from "@/lib/categories";
+import { sharedSettlementFields } from "@/lib/shared-refund-schema";
+import { importResultSchema, MAX_IMPORT_RESULTS } from "@/lib/import/result-schema";
 export { categories, type Category } from "@/lib/categories";
 
 z.config(z.locales.de());
@@ -93,7 +95,7 @@ export const plannedOneOffSchema = z.object({
   "Gesamtbetrag muss nach den regulären Raten einen positiven Rest ergeben.");
 export type PlannedOneOff = z.infer<typeof plannedOneOffSchema>;
 const transactionFieldsSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).refine((id) => id.trim().length > 0, "Umsatz-ID darf nicht leer sein."),
   date: dateSchema,
   time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/).optional(),
   bank: z.string().trim().min(1, "Bank erforderlich").max(100),
@@ -131,9 +133,15 @@ const transactionFieldsSchema = z.object({
   occurrence: z.number().int().positive().optional(),
   sharedWithRaphael: z.boolean().optional(),
   sharedPaidManually: z.boolean().optional(),
+  ...sharedSettlementFields,
 });
 export const transactionSchema = transactionFieldsSchema.overwrite(normalizeAccount);
 export type Transaction = z.infer<typeof transactionSchema>;
+export const statementRepairDraftSchema = transactionFieldsSchema.extend({
+  amount: moneySchema.nullable(),
+  date: dateSchema.or(z.literal("")),
+  description: z.string().trim().max(1000),
+}).overwrite(normalizeAccount);
 export const pocketSnapshotSchema = z.object({
   pocket: z.enum(pocketNames),
   bank: z.literal("Revolut"),
@@ -193,22 +201,28 @@ export const reviewItemSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("booking"),
     id: z.string(),
-    draft: transactionFieldsSchema.extend({
-      amount: moneySchema.nullable(),
-      date: dateSchema.or(z.literal("")),
-      description: z.string().trim().max(1000),
-    }).overwrite(normalizeAccount).refine(
-      (draft) => isAmexScreenshot(draft) || (!!draft.date && !!draft.description),
-      "Datum und Beschreibung erforderlich.",
-    ),
+    draft: statementRepairDraftSchema,
     message: z.string(),
     importIssues: z.array(z.string()).optional(),
-  }),
+    sourceRepair: z.boolean().optional(),
+    importUploadId: z.string().uuid().optional(),
+  }).refine(
+    (item) => item.sourceRepair === true || isAmexScreenshot(item.draft) || (!!item.draft.date && !!item.draft.description),
+    "Datum und Beschreibung erforderlich.",
+  ),
   z.object({
     kind: z.literal("fixed"),
     id: z.string(),
     change: fixedChangeSchema,
-  }),
+    importUploadId: z.string().uuid().optional(),
+    importUploadIds: z.record(z.string().min(1), z.string().uuid()).refine(
+      (sources) => Object.keys(sources).length <= 100_000,
+      "Zu viele Herkunftszuordnungen in der Fixkostenprüfung.",
+    ).optional(),
+  }).refine((item) => {
+    const bookingIds = new Set(item.change.bookings.map((row) => row.id));
+    return Object.keys(item.importUploadIds ?? {}).every((id) => bookingIds.has(id));
+  }, "Die Herkunftszuordnung muss zu einer Buchung dieser Fixkostenprüfung gehören."),
 ]);
 export type ReviewItem = z.infer<typeof reviewItemSchema>;
 export type FixedChange = z.infer<typeof fixedChangeSchema>;
@@ -217,7 +231,7 @@ const financeValuesSchema = z.record(
   moneySchema.nonnegative().nullable(),
 );
 export const financeRowSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().min(1).refine((id) => id.trim().length > 0, "Finanzzeilen-ID darf nicht leer sein."),
   label: z.string().trim().min(1).max(100),
   kind: z.enum(["income", "fixed", "variable"]),
   planCategory: categorySchema.optional(),
@@ -267,6 +281,10 @@ export const settingsSchema = z
       (values) => Object.values(values).every((n) => n >= 0),
       "Startstände müssen positiv sein",
     ),
+    unknownBalances: z.array(z.enum(pocketNames)).max(pocketNames.length).refine(
+      (pockets) => new Set(pockets).size === pockets.length,
+      "Unbekannte Startstände müssen eindeutig sein.",
+    ).optional(),
     emergencyTarget: moneySchema.nonnegative(),
     vacationTarget: moneySchema.nonnegative(),
     savingsTarget: moneySchema.nonnegative(),
@@ -307,6 +325,11 @@ export const savingsGoalSchema = z.object({
   }).optional(),
 });
 export type SavingsGoal = z.infer<typeof savingsGoalSchema>;
+export const pocketOpeningBalanceSchema = savingsGoalSchema.shape.openingBalance.unwrap().extend({
+  pocket: z.string().trim().min(1).max(100),
+  ignoreEmptySnapshot: z.boolean().optional(),
+});
+export type PocketOpeningBalance = z.infer<typeof pocketOpeningBalanceSchema>;
 export const seasonalPreferenceSchema = z.object({
   // Legacy choices remain readable, but no longer control the calendar.
   mode: z.enum(seasonalModes).optional(),
@@ -367,13 +390,23 @@ export const appStateSchema = z.object({
     (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,
     "Sparziele müssen eindeutige IDs haben",
   ).optional(),
+  pocketOpeningBalances: z.array(pocketOpeningBalanceSchema).max(10_000).optional(),
   bikeOnlyGoalApplied: z.boolean().optional(),
   planningRepairs: z
     .array(z.literal("september-2026-sonstiges-focus-override"))
     .max(1)
     .optional(),
   settings: settingsSchema,
-  transactions: z.array(transactionSchema).max(100_000),
+  transactions: z.array(transactionSchema).max(100_000).superRefine((rows, context) => {
+    const seen = new Set<string>();
+    rows.forEach((row, index) => {
+      if (seen.has(row.id)) context.addIssue({
+        code: "custom", path: [index, "id"],
+        message: `Doppelte Umsatz-ID „${row.id}“. Buchungen werden nicht zusammengeführt.`,
+      });
+      seen.add(row.id);
+    });
+  }),
   ignoredStatementKeys: z.array(z.string().max(2000).overwrite(normalizeStatementKey)).max(100_000).optional(),
   pocketSnapshots: z.array(pocketSnapshotSchema).max(10_000).optional(),
   merchantRules: z.array(merchantRuleSchema).max(100_000).optional(),
@@ -399,7 +432,20 @@ export const appStateSchema = z.object({
   importStatus: z
     .object({ imported: z.number().nonnegative(), issues: z.array(z.string()) })
     .optional(),
-  financeRows: z.array(financeRowSchema).max(200),
+  importResults: z.array(importResultSchema).max(MAX_IMPORT_RESULTS).refine(
+    (results) => new Set(results.map((result) => result.uploadId)).size === results.length,
+    "Importergebnisse müssen eindeutige Upload-IDs haben.",
+  ).optional(),
+  financeRows: z.array(financeRowSchema).max(200).superRefine((rows, context) => {
+    const seen = new Set<string>();
+    rows.forEach((row, index) => {
+      if (seen.has(row.id)) context.addIssue({
+        code: "custom", path: [index, "id"],
+        message: `Doppelte Finanzzeilen-ID „${row.id}“. Zeilen werden nicht zusammengeführt.`,
+      });
+      seen.add(row.id);
+    });
+  }),
   months: z.record(
     z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
     monthInputSchema,

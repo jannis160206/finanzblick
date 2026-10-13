@@ -9,6 +9,7 @@ import { StatementImport } from "./statement-import";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { parseStatementFile, type StatementResult } from "@/lib/import/statements";
 import type { AutomationJob } from "@/lib/automation/schema";
+import { automationFailure } from "@/lib/automation/errors";
 
 vi.mock("next-themes", () => ({ ThemeProvider: ({ children }: { children: ReactNode }) => children }));
 vi.mock("sonner", () => ({ Toaster: () => null, toast: { success: vi.fn(), error: vi.fn() } }));
@@ -157,11 +158,18 @@ it("tracks local parsing until persisted completion and places parser failures a
   expect(screen.getByText("Datei wird geprüft")).toBeTruthy();
   await act(async () => parsed.resolve({ file: "lokal.csv", source: null, rows: [], skipped: 0, issues: [] }));
   await waitFor(() => expect(badge()).toBe("!"));
-  expect(screen.getByText("Abgeschlossen")).toBeTruthy();
-  expect(screen.getByRole("alert").textContent).toBe("PDF nicht lesbar");
-  expect(screen.getByRole("region", { name: "Importstatus" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Importhinweise" }));
-  expect(screen.getByRole("list", { name: "Importhinweise" }).textContent).toContain("PDF nicht lesbar");
+  expect(screen.getByText("Nicht unterstützt")).toBeTruthy();
+  expect(screen.getByText("Import fehlgeschlagen")).toBeTruthy();
+  expect(screen.queryByText("Abgeschlossen")).toBeNull();
+  expect(screen.getByRole("alert").textContent).toBe(automationFailure("PARSE_DAMAGED").message);
+  expect(screen.queryByRole("region", { name: "Importstatus" })).toBeNull();
+  const unsupported = within(screen.getByRole("article", { name: "Verarbeitung: lokal.csv" }));
+  expect(unsupported.getByText("Keine neuen Buchungen: Dieses Dateiformat wurde nicht unterstützt.")).toBeTruthy();
+  expect(unsupported.getByLabelText("Importergebnis").textContent).toContain("Neu0");
+  const failed = within(screen.getByRole("article", { name: "Verarbeitung: kaputt.pdf" }));
+  expect(failed.queryByLabelText("Importergebnis")).toBeNull();
+  expect(failed.getByRole("alert").textContent).toBe(automationFailure("PARSE_DAMAGED").message);
+  expect(screen.queryByText("PDF nicht lesbar")).toBeNull();
 });
 
 it("never marks a parsed local file completed when persisting its bookings fails", async () => {

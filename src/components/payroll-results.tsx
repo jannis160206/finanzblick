@@ -109,7 +109,9 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
             ]}
           />
           <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-            {rough
+            {analysis.contextIssues.length
+              ? "Nur belegte Abrechnungswerte; für diesen Kontext keine Fortschreibung."
+              : rough
               ? "Lücken nur geschätzt, nicht als Abrechnungen gespeichert."
               : "Prognose aktualisiert sich mit neuen Abrechnungen."}
           </p>
@@ -124,9 +126,16 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
           subtitle={
             nextPayment
               ? `${monthLabel(payrollPeriod(year, nextPayment.month))} · Unverbindliche Schätzung`
-              : "Keine weitere Sonderzahlung im Modell"
+              : analysis.contextIssues.length
+                ? "Steuer- und Nettoprognose nicht verfügbar"
+                : "Keine weitere Sonderzahlung im Modell"
           }
         />
+        {analysis.contextIssues.length > 0 && (
+          <p role="status" className="mb-3 text-sm text-muted-foreground">
+            {analysis.contextIssues.join(" ")} Belegte Werte bleiben erhalten.
+          </p>
+        )}
         {nextPayment ? (
           <>
             <PayrollFigures

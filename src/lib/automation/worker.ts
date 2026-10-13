@@ -1,4 +1,4 @@
-import { readFile, unlink } from "node:fs/promises";
+import { unlink } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { createEmptyAccountState } from "@/lib/account-state";
 import {
@@ -7,10 +7,12 @@ import {
   queueLedgerReview,
 } from "@/lib/import/review";
 import { refreshPlanning } from "@/lib/planning";
-import { AccountError } from "@/lib/server/errors";
+import { isAccountError } from "@/lib/server/errors";
 import { appStateSchema } from "@/lib/types";
 import { MerchantIndex } from "./merchants";
-import { parseServerStatement } from "./parse";
+import { PARSER_BUDGET_MS, parseStatementInChild, type ParserRuntimeOptions } from "./parser-runtime";
+import { automationFailure, ParserFailure } from "./errors";
+import type { ImportResult } from "@/lib/import/result-schema";
 import {
   backfillBatch,
   enrichTransaction,
@@ -20,13 +22,22 @@ import { AutomationStore, WorkerLeaseError, type ClaimedJob } from "./store";
 import { createAccountMerchantResolver } from "./aliases";
 
 export class AutomationWorker {
+  private nextMetadataCleanupAt = 0;
+
   constructor(
     readonly store: AutomationStore,
     readonly owner: string,
     readonly index: MerchantIndex,
+    readonly parserOptions: Omit<ParserRuntimeOptions, "signal"> = {},
   ) {}
 
-  async process(job: ClaimedJob): Promise<void> {
+  async process(job: ClaimedJob, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + (this.parserOptions.budgetMs ?? PARSER_BUDGET_MS);
+    const checkCancellation = () => {
+      if (signal?.aborted) throw new ParserFailure("WORKER_ABORTED");
+      if (Date.now() >= deadline) throw new ParserFailure("PARSE_TIMEOUT");
+    };
+    checkCancellation();
     if (job.kind === "backfill") {
       const batch = this.store.batch(job);
       this.store.accounts.transformFinance(
@@ -37,21 +48,25 @@ export class AutomationWorker {
             batch.ids,
             this.index,
           ),
-        (db) =>
+        (db) => {
+          checkCancellation();
           this.store.checkpoint(
             db,
             this.owner,
             job,
             batch.cursor,
             batch.cursor >= job.total,
-          ),
+          );
+        },
       );
       return;
     }
     this.store.progress(this.owner, job, 5);
-    const bytes = await readFile(this.store.filePath(job.id));
-    if (bytes.byteLength !== job.bytes) throw new Error("Upload size mismatch");
-    const result = await parseServerStatement(bytes, job.name);
+    const result = await parseStatementInChild(
+      this.store.filePath(job.id), job.name, job.bytes,
+      { ...this.parserOptions, budgetMs: Math.max(1, deadline - Date.now()), signal },
+    );
+    checkCancellation();
     this.store.progress(this.owner, job, 40);
     const snapshot = this.store.accounts.getFinance(job.userId);
     const resolveAccount = createAccountMerchantResolver(
@@ -59,6 +74,7 @@ export class AutomationWorker {
     );
     const rows: typeof result.rows = [];
     for (let offset = 0; offset < result.rows.length; offset += 200) {
+      checkCancellation();
       for (let i = offset; i < Math.min(offset + 200, result.rows.length); i++)
         rows.push(
           enrichTransaction(result.rows[i], this.index, resolveAccount),
@@ -70,10 +86,13 @@ export class AutomationWorker {
       );
       await delay(0);
     }
+    checkCancellation();
     this.store.progress(this.owner, job, 90);
+    let outcome: ImportResult | undefined;
     this.store.accounts.transformFinance(
       job.userId,
       (stored) => {
+        checkCancellation();
         const state = stored ?? createEmptyAccountState();
         const revision = this.store.accounts.read((db) =>
           Number(
@@ -88,6 +107,7 @@ export class AutomationWorker {
             : null;
         const enriched = {
           ...result,
+          uploadId: job.id,
           rows: currentRules
             ? result.rows.map((row) =>
                 enrichTransaction(row, this.index, currentRules),
@@ -101,15 +121,21 @@ export class AutomationWorker {
           [],
           prepared.metadata,
         );
-        return appStateSchema.parse(
+        const next = appStateSchema.parse(
           retainLockedAssignments(
             state,
             refreshPlanning(queueLedgerReview(committed.state)),
           ),
         );
+        outcome = next.importResults?.find((item) => item.uploadId === job.id);
+        if (!outcome) throw new Error("Statement outcome missing");
+        checkCancellation();
+        return next;
       },
-      (db) =>
-        this.store.checkpoint(db, this.owner, job, result.rows.length, true),
+      (db) => {
+        checkCancellation();
+        this.store.checkpoint(db, this.owner, job, result.rows.length, true, outcome);
+      },
     );
   }
 
@@ -118,9 +144,17 @@ export class AutomationWorker {
       try {
         await unlink(this.store.filePath(id));
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          console.error("Automation cleanup deferred:", id, "UploadCleanupError");
+          continue;
+        }
       }
       this.store.cleaned(id);
+    }
+    const now = Date.now();
+    if (now >= this.nextMetadataCleanupAt) {
+      this.store.pruneCompletedStatements(now);
+      this.nextMetadataCleanupAt = now + 60_000;
     }
   }
 
@@ -128,11 +162,16 @@ export class AutomationWorker {
     if (!this.store.acquire(this.owner))
       throw new Error("Another worker is already running");
     let leaseError: unknown;
+    let running = new AbortController();
+    const abort = () => running.abort();
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
     const heartbeat = setInterval(() => {
       try {
         this.store.heartbeat(this.owner);
       } catch (error) {
         leaseError = error;
+        running.abort();
       }
     }, 10_000);
     try {
@@ -143,37 +182,48 @@ export class AutomationWorker {
           await this.cleanup();
           job = this.store.claim(this.owner);
         } catch (error) {
-          // Standby can expire an idle lease; never recover while processing a job.
-          if (!(error instanceof WorkerLeaseError) || !this.store.acquire(this.owner))
+          // Recover only an idle lease; never reclaim one lost during parsing.
+          if (!(error instanceof WorkerLeaseError) || signal.aborted || !this.store.acquire(this.owner))
             throw error;
           leaseError = undefined;
+          running = new AbortController();
           console.info("Statement worker resumed after an idle lease interruption.");
           continue;
         }
         if (!job) {
-          await delay(500);
+          await delay(500, undefined, { signal: running.signal }).catch(() => {});
           continue;
         }
         try {
-          await this.process(job);
+          await this.process(job, running.signal);
         } catch (error) {
+          if (leaseError) throw leaseError;
+          if (signal.aborted || (error instanceof ParserFailure && error.code === "WORKER_ABORTED")) {
+            this.store.cancel(this.owner, job);
+            break;
+          }
           // Logs and persisted messages must never contain statement text or SQL parameters.
           console.error(
             "Automation job failed:",
             job.id,
-            error instanceof Error ? error.name : "UnknownError",
+            error instanceof ParserFailure ? error.code : "JobInfrastructureError",
           );
           this.store.fail(
             this.owner,
             job,
-            error instanceof AccountError
-              ? error.message
-              : "Auszug konnte nicht verarbeitet werden. Erneuter Versuch erfolgt automatisch; nach fünf Fehlern bitte Datei prüfen.",
+            error instanceof ParserFailure
+              ? automationFailure(error.code)
+              : isAccountError(error) && error.status === 409
+                ? automationFailure("COMMIT_CONFLICT")
+                : isAccountError(error)
+                  ? { ...automationFailure("PARSE_RESOURCE_LIMIT"), message: error.message }
+                  : automationFailure("PARSE_INFRASTRUCTURE"),
           );
         }
       }
     } finally {
       clearInterval(heartbeat);
+      signal.removeEventListener("abort", abort);
       this.store.release(this.owner, signal.aborted && !leaseError);
       await this.cleanup();
     }

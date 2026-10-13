@@ -74,6 +74,7 @@ it("prioritizes the surplus, keeps model values and plan/actual distinctions, an
 it("keeps every 90-day forecast figure and labels rates for all goals, not only the motorcycle", () => {
   const state = fixture();
   state.savingsGoals!.push({ id: "camera", name: "Kamera", pocket: "Kamera", target: 300, date: "2026-10-20" });
+  state.accountSnapshots = [{ bank: "Revolut", name: "Kamera", date: state.settings.asOf, balance: 0 }];
   const { dashboard } = mount(state);
   const forecast = within(screen.getByRole("region", { name: "Monatsprognose" }));
   expect(forecast.getAllByRole("article")).toHaveLength(3);
@@ -147,7 +148,9 @@ it("supports an empty account and non-motorcycle goals without inventing funding
   state.savingsGoals = [{ id: "camera", name: "Kamera", pocket: "Kamera", target: 1200, date: "2027-04-01" }];
   mount(state);
   expect(screen.getByRole("article", { name: "Sparziel Kamera" })).toBeTruthy();
-  expect(screen.getByRole("progressbar", { name: "Kamera Fortschritt" }).getAttribute("aria-valuenow")).toBe("0");
+  const progress = screen.getByRole("progressbar", { name: "Kamera Fortschritt" });
+  expect(progress.hasAttribute("aria-valuenow")).toBe(false);
+  expect(progress.getAttribute("aria-valuetext")).toBe("Kontostand unbekannt");
 });
 
 it.each([false, true])("shows the savings recommendation or the actual explicitly transferred amount (executed: %s)", (executed) => {
