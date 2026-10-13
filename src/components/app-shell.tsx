@@ -59,7 +59,7 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
-  const { ready, saved, storageError, retrySave, openReviewCount } = useFinance();
+  const { ready, saved, storageError, retrySave, openReviewCount, synchronizing, syncNeedsAttention } = useFinance();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const security = useSecurityMode();
@@ -165,8 +165,8 @@ export function AppShell({
                   ) : (
                     <Check className="size-3 text-primary" />
                   )}
-                  {storageError
-                    ? "Nicht gespeichert"
+                  {synchronizing ? "Gleicht ab …" : storageError
+                    ? workspace ? syncNeedsAttention ? "Prüfung nötig" : "Lokal gesichert" : "Nicht gespeichert"
                     : saved
                       ? workspace ? "Synchronisiert" : "Lokal gespeichert"
                       : "Speichert …"}
@@ -217,7 +217,7 @@ export function AppShell({
           </div>
           <div data-financial-content>
           <AccountSyncTools visible={!security.locked && ready} />
-          {storageError && (
+          {storageError && !workspace && (
             <div
               role="alert"
               className="mb-5 flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm"

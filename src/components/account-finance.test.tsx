@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { StrictMode, useEffect, type ReactNode } from "react";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FinanceProvider, useFinance } from "./finance-provider";
 import { createEmptyAccountState } from "@/lib/account-state";
@@ -65,6 +65,59 @@ it("hydrates and saves an empty account in StrictMode without adding personal se
   expect(request.mock.calls.filter((call) => call[1].method === "GET")).toHaveLength(1);
 });
 
+it("automatically retries an unavailable first load without submitting placeholder finance data", async () => {
+  remote = { ...createEmptyAccountState(), transactions: [{ id: "existing", bank: "Amex", pocket: "Amex",
+    date: "2026-10-06", description: "Existing", amount: -42, category: "Shopping", includeInPlan: true }] };
+  revision = 3;
+  const normal = request.getMockImplementation()!;
+  request.mockRejectedValueOnce(new TypeError("First load unavailable")).mockImplementation(normal);
+  const view = mount();
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  expect(view.read().state.transactions.map((row) => row.id)).toEqual(["existing"]);
+  for (const call of request.mock.calls.filter((call) => call[1].method === "PUT"))
+    expect(JSON.parse(String(call[1].body)).state.transactions.map((row: { id: string }) => row.id)).toEqual(["existing"]);
+});
+
+it("bounds automatic transport retries and resumes on online without a request loop", async () => {
+  vi.useFakeTimers();
+  try {
+    const view = mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    expect(view.read().saved).toBe(true);
+    const normal = request.getMockImplementation()!;
+    request.mockRejectedValue(new TypeError("Offline"));
+    act(() => view.read().update((state) => ({ ...state, holidayRanges: [{ from: "2026-10-20", to: "2026-10-22" }] })));
+    for (const delay of [1, 1, 2_001, 10_001, 30_001])
+      await act(async () => { await vi.advanceTimersByTimeAsync(delay); });
+    const calls = request.mock.calls.length;
+    expect(request.mock.calls.filter((call) => call[1].method === "GET")).toHaveLength(5);
+    expect(view.read().saved).toBe(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(600_000); });
+    expect(request.mock.calls).toHaveLength(calls);
+    request.mockImplementation(normal);
+    await act(async () => { window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(10); });
+    expect(view.read().saved).toBe(true);
+    expect(remote?.holidayRanges).toEqual([{ from: "2026-10-20", to: "2026-10-22" }]);
+  } finally { vi.useRealTimers(); }
+});
+
+it("never chooses between conflicting financial settings or sends a guessed merged stand", async () => {
+  const base = createEmptyAccountState(), local = structuredClone(base);
+  local.settings.emergencyTarget = 123;
+  remote = structuredClone(base);
+  remote.settings.emergencyTarget = 456;
+  revision = 2;
+  const original = JSON.stringify({ state: local, revision: 1, pending: true, baseState: base });
+  localStorage.setItem(accountStorageKey(account.id), original);
+  const view = mount(false, true);
+  await waitFor(() => expect(view.read().syncNeedsAttention).toBe(true));
+  expect(screen.getByRole("link", { name: "Details prüfen" })).toBeTruthy();
+  expect(view.read().state.settings.emergencyTarget).toBe(123);
+  expect(remote.settings.emergencyTarget).toBe(456);
+  expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(0);
+  expect(view.read().storageError).toContain("widersprüchliche");
+});
+
 it("persists complete confirmed imports immediately on the device then synchronizes the account", async () => {
   const view = mount();
   await waitFor(() => expect(view.read().saved).toBe(true));
@@ -92,15 +145,18 @@ it("loads a second device from the server instead of a shared browser's legacy l
   expect(view.read().state.holidayRanges).toEqual(remote.holidayRanges);
 });
 
-it("keeps a conflicted device's edits visible and never overwrites the newer server", async () => {
+it("automatically combines device edits and newer server changes without requiring confirmation", async () => {
   const view = mount();
   await waitFor(() => expect(view.read().saved).toBe(true));
   revision++;
+  remote = { ...remote!, holidayRanges: [{ from: "2026-11-01", to: "2026-11-03" }] };
   act(() => view.read().update((state) => ({ ...state, holidayRanges: [{ from: "2026-10-20", to: "2026-10-22" }] })));
-  await waitFor(() => expect(view.read().storageError).toContain("anderen Gerät"));
-  expect(view.read().saved).toBe(false);
-  expect(view.read().state.holidayRanges).toEqual([{ from: "2026-10-20", to: "2026-10-22" }]);
-  expect(remote?.holidayRanges).toEqual([]);
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  expect(view.read().storageError).toBeNull();
+  expect(view.read().state.holidayRanges).toEqual([
+    { from: "2026-10-20", to: "2026-10-22" }, { from: "2026-11-01", to: "2026-11-03" },
+  ]);
+  expect(remote?.holidayRanges).toEqual(view.read().state.holidayRanges);
 });
 
 it("recovers the actual conflict UI without deleting local/server bookings, manual choices or an older backup", async () => {
@@ -117,63 +173,54 @@ it("recovers the actual conflict UI without deleting local/server bookings, manu
   const original = JSON.stringify({ state: local, revision: 0, pending: true });
   localStorage.setItem(accountConflictKey(account.id), original);
   const view = mount(false, true);
-  await waitFor(() => expect(view.read().storageError).toContain("Neuere Daten"));
-  fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
-  fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
   await waitFor(() => expect(view.read().saved).toBe(true));
   expect(new Set(view.read().state.transactions.map((booking) => booking.id))).toEqual(new Set(["local", "shared", "server"]));
   expect(remote?.transactions.find((booking) => booking.id === "shared")?.category).toBe("Geschenke & Spenden");
   expect(view.read().storageError).toBeNull();
   expect(localStorage.getItem(accountConflictKey(account.id))).toBe(original);
+  expect(screen.queryByText("Lokale Konfliktsicherung")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Serverstand laden" })).toBeNull();
 });
 
-it("keeps the merged stand visible after a failed acknowledgement and prevents ordinary retry from dropping server rows", async () => {
+it("automatically resumes a failed merged acknowledgement without dropping server rows", async () => {
   const view = mount(false, true);
   await waitFor(() => expect(view.read().saved).toBe(true));
   remote = { ...remote!, transactions: [{ id: "server", bank: "Amex", pocket: "Amex",
     date: "2026-10-06", description: "Public Duty Free", amount: -42, category: "Shopping", includeInPlan: true }] };
   revision++;
-  act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
-  await waitFor(() => expect(view.read().storageError).toContain("anderen Gerät"));
   const normal = request.getMockImplementation();
   if (!normal) throw new Error("Finance request fixture missing");
-  let fail = true;
+  let writes = 0;
   request.mockImplementation(async (url: string, options: RequestInit) => {
-    if (options.method === "PUT" && fail) {
-      fail = false;
-      throw new TypeError("Acknowledgement lost");
+    if (options.method === "PUT") {
+      writes++;
+      if (writes === 1) return new Response(null, { status: 409 });
+      if (writes === 2) throw new TypeError("Acknowledgement lost");
     }
     return normal(url, options);
   });
-  fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
-  fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+  act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
   await waitFor(() => expect(view.read().storageError).toContain("Server nicht erreichbar"));
   expect(new Set(view.read().state.transactions.map((row) => row.id))).toEqual(new Set(["local", "server"]));
-  const writes = request.mock.calls.filter((call) => call[1].method === "PUT").length;
-  act(() => view.read().retrySave());
-  await waitFor(() => expect(view.read().storageError).toContain("Abgleich ist noch nicht abgeschlossen"));
-  expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(writes);
-  expect(new Set(view.read().state.transactions.map((row) => row.id))).toEqual(new Set(["local", "server"]));
-  fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
-  fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
-  fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
-  await waitFor(() => expect(view.read().saved).toBe(true));
+  await waitFor(() => expect(view.read().saved).toBe(true), { timeout: 7_000 });
   expect(new Set(remote?.transactions.map((row) => row.id))).toEqual(new Set(["local", "server"]));
 });
 
-it("never hydrates over newer working edits whose cache save failed during reconciliation", async () => {
+it("automatically preserves newer working edits whose cache save failed during reconciliation", async () => {
     const view = mount(false, true);
     await waitFor(() => expect(view.read().saved).toBe(true));
     remote = { ...remote!, transactions: [{ id: "server", bank: "Amex", pocket: "Amex",
       date: "2026-10-06", description: "Public Duty Free", amount: -42, category: "Shopping", includeInPlan: true }] };
     revision++;
-    act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
-    await waitFor(() => expect(view.read().storageError).toContain("anderen Gerät"));
     const normal = request.getMockImplementation();
     if (!normal) throw new Error("Finance request fixture missing");
     let finish!: () => void;
+    let writes = 0;
     request.mockImplementation(async (url: string, options: RequestInit) => {
       if (options.method !== "PUT") return normal(url, options);
+      writes++;
+      if (writes === 1) return new Response(null, { status: 409 });
+      if (writes > 2) return normal(url, options);
       const sent = JSON.parse(String(options.body));
       return new Promise<Response>((resolve) => { finish = () => {
         remote = sent.state;
@@ -181,22 +228,17 @@ it("never hydrates over newer working edits whose cache save failed during recon
         resolve(Response.json({ state: remote, revision }));
       }; });
     });
-    fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abgleich bestätigen" }));
+    act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
     await waitFor(() => expect(finish).toBeDefined());
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => { throw new DOMException("quota", "QuotaExceededError"); });
     act(() => view.read().update((state) => ({ ...state, settings: { ...state.settings, emergencyTarget: 123 } })));
-    await waitFor(() => expect(view.read().storageError).toContain("widersprüchliche"));
+    await waitFor(() => expect(view.read().storageError).toContain("Browserspeicher"));
     await act(async () => finish());
-    await waitFor(() => expect(view.read().storageError).toContain("neue Geräteänderungen"));
     expect(view.read().state.settings.emergencyTarget).toBe(123);
-    expect(view.read().saved).toBe(false);
+    await waitFor(() => expect(view.read().saved).toBe(true), { timeout: 7_000 });
+    expect(view.read().state.settings.emergencyTarget).toBe(123);
+    expect(remote?.settings.emergencyTarget).toBe(123);
     expect(remote?.transactions.map((row) => row.id)).toEqual(["local", "server"]);
-    expect(JSON.parse(localStorage.getItem(accountStorageKey(account.id))!).reconcileRequired).toBe(true);
-    const writes = request.mock.calls.filter((call) => call[1].method === "PUT").length;
-    act(() => view.read().retrySave());
-    await waitFor(() => expect(view.read().storageError).toContain("widersprüchliche"));
-    expect(view.read().state.settings.emergencyTarget).toBe(123);
-    expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(writes);
 });
 
 it("does not show a successful earlier write while a newer change is still unsynchronized", async () => {
@@ -214,16 +256,14 @@ it("does not show a successful earlier write while a newer change is still unsyn
   expect(view.read().state.holidayRanges).toEqual([{ from: "2026-10-20", to: "2026-10-22" }]);
 });
 
-it("keeps background-read errors and a working retry visible until synchronization recovers", async () => {
+it("automatically recovers a transient background-read error without a user retry", async () => {
   const view = mount();
   await waitFor(() => expect(view.read().saved).toBe(true));
   request.mockRejectedValueOnce(new TypeError("offline"));
   act(() => window.dispatchEvent(new Event("focus")));
-  await waitFor(() => expect(view.read().storageError).toContain("Server nicht erreichbar"));
-  expect(view.read().saved).toBe(false);
+  await waitFor(() => expect(request.mock.calls.filter((call) => call[1].method === "GET").length).toBeGreaterThan(2));
+  await waitFor(() => expect(view.read().saved).toBe(true));
   act(() => view.read().update((state) => ({ ...state, holidayRanges: [{ from: "2026-10-20", to: "2026-10-22" }] })));
-  expect(view.read().storageError).toBeTruthy();
-  act(() => view.read().retrySave());
   await waitFor(() => expect(view.read().saved).toBe(true));
   expect(remote?.holidayRanges).toEqual([{ from: "2026-10-20", to: "2026-10-22" }]);
 });

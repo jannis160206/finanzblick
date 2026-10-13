@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -33,7 +34,7 @@ import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 import { FINANCE_STORAGE_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 import { amexBalanceRecoveryResponseSchema, needsAmexBalanceRecovery, recoverAmexBalance, type AmexBalanceRecovery } from "@/lib/import/amex-balance-recovery";
 import type { AccountUser } from "@/lib/account-schema";
-import { AccountFinanceStorage, AccountSessionError, AccountReconciliationError } from "@/lib/account-finance-storage";
+import { AccountFinanceStorage, AccountSessionError, AccountReconciliationError, AccountWorkingChangeError, canAutomaticallyReconcile } from "@/lib/account-finance-storage";
 import { sameFinanceData } from "@/lib/account-finance-merge";
 import { AccountWorkspaceContext } from "@/components/account-context";
 import { createEmptyAccountState } from "@/lib/account-state";
@@ -49,6 +50,7 @@ type Store = {
   data: AppState;
   ready: boolean;
   error: string | null;
+  errorCause?: unknown;
   saved: boolean;
   blocked: boolean;
   planCapacityBlocked?: boolean;
@@ -68,13 +70,14 @@ type Action =
       data: AppState;
       reference?: AppState;
       error?: string;
+      cause?: unknown;
       blocked?: boolean;
     }
   | { type: "update"; updater: (state: AppState) => AppState }
   | { type: "restore"; id: string; data: AppState; expected: AppState }
   | { type: "recoverAmexBalance"; recoveries: AmexBalanceRecovery[] }
   | { type: "saved"; data?: AppState }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; cause?: unknown }
   | { type: "retry" };
 type AppendAction = {
   type: "appendStatements";
@@ -143,6 +146,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
           data: appStateSchema.parse(synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad))),
           ready: true,
           error: action.type === "hydrate" ? action.error ?? null : null,
+          errorCause: action.type === "hydrate" ? action.cause : undefined,
           saved: false,
           blocked: action.type === "hydrate" ? action.blocked ?? false : false,
           restoration: action.type === "restore" ? { id: action.id } : store.restoration,
@@ -152,7 +156,7 @@ function reducer(store: Store, action: Action | AppendAction): Store {
         if (action.type === "restore")
           return { ...store, restoration: { id: action.id, error: error.message } };
         return { data: action.data, ready: true, saved: false, blocked: action.blocked ?? false,
-          error: action.error ?? null, planCapacityBlocked: true, actionError: { message: error.message } };
+          error: action.error ?? null, errorCause: action.cause, planCapacityBlocked: true, actionError: { message: error.message } };
       }
     }
     case "update": {
@@ -175,9 +179,9 @@ function reducer(store: Store, action: Action | AppendAction): Store {
     }
     case "saved":
       if (action.data && action.data !== store.data) return store;
-      return { ...store, saved: true, error: null };
+      return { ...store, saved: true, error: null, errorCause: undefined };
     case "error":
-      return { ...store, saved: false, error: action.message };
+      return { ...store, saved: false, error: action.message, errorCause: action.cause };
     case "retry":
       return { ...store, saved: false, data: { ...store.data }, error: null };
   }
@@ -189,6 +193,8 @@ type FinanceContextValue = {
   ready: boolean;
   saved: boolean;
   storageError: string | null;
+  synchronizing?: boolean;
+  syncNeedsAttention?: boolean;
   update: (updater: (state: AppState) => AppState) => void;
   replace: (state: AppState) => void;
   retrySave: () => void;
@@ -230,13 +236,16 @@ export function FinanceProvider({
   const [storage] = useState(() => new FinanceStorage());
   const [automation, setAutomation] = useState<AutomationEvent>({ revision: 0, jobs: [] });
   const [automationError, setAutomationError] = useState<string | null>(null);
+  const [synchronizing, setSynchronizing] = useState(false);
+  const [recoveryTick, setRecoveryTick] = useState(0);
+  const recovery = useRef({ attempts: 0, running: false });
   const handleCloudError = useCallback((error: unknown) => {
     if (error instanceof AccountSessionError) {
       // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Clear the previous account's in-memory ledger.
       window.location.assign("/login");
       return;
     }
-    dispatch({ type: "error", message: financeStorageMessage(error) });
+    dispatch({ type: "error", message: financeStorageMessage(error), cause: error });
   }, []);
   const [accountInitial] = useState(initialState);
   const [cloud] = useState(() => account ? new AccountFinanceStorage(
@@ -252,7 +261,52 @@ export function FinanceProvider({
     resolve: () => void;
     reject: (error: FinanceStorageError) => void;
   } | null>(null);
-  useEffect(() => { latest.current = store; }, [store]);
+  useLayoutEffect(() => { latest.current = store; }, [store]);
+  const reconcileAccount = useCallback(async () => {
+    if (!cloud) return;
+    const expected = latest.current.data;
+    setSynchronizing(true);
+    try {
+      const data = latest.current.blocked
+        ? await cloud.load()
+        : await cloud.reconcileServer(expected, () => sameFinanceData(latest.current.data, expected));
+      if (!sameFinanceData(latest.current.data, expected))
+        throw new AccountWorkingChangeError("Neue Geräteänderungen werden erneut abgeglichen.");
+      if (cloud.error && latest.current.blocked) {
+        dispatch({ type: "hydrate", data: data ?? accountInitial, error: cloud.error.message, cause: cloud.error });
+        throw cloud.error;
+      }
+      recovery.current.attempts = 0;
+      dispatch({ type: "hydrate", data: data ?? accountInitial });
+    } catch (error) {
+      if (error instanceof AccountReconciliationError && sameFinanceData(latest.current.data, expected))
+        dispatch({ type: "hydrate", data: error.pendingState, error: error.message, cause: error });
+      handleCloudError(error);
+      throw error;
+    } finally {
+      setSynchronizing(false);
+    }
+  }, [cloud, handleCloudError, accountInitial]);
+  useEffect(() => {
+    if (!cloud || !store.ready || !store.error || recovery.current.running ||
+      !canAutomaticallyReconcile(store.errorCause ?? cloud.error)) return;
+    const delays = [0, 2_000, 10_000, 30_000];
+    const attempt = recovery.current.attempts;
+    if (attempt >= delays.length) return;
+    const timer = window.setTimeout(async () => {
+      if (cloud.synchronizing || !navigator.onLine) return;
+      recovery.current.running = true;
+      recovery.current.attempts++;
+      try { await reconcileAccount(); }
+      catch (error) {
+        if (!(error instanceof FinanceStorageError) && !(error instanceof DOMException)) throw error;
+      } finally {
+        recovery.current.running = false;
+        setRecoveryTick((value) => value + 1);
+      }
+    }, delays[attempt]);
+    return () => window.clearTimeout(timer);
+  }, [cloud, store.ready, store.blocked, store.error, store.errorCause, store.data, reconcileAccount, recoveryTick]);
   useEffect(() => {
     const pending = restoring.current;
     if (!pending || store.restoration?.id !== pending.id) return;
@@ -322,7 +376,7 @@ export function FinanceProvider({
       try {
         const data = await cloud!.load();
         if (!active) return;
-        dispatch({ type: "hydrate", data: data ?? accountInitial, error: cloud!.error?.message });
+        dispatch({ type: "hydrate", data: data ?? accountInitial, error: cloud!.error?.message, cause: cloud!.error });
       } catch (error) {
         if (!active) return;
         dispatch({ type: "hydrate", data: cloud!.cachedState ?? accountInitial, blocked: true });
@@ -330,6 +384,19 @@ export function FinanceProvider({
       }
     }
     async function poll() {
+      if (latest.current.error && canAutomaticallyReconcile(latest.current.errorCause ?? cloud!.error)) {
+        if (recovery.current.running || cloud!.synchronizing || !navigator.onLine) return;
+        recovery.current.attempts = 0;
+        recovery.current.running = true;
+        try { await reconcileAccount(); }
+        catch (error) {
+          if (!(error instanceof FinanceStorageError) && !(error instanceof DOMException)) throw error;
+        } finally {
+          recovery.current.running = false;
+          setRecoveryTick((value) => value + 1);
+        }
+        return;
+      }
       if (polling || !latest.current.saved || latest.current.error || !navigator.onLine) return;
       polling = true;
       try {
@@ -357,7 +424,7 @@ export function FinanceProvider({
       window.removeEventListener("online", refresh);
       window.removeEventListener("beforeunload", beforeUnload);
     };
-  }, [cloud, handleCloudError, accountInitial]);
+  }, [cloud, handleCloudError, accountInitial, reconcileAccount]);
   useEffect(() => {
     if (!account || !cloud) return;
     const source = new EventSource(`/api/statements/events?account=${encodeURIComponent(account.id)}`);
@@ -415,9 +482,10 @@ export function FinanceProvider({
       storage.save(store.data);
       dispatch({ type: "saved" });
     } catch (error) {
-      dispatch({ type: "error", message: financeStorageMessage(error) });
+      if (cloud) handleCloudError(error);
+      else dispatch({ type: "error", message: financeStorageMessage(error) });
     }
-  }, [store.data, store.ready, store.blocked, store.saved, storage, cloud]);
+  }, [store.data, store.ready, store.blocked, store.saved, storage, cloud, handleCloudError]);
   useEffect(() => {
     if (account || !store.ready || store.blocked || store.error || !amexRecoveryNeeded) return;
     const controller = new AbortController();
@@ -480,6 +548,8 @@ export function FinanceProvider({
     ready: store.ready,
     saved: store.saved,
     storageError: store.error,
+    synchronizing,
+    syncNeedsAttention: !!cloud && !!store.error && !canAutomaticallyReconcile(store.errorCause ?? cloud.error),
     update,
     replace: (data) => {
       const parsed = appStateSchema.parse(data);
@@ -498,8 +568,15 @@ export function FinanceProvider({
     },
     retrySave: () => {
       if (cloud) {
+        recovery.current.attempts = 0;
+        if (canAutomaticallyReconcile(latest.current.errorCause ?? cloud.error)) {
+          void reconcileAccount().catch((error: unknown) => {
+            if (!(error instanceof FinanceStorageError) && !(error instanceof DOMException)) throw error;
+          });
+          return;
+        }
         void cloud.retry(latest.current.data).then((data) => {
-          dispatch({ type: "hydrate", data: data ?? createEmptyAccountState(), error: cloud.error?.message });
+          dispatch({ type: "hydrate", data: data ?? createEmptyAccountState(), error: cloud.error?.message, cause: cloud.error });
         }, handleCloudError);
       } else if (store.blocked) load(store.data);
       else dispatch({ type: "retry" });
@@ -509,20 +586,7 @@ export function FinanceProvider({
   };
   const workspace = account && cloud ? {
     user: account,
-    reconcileServer: async () => {
-      const expected = latest.current.data;
-      try {
-        const data = await cloud.reconcileServer(expected, () => sameFinanceData(latest.current.data, expected));
-        if (!sameFinanceData(latest.current.data, expected))
-          throw new FinanceStorageError("Während des Abgleichs wurden neue Geräteänderungen vorgenommen. Sie bleiben erhalten; bitte erneut prüfen.");
-        dispatch({ type: "hydrate", data });
-      } catch (error) {
-        if (error instanceof AccountReconciliationError && sameFinanceData(latest.current.data, expected))
-          dispatch({ type: "hydrate", data: error.pendingState, error: error.message });
-        handleCloudError(error);
-        throw error;
-      }
-    },
+    reconcileServer: reconcileAccount,
     loadServer: async () => {
       try {
         const data = await cloud.useServer();

@@ -3,12 +3,15 @@ import { appStateSchema, type AppState } from "@/lib/types";
 import { financeSnapshotSchema } from "@/lib/account-schema";
 import { FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 import { parseFinanceBackup } from "@/lib/finance-backup";
-import { mergeFinanceStates, sameFinanceData } from "@/lib/account-finance-merge";
+import { mergeFinanceStates, sameFinanceData, type FinanceMergeBaseline } from "@/lib/account-finance-merge";
 
+// Booking facts use additive/protected merging, not a third full browser copy.
+const baseStateSchema = appStateSchema.omit({ transactions: true, fixedReceipts: true, reviewQueue: true });
 const cacheSchema = z.object({
   revision: z.number().int().nonnegative(),
   pending: z.boolean(),
   reconcileRequired: z.literal(true).optional(),
+  baseState: baseStateSchema.nullable().optional(),
   state: appStateSchema,
 });
 type Cache = z.infer<typeof cacheSchema>;
@@ -64,8 +67,14 @@ export function discardAccountConflictBackup(accountId: string, expectedRaw: str
 
 export class AccountSessionError extends FinanceStorageError {}
 export class AccountRevisionConflictError extends FinanceStorageError {}
+export class AccountTransportError extends FinanceStorageError {}
+export class AccountWorkingChangeError extends FinanceStorageError {}
+export function canAutomaticallyReconcile(error: unknown): boolean {
+  return error instanceof AccountRevisionConflictError || error instanceof AccountTransportError ||
+    error instanceof AccountWorkingChangeError || (error instanceof AccountReconciliationError && error.retryable);
+}
 export class AccountReconciliationError extends FinanceStorageError {
-  constructor(readonly pendingState: AppState, message: string) { super(message); }
+  constructor(readonly pendingState: AppState, message: string, readonly retryable = false) { super(message); }
 }
 
 export class AccountFinanceStorage {
@@ -76,12 +85,14 @@ export class AccountFinanceStorage {
   private loaded = false;
   private loading: Promise<AppState | null> | undefined;
   private baseline: string | null | undefined;
+  private confirmed: { revision: number; state: FinanceMergeBaseline | null } | undefined;
   private readonly key: string;
   private readonly headers: Record<string, string>;
   error: FinanceStorageError | null = null;
 
   get cachedState() { return this.cache?.state; }
   get revision() { return this.cache?.revision ?? 0; }
+  get synchronizing() { return this.busy; }
 
   constructor(
     readonly userId: string,
@@ -104,10 +115,12 @@ export class AccountFinanceStorage {
     if (this.baseline !== undefined && current !== this.baseline) {
       throw new FinanceStorageError("Ein anderer Tab hat diesen Kontostand geändert. Bitte deinen Stand sichern und den Serverstand laden.");
     }
-    const raw = JSON.stringify(cache);
+    const compact = cache.baseState === undefined || cache.baseState === null
+      ? cache : { ...cache, baseState: baseStateSchema.parse(cache.baseState) };
+    const raw = JSON.stringify(compact);
     localStorage.setItem(this.key, raw);
     this.baseline = raw;
-    this.cache = cache;
+    this.cache = compact;
   }
 
   private async request(method: "GET" | "PUT", cache?: Cache) {
@@ -123,18 +136,21 @@ export class AccountFinanceStorage {
       });
     } catch (error) {
       if (error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError"))
-        throw new FinanceStorageError("Die Synchronisierung hat zu lange gedauert. Änderungen bleiben auf diesem Gerät; bitte erneut versuchen.");
+        throw new AccountTransportError("Die Verbindung dauert länger. Änderungen bleiben auf diesem Gerät.");
       if (!(error instanceof TypeError)) throw error;
-      throw new FinanceStorageError("Server nicht erreichbar. Änderungen bleiben auf diesem Gerät; bitte erneut synchronisieren.");
+      throw new AccountTransportError("Server nicht erreichbar. Änderungen bleiben auf diesem Gerät.");
     }
     if (response.status === 401) throw new AccountSessionError("Die Anmeldung ist abgelaufen oder das Konto wurde gewechselt. Bitte erneut anmelden.");
     if (response.status === 409) throw new AccountRevisionConflictError("Auf einem anderen Gerät gibt es neuere Änderungen. Dein Stand bleibt erhalten. Bitte zuerst sichern und dann die Datenstände abgleichen.");
-    if (!response.ok) throw new FinanceStorageError("Der Server konnte die Finanzdaten nicht speichern oder laden. Bitte erneut versuchen.");
+    if (response.status >= 500 || response.status === 429) throw new AccountTransportError("Der Server ist vorübergehend nicht erreichbar. Änderungen bleiben auf diesem Gerät.");
+    if (!response.ok) throw new FinanceStorageError("Die Finanzdaten konnten nicht übertragen werden.");
     let value: unknown;
     try {
       value = await response.json();
     } catch (error) {
-      if (!(error instanceof SyntaxError) && !(error instanceof TypeError)) throw error;
+      if (error instanceof TypeError)
+        throw new AccountTransportError("Die Serverantwort ist unlesbar. Dein gespeicherter Stand bleibt erhalten.");
+      if (!(error instanceof SyntaxError)) throw error;
       throw new FinanceStorageError("Die Serverantwort ist unlesbar. Dein gespeicherter Stand bleibt erhalten.");
     }
     const result = financeSnapshotSchema.safeParse(value);
@@ -157,6 +173,8 @@ export class AccountFinanceStorage {
       this.cache = undefined;
       let local = this.readCache();
       this.cache = local;
+      this.confirmed = local?.baseState !== undefined
+        ? { revision: local.revision, state: local.baseState } : undefined;
       let remote: z.infer<typeof financeSnapshotSchema>;
       try {
         remote = await this.request("GET");
@@ -170,24 +188,27 @@ export class AccountFinanceStorage {
       }
       if (this.disposed) return this.cache?.state ?? null;
       local = this.cache;
+      if (!local?.pending || local.revision === remote.revision)
+        this.confirmed = { revision: remote.revision, state: remote.state };
       if (local?.pending && remote.state && JSON.stringify(local.state) === JSON.stringify(remote.state)) {
         this.writeCache({ ...remote, state: remote.state, pending: false });
         this.loaded = true;
         this.paused = false;
         this.error = null;
+        this.confirmed = { revision: remote.revision, state: remote.state };
         return remote.state;
       }
       if (local?.pending && local.revision !== remote.revision) {
         this.cache = local;
         this.loaded = true;
         this.paused = true;
-        this.error = new FinanceStorageError("Neuere Daten sind auf dem Server vorhanden. Ungesicherte Änderungen bleiben auf diesem Gerät. Bitte zuerst sichern und den Serverstand laden.");
+        this.error = new AccountRevisionConflictError("Neuere Serverdaten werden mit den Geräteänderungen abgeglichen.");
         return local.state;
       }
       if (local?.pending && local.reconcileRequired) {
         this.loaded = true;
         this.paused = true;
-        this.error = new FinanceStorageError("Der datenerhaltende Abgleich ist noch nicht abgeschlossen. Der gemeinsame Gerätestand bleibt erhalten; bitte erneut „Datenstände abgleichen“ wählen.");
+        this.error = new AccountRevisionConflictError("Der datenerhaltende Abgleich ist noch nicht abgeschlossen.");
         return local.state;
       }
       this.loaded = true;
@@ -211,8 +232,10 @@ export class AccountFinanceStorage {
       if (!this.paused) this.onSaved(state);
       return;
     }
-    const preserved = this.cache?.reconcileRequired ? mergeFinanceStates(state, this.cache.state) : state;
+    const preserved = this.cache?.reconcileRequired ? mergeFinanceStates(state, this.cache.state,
+      this.confirmed?.revision === this.cache.revision ? this.confirmed.state : undefined) : state;
     this.writeCache({ state: preserved, revision: this.cache?.revision ?? 0, pending: true,
+      ...(this.confirmed ? { baseState: this.confirmed.state } : {}),
       ...(this.cache?.reconcileRequired ? { reconcileRequired: true } : {}) });
     if (!this.paused) void this.flush();
   }
@@ -228,7 +251,9 @@ export class AccountFinanceStorage {
         if (this.disposed) return;
         const current = this.cache;
         const pending = !sameFinanceData(current.state, sent.state);
-        this.writeCache({ state: pending ? current.state : remote.state, revision: remote.revision, pending });
+        this.writeCache({ state: pending ? current.state : remote.state, revision: remote.revision, pending,
+          ...(pending ? { baseState: remote.state } : {}) });
+        this.confirmed = { revision: remote.revision, state: remote.state };
         if (!pending) this.onSaved(current.state);
       }
     } catch (error) {
@@ -253,6 +278,7 @@ export class AccountFinanceStorage {
       if (this.disposed || this.cache?.pending) return;
       if (remote.state && remote.revision !== this.cache?.revision) {
         this.writeCache({ ...remote, state: remote.state, pending: false });
+        this.confirmed = { revision: remote.revision, state: remote.state };
         return remote.state;
       }
     } catch (error) {
@@ -308,6 +334,7 @@ export class AccountFinanceStorage {
       this.loaded = true;
       this.paused = false;
       this.error = null;
+      this.confirmed = { revision: remote.revision, state: remote.state };
       return remote.state;
     } finally {
       this.busy = false;
@@ -327,16 +354,18 @@ export class AccountFinanceStorage {
         const selectedRaw = localStorage.getItem(this.key);
         const remote = await this.request("GET");
         if (this.disposed) throw new AccountSessionError("Das Konto wurde gewechselt. Der Gerätestand bleibt erhalten.");
-        if (!isCurrent()) throw new FinanceStorageError("Während des Abgleichs wurden neue Geräteänderungen vorgenommen. Sie bleiben erhalten; bitte erneut prüfen.");
+        if (!isCurrent()) throw new AccountWorkingChangeError("Neue Geräteänderungen werden beim nächsten Abgleich berücksichtigt.");
         if (!sameFinanceData(selected, this.cache) || selectedRaw !== localStorage.getItem(this.key) || selectedRaw !== this.baseline)
-          throw new FinanceStorageError("Während des Abgleichs wurde der Gerätestand geändert. Alle Änderungen bleiben erhalten; bitte erneut prüfen.");
-        const combined = remote.state ? mergeFinanceStates(selected.state, remote.state) : selected.state;
+          throw new AccountWorkingChangeError("Der Gerätestand wurde aktualisiert. Die Änderungen bleiben erhalten.");
+        const combined = remote.state ? mergeFinanceStates(selected.state, remote.state,
+          this.confirmed?.revision === selected.revision ? this.confirmed.state : undefined) : selected.state;
         const conflictKey = accountConflictKey(this.userId);
         if (selectedRaw !== null && localStorage.getItem(conflictKey) === null) {
           localStorage.setItem(conflictKey, selectedRaw);
           window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
         }
-        this.writeCache({ state: combined, revision: remote.revision, pending: true, reconcileRequired: true });
+        this.writeCache({ state: combined, revision: remote.revision, pending: true, reconcileRequired: true, baseState: remote.state });
+        this.confirmed = { revision: remote.revision, state: remote.state };
         rebased = true;
         const sent: Cache = this.cache;
         let saved: z.infer<typeof financeSnapshotSchema>;
@@ -348,21 +377,23 @@ export class AccountFinanceStorage {
         if (!saved.state) throw new FinanceStorageError("Der Server hat den gemeinsamen Datenstand nicht bestätigt. Die lokale Kopie bleibt erhalten.");
         if (this.disposed) throw new AccountSessionError("Das Konto wurde gewechselt. Die lokale Kopie bleibt erhalten.");
         if (!sameFinanceData(sent, this.cache) || localStorage.getItem(this.key) !== this.baseline)
-          throw new FinanceStorageError("Während des Speicherns wurden neue Geräteänderungen vorgenommen. Sie bleiben erhalten; bitte erneut abgleichen.");
+          throw new AccountWorkingChangeError("Neue Geräteänderungen bleiben erhalten und werden erneut abgeglichen.");
         if (!isCurrent()) {
-          this.writeCache({ state: saved.state, revision: saved.revision, pending: true, reconcileRequired: true });
-          throw new FinanceStorageError("Während des Abgleichs wurden neue Geräteänderungen vorgenommen. Sie bleiben erhalten; bitte erneut prüfen.");
+          this.writeCache({ state: saved.state, revision: saved.revision, pending: true, reconcileRequired: true, baseState: saved.state });
+          this.confirmed = { revision: saved.revision, state: saved.state };
+          throw new AccountWorkingChangeError("Neue Geräteänderungen bleiben erhalten und werden erneut abgeglichen.");
         }
         this.writeCache({ state: saved.state, revision: saved.revision, pending: false });
         this.paused = false;
         this.error = null;
+        this.confirmed = { revision: saved.revision, state: saved.state };
         return saved.state;
       }
       throw new FinanceStorageError("Der Serverstand ändert sich weiterhin. Beide Datenstände bleiben erhalten; bitte erneut abgleichen.");
     } catch (error) {
       if (rebased && this.cache && !(error instanceof AccountSessionError) &&
         (error instanceof FinanceStorageError || error instanceof DOMException))
-        throw new AccountReconciliationError(this.cache.state, financeStorageMessage(error));
+        throw new AccountReconciliationError(this.cache.state, financeStorageMessage(error), canAutomaticallyReconcile(error));
       throw error;
     } finally {
       this.busy = false;

@@ -30,6 +30,40 @@ it("compares contents rather than references, property order or omitted optional
   expect(sameFinanceData(state("old"), state("new"))).toBe(false);
 });
 
+it("uses a confirmed common baseline for independent settings and payroll edits without guessing", () => {
+  const base = state("shared"), local = structuredClone(base), remote = structuredClone(base);
+  local.settings.emergencyTarget = 123;
+  remote.settings.vacationTarget = 456;
+  local.transactions[0] = { ...local.transactions[0], manualCategory: true, category: "Geschenke & Spenden" };
+  const result = mergeFinanceStates(local, remote, base);
+  expect(result.settings.emergencyTarget).toBe(123);
+  expect(result.settings.vacationTarget).toBe(456);
+  expect(result.transactions[0].manualCategory).toBe(true);
+  remote.settings.emergencyTarget = 789;
+  expect(() => mergeFinanceStates(local, remote, base)).toThrow(/widersprüchliche/);
+});
+
+it("retains all bookings even when one side deleted a baseline row", () => {
+  const base = state("shared"), local = structuredClone(base), remote = structuredClone(base);
+  local.transactions = [];
+  remote.transactions.push(booking("new"));
+  expect(mergeFinanceStates(local, remote, base).transactions.map((row) => row.id)).toEqual(["shared", "new"]);
+});
+
+it("protects baseline manual categories from an automatic server classification", () => {
+  const base = state("shared");
+  base.transactions[0] = { ...base.transactions[0], category: "Geschenke & Spenden", manualCategory: true };
+  const remote = state("shared");
+  const combined = mergeFinanceStates(structuredClone(base), remote, base);
+  expect(combined.transactions[0].category).toBe("Geschenke & Spenden");
+  expect(combined.transactions[0].manualCategory).toBe(true);
+  const receipt = { key: "receipt-key", amount: -42, date: base.transactions[0].date,
+    booking: base.transactions[0], category: "Geschenke & Spenden" as const };
+  base.fixedReceipts = [receipt];
+  remote.fixedReceipts = [{ ...receipt, booking: remote.transactions[0], category: "Shopping" }];
+  expect(mergeFinanceStates(structuredClone(base), remote, base).fixedReceipts![0].booking?.manualCategory).toBe(true);
+});
+
 it("keeps all local and server bookings, goals, plans and original snapshots without duplicates", () => {
   const local = state("local"),
     remote = state("remote");

@@ -6,6 +6,8 @@ import { hasCategoryChoice } from "@/lib/manual-category";
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+export class FinanceMergeConflictError extends FinanceStorageError {}
+export type FinanceMergeBaseline = Omit<AppState, "transactions" | "fixedReceipts" | "reviewQueue">;
 
 export function sameFinanceData(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) return true;
@@ -76,7 +78,7 @@ function conflict(section: string): never {
     savingsGoals: "Sparziele",
     months: "Monatsplanung",
   };
-  throw new FinanceStorageError(
+  throw new FinanceMergeConflictError(
     `Die Datenstände enthalten widersprüchliche Angaben im Bereich „${labels[section] ?? section}“. Es wurde nichts überschrieben. Bitte beide Stände sichern und die Unterschiede prüfen.`,
   );
 }
@@ -94,12 +96,19 @@ function keyFor(value: unknown, section: string): string {
   return JSON.stringify(fields.map((key) => value[key]));
 }
 
-function merge(left: unknown, right: unknown, section: string): unknown {
+function merge(left: unknown, right: unknown, section: string, base?: unknown, knownBase = false): unknown {
   if (sameFinanceData(left, right)) return right;
+  if (!Array.isArray(left) && !Array.isArray(right) && !record(left) && !record(right) && knownBase) {
+    if (sameFinanceData(left, base)) return right;
+    if (sameFinanceData(right, base)) return left;
+  }
   if (left === undefined) return right;
   if (right === undefined) return left;
   if (Array.isArray(left) && Array.isArray(right)) {
     const values = new Map<string, unknown>();
+    const originals = new Map<string, unknown>();
+    if (Array.isArray(base))
+      for (const value of base) originals.set(keyFor(value, section), value);
     for (const list of [left, right]) {
       const seen = new Set<string>();
       for (const value of list) {
@@ -108,7 +117,7 @@ function merge(left: unknown, right: unknown, section: string): unknown {
         seen.add(key);
         values.set(
           key,
-          values.has(key) ? merge(values.get(key), value, section) : value,
+          values.has(key) ? merge(values.get(key), value, section, originals.get(key), knownBase) : value,
         );
       }
     }
@@ -164,7 +173,7 @@ function merge(left: unknown, right: unknown, section: string): unknown {
     const metadata = new Set(["booking", "category", "merchantKey"]);
     if (!sameFinanceData(without(left, metadata), without(right, metadata)))
       conflict(section);
-    const booking = merge(left.booking, right.booking, section);
+    const booking = merge(left.booking, right.booking, section, record(base) ? base.booking : undefined, knownBase);
     const selected = sameFinanceData(booking, left.booking) ? left : right;
     return { ...selected, booking };
   }
@@ -177,7 +186,7 @@ function merge(left: unknown, right: unknown, section: string): unknown {
       left.kind === "booking" &&
       right.kind === "booking"
         ? right[key]
-        : merge(left[key], right[key], collections[key] ? key : section),
+        : merge(left[key], right[key], collections[key] ? key : section, record(base) ? base[key] : undefined, knownBase),
     ]);
   return Object.fromEntries(combined);
 }
@@ -185,15 +194,17 @@ function merge(left: unknown, right: unknown, section: string): unknown {
 export function mergeFinanceStates(
   local: AppState,
   remote: AppState,
+  baseline?: FinanceMergeBaseline | null,
 ): AppState {
   const left: Record<string, unknown> = local,
     right: Record<string, unknown> = remote;
   const combined: [string, unknown][] = [];
   for (const key of new Set([...Object.keys(local), ...Object.keys(remote)]))
-    combined.push([key, merge(left[key], right[key], key)]);
+    combined.push([key, merge(left[key], right[key], key, baseline ? Reflect.get(baseline, key) : undefined,
+      baseline !== undefined && (baseline === null || Object.hasOwn(baseline, key)))]);
   const result = appStateSchema.safeParse(Object.fromEntries(combined));
   if (!result.success)
-    throw new FinanceStorageError(
+    throw new FinanceMergeConflictError(
       "Der gemeinsame Datenstand ist nicht gültig. Beide Originalstände bleiben erhalten; bitte sichern und die Unterschiede prüfen.",
     );
   return result.data;

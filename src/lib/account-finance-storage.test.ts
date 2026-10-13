@@ -21,6 +21,46 @@ function storage(id = "alice") {
 }
 
 describe("account finance persistence", () => {
+  it("does not duplicate large booking/review/receipt data in the persisted baseline", async () => {
+    const base = changed("shared");
+    base.transactions = Array.from({ length: 3_062 }, (_, id) => ({ ...base.transactions[0],
+      id: `booking-${id}`, description: "Synthetic known purchase".repeat(12) }));
+    base.reviewQueue = [{ kind: "booking", id: "proposal", draft: { ...base.transactions[0], id: "proposal" }, message: "Approval needed" }];
+    base.fixedReceipts = [{ key: "receipt", amount: -42, date: base.transactions[0].date,
+      category: "Shopping", booking: base.transactions[0] }];
+    const { controller } = storage();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response(base, 2)));
+    await controller.load();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Offline")));
+    const local = { ...base, settings: { ...base.settings, emergencyTarget: 123 } };
+    controller.save(local);
+    const primary = cached();
+    expect(primary.state).toEqual(local);
+    expect(primary.baseState.settings).toEqual(base.settings);
+    for (const field of ["transactions", "fixedReceipts", "reviewQueue"])
+      expect(primary.baseState[field]).toBeUndefined();
+    expect(JSON.stringify(primary.baseState).length).toBeLessThan(JSON.stringify(base).length / 10);
+    await vi.waitFor(() => expect(controller.error).not.toBeNull());
+  });
+  it("restores the common baseline after reload and safely combines independent settings", async () => {
+    const base = changed("shared"), local = structuredClone(base), remote = structuredClone(base);
+    local.settings.emergencyTarget = 123;
+    remote.settings.vacationTarget = 456;
+    localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 2, pending: true, baseState: base }));
+    const request = vi.fn().mockResolvedValue(response(remote, 3));
+    request.mockImplementation(async (_url: string, options: RequestInit) => {
+      if (options.method !== "PUT") return response(remote, 3);
+      const sent = JSON.parse(String(options.body));
+      return response(appStateSchema.parse(sent.state), 4);
+    });
+    vi.stubGlobal("fetch", request);
+    const { controller } = storage();
+    expect(await controller.load()).toEqual(local);
+    const combined = await controller.reconcileServer(local);
+    expect(combined.settings.emergencyTarget).toBe(123);
+    expect(combined.settings.vacationTarget).toBe(456);
+    expect(cached()).toEqual({ state: combined, revision: 4, pending: false });
+  });
   it("surfaces a failed response body or timeout without erasing pending changes", async () => {
     const local = changed("pending");
     localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 2, pending: true }));
@@ -33,7 +73,7 @@ describe("account finance persistence", () => {
     expect(await controller.load()).toEqual(local);
     expect(controller.error?.message).toContain("Serverantwort ist unlesbar");
     expect(await controller.retry(local)).toEqual(local);
-    expect(controller.error?.message).toContain("zu lange gedauert");
+    expect(controller.error?.message).toContain("dauert länger");
     expect(cached().pending).toBe(true);
   });
   it("does not import shared legacy data or another user's cache", async () => {
@@ -64,7 +104,7 @@ describe("account finance persistence", () => {
     state.holidayRanges = [{ from: "2026-10-01", to: "2026-10-03" }];
     state.merchantRules = [{ key: "amex|confirmed", category: "Shopping", merchantAlias: "Mein Einkauf" }];
     controller.save(state);
-    expect(cached()).toEqual({ state, revision: 0, pending: true });
+    expect(cached()).toEqual({ state, revision: 0, pending: true, baseState: null });
     expect(saved).not.toHaveBeenCalled();
     finish(response(state, 1));
     await vi.waitFor(() => expect(saved).toHaveBeenCalledWith(state));
@@ -201,7 +241,7 @@ describe("account finance persistence", () => {
       if (source === "device") controller.save(newer);
       else localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: newer, revision: 1, pending: true }));
       finish(response(remote, 2));
-      await expect(pending).rejects.toThrow(/Gerätestand geändert/);
+      await expect(pending).rejects.toThrow(/Gerätestand wurde aktualisiert/);
       expect(cached().state).toEqual(newer);
       expect(request).toHaveBeenCalledTimes(2);
     });
@@ -266,7 +306,7 @@ describe("account finance persistence", () => {
     vi.stubGlobal("fetch", request);
     const { controller } = storage();
     expect(await controller.load()).toEqual(local);
-    expect(controller.error?.message).toContain("Neuere Daten");
+    expect(controller.error?.message).toContain("Neuere Serverdaten");
     controller.save(local);
     expect(request).toHaveBeenCalledOnce();
     expect(cached().revision).toBe(2);

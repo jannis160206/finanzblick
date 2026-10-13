@@ -93,6 +93,23 @@ afterEach(() => {
 });
 
 describe("AccountSyncTools", () => {
+  it("keeps archived backups and technical recovery controls off everyday pages", () => {
+    localStorage.setItem(accountConflictKey("own-account"), JSON.stringify({ state: fixture(), revision: 0, pending: true }));
+    mount(<AccountSyncTools />, { ...workspace("user"), reconcileServer: vi.fn() });
+    expect(screen.queryByText("Lokale Konfliktsicherung")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Serverstand laden" })).toBeNull();
+    expect(localStorage.getItem(accountConflictKey("own-account"))).not.toBeNull();
+  });
+
+  it("shows one short targeted prompt for genuine financial conflicts without exposing raw errors", () => {
+    finance.storageError = "Technical long diagnostic requiring a real decision";
+    useFinanceMock.mockReturnValue({ ...finance, syncNeedsAttention: true });
+    mount(<AccountSyncTools />, { ...workspace("user"), reconcileServer: vi.fn() });
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Details prüfen" }).getAttribute("href")).toBe("/einstellungen#sicherung");
+    expect(screen.queryByText(finance.storageError)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Serverstand laden" })).toBeNull();
+  });
   it("renders nothing outside an account workspace and never reads legacy data", () => {
     seedLegacy();
     const read = vi.spyOn(Storage.prototype, "getItem");
@@ -182,7 +199,7 @@ describe("AccountSyncTools", () => {
     const view = mount();
     view.unmount();
     mount(<AccountSyncTools manual />);
-    fireEvent.click(screen.getByText("Bisherige Browserdaten", { exact: true }));
+    fireEvent.click(screen.getByText("Erweiterte Datensicherung", { exact: true }));
     fireEvent.click(screen.getByRole("button", { name: "Bisherige Browserdaten übernehmen" }));
     expect(finance.replace).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Übernahme bestätigen" }));
@@ -379,7 +396,7 @@ describe("AccountSyncTools", () => {
   it("requires a separate confirmation before choosing the server snapshot and allows cancellation", () => {
     finance.storageError = "Synchronisierungskonflikt";
     mount(<AccountSyncTools />, workspace("user"));
-    expect(screen.getByText(/Vor dem Laden neuerer Serverdaten bitte eine Sicherung herunterladen/)).toBeTruthy();
+    expect(screen.getByText(/Deine Daten bleiben erhalten/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Serverstand laden" }));
     expect(screen.getByText(/Ungesicherte Änderungen werden zusätzlich lokal als Konfliktsicherung aufbewahrt/)).toBeTruthy();
     expect(loadServer).not.toHaveBeenCalled();
@@ -413,7 +430,8 @@ describe("AccountSyncTools", () => {
   it("offers a separately confirmed data-preserving reconciliation rather than replacing the device stand", async () => {
     finance.storageError = "Synchronisierungskonflikt";
     const reconcileServer = vi.fn().mockResolvedValue(undefined);
-    mount(<AccountSyncTools />, { ...workspace("user"), reconcileServer });
+    mount(<AccountSyncTools manual />, { ...workspace("user"), reconcileServer });
+    fireEvent.click(screen.getByText("Erweiterte Datensicherung", { exact: true }));
     fireEvent.click(screen.getByRole("button", { name: "Datenstände abgleichen" }));
     expect(screen.getByText(/ohne Löschen zusammenführen/)).toBeTruthy();
     expect(reconcileServer).not.toHaveBeenCalled();
@@ -515,9 +533,9 @@ describe("account conflict restoration", () => {
     const raw = seedConflict();
     openRecovery();
     expect(screen.getByText(/1 Buchungen/)).toBeTruthy();
-    expect(screen.getByText(/Einstellungen, Salden/)).toBeTruthy();
+    expect(screen.getByText(/vollständiger Kontostand/)).toBeTruthy();
     reviewRestore();
-    expect(screen.getByText(/gesamten aktuellen Kontostand/)).toBeTruthy();
+    expect(screen.getByText(/Aktuellen Stand ersetzen/)).toBeTruthy();
     expect(restoreMock).not.toHaveBeenCalled();
     expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
     fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
@@ -606,7 +624,7 @@ describe("account conflict restoration", () => {
     fireEvent.click(screen.getByRole("button", { name: "Ungeprüftes Original herunterladen" }));
     expect(await readBlob(captured)).toBe(raw);
     fireEvent.click(screen.getByRole("button", { name: "Konfliktsicherung verwerfen" }));
-    expect(screen.getByText(/unwiderruflich löschen/)).toBeTruthy();
+    expect(screen.getByText(/endgültig löschen/)).toBeTruthy();
     expect(localStorage.getItem(accountConflictKey("own-account"))).toBe(raw);
     fireEvent.click(screen.getByRole("button", { name: "Verwerfen bestätigen" }));
     await waitFor(() => expect(localStorage.getItem(accountConflictKey("own-account"))).toBeNull());

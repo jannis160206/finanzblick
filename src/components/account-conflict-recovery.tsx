@@ -92,9 +92,7 @@ export function downloadAccountCache(raw: string, accountId: string) {
 
 export function AccountBackupScope({ state }: { state: AppState }) {
   return <p className="text-xs leading-relaxed">
-    Stand {state.settings.asOf}: {state.transactions.length} Buchungen, {state.financeRows.length} Finanzzeilen,
-    {" "}{state.savingsGoals?.length ?? 0} Ziele und {state.payslips?.length ?? 0} Lohnabrechnungen.
-    Enthalten sind auch Einstellungen, Salden, Planung, Urlaubszeiträume sowie Händlerregeln und Importentscheidungen.
+    {state.settings.asOf} · {state.transactions.length} Buchungen · vollständiger Kontostand
   </p>;
 }
 
@@ -134,9 +132,9 @@ function ConflictRecovery({ accountId, username, isCurrent }: { accountId: strin
   }
 
   return <details className="mb-5 rounded-xl border bg-card p-4 text-sm">
-    <summary className="cursor-pointer font-medium">Lokale Konfliktsicherung</summary>
+    <summary className="cursor-pointer rounded-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">Lokale Konfliktsicherung</summary>
     <div className="mt-3 space-y-3">
-      <p>Diese Sicherung gehört ausschließlich zu Konto {username}. Sie bleibt bis zur dauerhaft gespeicherten Wiederherstellung oder zum ausdrücklichen Verwerfen erhalten.</p>
+      <p className="text-muted-foreground">Zusätzliche Sicherung für {username}. Wird nicht automatisch gelöscht.</p>
       {backup.state && <AccountBackupScope state={backup.state} />}
       {backup.error && <p role="alert" className="text-destructive">{backup.error}</p>}
       {backup.raw !== null && <div className="flex flex-wrap gap-2">
@@ -151,8 +149,8 @@ function ConflictRecovery({ accountId, username, isCurrent }: { accountId: strin
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => setReview({ raw: backup.raw!, state: backup.state, expected: state, action: "discard" })}>Konfliktsicherung verwerfen</Button>
       </div>}
       {review && <div className="space-y-3 border-t pt-3" onKeyDown={(event) => { if (event.key === "Escape" && !busy) setReview(null); }}>
-        <p>{review.action === "restore" ? "Den gesamten aktuellen Kontostand durch diese Konfliktsicherung ersetzen? Vorher den aktuellen Stand sichern. Die Konfliktkopie wird erst nach erfolgreicher Speicherung entfernt."
-          : "Diese lokale Konfliktsicherung unwiderruflich löschen? Bitte vorher herunterladen und den Download prüfen. Der aktuelle Kontostand bleibt unverändert."}</p>
+        <p>{review.action === "restore" ? "Aktuellen Stand ersetzen? Die Sicherung bleibt bis zur erfolgreichen Speicherung erhalten."
+          : "Sicherung endgültig löschen? Der aktuelle Kontostand bleibt unverändert."}</p>
         <Button size="sm" disabled={busy} onClick={() => {
           try { downloadFinanceBackup(state, `Finanzblick_${username}_${state.settings.asOf}.json`, accountId); }
           catch (error) { setError(financeStorageMessage(error)); }

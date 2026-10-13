@@ -15,6 +15,7 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { appStateSchema, type AppState } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { sameFinanceData } from "@/lib/account-finance-merge";
+import Link from "next/link";
 
 const unavailableLogoutBackupsMessage = "Lokale Sicherungen sind nicht erreichbar. Sie können vor dem Abmelden nicht geprüft oder heruntergeladen werden. Beim Abmelden bleiben diese ungeprüften lokalen Daten auf diesem Gerät erhalten.";
 
@@ -159,10 +160,26 @@ export function AccountLogout({ compact = false }: { compact?: boolean }) {
 
 const missingLegacySnapshot = (): LegacyNoticeStatus => "missing";
 
+export function AccountSyncStatus() {
+  const { storageError, synchronizing, syncNeedsAttention, retrySave } = useFinance();
+  if (!storageError && !synchronizing) return null;
+  return <section role={synchronizing ? "status" : "alert"} aria-live="polite"
+    className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-card px-4 py-3 text-sm">
+    {synchronizing ? <LoaderCircle aria-hidden="true" className="size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none" />
+      : <Download aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+    <p className="min-w-0 flex-1">{synchronizing ? "Daten werden automatisch abgeglichen …"
+      : syncNeedsAttention ? "Abgleich braucht Aufmerksamkeit. Deine Daten bleiben erhalten."
+      : "Daten bleiben lokal erhalten. Die Verbindung wird automatisch wiederhergestellt."}</p>
+    {!synchronizing && (syncNeedsAttention
+      ? <Button asChild size="sm" variant="outline"><Link href="/einstellungen#sicherung">Details prüfen</Link></Button>
+      : <Button size="sm" variant="ghost" onClick={retrySave}>Jetzt verbinden</Button>)}
+  </section>;
+}
+
 export function AccountSyncTools({ manual = false, visible = true }: { manual?: boolean; visible?: boolean } = {}) {
   const workspace = useAccountWorkspace();
   const { state, storageError: syncError, replace } = useFinance();
-  const storageError = manual ? null : syncError;
+  const storageError = syncError;
   const source = useAccountCacheSnapshot(storageError ? workspace?.user.id ?? null : null);
   const adminId = workspace?.user.role === "admin" ? workspace.user.id : null;
   const notice = useMemo(() => new LegacyAccountNotice(adminId, manual), [adminId, manual]);
@@ -171,13 +188,14 @@ export function AccountSyncTools({ manual = false, visible = true }: { manual?: 
   const legacyStatus = useSyncExternalStore(subscribeLegacyNotice, notice.getSnapshot, missingLegacySnapshot);
   const legacy = (legacyStatus === "available" || legacyStatus === "unsaved") && !imported;
   useEffect(() => {
-    if (visible && !storageError && legacyStatus === "available") notice.markShown();
-  }, [visible, storageError, legacyStatus, notice]);
+    if (visible && (manual || !workspace?.reconcileServer) && !storageError && legacyStatus === "available") notice.markShown();
+  }, [visible, manual, workspace?.reconcileServer, storageError, legacyStatus, notice]);
   const [confirm, setConfirm] = useState<"legacy" | "server" | "reconcile" | null>(null);
   const [serverReview, setServerReview] = useState<{ state: AppState; accountId: string } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   if (!workspace) return null;
+  if (!manual && workspace.reconcileServer) return <AccountSyncStatus />;
   function download() {
     try {
       const raw = localStorage.getItem(accountStorageKey(workspace!.user.id));
@@ -235,9 +253,8 @@ export function AccountSyncTools({ manual = false, visible = true }: { manual?: 
     }
   }
   const showTools = legacy || storageError || error || legacyStatus === "unavailable" || legacyStatus === "unsaved";
-  if (!showTools) return <AccountConflictRecovery />;
-  const content = <section aria-label="Kontodaten übertragen" className="mb-5 rounded-xl border bg-card p-4 text-sm">
-    {storageError ? <p>Dieser Gerätestand bleibt erhalten. Vor dem Laden neuerer Serverdaten bitte eine Sicherung herunterladen. Beim Abgleich bleiben lokale und serverseitige Buchungen erhalten; manuelle Zuordnungen sind geschützt.</p>
+  const content = showTools ? <section aria-label="Kontodaten übertragen" className="mb-5 rounded-xl border bg-card p-4 text-sm">
+    {storageError ? <p>Deine Daten bleiben erhalten. Sichere Änderungen werden automatisch abgeglichen.</p>
       : legacy && <p>In diesem Browser liegen noch Daten von vor der Konto-Anmeldung. Nur nach deiner Bestätigung werden sie in dein Admin-Konto übertragen. Daten von localhost zuerst dort als Excel exportieren.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
       <Button variant="outline" size="sm" onClick={download}><Download className="size-4" />{source.raw !== null && source.error ? "Ungeprüftes Geräte-Original herunterladen" : "Gerätestand sichern"}</Button>
@@ -263,9 +280,10 @@ export function AccountSyncTools({ manual = false, visible = true }: { manual?: 
     {error && <p role="alert" className="mt-3 text-destructive">{error}</p>}
     {legacyStatus === "unavailable" && <p role="alert" className="mt-3 text-destructive">Bisherige Browserdaten sind nicht erreichbar. Bitte die Browserspeicher-Einstellungen prüfen.</p>}
     {legacyStatus === "unsaved" && <p role="alert" className="mt-3 text-destructive">Dieser Hinweis konnte nicht dauerhaft gespeichert werden. Bitte die Browserspeicher-Einstellungen prüfen.</p>}
-  </section>;
-  return <><AccountConflictRecovery />{manual ? <details className="mt-4">
-    <summary className="cursor-pointer text-xs font-medium">Bisherige Browserdaten</summary>
-    <div className="mt-3">{content}</div>
-  </details> : content}</>;
+  </section> : null;
+  const recoveryTools = <><AccountConflictRecovery />{content}</>;
+  return manual ? <details className="mt-4">
+    <summary className="cursor-pointer text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring">Erweiterte Datensicherung</summary>
+    <div className="mt-3">{recoveryTools}</div>
+  </details> : recoveryTools;
 }
