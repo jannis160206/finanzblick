@@ -224,10 +224,10 @@ body {
   @apply rounded-xl border bg-card shadow-sm;
 }
 .eyebrow {
-  @apply text-[10px] font-semibold tracking-[0.16em] text-muted-foreground;
+  @apply text-[11px] font-semibold tracking-[0.14em] text-muted-foreground;
 }
 .status-pill {
-  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-medium;
+  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium;
 }
 .select-input {
   @apply h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-[border-color,box-shadow] duration-150;
@@ -347,6 +347,7 @@ body {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .data-table th,
 .data-table td {
@@ -355,7 +356,7 @@ body {
 }
 .data-table thead th {
   background: color-mix(in srgb, var(--muted) 40%, var(--card));
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
   color: var(--muted-foreground);
   text-align: left;
@@ -371,6 +372,9 @@ body {
 }
 .data-table tfoot td {
   background: var(--muted);
+}
+.month-grid {
+  font-variant-numeric: tabular-nums;
 }
 .month-grid th,
 .month-grid td {
