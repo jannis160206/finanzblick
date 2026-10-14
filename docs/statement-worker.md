@@ -24,6 +24,12 @@ npm run dev
 npm run worker
 ```
 
+Im Entwicklungsmodus (`npm run dev` mit Kontomodus) startet der Webserver den
+Worker automatisch als Kindprozess und startet ihn nach einem Absturz nach 5 s
+neu. Mit `FINANZBLICK_AUTO_WORKER=0` lässt sich das abschalten; in Produktion
+läuft der Worker weiterhin getrennt. Ein bereits laufender Worker wird durch die
+Lease nicht doppelt aktiv.
+
 Läuft kein Worker, zeigt der Uploadstatus bei wartenden Auszügen den Hinweis
 „Der Hintergrund-Worker läuft nicht“. Ohne Worker bleiben Uploads bei 0 % in der
 Warteschlange.
