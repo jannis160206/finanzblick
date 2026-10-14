@@ -226,6 +226,7 @@ export function FinanceProvider({
   children: ReactNode;
   account?: AccountUser;
 }) {
+  const settled = useRef(false);
   const [store, dispatch] = useReducer(reducer, {
     data: initialState,
     ready: false,
@@ -472,6 +473,14 @@ export function FinanceProvider({
       window.removeEventListener("focus", refresh);
     };
   }, []);
+  useEffect(() => {
+    if (!store.ready || store.blocked || store.error || settled.current) return;
+    if (!store.data.reviewQueue?.length) return;
+    settled.current = true;
+    void import("@/lib/automation/settle-open").then(({ settleOpenReviews }) => {
+      dispatch({ type: "update", updater: settleOpenReviews });
+    });
+  }, [store.ready, store.blocked, store.error, store.data.reviewQueue]);
   useEffect(() => {
     if (!store.ready || store.blocked || store.saved) return;
     try {
