@@ -25,13 +25,14 @@ it("treats unknown spend inside the holiday range as Urlaub and closes its revie
     booking("end", "Souvenir Lindos", "2026-08-20"),
     booking("before", "Qwx Heimat Villach", "2026-08-09"),
     booking("after", "Zrt Daheim Villach", "2026-08-21"),
+    booking("pos", "Kartenzahlung POS", "2026-08-13"),
   ]);
   const next = queueLedgerReview(state);
   const open = new Set((next.reviewQueue ?? []).map((item) => item.kind === "booking" ? item.id : ""));
-  expect(open.has("in") || open.has("start") || open.has("end")).toBe(false);
+  expect(open.has("in") || open.has("start") || open.has("end") || open.has("pos")).toBe(false);
   for (const id of ["before", "after"])
     expect(classify(actualBookings(next).find((row) => row.id === id)!).category).not.toBe("Urlaub");
-  for (const id of ["in", "start", "end"])
+  for (const id of ["in", "start", "end", "pos"])
     expect(classify(actualBookings(next).find((row) => row.id === id)!).category).toBe("Urlaub");
   expect(openReviewCount(next.reviewQueue ?? [])).toBe(open.size);
 });
@@ -45,4 +46,12 @@ it("keeps fixed costs, income and manual choices out of the holiday rule", () =>
   ]);
   const next = queueLedgerReview(state);
   expect(classify(actualBookings(next).find((row) => row.id === "manual")!).category).toBe("Shopping");
+});
+
+it("settles pending drafts that are not in the ledger yet", () => {
+  const draft = booking("pending", "Taverna Poseidon Rhodos", "2026-08-14");
+  const state = { ...stateWith([]), reviewQueue: [{ kind: "booking" as const, id: draft.id, draft, message: "Händlerzuordnung unsicher – bitte prüfen." }] };
+  const next = queueLedgerReview(state);
+  expect(openReviewCount(next.reviewQueue ?? [])).toBe(0);
+  expect(classify(actualBookings(next).find((row) => row.id === "pending")!).category).toBe("Urlaub");
 });
