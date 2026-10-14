@@ -126,6 +126,9 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (isNamedTransfer(row)) return;
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
+  // Unknown spend inside a holiday range is travel by definition; accountHolidayRanges already
+  // excludes fixed, variable-known, transfer, income and manually categorised bookings.
+  if (row.holidayRange && result.category === "Urlaub") return;
   const categorized = acceptCategorized && result.category !== "Prüfen";
   if (row.merchantNameConfirmed && row.amount < 0 && !result.isTransfer && !isIncome(result.category) && !categorized)
     return "Händlername bestätigt – Kategorie bitte noch bestätigen.";
