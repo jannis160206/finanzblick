@@ -48,6 +48,25 @@ it("persists safe typed infrastructure retries within the original five-attempt 
   }
 });
 
+it("serves uploads before an older queued backfill so imports are never blocked", () => {
+  store.cancel(owner, job);
+  const backfill = randomUUID();
+  const upload = randomUUID();
+  const now = Date.now();
+  accounts.transaction((db) => {
+    db.prepare("UPDATE automation_jobs SET status = 'COMPLETED' WHERE id = ?").run(job.id);
+    const insert = db.prepare(`INSERT INTO automation_jobs
+      (id, user_id, kind, name, status, bytes, available_at, updated_at, created_at)
+      VALUES (?, ?, ?, 'synthetic.csv', 'QUEUED', 1, ?, ?, ?)`);
+    insert.run(backfill, userId, "backfill", now - 1000, now - 1000, now - 1000);
+    insert.run(upload, userId, "statement", now, now, now);
+  });
+  const first = store.claim(owner, now)!;
+  expect(first.id).toBe(upload);
+  store.fail(owner, first, automationFailure("PARSE_INFRASTRUCTURE"));
+  expect(store.claim(owner, now)).toMatchObject({ id: backfill });
+});
+
 it("keeps faithful graceful-abort status across restart, without spending retries", () => {
   store.cancel(owner, job);
   expect(() => store.progress(owner, job, 50)).toThrow("ownership lost");

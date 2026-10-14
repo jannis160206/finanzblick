@@ -536,7 +536,7 @@ export class AutomationStore {
         .prepare(
           `SELECT ${columns} FROM automation_jobs
         WHERE status IN ('QUEUED', 'RETRYING') AND available_at <= ?
-        ORDER BY created_at, id LIMIT 1`,
+        ORDER BY (kind = 'backfill'), created_at, id LIMIT 1`,
         )
         .get(now);
       if (!row) return null;
