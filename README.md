@@ -224,6 +224,8 @@ Bereits gebuchte Umsätze mit konkreter Kategorie verlassen **Prüfung offen** o
 
 **Doppelte Buchungen** (gleiche Bank, Datum, Betrag, Text/Referenz und Vorkommen, alte POS-Kopien oder Amex-Screenshot samt Auszugszeile) werden bei jedem Laden und jeder Änderung automatisch zusammengeführt. Die Buchung mit den bewussten Entscheidungen bleibt erhalten, fehlende Bankfakten wie Uhrzeit oder Referenz werden ergänzt, Verweise in Prüfungen, Fixkostenbelegen und Planquellen werden umgehängt. Echte Wiederholungskäufe mit eigener laufender Nummer bleiben getrennt.
 
+**Verarbeitung abbrechen:** Im Uploadstatus hat jeder laufende oder wartende Kontoauszug ein **X**. Es bricht den Upload ab bzw. verwirft den Serverjob samt Datei, ohne dass daraus Buchungen entstehen. Bereits übernommene Buchungen bleiben unberührt; der Abgleich bestehender Buchungen ist nicht abbrechbar.
+
 **Alle Buchungen entfernen:** Unter **Einstellungen → Sicherung** löscht **Buchungen entfernen** nach Bestätigung alle Umsätze, offenen Prüfungen, Fixkostenbelege, Importergebnisse und ignorierten Auszugsschlüssel. Händlerregeln, Planung, Ziele, Salden und Einstellungen bleiben. Vorher ein Excel-Backup erstellen.
 
 **Logo-Ordner live:** Der Ordner `Logo` (oder `FINANZBLICK_LOGO_DIR`) wird bei Logoabfragen auf neue oder geänderte Bilddateien geprüft (höchstens alle zwei Sekunden), sofern `Logo/.private-usage.json` den Konto-Eintrag mit Nutzungsvermerk enthält. Jeder Umsatz, dessen Text den Dateinamen als ganzes Wort enthält (z. B. `DISKONT.webp` → „Einkauf bei Diskont Markt“), erhält dieses Logo; Zahlungsanbieter wie PayPal gelten nur am Textanfang. Fehlerhafte Dateien werden protokolliert und blockieren die übrigen nicht.

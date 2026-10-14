@@ -170,3 +170,23 @@ it("keeps legacy results unavailable and rejects mismatched persisted job proven
   ).run(JSON.stringify(result), job.id));
   expect(() => store.snapshot(userId)).toThrow("Import result/job mismatch");
 });
+
+it("cancels active statements for their owner only, fences the running worker and reports finished or unknown ids", () => {
+  const other = randomUUID();
+  const queued = randomUUID();
+  store.reserveUpload(userId, queued, "queued.csv", 1);
+  store.readyUpload(userId, queued);
+  expect(store.cancelStatement(randomUUID(), queued)).toBe("missing");
+  expect(store.cancelStatement(userId, other)).toBe("missing");
+  expect(store.cancelStatement(userId, queued)).toBe("cancelled");
+  expect(store.cancelStatement(userId, queued)).toBe("finished");
+  expect(store.snapshot(userId).jobs.find((item) => item.id === queued)).toMatchObject({
+    status: "FAILED", error: "Vom Nutzer abgebrochen.",
+  });
+  expect(store.holds(owner, job)).toBe(true);
+  expect(store.cancelStatement(userId, job.id)).toBe("cancelled");
+  expect(store.holds(owner, job)).toBe(false);
+  expect(() => accounts.transformFinance(userId, () => blankTestState(), (db) =>
+    store.checkpoint(db, owner, job, 1, true))).toThrow("ownership lost");
+  expect(accounts.getFinance(userId)).toEqual({ state: null, revision: 0 });
+});

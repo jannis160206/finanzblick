@@ -47,5 +47,8 @@ export function useUploadActivity(jobs: AutomationJob[]) {
       selected.has(item.id) ? { ...item, phase, error, errorCode, updatedAt } : item,
     )));
   }, []);
-  return { activities, add, change };
+  const remove = useCallback((id: string) => {
+    setActivities((current) => current.filter((item) => item.id !== id));
+  }, []);
+  return { activities, add, change, remove };
 }

@@ -144,6 +144,23 @@ export async function uploadStatement(request: Request): Promise<Response> {
   }
 }
 
+export async function cancelStatement(request: Request): Promise<Response> {
+  try {
+    const { config, database, user, store } = await authorized(request);
+    requireMutationOrigin(request, config);
+    database.consumeRateLimit(`statement:cancel:${user.id}`, 60, 60_000);
+    const parsedId = statementUploadResponseSchema.safeParse({
+      id: new URL(request.url).searchParams.get("id"),
+    });
+    if (!parsedId.success) throw new AccountError(400, "Ungültige Upload-ID.");
+    const outcome = store.cancelStatement(user.id, parsedId.data.id);
+    if (outcome === "missing") throw new AccountError(404, "Der Upload wurde nicht gefunden.");
+    if (outcome === "finished") throw new AccountError(409, "Der Upload ist bereits abgeschlossen.");
+    return jsonResponse({ id: parsedId.data.id }, 200);
+  } catch (error) {
+    return accountErrorResponse(error);
+  }
+}
 const streamGlobal = globalThis as typeof globalThis & {
   finanzblickAutomationStreams?: Map<string, number>;
 };

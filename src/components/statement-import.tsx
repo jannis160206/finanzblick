@@ -321,7 +321,9 @@ export function StatementImport({ reviewRequest = 0 }: {
 function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) {
   const workspace = useAccountWorkspace();
   const automation = useAutomation();
-  const { activities, add: addActivities, change: changeActivities } = useUploadActivity(automation.jobs);
+  const { activities, add: addActivities, change: changeActivities, remove: removeActivity } = useUploadActivity(automation.jobs);
+  const cancelledUploads = useRef(new Set<string>());
+  const uploadControllers = useRef(new Map<string, AbortController>());
   const importController = useRef<AbortController | null>(null);
   const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -465,6 +467,8 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     )
       return;
     busyRef.current = true;
+    cancelledUploads.current.clear();
+    uploadControllers.current.clear();
     const controller = new AbortController();
     importController.current = controller;
     setUI({ busy: true, dragging: false, ledgerOnly: false });
@@ -487,12 +491,15 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         if (!saved) throw new Error("Bitte zuerst die laufende Synchronisierung abwarten.");
         for (const [index, file] of files.entries()) {
           const id = uploads[index].id;
+          if (cancelledUploads.current.has(id)) continue;
+          const uploadController = new AbortController();
+          uploadControllers.current.set(id, uploadController);
           changeActivities([id], "uploading");
           try {
             if (!file.size || file.size > MAX_UPLOAD_BYTES) throw new Error("Ein Kontoauszug muss Daten enthalten und darf höchstens 20 MiB groß sein.");
             const response = await fetch(`/api/statements?name=${encodeURIComponent(file.name)}`, {
               method: "POST", credentials: "same-origin", body: file,
-              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(90_000)]),
+              signal: AbortSignal.any([controller.signal, uploadController.signal, AbortSignal.timeout(90_000)]),
               headers: { "Content-Type": "application/octet-stream", "X-Upload-Size": String(file.size),
                 "X-Upload-Id": id, "X-Finanzblick-Account": workspace.user.id },
             });
@@ -514,6 +521,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
             toast.success(`${file.name}: zur Hintergrundverarbeitung angenommen.`);
           } catch (error) {
             if (controller.signal.aborted) return;
+            if (cancelledUploads.current.has(id)) continue;
             const message = error instanceof Error ? error.message : "Der Auszug konnte nicht hochgeladen werden.";
             changeActivities([id], "failed", message);
             toast.error(`${file.name}: ${message}`);
@@ -570,7 +578,35 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
       }
     }
   }
-  const fileButton = <Button
+  async function cancelUpload(id: string) {
+    if (!workspace) {
+      cancelledUploads.current.add(id);
+      removeActivity(id);
+      return;
+    }
+    const local = activities.some((item) => item.id === id);
+    cancelledUploads.current.add(id);
+    uploadControllers.current.get(id)?.abort();
+    try {
+      const response = await fetch(`/api/statements?id=${encodeURIComponent(id)}`, {
+        method: "DELETE", credentials: "same-origin",
+        headers: { "X-Finanzblick-Account": workspace.user.id },
+      });
+      // Not yet reserved or already finished on the server: nothing left to stop.
+      if (!response.ok && response.status !== 404 && response.status !== 409) {
+        const body: unknown = await response.json().catch(() => null);
+        throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
+          ? body.error : "Die Verarbeitung konnte nicht abgebrochen werden.");
+      }
+      if (local) removeActivity(id);
+      toast.success("Verarbeitung abgebrochen.");
+    } catch (error) {
+      cancelledUploads.current.delete(id);
+      const message = error instanceof Error ? error.message : "Die Verarbeitung konnte nicht abgebrochen werden.";
+      if (local) changeActivities([id], "failed", message);
+      toast.error(message);
+    }
+  }  const fileButton = <Button
     size="sm"
     variant="outline"
     className="h-11 min-w-0 flex-1 sm:flex-none"
@@ -636,7 +672,8 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
             error={workspace ? automation.error : null} summary={state.importStatus}
             reviewCount={openReviewCount} results={state.importResults}
             onReview={() => { if (openReviewCount) setUI({ open: true, ledgerOnly: false }); }}
-            onReupload={() => fileInput.current?.click()} />
+            onReupload={() => fileInput.current?.click()}
+            onCancel={(id) => { void cancelUpload(id); }} />
           {fileButton}
         </div>
       </section>

@@ -168,3 +168,25 @@ it("replaces the older result when a third import finishes while the status wind
   expect(document.querySelector("[data-upload-badge]")?.textContent).toBe("!");
   await waitFor(() => expect(screen.queryByText("first.pdf")).toBeNull());
 });
+
+it("offers a cancel button only for active statement jobs and local uploads", () => {
+  const onCancel = vi.fn();
+  render(<UploadStatus activities={[{ id: "local", name: "local.csv", phase: "waiting", error: null, updatedAt: 1 },
+    { id: "reading", name: "reading.csv", phase: "reading", error: null, updatedAt: 1 }]}
+    jobs={[job("queue", "QUEUED"), job("done", "COMPLETED"), job("failed", "FAILED"),
+      job("backfill", "PROCESSING", "backfill")]}
+    error={null} reviewCount={0} onCancel={onCancel} />);
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  const dialog = within(screen.getByRole("dialog", { name: "Uploadstatus" }));
+  expect(dialog.getAllByRole("button", { name: /Verarbeitung abbrechen/ })).toHaveLength(2);
+  fireEvent.click(dialog.getByRole("button", { name: "Verarbeitung abbrechen: queue.pdf" }));
+  expect(onCancel).toHaveBeenCalledWith("queue");
+  fireEvent.click(dialog.getByRole("button", { name: "Verarbeitung abbrechen: local.csv" }));
+  expect(onCancel).toHaveBeenCalledWith("local");
+});
+
+it("shows no cancel button without a cancel handler", () => {
+  render(<UploadStatus activities={[]} jobs={[job("queue", "QUEUED")]} error={null} reviewCount={0} />);
+  fireEvent.click(screen.getByRole("button", { name: "Uploadstatus" }));
+  expect(screen.queryByRole("button", { name: /Verarbeitung abbrechen/ })).toBeNull();
+});

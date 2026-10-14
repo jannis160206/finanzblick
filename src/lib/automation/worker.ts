@@ -203,6 +203,7 @@ export class AutomationWorker {
           await this.process(job, running.signal);
         } catch (error) {
           if (leaseError) throw leaseError;
+          if (!this.store.holds(this.owner, job)) continue;
           if (signal.aborted || (error instanceof ParserFailure && error.code === "WORKER_ABORTED")) {
             this.store.cancel(this.owner, job);
             break;

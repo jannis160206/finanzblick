@@ -302,6 +302,25 @@ export class AutomationStore {
     });
   }
 
+  cancelStatement(userId: string, id: string, now = Date.now()): "cancelled" | "finished" | "missing" {
+    z.string().uuid().parse(id);
+    return this.accounts.transaction((db) => {
+      const result = db.prepare(
+        `UPDATE automation_jobs SET status = 'FAILED', owner = NULL, error = ?, error_code = NULL,
+        updated_at = ? WHERE id = ? AND user_id = ? AND kind = 'statement'
+        AND status IN ('UPLOADING', 'QUEUED', 'RETRYING', 'PROCESSING')`,
+      ).run("Vom Nutzer abgebrochen.", now, id, userId);
+      if (result.changes === 1) return "cancelled";
+      return db.prepare("SELECT id FROM automation_jobs WHERE id = ? AND user_id = ? AND kind = 'statement'")
+        .get(id, userId) ? "finished" : "missing";
+    });
+  }
+
+  holds(owner: string, job: ClaimedJob): boolean {
+    return this.accounts.read((db) => db.prepare(
+      "SELECT id FROM automation_jobs WHERE id = ? AND user_id = ? AND status = 'PROCESSING' AND owner = ?",
+    ).get(job.id, job.userId, owner) !== undefined);
+  }
   enqueueBackfill(
     userId: string,
     now = Date.now(),

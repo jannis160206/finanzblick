@@ -7,6 +7,7 @@ import {
   Clock3,
   Loader2,
   RotateCw,
+  X,
 } from "lucide-react";
 import { useAutomation } from "./automation-context";
 import type { AutomationJob } from "@/lib/automation/schema";
@@ -112,7 +113,7 @@ function useJobCards(jobs: AutomationJob[], showCompleted: boolean) {
 }
 
 export function AutomationJobCard({ job, exiting = false, label: customLabel, indeterminate = job.status === "UPLOADING",
-  onReview, onReupload,
+  onReview, onReupload, onCancel,
 }: {
   job: Pick<AutomationJob, "id" | "name" | "status" | "progress" | "error"> & {
     result?: ImportResult | null;
@@ -123,6 +124,7 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
   indeterminate?: boolean;
   onReview?: () => void;
   onReupload?: () => void;
+  onCancel?: () => void;
 }) {
   const errorId = useId();
   const { label: statusLabel, Icon: StatusIcon, animation } = statuses[job.status];
@@ -234,6 +236,11 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
         >
           {percentage}%
         </span>}
+        {onCancel && !completed && !failed && <Button type="button" variant="ghost" size="icon"
+          className="-mt-1 -mr-1 size-8 shrink-0 text-muted-foreground hover:text-foreground"
+          aria-label={`Verarbeitung abbrechen: ${job.name}`} title="Abbrechen" onClick={onCancel}>
+          <X className="size-4" aria-hidden="true" />
+        </Button>}
       </div>
       <div
         role="progressbar"
@@ -277,12 +284,13 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
   );
 }
 
-export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, showCompleted = false, onReview, onReupload }: {
+export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, showCompleted = false, onReview, onReupload, onCancel }: {
   jobs?: AutomationJob[];
   error?: string | null;
   showCompleted?: boolean;
   onReview?: () => void;
   onReupload?: () => void;
+  onCancel?: (id: string) => void;
 } = {}) {
   const automation = useAutomation();
   const jobs = suppliedJobs ?? automation.jobs;
@@ -313,7 +321,8 @@ export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, sho
         className="space-y-3"
       >
         {cards.map((card) => (
-          <AutomationJobCard key={card.job.id} {...card} onReview={onReview} onReupload={onReupload} />
+          <AutomationJobCard key={card.job.id} {...card} onReview={onReview} onReupload={onReupload}
+            onCancel={onCancel && card.job.kind === "statement" ? () => onCancel(card.job.id) : undefined} />
         ))}
       </div>
     </section>

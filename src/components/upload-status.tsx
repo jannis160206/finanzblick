@@ -25,8 +25,10 @@ const phases: Record<UploadPhase, { status: AutomationJob["status"]; label: stri
   failed: { status: "FAILED", label: "Import fehlgeschlagen" },
 };
 
+const cancellablePhases = new Set<UploadPhase>(["waiting", "uploading", "accepted"]);
+
 export function UploadStatus({
-  activities, jobs, error, summary, reviewCount, results = [], onReview, onReupload,
+  activities, jobs, error, summary, reviewCount, results = [], onReview, onReupload, onCancel,
 }: {
   activities: UploadActivity[];
   jobs: AutomationJob[];
@@ -36,6 +38,7 @@ export function UploadStatus({
   results?: ImportResult[];
   onReview?: () => void;
   onReupload?: () => void;
+  onCancel?: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const retainedResults = retainImportResults(results);
@@ -107,10 +110,11 @@ export function UploadStatus({
                 result: item.result, errorCode: item.errorCode }}
               label={phases[item.phase].label}
               indeterminate={isActiveUpload(item)}
+              onCancel={onCancel && cancellablePhases.has(item.phase) ? () => onCancel(item.id) : undefined}
               onReview={onReview ? () => { setOpen(false); onReview(); } : undefined}
               onReupload={onReupload ? () => { setOpen(false); onReupload(); } : undefined} />)}
           </div>
-          <AutomationStatus jobs={visibleJobs} error={error} showCompleted
+          <AutomationStatus jobs={visibleJobs} error={error} showCompleted onCancel={onCancel}
             onReview={onReview ? () => { setOpen(false); onReview(); } : undefined}
             onReupload={onReupload ? () => { setOpen(false); onReupload(); } : undefined} />
           {summary && !hasResults && <StatementImportStatus imported={summary.imported}
