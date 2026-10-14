@@ -24,10 +24,10 @@ async function settings(page: Page) {
   await page.goto("/einstellungen");
   await stored(page);
 }
+const themeLabels: Record<string, string> = { default: "Standard", halloween: "Halloween", christmas: "Weihnachten", newyear: "Neujahr", carnival: "Fasching", easter: "Ostern", summer: "Sommer", betweenyears: "Zwischen den Jahren" };
+const sceneThemes = ["halloween", "christmas", "newyear", "summer"];
 async function fixed(page: Page, theme: string) {
-  const preview = page.getByLabel("Saisonvorschau", { exact: true });
-  if (!(await preview.isVisible())) await page.locator("summary", { hasText: "Saisonvorschau" }).click();
-  await preview.selectOption(theme);
+  await page.getByRole("radio", { name: themeLabels[theme], exact: true }).check();
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
 }
 async function save(page: Page) {
@@ -51,7 +51,6 @@ async function palette(page: Page) {
         "--primary",
         "--ring",
         "--chart-1",
-        "--chart-2",
       ].map((name) => [name, css.getPropertyValue(name).trim()]),
     );
   });
@@ -127,25 +126,25 @@ test("season decorates the same palette and logo instead of replacing the brand"
     await expect(
       page.locator('[data-logo-mark="finanzblick"] .lucide-landmark'),
     ).toHaveCount(1);
-    await expect(page.locator(".logo-season-detail")).toHaveCount(
-      theme === "default" ? 0 : 1,
-    );
-    await expect(
-      page.locator(
-        "[data-atmosphere], .seasonal-scene, .seasonal-particles, canvas",
-      ),
-    ).toHaveCount(0);
+    await expect(page.locator(".logo-motif")).toHaveCount(theme === "default" ? 0 : 1);
+    await expect(page.locator(".logo-season-detail")).toHaveCount(0);
+    await expect(page.locator("canvas.season-scene")).toHaveCount(sceneThemes.includes(theme) ? 1 : 0);
     await expect(page.locator("h1")).toHaveCSS("text-shadow", "none");
     await expect(page.locator(".brand-mark")).toHaveCSS(
       "background-color",
       "rgb(96, 165, 250)",
     );
   }
-  await expect(
-    page.getByLabel("Saisonvorschau", { exact: true }).locator("option"),
-  ).toHaveText(["Aktueller Kalender", "Default", "Halloween", "Weihnachten", "Neujahr", "Fasching", "Ostern", "Sommer", "Zwischen den Jahren"]);
-  expect(await stored(page)).toEqual(before);
-  await page.locator("summary", { hasText: "Saisonvorschau" }).click();
+  await expect(page.getByRole("radiogroup", { name: "Thema" }).getByRole("radio")).toHaveCount(8);
+  const chosen = await stored(page);
+  expect(chosen.seasonalTheme).toMatchObject({ mode: "fixed", theme: "betweenyears", accentColor: "#60a5fa" });
+  delete chosen.seasonalTheme;
+  delete before.seasonalTheme;
+  expect(chosen).toEqual(before);
+  await page.reload();
+  await stored(page);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "betweenyears");
+  await page.getByRole("button", { name: "Automatisch (Saison)" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "default");
   expect(await palette(page)).toEqual(baseline);
 });

@@ -1,9 +1,13 @@
 import { runInNewContext } from "node:vm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  chooseSeasonalTheme,
+  isManualSeasonalTheme,
+  resetSeasonalTheme,
   resolveSeasonalTheme,
   seasonalThemeBootstrap,
   seasonalThemes,
+  type SeasonalPreference,
 } from "./seasonal-theme";
 import { appStateSchema, seasonalPreferenceSchema } from "./types";
 import { createSeed } from "./seed";
@@ -62,21 +66,33 @@ describe("local seasonal calendar", () => {
     },
   );
 
-  it.each(seasonalThemes)("legacy fixed %s cannot override the calendar", (theme) => {
+  it.each(seasonalThemes)("a manual %s choice wins over the calendar", (theme) => {
     expect(
       resolveSeasonalTheme({ mode: "fixed", theme }, new Date(2026, 11, 24)),
-    ).toBe("christmas");
+    ).toBe(theme);
   });
-  it("legacy always-standard also follows the calendar", () => {
+  it("always-standard overrides the calendar", () => {
     expect(
       resolveSeasonalTheme(
         { mode: "default", theme: "christmas" },
         new Date(2026, 11, 24),
       ),
-    ).toBe("christmas");
+    ).toBe("default");
+  });
+  it("ignores an unknown stored theme and falls back to the calendar", () => {
+    const preference = { mode: "fixed", theme: "script" } as unknown as SeasonalPreference;
+    expect(resolveSeasonalTheme(preference, new Date(2026, 11, 24))).toBe("christmas");
+  });
+  it("choosing and resetting keeps accent and motion settings", () => {
+    const base: SeasonalPreference = { mode: "auto", theme: "default", accentColor: "#60a5fa", reduceMotion: true };
+    const chosen = chooseSeasonalTheme(base, "summer");
+    expect(chosen).toEqual({ mode: "fixed", theme: "summer", accentColor: "#60a5fa", reduceMotion: true });
+    expect(isManualSeasonalTheme(chosen)).toBe(true);
+    const reset = resetSeasonalTheme(chosen);
+    expect(reset).toEqual(base);
+    expect(isManualSeasonalTheme(reset)).toBe(false);
   });
 });
-
 describe("presentation-only storage", () => {
   it("keeps old stores valid without modifying financial settings", () => {
     const seed = createSeed();
@@ -122,7 +138,7 @@ describe("pre-paint bootstrap", () => {
     });
     expect(document.documentElement.dataset.theme).toBe("christmas");
   });
-  it("works when storage is blocked and ignores legacy overrides", () => {
+  it("works when storage is blocked and applies a stored manual choice", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 9, 31));
     const document = {
@@ -151,6 +167,17 @@ describe("pre-paint bootstrap", () => {
           }),
       },
     });
-    expect(document.documentElement.dataset.theme).toBe("halloween");
+    expect(document.documentElement.dataset.theme).toBe("default");
+    runInNewContext(seasonalThemeBootstrap, {
+      document,
+      Date,
+      localStorage: {
+        getItem: () =>
+          JSON.stringify({
+            seasonalTheme: { mode: "fixed", theme: "summer" },
+          }),
+      },
+    });
+    expect(document.documentElement.dataset.theme).toBe("summer");
   });
 });

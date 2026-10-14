@@ -125,7 +125,7 @@ export function AppearanceControls({
           </span>
         </label>
         <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-          Saisonale Details automatisch · Akzentfarbe bleibt.
+          Bei „Bewegung reduzieren“ entfallen Szene, Flackern und Übergänge. Schrift und Farben bleiben.
         </p>
       </div>
     </div>

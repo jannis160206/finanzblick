@@ -42,10 +42,12 @@ for (const width of [1440, 390]) {
     await expect(appearance.getByRole("checkbox", { name: "Bewegung reduzieren" })).toBeChecked();
     await expect(page.locator("#profil")).toHaveJSProperty("innerHTML", profile);
 
-    await page.locator("summary", { hasText: "Saisonvorschau" }).click();
-    await appearance.getByLabel("Saisonvorschau", { exact: true }).selectOption("christmas");
+    await appearance.getByRole("radio", { name: "Weihnachten", exact: true }).check();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "christmas");
-    await page.locator("summary", { hasText: "Saisonvorschau" }).click();
+    await page.reload();
+    await showSettings(page);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "christmas");
+    await appearance.getByRole("button", { name: "Automatisch (Saison)" }).click();
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", "christmas");
 
     const tr = page.getByRole("region", { name: "Trade Republic", exact: true });

@@ -1,5 +1,12 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@fontsource-variable/big-shoulders-display";
+@import "@fontsource-variable/fredoka";
+@import "@fontsource-variable/josefin-sans";
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/quicksand";
+@import "@fontsource-variable/outfit";
+@import "@fontsource-variable/fraunces";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -8,7 +15,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -133,28 +139,163 @@
   --sidebar-border: oklch(1 0 0 / 10%);
 }
 
-/* Season changes shell tint and small decorations only, never the user's accent. */
+/* A season swaps shell tint, heading font, radius, shadow and chart colours. The user's accent (--chart-1, --primary) is never touched. */
+:root {
+  --font-heading: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --card-inner: none;
+  --card-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
 :root[data-theme="halloween"] {
   --season-tint: #b67842;
   --season-decoration: #99612e;
+  --theme-heading: 'Big Shoulders Display Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 800;
+  --radius: 0.375rem;
+  --card-shadow: 0 2px 0 -1px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #b45309;
+  --chart-3: #7c3aed;
+  --chart-4: #c2410c;
+  --chart-5: #4d7c0f;
+  --chart-6: #be123c;
+  --chart-7: #57534e;
 }
 :root.dark[data-theme="halloween"] {
   --season-decoration: #d9aa77;
+  --chart-2: #fb923c;
+  --chart-3: #a78bfa;
+  --chart-4: #f59e0b;
+  --chart-5: #a3e635;
+  --chart-6: #fb7185;
+  --chart-7: #a8a29e;
 }
 :root[data-theme="christmas"] {
   --season-tint: #7a896a;
   --season-decoration: #6f7946;
+  --theme-heading: 'Fredoka Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 600;
+  --radius: 0.875rem;
+  --card-shadow: 0 6px 16px -8px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #b91c1c;
+  --chart-3: #15803d;
+  --chart-4: #a16207;
+  --chart-5: #0e7490;
+  --chart-6: #9f1239;
+  --chart-7: #475569;
 }
 :root.dark[data-theme="christmas"] {
   --season-decoration: #c9bd8d;
+  --chart-2: #f87171;
+  --chart-3: #4ade80;
+  --chart-4: #facc15;
+  --chart-5: #22d3ee;
+  --chart-6: #fb7185;
+  --chart-7: #94a3b8;
 }
 :root[data-theme="newyear"] {
   --season-tint: #b3a576;
+  --theme-heading: 'Josefin Sans Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 300;
+  --radius: 0.5rem;
+  --card-shadow: 0 4px 14px -8px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #a16207;
+  --chart-3: #4338ca;
+  --chart-4: #0e7490;
+  --chart-5: #be185d;
+  --chart-6: #6d28d9;
+  --chart-7: #52525b;
 }
-:root[data-theme="carnival"] { --season-tint: #a888bd; }
-:root[data-theme="easter"] { --season-tint: #9cae73; }
-:root[data-theme="summer"] { --season-tint: #d2b873; }
-:root[data-theme="betweenyears"] { --season-tint: #879bad; }
+:root.dark[data-theme="newyear"] {
+  --chart-2: #facc15;
+  --chart-3: #818cf8;
+  --chart-4: #22d3ee;
+  --chart-5: #f472b6;
+  --chart-6: #a78bfa;
+  --chart-7: #a1a1aa;
+}
+:root[data-theme="carnival"] {
+  --season-tint: #a888bd;
+  --theme-heading: 'Bricolage Grotesque Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 700;
+  --radius: 0.75rem;
+  --card-shadow: 0 4px 0 -2px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #a21caf;
+  --chart-3: #0284c7;
+  --chart-4: #a16207;
+  --chart-5: #15803d;
+  --chart-6: #dc2626;
+  --chart-7: #4f46e5;
+}
+:root.dark[data-theme="carnival"] {
+  --chart-2: #e879f9;
+  --chart-3: #38bdf8;
+  --chart-4: #facc15;
+  --chart-5: #4ade80;
+  --chart-6: #f87171;
+  --chart-7: #818cf8;
+}
+:root[data-theme="easter"] {
+  --season-tint: #9cae73;
+  --theme-heading: 'Quicksand Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 700;
+  --radius: 1rem;
+  --card-shadow: 0 6px 14px -8px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #0f766e;
+  --chart-3: #a21caf;
+  --chart-4: #b45309;
+  --chart-5: #4d7c0f;
+  --chart-6: #be185d;
+  --chart-7: #0369a1;
+}
+:root.dark[data-theme="easter"] {
+  --chart-2: #5eead4;
+  --chart-3: #e879f9;
+  --chart-4: #fbbf24;
+  --chart-5: #bef264;
+  --chart-6: #f9a8d4;
+  --chart-7: #7dd3fc;
+}
+:root[data-theme="summer"] {
+  --season-tint: #d2b873;
+  --theme-heading: 'Outfit Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 600;
+  --radius: 0.875rem;
+  --card-shadow: 0 8px 18px -10px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #0369a1;
+  --chart-3: #c2410c;
+  --chart-4: #0f766e;
+  --chart-5: #a16207;
+  --chart-6: #be123c;
+  --chart-7: #4338ca;
+}
+:root.dark[data-theme="summer"] {
+  --chart-2: #38bdf8;
+  --chart-3: #fb923c;
+  --chart-4: #2dd4bf;
+  --chart-5: #fde047;
+  --chart-6: #fb7185;
+  --chart-7: #818cf8;
+}
+:root[data-theme="betweenyears"] {
+  --season-tint: #879bad;
+  --theme-heading: 'Fraunces Variable', var(--font-geist-sans), sans-serif;
+  --theme-heading-weight: 600;
+  --radius: 0.5rem;
+  --card-shadow: 0 3px 10px -6px color-mix(in srgb, var(--season-tint) 45%, rgb(0 0 0 / 0.5));
+  --chart-2: #1d4ed8;
+  --chart-3: #6d28d9;
+  --chart-4: #0f766e;
+  --chart-5: #57534e;
+  --chart-6: #9f1239;
+  --chart-7: #334155;
+}
+:root.dark[data-theme="betweenyears"] {
+  --chart-2: #60a5fa;
+  --chart-3: #a78bfa;
+  --chart-4: #2dd4bf;
+  --chart-5: #d6d3d1;
+  --chart-6: #fb7185;
+  --chart-7: #94a3b8;
+}
 
 :root[data-reduce-motion="true"] *,
 :root[data-reduce-motion="true"] *::before,
@@ -458,7 +599,57 @@ body {
 }
 
 :root[data-theme]:not([data-theme="default"]) .app-sidebar {
-  background-color: color-mix(in srgb, var(--season-tint) 4%, var(--sidebar));
+  background-color: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--season-tint) 4%, var(--sidebar)) 90%,
+    transparent
+  );
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--season-tint) 22%, transparent),
+    color-mix(in srgb, var(--season-tint) 6%, transparent) 55%,
+    transparent
+  );
+}
+/* Light falls from the top left: a lit edge plus a soft inner glow. */
+:root[data-theme]:not([data-theme="default"]) {
+  --card-inner:
+    inset 1px 1px 0 0 color-mix(in srgb, white 55%, transparent),
+    inset 10px 12px 24px -16px color-mix(in srgb, var(--season-tint) 28%, transparent);
+}
+:root.dark[data-theme]:not([data-theme="default"]) {
+  --card-inner:
+    inset 1px 1px 0 0 color-mix(in srgb, white 8%, transparent),
+    inset 10px 12px 24px -16px color-mix(in srgb, var(--season-tint) 22%, transparent);
+}
+:root[data-theme]:not([data-theme="default"]) .panel,
+:root[data-theme]:not([data-theme="default"]) [data-slot="card"] {
+  box-shadow: var(--card-inner), var(--card-shadow);
+}
+/* Headings and the logo take the theme font; tables and amounts stay in Geist. */
+h1,
+h2,
+.brand-name {
+  font-family: var(--theme-heading, var(--font-heading));
+}
+:root[data-theme]:not([data-theme="default"]) :is(h1, h2, .brand-name) {
+  font-weight: var(--theme-heading-weight);
+}
+:root[data-theme="halloween"]:not([data-theme="default"]) h2 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+}
+:root[data-theme="halloween"] h1 {
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.season-scene {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 :root[data-theme]:not([data-theme="default"]) .app-header {
   background-color: color-mix(
@@ -473,16 +664,55 @@ body {
 [data-slot="button"][data-variant="default"]:hover {
   background-color: var(--user-accent-hover, var(--primary));
 }
-.logo-season-detail {
+.logo-motif {
   position: absolute;
-  right: -5px;
-  bottom: -4px;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--sidebar);
-  color: var(--season-decoration);
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: inherit;
+  background: var(--primary);
+  color: var(--primary-foreground);
   pointer-events: none;
+}
+.logo-motif[data-flicker="true"] {
+  animation: logo-flicker 900ms steps(1, end) 1;
+}
+@keyframes logo-flicker {
+  0% { opacity: 0; }
+  12% { opacity: 1; }
+  20% { opacity: 0.2; }
+  34% { opacity: 1; }
+  44% { opacity: 0.5; }
+  58%, 100% { opacity: 1; }
+}
+/* Route changes crossfade in well under 400 ms. */
+::view-transition-old(.page-fade) {
+  animation: page-fade-out 140ms ease-out both;
+}
+::view-transition-new(.page-fade) {
+  animation: page-fade-in 200ms ease-out 100ms both;
+}
+@keyframes page-fade-out {
+  to { opacity: 0; }
+}
+@keyframes page-fade-in {
+  from { opacity: 0; }
+}
+:root[data-reduce-motion="true"]::view-transition-group(*),
+:root[data-reduce-motion="true"]::view-transition-old(*),
+:root[data-reduce-motion="true"]::view-transition-new(*) {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+  .logo-motif[data-flicker="true"] {
+    animation: none;
+  }
 }
 .seasonal-detail {
   color: var(--season-decoration);

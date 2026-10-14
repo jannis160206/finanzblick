@@ -92,17 +92,26 @@ export function SeasonalIcon({
   );
 }
 
-export function FinanzblickMark() {
-  const { theme } = useSeasonalTheme();
+/** Two states: the plain mark, or the season motif laid over it. */
+export function FinanzblickMark({ flicker = false }: { flicker?: boolean }) {
+  const { theme, motionReduced } = useSeasonalTheme();
+  const seasonal = theme !== "default";
   return (
     <span
       className="brand-mark relative rounded-lg bg-primary p-2 text-primary-foreground"
       data-logo-mark="finanzblick"
+      data-logo-state={seasonal ? "seasonal" : "standard"}
     >
       <Landmark className="size-4" aria-hidden="true" />
-      {theme !== "default" && (
-        <span className="logo-season-detail" aria-hidden="true">
-          <SeasonalIcon slot="logo" className="size-3" />
+      {seasonal && (
+        <span
+          key={theme}
+          className="logo-motif"
+          data-logo-motif={theme}
+          data-flicker={flicker && !motionReduced}
+          aria-hidden="true"
+        >
+          <SeasonalIcon slot="logo" className="size-4" />
         </span>
       )}
     </span>

@@ -9,9 +9,9 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { calculateDashboard } from "@/lib/calc";
 import type { AppState } from "@/lib/types";
 
-const seasonal = vi.hoisted(() => ({ setPreview: vi.fn(), setTestTheme: vi.fn() }));
+const seasonal = vi.hoisted(() => ({ setPreview: vi.fn(), suggestedTheme: "christmas" as const }));
 vi.mock("./finance-provider", () => ({ useFinance: vi.fn(), useFinanceRestoration: () => vi.fn() }));
-vi.mock("./seasonal-theme-provider", () => ({ useSeasonalTheme: () => ({ ...seasonal, testTheme: null }) }));
+vi.mock("./seasonal-theme-provider", () => ({ useSeasonalTheme: () => seasonal }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 
 beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
@@ -99,14 +99,26 @@ it("keeps invalid or future-dated Trade Republic drafts unsaved", () => {
   expect(read()).toEqual(before);
 });
 
-it("keeps seasonal preview temporary and clears it when the preview closes", () => {
+it("applies a chosen theme immediately, keeps it, and resets to the automatic suggestion", () => {
   const read = mount();
-  const before = structuredClone(read());
-  fireEvent.change(screen.getByLabelText("Saisonvorschau"), { target: { value: "christmas" } });
-  expect(seasonal.setTestTheme).toHaveBeenLastCalledWith("christmas");
-  const details = screen.getByText("Saisonvorschau").closest("details")!;
-  details.open = false;
-  fireEvent(details, new Event("toggle"));
-  expect(seasonal.setTestTheme).toHaveBeenLastCalledWith(null);
-  expect(read()).toEqual(before);
+  expect(screen.getByText(/Automatisch: Die Saison schlägt/).textContent).toContain("Weihnachten");
+  expect((screen.getByRole("button", { name: "Automatisch (Saison)" }) as HTMLButtonElement).disabled).toBe(true);
+  fireEvent.click(screen.getByRole("radio", { name: "Halloween" }));
+  expect(read().seasonalTheme).toEqual({ mode: "fixed", theme: "halloween" });
+  expect((screen.getByRole("radio", { name: "Halloween" }) as HTMLInputElement).checked).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "Automatisch (Saison)" }));
+  expect(read().seasonalTheme).toEqual({ mode: "auto", theme: "default" });
+  expect(screen.queryByRole("button", { name: "Einstellungen speichern" })).toBeNull();
+});
+
+it("lists every theme and keeps a pending accent draft when the theme changes", () => {
+  const read = mount();
+  const group = screen.getByRole("radiogroup", { name: "Thema" });
+  expect(Array.from(group.querySelectorAll("input")).map((input) => input.value)).toEqual(
+    ["default", "halloween", "christmas", "newyear", "carnival", "easter", "summer", "betweenyears"],
+  );
+  fireEvent.click(screen.getByRole("radio", { name: "Violett" }));
+  fireEvent.click(screen.getByRole("radio", { name: "Sommer" }));
+  fireEvent.click(screen.getByRole("button", { name: "Einstellungen speichern" }));
+  expect(read().seasonalTheme).toEqual({ mode: "fixed", theme: "summer", accentColor: "#a78bfa" });
 });

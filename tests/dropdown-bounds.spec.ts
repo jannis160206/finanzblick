@@ -203,9 +203,6 @@ for (const viewport of viewports) {
     await page.goto("/pockets");
     await page.getByText("Round-ups", { exact: true }).first().click();
     await checkSelect(page, cdp, page.getByLabel("Round-up Jahr", { exact: true }), testInfo, "round-up");
-    await page.goto("/einstellungen");
-    await page.getByText("Saisonvorschau", { exact: true }).click();
-    await checkSelect(page, cdp, page.getByLabel("Saisonvorschau", { exact: true }), testInfo, "season");
   });
 
   test(`category picker fits viewport edges with selected last option at ${viewport.width}x${viewport.height}`, async ({ page, context }, testInfo) => {

@@ -49,15 +49,14 @@ function subscribeCalendar(notify: () => void) {
 const SeasonalContext = createContext<{
   theme: SeasonalTheme;
   setPreview: Dispatch<SetStateAction<SeasonalPreference | null>>;
-  testTheme: SeasonalTheme | null;
-  setTestTheme: Dispatch<SetStateAction<SeasonalTheme | null>>;
+  suggestedTheme: SeasonalTheme;
+  motionReduced: boolean;
 } | null>(null);
 
 export function SeasonalThemeProvider({ children }: { children: ReactNode }) {
   const { state, ready } = useFinance();
   const pathname = usePathname();
   const [preview, setPreview] = useState<SeasonalPreference | null>(null);
-  const [testTheme, setTestTheme] = useState<SeasonalTheme | null>(null);
   const day = useSyncExternalStore(
     subscribeCalendar,
     localDateSnapshot,
@@ -66,8 +65,10 @@ export function SeasonalThemeProvider({ children }: { children: ReactNode }) {
   const preference =
     pathname === "/einstellungen" && preview ? preview : state.seasonalTheme;
   const theme =
-    pathname === "/einstellungen" && testTheme ? testTheme :
-      day === null ? "default" : resolveSeasonalTheme(preference, new Date(day));
+    day === null ? "default" : resolveSeasonalTheme(preference, new Date(day));
+  const suggestedTheme =
+    day === null ? "default" : resolveSeasonalTheme(undefined, new Date(day));
+  const motionReduced = preference?.reduceMotion === true;
   useLayoutEffect(() => {
     // Keep the pre-paint bootstrap until the finance store has hydrated.
     if (!ready || day === null) return;
@@ -80,7 +81,7 @@ export function SeasonalThemeProvider({ children }: { children: ReactNode }) {
     }
   }, [ready, day, theme, preference?.accentColor, preference?.reduceMotion]);
   return (
-    <SeasonalContext.Provider value={{ theme, setPreview, testTheme, setTestTheme }}>
+    <SeasonalContext.Provider value={{ theme, setPreview, suggestedTheme, motionReduced }}>
       {children}
     </SeasonalContext.Provider>
   );

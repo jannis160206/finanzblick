@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CalendarDays, ChevronDown, DatabaseBackup, Landmark, Palette, Save, ShieldCheck } from "lucide-react";
+import { DatabaseBackup, Landmark, Palette, Save, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 import { AppearanceControls } from "@/components/appearance-controls";
+import { ThemePicker, type ThemeChoice } from "@/components/theme-picker";
 import { InteractionSoundsSetting } from "@/components/interaction-sounds";
 import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
@@ -22,7 +23,7 @@ import { FinancialData } from "@/components/financial-data";
 import { latestTRBalance } from "@/lib/calc";
 import { currency, dateLabel, percent } from "@/lib/format";
 import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
-import { defaultSeasonalPreference, seasonalThemes, seasonalLabels, type SeasonalPreference } from "@/lib/seasonal-theme";
+import { defaultSeasonalPreference, type SeasonalPreference } from "@/lib/seasonal-theme";
 
 function TradeRepublicSettings() {
   const { state, update } = useFinance();
@@ -75,21 +76,26 @@ function TradeRepublicSettings() {
 export function Settings() {
   const workspace = useAccountWorkspace();
   const { state, update } = useFinance();
-  const { setPreview, testTheme, setTestTheme } = useSeasonalTheme();
+  const { setPreview, suggestedTheme } = useSeasonalTheme();
   const [draft, setDraft] = useState<SeasonalPreference | null>(null);
   const saved = state.seasonalTheme ?? defaultSeasonalPreference;
   const value = draft ?? saved;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(saved);
-  useEffect(() => () => { setPreview(null); setTestTheme(null); }, [setPreview, setTestTheme]);
+  useEffect(() => () => setPreview(null), [setPreview]);
+  const chooseTheme = (choice: ThemeChoice) => {
+    update((current) => ({ ...current, seasonalTheme: { ...(current.seasonalTheme ?? defaultSeasonalPreference), ...choice } }));
+    if (draft) { const next = { ...draft, ...choice }; setDraft(next); setPreview(next); }
+  };
   return <>
     <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
     <div className="space-y-4">
       <AccountProfileSettings />
       <SecurityModeSettings />
       <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Deine Farben, dein Komfort. So fühlt sich Finanzblick nach dir an." icon={Palette}>
-        <form onSubmit={(event) => {
+        <ThemePicker preference={saved} suggested={suggestedTheme} onChoose={chooseTheme} />
+        <form className="mt-6 border-t border-border/70 pt-6" onSubmit={(event) => {
           event.preventDefault(); const parsed = seasonalPreferenceSchema.safeParse(value); if (!parsed.success) return;
-          update((current) => ({ ...current, seasonalTheme: parsed.data }));
+          update((current) => ({ ...current, seasonalTheme: { ...parsed.data, mode: current.seasonalTheme?.mode ?? "auto", theme: current.seasonalTheme?.theme ?? "default" } }));
           setDraft(null); setPreview(null); toast.success("Einstellungen gespeichert");
         }}>
           <AppearanceControls value={value} inputRef={null} onBlur={() => {}} onChange={(next) => { setDraft(next); setPreview(next); }} />
@@ -101,25 +107,8 @@ export function Settings() {
             </div>
           </div>}
         </form>
-        <div className="mt-6 grid items-start gap-4 border-t border-border/70 pt-6 xl:grid-cols-2">
+        <div className="mt-6 border-t border-border/70 pt-6">
         <InteractionSoundsSetting />
-        <details className="group rounded-2xl border border-border/70 bg-muted/15 p-4 text-xs" onToggle={(event) => { if (!event.currentTarget.open) setTestTheme(null); }}>
-          <summary className="flex min-h-10 cursor-pointer list-none items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background/70"><CalendarDays aria-hidden="true" className="size-4 text-muted-foreground" /></span>
-            <span className="flex-1"><span className="block text-sm font-medium">Saisonvorschau</span><span className="mt-1 block text-xs leading-relaxed text-muted-foreground">Ein Blick auf die nächsten Jahreszeiten.</span></span>
-            <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
-          </summary>
-          <label className="mt-4 block border-t border-border/60 pt-4">Vorschau
-            <select aria-label="Saisonvorschau" className="select-input mt-2 w-full bg-background/50" value={testTheme ?? ""} onChange={(event) => {
-              const theme = seasonalThemes.find((theme) => theme === event.target.value);
-              setTestTheme(theme ?? null);
-            }}>
-              <option value="">Aktueller Kalender</option>
-              {seasonalThemes.map((theme) => <option key={theme} value={theme}>{seasonalLabels[theme]}</option>)}
-            </select>
-          </label>
-          <p className="mt-2 text-muted-foreground">Nur ansehen – wird nicht gespeichert.</p>
-        </details>
         </div>
       </SettingsSection>
       <SavingsGoals />

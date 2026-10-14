@@ -29,7 +29,7 @@ export const defaultSeasonalPreference: SeasonalPreference = {
   theme: "default",
 };
 export const seasonalLabels: Record<SeasonalTheme, string> = {
-  default: "Default",
+  default: "Standard",
   halloween: "Halloween",
   christmas: "Weihnachten",
   newyear: "Neujahr",
@@ -39,13 +39,15 @@ export const seasonalLabels: Record<SeasonalTheme, string> = {
   betweenyears: "Zwischen den Jahren",
 };
 
-// Easter is supplied explicitly so this function can also run before hydration.
+// Self-contained on purpose: it is serialised into the bootstrap script. A manual choice wins, otherwise the calendar suggests.
 export function resolveSeasonalTheme(
   preference?: SeasonalPreference,
   now = new Date(),
   easter = easterSunday(now.getFullYear()),
 ): SeasonalTheme {
-  void preference; // Old manual modes never override the calendar.
+  const manual = ["default", "halloween", "christmas", "newyear", "carnival", "easter", "summer", "betweenyears"];
+  if (preference?.mode === "default") return "default";
+  if (preference?.mode === "fixed" && preference.theme && manual.includes(preference.theme)) return preference.theme;
   const day = (now.getMonth() + 1) * 100 + now.getDate();
   if (day <= 105) return "newyear";
   const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
@@ -60,6 +62,22 @@ export function resolveSeasonalTheme(
   return "default";
 }
 
+export function chooseSeasonalTheme(
+  preference: SeasonalPreference | undefined,
+  theme: SeasonalTheme,
+): SeasonalPreference {
+  return { ...defaultSeasonalPreference, ...preference, mode: "fixed", theme };
+}
+
+export function resetSeasonalTheme(
+  preference: SeasonalPreference | undefined,
+): SeasonalPreference {
+  return { ...defaultSeasonalPreference, ...preference, ...defaultSeasonalPreference };
+}
+
+export function isManualSeasonalTheme(preference?: SeasonalPreference): boolean {
+  return preference?.mode === "fixed" || preference?.mode === "default";
+}
 export const seasonalThemeBootstrap = `(()=>{
   const resolve = ${resolveSeasonalTheme.toString()};
   const accent = ${accentTokens.toString()};

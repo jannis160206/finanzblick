@@ -32,6 +32,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { FinanzblickMark, SeasonalIcon } from "@/components/seasonal-icons";
+import { SeasonalScene } from "@/components/seasonal-scene";
+import { PageTransition } from "@/components/page-transition";
 import { useFinance } from "@/components/finance-provider";
 import { ReviewCount } from "@/components/review-count";
 import { cn } from "@/lib/utils";
@@ -99,6 +101,7 @@ export function AppShell({
   );
   return (
     <div className="app-shell min-h-screen">
+      <SeasonalScene />
       <a
         href="#main-content"
         className="sr-only z-50 rounded bg-primary p-3 text-primary-foreground focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
@@ -107,8 +110,8 @@ export function AppShell({
       </a>
       <aside className="app-sidebar fixed inset-y-0 left-0 z-30 hidden w-[224px] flex-col border-r bg-sidebar lg:flex">
         <Link href="/" className="flex h-[76px] items-center gap-2.5 px-6">
-          <FinanzblickMark />
-          <span className="text-[16px] font-semibold tracking-tight">
+          <FinanzblickMark flicker />
+          <span className="brand-name text-[16px] font-semibold tracking-tight">
             Finanz
             <span className="font-normal text-muted-foreground">blick</span>
           </span>
@@ -236,7 +239,7 @@ export function AppShell({
             </p>
           )}
           {ready ? (
-            children
+            <PageTransition>{children}</PageTransition>
           ) : (
             <div role="status" aria-live="polite" className="space-y-6">
               <p className="text-sm text-muted-foreground">
@@ -266,7 +269,7 @@ export function AppShell({
           menuTrigger.current?.focus();
         }}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-3"><FinanzblickMark />Finanzblick</DialogTitle>
+            <DialogTitle className="flex items-center gap-3"><FinanzblickMark /><span className="brand-name">Finanzblick</span></DialogTitle>
             <DialogDescription>Seite wählen</DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-6">
