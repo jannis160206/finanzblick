@@ -143,9 +143,9 @@ it("does not promote an inherited automatic category when only its name is confi
     enrichTransaction(future, index, createAccountMerchantResolver(state))
       .category,
   ).toBe("Lebensmittel");
-  const item = queueLedgerReview(state).reviewQueue?.[0];
-  expect(item?.kind).toBe("booking");
-  if (item?.kind === "booking") expect(item.message).toContain("Kategorie");
+  // The inherited category is accepted for display without becoming a manual rule.
+  expect(queueLedgerReview(state).reviewQueue ?? []).toEqual([]);
+  expect(queueLedgerReview(state).merchantRules).toEqual(state.merchantRules);
 });
 
 it("keeps manually confirmed names locked and propagates no human label through legacy rule repair", () => {

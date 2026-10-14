@@ -13,7 +13,7 @@ import {
 } from "./merchant-logo-presentations";
 import { merchantLogoBookingId, merchantLogoName } from "./merchant-mark-name";
 import { merchantMarksRequestSchema } from "./merchant-presentation-schema";
-import { MerchantIndex, normalizeMerchantDescriptor } from "./merchants";
+import { MerchantIndex, normalizeMerchantDescriptor, isPaymentProviderText } from "./merchants";
 import type { AutomationStore } from "./store";
 import { isIncomeCategory } from "@/lib/fixed";
 import { normalizeLocalLogoName } from "./merchant-local-logos";
@@ -137,8 +137,13 @@ export async function accountMerchantBookingPresentations(
       );
       const identities = new Set(matches.map(({ grant }) => grant.merchantId));
       if (identities.size !== 1) return null;
-      const local = matches.find(
-        ({ name }) => normalized === name || normalized.startsWith(`${name} `),
+      // A supplied word anywhere in the booking text selects its logo, except a
+      // payment provider, which only names the merchant at the start of the text.
+      const local = (
+        matches.find(
+          ({ name }) =>
+            normalized === name || normalized.startsWith(`${name} `),
+        ) ?? matches.find(({ name }) => !isPaymentProviderText(name))
       )?.grant;
       if (!local || qualifiedCompany(text, local.canonicalName)) return null;
       const publicMatch = index.match(text);

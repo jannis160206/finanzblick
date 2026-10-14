@@ -148,6 +148,7 @@ export async function importSuppliedLocalLogos(
     directory: string;
     rightsReference: string;
     aliases?: Record<string, string[]>;
+    files?: ReadonlySet<string>;
     signal?: AbortSignal;
   },
 ) {
@@ -171,6 +172,7 @@ export async function importSuppliedLocalLogos(
     for await (const entry of directory) {
       options.signal?.throwIfAborted();
       if (!/\.(?:png|jpe?g|webp|avif)$/i.test(entry.name)) continue;
+      if (options.files && !options.files.has(entry.name)) continue;
       if (entries.length >= MAX_FILES)
         throw new RangeError("Too many supplied logos");
       if (!entry.isFile() || entry.isSymbolicLink())

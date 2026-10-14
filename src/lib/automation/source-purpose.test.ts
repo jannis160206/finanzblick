@@ -193,7 +193,9 @@ it("clears only proven ledger reviews while retaining manual choices, fixed prop
   expect(result.fixedReceipts).toEqual(state.fixedReceipts.map((receipt) =>
     ({ ...receipt, booking: { ...planned, is_locked: true } })));
   expect(result.transactions.some((booking) => booking.id === pending.id)).toBe(false);
-  expect(openReviewCount(result.reviewQueue ?? [])).toBe(5);
+  // A confirmed name with a concrete category no longer waits for a second confirmation.
+  expect(result.reviewQueue?.some((item) => item.id === named.id)).toBe(false);
+  expect(openReviewCount(result.reviewQueue ?? [])).toBe(4);
   expect(queueLedgerReview(result).reviewQueue).toEqual(result.reviewQueue);
 });
 

@@ -161,7 +161,7 @@ export function approveReviewedBooking(
     const row = updated.get(entry.draft.id);
     if (!row) return [entry];
     const draft = { ...entry.draft, ...row };
-    const message = bookingReviewReason(next, draft, ruleIndex);
+    const message = bookingReviewReason(next, draft, ruleIndex, index.byId.has(draft.id));
     return message ? [{ ...entry, draft, message }] : [];
   });
   next = {

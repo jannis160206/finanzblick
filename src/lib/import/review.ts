@@ -44,6 +44,7 @@ import { statementTime } from "@/lib/holidays-at-kaernten";
 import { alwaysLunch, isSharedHoliday, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 import { isAutomationLocked } from "@/lib/automation/locks";
+import { mergeDuplicateBookings } from "./booking-dedup";
 import { bankOperationReviewMessage } from "@/lib/bank-operation";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
@@ -114,7 +115,8 @@ function indexReviewRules(state: AppState) {
   return index;
 }
 
-export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state)): string | undefined {
+// For ledger rows (`acceptCategorized`) a concrete category settles name-only and worker-uncertainty reviews; import drafts keep asking.
+export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state), acceptCategorized = false): string | undefined {
   if (isAmexScreenshot(row) && !transactionSchema.safeParse(row).success)
     return "Buchungsdaten unvollständig – bitte Datum, Händler und Betrag prüfen.";
   if (isAmexScreenshot(row) && row.rawDetails?.includes("OCR-Händler unklar") &&
@@ -124,9 +126,10 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (isNamedTransfer(row)) return;
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
   if (row.reviewed && row.categoryOverride && result.category !== "Prüfen") return;
-  if (row.merchantNameConfirmed && row.amount < 0 && !result.isTransfer && !isIncome(result.category))
+  const categorized = acceptCategorized && result.category !== "Prüfen";
+  if (row.merchantNameConfirmed && row.amount < 0 && !result.isTransfer && !isIncome(result.category) && !categorized)
     return "Händlername bestätigt – Kategorie bitte noch bestätigen.";
-  if (row.requires_manual_review && !row.is_locked)
+  if (row.requires_manual_review && !row.is_locked && !categorized)
     return bankOperationReviewMessage(row) ?? "Händlerzuordnung unsicher – bitte prüfen.";
   if (!row.merchantAlias && unresolvedTerminal(row.description)) return "POS-Händler fehlt: Auszug mit Verwendungszweck erneut ablegen.";
   if (result.category === "Prüfen") return "Kategorie noch offen oder widersprüchlich.";
@@ -235,6 +238,7 @@ function repairPayrollBookings(state: AppState): AppState {
 }
 
 export function queueLedgerReview(state: AppState): AppState {
+  state = mergeDuplicateBookings(state).state;
   const beforeReview = state;
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, actualBookings(state)) };
@@ -306,7 +310,7 @@ export function reconcileLedgerReviewQueue(state: AppState, {
     })));
   for (const draft of ledger) {
     if (pinned.has(draft.id)) continue;
-    const message = bookingReviewReason(state, draft, rules);
+    const message = bookingReviewReason(state, draft, rules, true);
     if (!message) continue;
     const importIssues = linkedIssues.get(draft.id);
     const importUploadId = linkedUploads.get(draft.id);

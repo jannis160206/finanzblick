@@ -17,6 +17,7 @@ const MAX_FUZZY_CANDIDATES = 128;
 export const MAX_MERCHANT_ALIASES = 40_000;
 const providers =
   /\b(?:pay\s*pal|klarna|sum\s*up|stripe|adyen|mollie|worldline|revolut(?:\s+epayment)?|apple\s+pay|google\s+pay)\b/i;
+export const isPaymentProviderText = (text: string) => providers.test(text);
 const ibanLengths: Record<string, number> = {
   AT: 20,
   DE: 22,

@@ -5,6 +5,7 @@ import type { AccountDatabase } from "@/lib/server/database";
 import type { Transaction } from "@/lib/types";
 import { createAccountMerchantResolver } from "./aliases";
 import { availableLocalLogoGrants } from "./merchant-local-logos";
+import { syncLiveLogoDirectory } from "./merchant-live-logo-directory";
 import { readAuthorizedMerchantLogo } from "./merchant-logo-grants";
 import {
   logoAccountIdSchema,
@@ -44,10 +45,11 @@ export class MerchantLogoRequest {
   }
 
   localLogos() {
-    return (this.supplied ??= availableLocalLogoGrants(
+    return (this.supplied ??= syncLiveLogoDirectory(
       this.store,
       this.userId,
-      this.privateFiles,
+    ).then(() =>
+      availableLocalLogoGrants(this.store, this.userId, this.privateFiles),
     ));
   }
 
