@@ -76,13 +76,13 @@ export function SavingsGoals() {
               </div>
             </div>
             <p className="mt-5 text-xs text-muted-foreground"><span className="text-xl font-semibold tracking-tight text-foreground tabular-nums">{balance === null ? unavailable : currency(balance)}</span> von {currency(goal.target)}</p>
-            <div className="mb-2 mt-4 flex items-center justify-between text-[11px] text-muted-foreground"><span>Pocket-Guthaben</span><span className="font-medium tabular-nums text-primary">{progress === null ? "—" : `${Math.round(progress)} %`}</span></div>
+            <div className="mb-2 mt-4 flex items-center justify-between text-2xs text-muted-foreground"><span>Pocket-Guthaben</span><span className="font-medium tabular-nums text-primary">{progress === null ? "—" : `${Math.round(progress)} %`}</span></div>
             <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress ?? undefined} aria-valuetext={progress === null ? unavailable : undefined} aria-valuemin={0} aria-valuemax={100}>
               <div className="h-full rounded-full bg-primary" style={{ width: `${progress ?? 0}%` }} />
             </div>
             {basis.status === "conflict" && <p className="mt-3 text-xs text-muted-foreground">Pocket-Zuordnung oder widersprüchliche Salden klären. Das Guthaben ist nicht mehrfach verfügbar.</p>}
             {basis.status === "unknown" && <p className="mt-3 text-xs text-muted-foreground">Ohne belegten Startstand oder Auszugssaldo ist der Fortschritt nicht bekannt.</p>}
-            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-border/60 pt-3 text-[11px] text-muted-foreground">
+            <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t border-border/60 pt-3 text-2xs text-muted-foreground">
               <span className="inline-flex items-center gap-1.5"><CalendarDays aria-hidden="true" className="size-3.5 shrink-0" />Bis {dateLabel(goal.date)}</span>
               <span className="inline-flex min-w-0 items-center gap-1.5"><Wallet aria-hidden="true" className="size-3.5 shrink-0" /><span className="break-all">{goal.pocket}</span></span>
             </div>

@@ -6,7 +6,7 @@ export function ReviewCount({ count, className }: { count: number; className?: s
   return (
     <span
       aria-label={`${count} offene Zuordnungen`}
-      className={cn("inline-flex shrink-0 items-center justify-center rounded-full bg-primary text-[10px] leading-none font-semibold text-primary-foreground tabular-nums", className)}
+      className={cn("inline-flex shrink-0 items-center justify-center rounded-full bg-primary text-2xs leading-none font-semibold text-primary-foreground tabular-nums", className)}
       style={{ width: diameter, height: diameter }}
     >
       {count}

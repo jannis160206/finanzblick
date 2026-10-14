@@ -122,7 +122,7 @@ export function PocketForecast({ dashboard }: { dashboard: Dashboard; state?: Ap
             />
           </div>
         </label>
-        <p className="w-full text-[11px] text-muted-foreground">
+        <p className="w-full text-2xs text-muted-foreground">
           Berechnete Monatsendwerte · keine bestätigten Kontostände.
         </p>
       </div>

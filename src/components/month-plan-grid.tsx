@@ -313,7 +313,7 @@ function MonthPositionRow({
                   onCommit={(value) => onCommit(row, month, value)}
                 />
                 {row.kind === "variable" && row.values[month] == null && (
-                  <p className="mt-1 text-right text-[10px] text-muted-foreground tabular-nums">
+                  <p className="mt-1 text-right text-2xs text-muted-foreground tabular-nums">
                     {number(automatic)}
                   </p>
                 )}

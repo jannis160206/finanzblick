@@ -173,7 +173,7 @@ export function TransactionCategoryCell({
             type="button"
             aria-label={`Zuordnungsdetails: ${booking.description}`}
             className={cn(
-              "inline-flex min-h-7 items-center gap-1.5 rounded-md px-1 text-[11px] transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none",
+              "inline-flex min-h-7 items-center gap-1.5 rounded-md px-1 text-2xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none",
               reason ? "font-medium text-primary" : "text-muted-foreground",
             )}
           >
@@ -234,13 +234,13 @@ export function TransactionAmountCell({
       {items.map((item) => (
         <span
           key={item.bookingId}
-          className="mt-1 block text-[11px] leading-relaxed whitespace-normal text-muted-foreground"
+          className="mt-1 block text-2xs leading-relaxed whitespace-normal text-muted-foreground"
         >
           Gesamt {currency(item.fullAmount)} · Meine Hälfte · {item.status}
         </span>
       ))}
       {reimbursement && (
-        <span className="mt-1 block text-[11px] whitespace-normal text-muted-foreground">
+        <span className="mt-1 block text-2xs whitespace-normal text-muted-foreground">
           Geteilt bezahlt · kein Einkommen
         </span>
       )}

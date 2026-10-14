@@ -82,7 +82,7 @@ export function UploadStatus({
           <Clock3 className="size-4" aria-hidden="true" />
           {(activeCount > 0 || hasIssues) && (
             <span aria-hidden="true" data-upload-badge
-              className={cn("absolute -top-2 -right-2 flex min-w-5 items-center justify-center rounded-full border-2 border-card px-1 text-[10px] leading-4 font-semibold tabular-nums",
+              className={cn("absolute -top-2 -right-2 flex min-w-5 items-center justify-center rounded-full border-2 border-card px-1 text-2xs leading-4 font-semibold tabular-nums",
                 activeCount ? "bg-primary text-primary-foreground" : "bg-amber-500 text-black")}>
               {activeCount || "!"}
             </span>

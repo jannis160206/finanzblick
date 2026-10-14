@@ -130,12 +130,12 @@ export function StatementImportStatus({
                       {detail.message}
                     </p>
                     {detail.source && (
-                      <span className="rounded-md bg-muted/70 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="rounded-md bg-muted/70 px-1.5 py-0.5 text-2xs text-muted-foreground">
                         {detail.source}
                       </span>
                     )}
                     {detail.line && (
-                      <span className="rounded-md border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      <span className="rounded-md border px-1.5 py-0.5 text-2xs text-muted-foreground">
                         Zeile {detail.line}
                       </span>
                     )}

@@ -80,7 +80,7 @@ export function PocketBalanceCards({
             >
               {bankBalance === null ? "Kontostand unbekannt" : currency(bankBalance)}
             </FinancialData>
-            <FinancialData as="p" className="mt-2 text-[11px] text-muted-foreground">
+            <FinancialData as="p" className="mt-2 text-2xs text-muted-foreground">
               {bankBalance === null ? "Kein eindeutiger belegter Startstand" : snapshot
                 ? `${pocket === "Notgroschen" ? "Stand" : "Auszugbasis"} ${dateLabel(snapshot.date)}`
                 : basis.source === "snapshot" ? "Auszugssaldo" : `Startstand ${dateLabel(state.settings.baselineDate)}`}
@@ -129,7 +129,7 @@ export function EverydayPocketBalances({ state }: { state: AppState }) {
               >
                 {currency(snapshot.balance)}
               </dd>
-              <dd className="mt-1 text-[11px] text-muted-foreground">
+              <dd className="mt-1 text-2xs text-muted-foreground">
                 {dateLabel(snapshot.date)}
               </dd>
             </div>

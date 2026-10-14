@@ -39,7 +39,7 @@ export function PlannedOneOffLines() {
     <h2 className="mb-4 flex items-center gap-2 text-sm font-medium"><CalendarDays aria-hidden="true" className="size-4 text-muted-foreground" />Geplant</h2>
     <FinancialData className="space-y-4">
       {[...groups].map(([month, items]) => <div key={month} className="flex items-start gap-3">
-        <time dateTime={month} title={monthLabel(month)} className="inline-flex min-w-10 shrink-0 justify-center rounded-lg bg-muted/60 px-2 py-1 text-[11px] font-medium text-muted-foreground">
+        <time dateTime={month} title={monthLabel(month)} className="inline-flex min-w-10 shrink-0 justify-center rounded-lg bg-muted/60 px-2 py-1 text-2xs font-medium text-muted-foreground">
           {shortMonthLabel(`${month}-01`)}
         </time>
         <ul className="min-w-0 flex-1 space-y-2" aria-label={`Geplant ${monthLabel(month)}`}>

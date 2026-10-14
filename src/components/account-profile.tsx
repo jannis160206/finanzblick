@@ -23,7 +23,7 @@ export function AccountSidebarProfile({ active, onNavigate }: { active: boolean;
       <ProfileAvatar username={username} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-semibold">{username}</span>
-        <span className="mt-0.5 block text-[11px] text-muted-foreground">{role === "admin" ? "Administrator" : "Persönliches Konto"}</span>
+        <span className="mt-0.5 block text-2xs text-muted-foreground">{role === "admin" ? "Administrator" : "Persönliches Konto"}</span>
       </span>
       <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
     </Link>
@@ -47,12 +47,12 @@ export function AccountProfileSettings() {
       <div className="flex min-w-0 items-center gap-4">
         <ProfileAvatar username={username} large />
         <div className="min-w-0">
-          <p className="mb-1 text-[10px] font-medium tracking-[0.16em] text-muted-foreground">DEIN PROFIL</p>
+          <p className="mb-1 text-2xs font-medium tracking-[0.16em] text-muted-foreground">DEIN PROFIL</p>
           <h2 id="profile-heading" className="truncate text-xl font-semibold tracking-tight">{username}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{role === "admin" ? "Administrator" : "Persönliches Konto"}</p>
         </div>
       </div>
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-3 py-1.5 text-[11px] font-medium text-primary">
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-3 py-1.5 text-2xs font-medium text-primary">
         <ShieldCheck aria-hidden="true" className="size-3.5" />Angemeldet
       </span>
     </div>

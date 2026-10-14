@@ -41,6 +41,8 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -71,13 +73,18 @@
   --input: oklch(0.922 0 0);
   --ring: var(--accent-ink);
   --chart-1: var(--accent-ink);
-  --chart-2: #38bdf8;
-  --chart-3: #fbbf24;
-  --chart-4: #fb923c;
-  --chart-5: #a3a3a3;
-  --chart-6: #f87171;
-  --chart-7: #64748b;
+  --chart-2: #0284c7;
+  --chart-3: #b45309;
+  --chart-4: #c2410c;
+  --chart-5: #737373;
+  --chart-6: #dc2626;
+  --chart-7: #475569;
   --accent-muted: color-mix(in srgb, var(--primary) 8%, var(--card));
+  --editable-bg: #fff2c4;
+  --editable-border: #eac66a;
+  --editable-foreground: #694500;
+  --editable-placeholder: #8a6a24;
+  --editable-focus: #e8ae25;
   --season-tint: transparent;
   --season-decoration: var(--accent-ink);
   --radius: 0.625rem;
@@ -108,6 +115,17 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: #2a322e;
   --input: #38423c;
+  --chart-2: #38bdf8;
+  --chart-3: #fbbf24;
+  --chart-4: #fb923c;
+  --chart-5: #a3a3a3;
+  --chart-6: #f87171;
+  --chart-7: #94a3b8;
+  --editable-bg: #332b18;
+  --editable-border: #635024;
+  --editable-foreground: #f3d282;
+  --editable-placeholder: #c9a85a;
+  --editable-focus: #e8ae25;
   --sidebar: #141817;
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
@@ -224,10 +242,10 @@ body {
   @apply rounded-xl border bg-card shadow-sm;
 }
 .eyebrow {
-  @apply text-[11px] font-semibold tracking-[0.14em] text-muted-foreground;
+  @apply text-2xs font-semibold tracking-[0.14em] text-muted-foreground;
 }
 .status-pill {
-  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium;
+  @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-2xs font-medium;
 }
 .select-input {
   @apply h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-[border-color,box-shadow] duration-150;
@@ -326,21 +344,16 @@ body {
   }
 }
 .editable {
-  background-color: #fff2c4 !important;
-  border-color: #eac66a !important;
-  color: #694500;
-}
-.dark .editable {
-  background-color: #332b18 !important;
-  border-color: #635024 !important;
-  color: #f3d282;
+  background-color: var(--editable-bg) !important;
+  border-color: var(--editable-border) !important;
+  color: var(--editable-foreground);
 }
 .editable:focus {
-  border-color: #e8ae25 !important;
-  --tw-ring-color: #d9a72a40;
+  border-color: var(--editable-focus) !important;
+  --tw-ring-color: color-mix(in srgb, var(--editable-focus) 25%, transparent);
 }
 .editable::placeholder {
-  color: #9a762d;
+  color: var(--editable-placeholder);
   opacity: 0.8;
 }
 .data-table {

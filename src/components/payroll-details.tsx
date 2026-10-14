@@ -50,7 +50,7 @@ export function PayrollDetails({ view }: { view: PayrollPresentation }) {
                     {label}
                   </h3>
                   {hasSpecial && (
-                    <span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">
+                    <span className="rounded-md bg-primary/10 px-2 py-1 text-2xs font-medium text-primary">
                       Sonderzahlung
                     </span>
                   )}

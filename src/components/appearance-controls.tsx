@@ -61,7 +61,7 @@ export function AppearanceControls({
                 }}>
                   {color === swatch.color && <Check className="size-3.5" aria-hidden="true" />}
                 </span>
-                <span className="text-[11px] font-medium">{swatch.label}</span>
+                <span className="text-2xs font-medium">{swatch.label}</span>
               </span>
             </label>
           ))}
@@ -93,7 +93,7 @@ export function AppearanceControls({
         <div aria-label="Akzentvorschau" className="overflow-hidden rounded-2xl border border-border/70 bg-background/40">
           <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
             <p className="text-xs font-medium">Dein Stil</p>
-            <span className="rounded-full bg-muted px-2 py-1 text-[10px] text-muted-foreground">Vorschau</span>
+            <span className="rounded-full bg-muted px-2 py-1 text-2xs text-muted-foreground">Vorschau</span>
           </div>
           <div className="flex items-end justify-between gap-4 p-4">
             <div>

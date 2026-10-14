@@ -181,7 +181,7 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
           </p>
           <span
             className={cn(
-              "mt-1.5 inline-flex items-center rounded-full bg-muted/60 px-2 py-0.5 text-[11px] font-medium",
+              "mt-1.5 inline-flex items-center rounded-full bg-muted/60 px-2 py-0.5 text-2xs font-medium",
               tone,
               processing && "bg-primary/10",
               failed && "bg-rose-500/10",

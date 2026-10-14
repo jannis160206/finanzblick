@@ -25,7 +25,7 @@ export function HolidayRanges({ iconOnly = false }: { iconOnly?: boolean }) {
     setError("");
   };
   const chips = <div className="flex flex-wrap gap-1" aria-label="Aktive Urlaubszeiträume">
-    {ranges.map((range) => <span key={`${range.from}|${range.to}`} className="inline-flex items-center gap-1 rounded-md border bg-muted/30 px-2 py-1 text-[10px]">
+    {ranges.map((range) => <span key={`${range.from}|${range.to}`} className="inline-flex items-center gap-1 rounded-md border bg-muted/30 px-2 py-1 text-2xs">
       {dateLabel(range.from)}–{dateLabel(range.to)}
       <button type="button" disabled={!!storageError} className="rounded p-1 text-destructive hover:bg-destructive/10 focus-visible:outline-2 focus-visible:outline-ring" aria-label={`Urlaub löschen: ${range.from} bis ${range.to}`}
         onClick={() => update((current) => ({ ...current, holidayRanges: current.holidayRanges?.filter((item) => item.from !== range.from || item.to !== range.to) }))}><X className="size-3" /></button>

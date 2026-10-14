@@ -108,7 +108,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
     <DialogTrigger asChild>
     <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative size-11" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
       <Users className="size-3.5" />{!iconOnly && "Geteilt"}
-      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</FinancialData>}
+      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-2xs font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</FinancialData>}
     </Button>
     </DialogTrigger>
     </Tooltip>
@@ -145,7 +145,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
               checked={selected.includes(row.id)} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, row.id] : ids.filter((id) => id !== row.id))} />
             <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={bookingDescription(row)}>{bookingDescription(row)}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
             <span className="shrink-0 text-right">
-              <span className="block text-[10px] text-muted-foreground">Gesamt {currency(Math.abs(row.amount))}</span>
+              <span className="block text-2xs text-muted-foreground">Gesamt {currency(Math.abs(row.amount))}</span>
               {selected.includes(row.id) && <span className="block font-mono text-primary">Meine Hälfte (50 %)<br />{currency(Math.abs(personalAmount({ ...row, sharedWithRaphael: true })))}</span>}
             </span>
           </label>)}

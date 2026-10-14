@@ -37,7 +37,7 @@ export function FixedCostChoice({
       <span className={cn("text-xs font-medium", checked && eligible && "text-foreground")}>
         Als Fixkosten markieren
       </span>
-      <span className="ml-auto text-right text-[11px]">
+      <span className="ml-auto text-right text-2xs">
         {!eligible ? "Nur Ausgaben" : checked ? "Kein neuer Planbetrag" : "Optional"}
       </span>
       <span id={helpId} className="sr-only">{help}</span>

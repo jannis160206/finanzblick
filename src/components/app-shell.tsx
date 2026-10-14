@@ -40,6 +40,7 @@ import { useAccountWorkspace } from "@/components/account-context";
 import { AccountSyncTools } from "@/components/account-tools";
 import { AccountSidebarProfile } from "@/components/account-profile";
 import { FinancialData } from "@/components/financial-data";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const navigation = [
   { href: "/", label: "Übersicht", icon: LayoutDashboard },
@@ -124,7 +125,7 @@ export function AppShell({
             </span>
             Privater Workspace
           </div>
-          <p className="mt-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
+          <p className="mt-2 px-1 text-2xs leading-relaxed text-muted-foreground">
             Daten bleiben in diesem Browser.
           </p>
         </div>}
@@ -156,7 +157,7 @@ export function AppShell({
               <>
                 <span
                   className={cn(
-                    "mr-2 hidden items-center gap-1.5 text-[10px] xl:flex",
+                    "mr-2 hidden items-center gap-1.5 text-2xs xl:flex",
                     storageError ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
@@ -243,17 +244,17 @@ export function AppShell({
               </p>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                 {[0, 1, 2, 3].map((index) => (
-                  <div
+                  <Skeleton
                     key={index}
-                    className="panel h-36 animate-pulse bg-muted/20"
+                    className="panel h-36"
                   />
                 ))}
               </div>
-              <div className="panel h-80 animate-pulse bg-muted/20" />
+              <Skeleton className="panel h-80" />
             </div>
           )}
           </div>
-          <footer className="mt-10 flex flex-wrap justify-between gap-2 border-t pt-4 text-[10px] text-muted-foreground">
+          <footer className="mt-10 flex flex-wrap justify-between gap-2 border-t pt-4 text-2xs text-muted-foreground">
             <span>Finanzblick · Persönliche Finanzplanung</span>
             <span>EUR · Planung ist keine Kontobestätigung</span>
           </footer>
