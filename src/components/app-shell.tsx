@@ -111,7 +111,7 @@ export function AppShell({
       <aside className="app-sidebar fixed inset-y-0 left-0 z-30 hidden w-[224px] flex-col border-r bg-sidebar lg:flex">
         <Link href="/" className="flex h-[76px] items-center gap-2.5 px-6">
           <FinanzblickMark flicker />
-          <span className="brand-name text-[16px] font-semibold tracking-tight">
+          <span className="text-[16px] font-semibold tracking-tight">
             Finanz
             <span className="font-normal text-muted-foreground">blick</span>
           </span>
@@ -269,7 +269,7 @@ export function AppShell({
           menuTrigger.current?.focus();
         }}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-3"><FinanzblickMark /><span className="brand-name">Finanzblick</span></DialogTitle>
+            <DialogTitle className="flex items-center gap-3"><FinanzblickMark />Finanzblick</DialogTitle>
             <DialogDescription>Seite wählen</DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-6">

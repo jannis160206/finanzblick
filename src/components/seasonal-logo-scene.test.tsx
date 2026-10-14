@@ -38,17 +38,24 @@ it("lays the season motif over the mark and flickers only when asked and allowed
   expect(container.querySelector(".logo-motif")?.getAttribute("data-flicker")).toBe("false");
 });
 
-it("renders an inert, hidden canvas for scene themes", () => {
-  state.theme = "christmas";
+it.each(["halloween", "christmas", "newyear", "carnival", "easter", "summer", "betweenyears"])(
+  "renders an inert, hidden canvas for the %s scene",
+  (theme) => {
+    state.theme = theme;
+    const { container } = render(<SeasonalScene />);
+    const canvas = container.querySelector("canvas");
+    expect(canvas?.getAttribute("aria-hidden")).toBe("true");
+    expect(canvas?.className).toContain("season-scene");
+    expect(canvas?.getAttribute("data-season-scene")).toBe(theme);
+  },
+);
+
+it("keeps an empty canvas for the standard theme so a leaving scene can fade out", () => {
   const { container } = render(<SeasonalScene />);
-  const canvas = container.querySelector("canvas");
-  expect(canvas?.getAttribute("aria-hidden")).toBe("true");
-  expect(canvas?.className).toContain("season-scene");
+  expect(container.querySelector("canvas")?.getAttribute("data-season-scene")).toBe("none");
 });
 
 it.each([
-  ["standard theme", { theme: "default" }],
-  ["a theme without scene", { theme: "easter" }],
   ["reduced motion", { theme: "halloween", motionReduced: true }],
   ["the transaction list", { theme: "halloween", pathname: "/umsaetze" }],
 ])("renders no scene for %s", (_name, patch) => {

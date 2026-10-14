@@ -25,7 +25,7 @@ async function settings(page: Page) {
   await stored(page);
 }
 const themeLabels: Record<string, string> = { default: "Standard", halloween: "Halloween", christmas: "Weihnachten", newyear: "Neujahr", carnival: "Fasching", easter: "Ostern", summer: "Sommer", betweenyears: "Zwischen den Jahren" };
-const sceneThemes = ["halloween", "christmas", "newyear", "summer"];
+const sceneThemes = ["halloween", "christmas", "newyear", "carnival", "easter", "summer", "betweenyears"];
 async function fixed(page: Page, theme: string) {
   await page.getByRole("radio", { name: themeLabels[theme], exact: true }).check();
   await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
@@ -118,6 +118,7 @@ test("season decorates the same palette and logo instead of replacing the brand"
   await settings(page);
   await accent(page, "#60a5fa");
   const baseline = await palette(page);
+  const headingFont = await page.locator("h1").evaluate((el) => getComputedStyle(el).fontFamily);
   const before = await stored(page);
   for (const theme of ["default", "halloween", "christmas", "newyear", "carnival", "easter", "summer", "betweenyears"]) {
     await fixed(page, theme);
@@ -128,7 +129,8 @@ test("season decorates the same palette and logo instead of replacing the brand"
     ).toHaveCount(1);
     await expect(page.locator(".logo-motif")).toHaveCount(theme === "default" ? 0 : 1);
     await expect(page.locator(".logo-season-detail")).toHaveCount(0);
-    await expect(page.locator("canvas.season-scene")).toHaveCount(sceneThemes.includes(theme) ? 1 : 0);
+    await expect(page.locator("canvas.season-scene")).toHaveAttribute("data-season-scene", sceneThemes.includes(theme) ? theme : "none");
+    await expect(page.locator("h1")).toHaveCSS("font-family", headingFont);
     await expect(page.locator("h1")).toHaveCSS("text-shadow", "none");
     await expect(page.locator(".brand-mark")).toHaveCSS(
       "background-color",
