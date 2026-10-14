@@ -12,6 +12,7 @@ import {
 import { useAutomation } from "./automation-context";
 import type { AutomationJob } from "@/lib/automation/schema";
 import { cn } from "@/lib/utils";
+import { isActiveJob } from "@/components/upload-activity";
 import { importResultLabel, type ImportResult } from "@/lib/import/results";
 import { Button } from "@/components/ui/button";
 
@@ -296,6 +297,7 @@ export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, sho
   const jobs = suppliedJobs ?? automation.jobs;
   const error = suppliedError === undefined ? automation.error : suppliedError;
   const cards = useJobCards(jobs, showCompleted);
+  const workerMissing = automation.worker?.running === false && jobs.some(isActiveJob);
   if (!cards.length && !error && !automation.catalogue) return null;
   return (
     <section aria-label="Hintergrundverarbeitung" className="mb-4 space-y-3">
@@ -307,7 +309,13 @@ export function AutomationStatus({ jobs: suppliedJobs, error: suppliedError, sho
             : `Händlererkennung: ${automation.catalogue.sources} öffentliche Kataloggebiete eingelesen · zusätzlich lokale Regeln, Buchungszweck und bestätigte Zuordnungen.`)}
         </p>
       )}
-      {error && (
+      {workerMissing && (
+        <p role="alert"
+          className="rounded-xl border border-amber-400/30 bg-amber-500/5 px-4 py-3 text-sm leading-relaxed text-amber-800 dark:text-amber-200">
+          Der Hintergrund-Worker läuft nicht, deshalb wartet die Verarbeitung. Bitte <code>npm run worker</code> starten;
+          wartende Auszüge werden danach automatisch abgearbeitet.
+        </p>
+      )}      {error && (
         <p
           role="alert"
           className="rounded-xl border border-rose-400/20 bg-rose-500/5 px-4 py-3 text-sm text-rose-600 dark:text-rose-300"

@@ -24,6 +24,10 @@ npm run dev
 npm run worker
 ```
 
+Läuft kein Worker, zeigt der Uploadstatus bei wartenden Auszügen den Hinweis
+„Der Hintergrund-Worker läuft nicht“. Ohne Worker bleiben Uploads bei 0 % in der
+Warteschlange.
+
 Für den vServer die bestehende Kontokonfiguration aus `/etc/finanzblick.env`
 verwenden. Datenbank und Uploadordner müssen außerhalb des Repositorys liegen.
 Die mitgelieferte Unit gegebenenfalls an Node-/Projekt-/Datenbankpfade anpassen:

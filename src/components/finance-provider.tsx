@@ -607,7 +607,7 @@ export function FinanceProvider({
       <FinanceContext.Provider value={value}>
         <FinanceRestorationContext.Provider value={restore}>
         <AccountWorkspaceContext.Provider value={workspace}>
-        <AutomationContext.Provider value={{ jobs: automation.jobs, error: automationError, catalogue: automation.catalogue }}>
+        <AutomationContext.Provider value={{ jobs: automation.jobs, error: automationError, catalogue: automation.catalogue, worker: automation.worker }}>
         {children}
         <FinanceNotifications />
         </AutomationContext.Provider>

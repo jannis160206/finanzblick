@@ -287,3 +287,20 @@ it("renders queue and retry animations and an honest indeterminate upload bar", 
   expect(document.querySelectorAll("svg.animate-pulse")).toHaveLength(2);
   expect(document.querySelectorAll(".automation-progress-shimmer")).toHaveLength(1);
 });
+
+it("warns when jobs wait but no background worker holds a lease", () => {
+  const queued: AutomationJob = { id: "q", name: "a.csv", kind: "statement", status: "QUEUED", progress: 0,
+    attempts: 0, cursor: 0, total: 0, updatedAt: 1, error: null };
+  const { rerender } = render(<AutomationContext.Provider value={{ error: null, jobs: [queued], worker: { running: false } }}>
+    <AutomationStatus />
+  </AutomationContext.Provider>);
+  expect(screen.getByRole("alert").textContent).toContain("npm run worker");
+  rerender(<AutomationContext.Provider value={{ error: null, jobs: [queued], worker: { running: true } }}>
+    <AutomationStatus />
+  </AutomationContext.Provider>);
+  expect(screen.queryByRole("alert")).toBeNull();
+  rerender(<AutomationContext.Provider value={{ error: null, jobs: [{ ...queued, status: "COMPLETED" }], worker: { running: false } }}>
+    <AutomationStatus showCompleted />
+  </AutomationContext.Provider>);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

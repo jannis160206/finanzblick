@@ -458,6 +458,10 @@ export class AutomationStore {
     const catalogue = merchantCatalogueStatus(this.accounts);
     return this.accounts.read((db) => ({
       ...(catalogue ? { catalogue } : {}),
+      worker: {
+        running: Number(db.prepare("SELECT expires_at FROM automation_worker WHERE id = 1").get()
+          ?.expires_at) > Date.now(),
+      },
       revision: Number(
         db.prepare("SELECT revision FROM finance WHERE user_id = ?").get(userId)
           ?.revision ?? 0,

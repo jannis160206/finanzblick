@@ -190,3 +190,9 @@ it("cancels active statements for their owner only, fences the running worker an
     store.checkpoint(db, owner, job, 1, true))).toThrow("ownership lost");
   expect(accounts.getFinance(userId)).toEqual({ state: null, revision: 0 });
 });
+
+it("reports whether a worker currently holds a valid lease", () => {
+  expect(store.snapshot(userId).worker).toEqual({ running: true });
+  store.release(owner, false);
+  expect(store.snapshot(userId).worker).toEqual({ running: false });
+});

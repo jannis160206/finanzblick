@@ -38,6 +38,7 @@ export const automationEventSchema = z.object({
   revision: z.number().int().nonnegative(),
   jobs: z.array(automationJobSchema).max(20),
   catalogue: merchantCatalogueStatusSchema.optional(),
+  worker: z.object({ running: z.boolean() }).optional(),
 }).refine((event) => event.jobs.every((job) => !job.result || job.result.uploadId === job.id), {
   message: "Importergebnis gehört nicht zu diesem Upload.",
   path: ["jobs"],
