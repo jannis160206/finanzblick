@@ -12,6 +12,7 @@ import { AppearanceControls } from "@/components/appearance-controls";
 import { InteractionSoundsSetting } from "@/components/interaction-sounds";
 import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
+import { ClearBookings } from "@/components/clear-bookings";
 import { AccountProfileSettings } from "@/components/account-profile";
 import { AccountSyncTools } from "@/components/account-tools";
 import { useAccountWorkspace } from "@/components/account-context";
@@ -131,6 +132,7 @@ export function Settings() {
           </div>
           <FinancialData><ExcelActions compact /></FinancialData>
         </div>
+        <FinancialData><ClearBookings /></FinancialData>
         <AccountSyncTools manual />
       </SettingsSection>
     </div>
