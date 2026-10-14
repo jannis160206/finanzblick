@@ -116,7 +116,7 @@ const transactionFieldsSchema = z.object({
   is_locked: z.boolean().optional(),
   requires_manual_review: z.boolean().optional(),
   automaticCategoryEvidence: z.object({
-    method: z.enum(["merchant", "purpose", "mcc"]),
+    method: z.enum(["merchant", "purpose", "mcc", "history", "source"]),
     category: categorySchema,
     mcc: z.string().regex(/^\d{4}$/).optional(),
     budgetExcluded: z.boolean().optional(),

@@ -6,6 +6,9 @@ import {
   activeMerchantRules,
   createMerchantNameApplier,
 } from "@/lib/import/merchant-rules";
+import { canonicalCategory, type Category } from "@/lib/categories";
+import { isIncomeCategory } from "@/lib/fixed";
+import { hasCategoryChoice } from "@/lib/manual-category";
 import type { AppState, Transaction } from "@/lib/types";
 import { normalizeMerchantDescriptor } from "./merchants";
 import { mergeConfirmedMerchantChoices } from "@/lib/import/merchant-choice";
@@ -33,6 +36,61 @@ function addChoice(
   const previous = choices.get(key);
   if (previous === null) return;
   choices.set(key, mergeConfirmedMerchantChoices(previous, rule));
+}
+
+export const unlearnableCategories: ReadonlySet<Category> = new Set([
+  "Prüfen",
+  "Sonstiges",
+  "Rückerstattungen",
+  "Transfer",
+  "Transfer intern",
+  "Urlaub",
+]);
+
+function historyKeys(row: Transaction): string[] {
+  return [
+    ...new Set(
+      [merchantAliasSourceKey(row), merchantRuleKey(row)].filter(
+        (key): key is string => key !== undefined && isSpecificMerchantKey(key),
+      ),
+    ),
+  ];
+}
+
+// A descriptor the account has already settled the same way, without a
+// contradicting booking, is evidence for further bookings of that descriptor.
+// User decisions count double; earlier history inferences never count again.
+export function createHistoryResolver(state: AppState) {
+  const groups = new Map<string, { categories: Set<Category>; weight: number }>();
+  for (const row of [
+    ...state.transactions,
+    ...(state.fixedReceipts ?? []).flatMap((item) => (item.booking ? [item.booking] : [])),
+  ]) {
+    const category = canonicalCategory(row.category);
+    if (row.amount >= 0 || unlearnableCategories.has(category) || isIncomeCategory(category))
+      continue;
+    const weight = hasCategoryChoice(row)
+      ? 2
+      : row.requires_manual_review === false &&
+          row.automaticCategoryEvidence &&
+          ["merchant", "purpose", "mcc"].includes(row.automaticCategoryEvidence.method)
+        ? 1
+        : 0;
+    if (!weight) continue;
+    for (const key of historyKeys(row)) {
+      const group = groups.get(key) ?? { categories: new Set<Category>(), weight: 0 };
+      group.categories.add(category);
+      group.weight += weight;
+      groups.set(key, group);
+    }
+  }
+  return (row: Transaction): Category | undefined => {
+    const matched = historyKeys(row).flatMap((key) => groups.get(key) ?? []);
+    const categories = new Set(matched.flatMap((group) => [...group.categories]));
+    if (categories.size !== 1 || Math.max(0, ...matched.map((group) => group.weight)) < 2)
+      return;
+    return [...categories][0];
+  };
 }
 
 // These rules live in the tenant snapshot, never in the global merchants table.

@@ -15,13 +15,17 @@ import {
 } from "@/lib/recurring-purpose";
 import { reviewedAustrianBankIds } from "./austrian-merchant-rules";
 import { isAutomationLocked } from "./locks";
-import { createAccountMerchantResolver } from "./aliases";
+import {
+  createAccountMerchantResolver,
+  createHistoryResolver,
+  unlearnableCategories,
+} from "./aliases";
 import {
   hasMerchantRefundEvidence,
   isMerchantTransfer,
 } from "@/lib/merchant-transfer";
 import { isIncomeCategory } from "@/lib/fixed";
-import { allCategories, canonicalCategory, knownMerchantCategory } from "@/lib/categories";
+import { allCategories, canonicalCategory, knownMerchantCategory, type Category } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { merchantEvidence, qualifiedCompany } from "./evidence";
 import {
@@ -29,7 +33,7 @@ import {
   bankOperationReviewMessage,
   bankTransferPurpose,
 } from "@/lib/bank-operation";
-import { compatiblePurchaseCategories, isDutyFreePurchase, purchasePurpose } from "@/lib/booking-purpose";
+import { compatiblePurchaseCategories, isDutyFreePurchase, purchasePurpose, type PurchasePurpose } from "@/lib/booking-purpose";
 import { reconcileLedgerReviewQueue } from "@/lib/import/review";
 export { isAutomationLocked } from "./locks";
 
@@ -50,10 +54,42 @@ function withoutMerchantIdentity(row: Transaction): Transaction {
   };
 }
 
+type CategoryInference = {
+  category: Category;
+  method: "history" | "source";
+};
+
+// Account history first, then the bank's or import's own purpose category.
+// Contradicting merchant or purpose signals keep the booking open.
+function inferCategory(evidence: {
+  known: Category | undefined;
+  purpose: PurchasePurpose | undefined;
+  history: Category | undefined;
+  source: Category | undefined;
+}): CategoryInference | undefined {
+  const { known, purpose } = evidence;
+  if (known === "Prüfen" || purpose?.kind === "conflict") return;
+  const fits = (category: Category) =>
+    (!known || compatiblePurchaseCategories(known, category)) &&
+    (purpose?.kind !== "matched" ||
+      compatiblePurchaseCategories(purpose.category, category));
+  if (evidence.history && fits(evidence.history))
+    return { category: evidence.history, method: "history" };
+  const source = evidence.source;
+  if (
+    source &&
+    !unlearnableCategories.has(source) &&
+    !isIncomeCategory(source) &&
+    fits(source)
+  )
+    return { category: source, method: "source" };
+}
+
 export function enrichTransaction(
   row: Transaction,
   index: MerchantIndex,
   resolveAccount?: ReturnType<typeof createAccountMerchantResolver>,
+  resolveHistory?: ReturnType<typeof createHistoryResolver>,
 ): Transaction {
   if (isAutomationLocked(row)) return { ...row, is_locked: true };
   const operation = bankOperation(row);
@@ -313,6 +349,26 @@ export function enrichTransaction(
         },
         requires_manual_review: false,
       });
+    const inferred = refund
+      ? undefined
+      : inferCategory({
+          known,
+          purpose,
+          history: resolveHistory?.(row),
+          source: match.method === "none" ? sourcePurpose : undefined,
+        });
+    if (inferred)
+      return transactionSchema.parse({
+        ...withoutMerchantIdentity(row),
+        category: inferred.category,
+        categoryOverride: true,
+        automaticCategoryEvidence: {
+          method: inferred.method,
+          category: inferred.category,
+          ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+        },
+        requires_manual_review: false,
+      });
     return { ...row, requires_manual_review: true };
   }
   if (
@@ -391,7 +447,31 @@ export function enrichTransaction(
     ((!evidencedPurpose &&
       (defaultCategory === null || match.merchant.requiresCategoryEvidence)) ||
       ((defaultCategory === "Tanken" || eniIdentity) && !recurringFuel && purpose?.kind !== "matched"))
-  )
+  ) {
+    const inferred = inferCategory({
+      known,
+      purpose,
+      history: resolveHistory?.(row),
+      source: sourcePurpose,
+    });
+    const fuelGuard =
+      (defaultCategory === "Tanken" || eniIdentity) && inferred?.category === "Tanken";
+    if (inferred && !fuelGuard)
+      return transactionSchema.parse({
+        ...row,
+        merchantId: match.merchant.id,
+        merchantAlias: confirmedName ?? match.merchant.canonicalName,
+        merchantLogo: !!match.merchant.logo,
+        merchantMatch: confirmedName || match.method === "regex" ? "rule" : "alias",
+        category: inferred.category,
+        categoryOverride: true,
+        automaticCategoryEvidence: {
+          method: inferred.method,
+          category: inferred.category,
+          ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+        },
+        requires_manual_review: false,
+      });
     return transactionSchema.parse({
       ...row,
       merchantId: match.merchant.id,
@@ -401,6 +481,7 @@ export function enrichTransaction(
         confirmedName || match.method === "regex" ? "rule" : "alias",
       requires_manual_review: true,
     });
+  }
   if (
     !refund &&
     contextual !== "Prüfen" &&
@@ -443,10 +524,11 @@ export function backfillBatch(
   index: MerchantIndex,
 ): AppState {
   const resolveAccount = createAccountMerchantResolver(state);
+  const resolveHistory = createHistoryResolver(state);
   const updated = new Map<string, Transaction>();
   const update = (row: Transaction): Transaction => {
     if (!ids.has(row.id)) return row;
-    const next = enrichTransaction(row, index, resolveAccount);
+    const next = enrichTransaction(row, index, resolveAccount, resolveHistory);
     updated.set(row.id, next);
     return next;
   };
@@ -479,7 +561,7 @@ export function backfillBatch(
             ...item.change,
             bookings: item.change.bookings.map((row) =>
               ids.has(row.id) && !isAutomationLocked(row)
-                ? enrichTransaction(row, index, resolveAccount)
+                ? enrichTransaction(row, index, resolveAccount, resolveHistory)
                 : row,
             ),
           },
@@ -507,6 +589,7 @@ export function backfillBatch(
               transactionSchema.parse(draft),
               index,
               resolveAccount,
+              resolveHistory,
             ),
             requires_manual_review: true,
           },

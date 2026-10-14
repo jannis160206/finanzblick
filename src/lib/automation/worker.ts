@@ -19,7 +19,7 @@ import {
   retainLockedAssignments,
 } from "./pipeline";
 import { AutomationStore, WorkerLeaseError, type ClaimedJob } from "./store";
-import { createAccountMerchantResolver } from "./aliases";
+import { createAccountMerchantResolver, createHistoryResolver } from "./aliases";
 
 export class AutomationWorker {
   private nextMetadataCleanupAt = 0;
@@ -70,15 +70,15 @@ export class AutomationWorker {
     checkCancellation();
     this.store.progress(this.owner, job, 40);
     const snapshot = this.store.accounts.getFinance(job.userId);
-    const resolveAccount = createAccountMerchantResolver(
-      snapshot.state ?? createEmptyAccountState(),
-    );
+    const knownState = snapshot.state ?? createEmptyAccountState();
+    const resolveAccount = createAccountMerchantResolver(knownState);
+    const resolveHistory = createHistoryResolver(knownState);
     const rows: typeof result.rows = [];
     for (let offset = 0; offset < result.rows.length; offset += 200) {
       checkCancellation();
       for (let i = offset; i < Math.min(offset + 200, result.rows.length); i++)
         rows.push(
-          enrichTransaction(result.rows[i], this.index, resolveAccount),
+          enrichTransaction(result.rows[i], this.index, resolveAccount, resolveHistory),
         );
       this.store.progress(
         this.owner,
@@ -104,14 +104,14 @@ export class AutomationWorker {
         );
         const currentRules =
           revision !== snapshot.revision
-            ? createAccountMerchantResolver(state)
+            ? { account: createAccountMerchantResolver(state), history: createHistoryResolver(state) }
             : null;
         const enriched = {
           ...result,
           uploadId: job.id,
           rows: currentRules
             ? result.rows.map((row) =>
-                enrichTransaction(row, this.index, currentRules),
+                enrichTransaction(row, this.index, currentRules.account, currentRules.history),
               )
             : rows,
         };
