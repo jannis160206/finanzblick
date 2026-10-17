@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useEffect, type ReactNode } from "react";
-import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { FinanceProvider, useFinance } from "./finance-provider";
 import { toast } from "sonner";
@@ -60,11 +60,13 @@ it("shows the automatic gap inside variable costs and updates surplus after rese
   const initial = view.read().state;
   const budgets = initial.financeRows.filter((row) => row.kind === "variable");
   const row = screen.getByRole("row", { name: /^Amex offen / });
-  expect(within(row).getByText("Amex offen").getAttribute("title")).toContain(`Rücklage ${currency(125)}`);
+  fireEvent.click(within(row).getByRole("button", { name: "Amex offen: Details" }));
+  const plain = (value: string) => value.replace(/\u00a0/g, " ");
+  expect(screen.getByText((text) => plain(text).includes(`Rücklage ${plain(currency(125))}`))).toBeTruthy();
   const rows = screen.getAllByRole("row");
   expect(rows.indexOf(row)).toBeGreaterThan(rows.indexOf(screen.getByRole("row", { name: "Variable Ausgaben" })));
   expect(rows.indexOf(row)).toBeLessThan(rows.indexOf(screen.getByRole("row", { name: /^Variabel gesamt / })));
-  expect(within(row).queryByRole("button")).toBeNull();
+  expect(within(row).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Amex offen: Details"]);
   expect(within(row).queryByRole("textbox")).toBeNull();
   expect(monthCell("Amex offen", 10).textContent).toBe(number(375));
   expect(monthCell("Amex offen", 11).textContent).toBe(number(0));

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useFinance, useFinanceRestoration } from "@/components/finance-provider";
 import { dateLabel } from "@/lib/format";
+import { recordBackup } from "@/lib/backup-age";
 import { type ImportResult } from "@/lib/excel";
 import { MAX_IMPORT_BYTES } from "@/lib/import/limits";
 import { openReviewCount, queueLedgerReview } from "@/lib/import/review";
@@ -63,6 +64,7 @@ export function ExcelActions({ compact = false }: { compact?: boolean }) {
       link.click();
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      recordBackup(workspace?.user.id ?? "local");
       toast.success("Excel-Sicherung erstellt");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Export fehlgeschlagen";

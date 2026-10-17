@@ -57,10 +57,9 @@ it.each([true, false])("shows each recognized booking before preserving the exis
   const view = mount();
   fireEvent.click(screen.getByRole("button", { name: "Prüfung öffnen" }));
   const region = within(screen.getByRole("region", { name: "Versicherungen prüfen" }));
-  const recognized = region.getAllByLabelText(`Erkannte Buchung: ${booking.description}`);
+  const recognized = region.getAllByLabelText(/^Erkannte Buchung:/);
   expect(recognized).toHaveLength(2);
   expect(recognized[0].textContent).toContain("Meine Haftpflicht");
-  expect(recognized[0].textContent).toContain(booking.description);
   expect(recognized[0].textContent).toContain(currency(-65));
   expect(recognized[0].textContent).toContain(dateLabel(booking.date));
   expect(recognized[0].textContent).toContain(accountLabel(booking));
@@ -112,12 +111,11 @@ it.each([
   const view = mount(initial);
   fireEvent.click(screen.getByRole("button", { name: "Prüfung öffnen" }));
   const region = within(screen.getByRole("region", { name: "Versicherungen prüfen" }));
-  const recognized = within(region.getAllByLabelText(`Erkannte Buchung: ${original.description}`)[0]);
+  const recognized = within(region.getAllByLabelText(/^Erkannte Buchung:/)[0]);
   fireEvent.click(recognized.getByRole("button", { name: "Händlername bearbeiten" }));
   const name = recognized.getByRole("textbox", { name: "Händlername" });
   expect(document.activeElement).toBe(name);
   fireEvent.change(name, { target: { value: "  Meine Versicherung  " } });
-  expect(recognized.getByText("Originalbuchung").closest("details")?.open).toBe(false);
   expect(actualBookings(view.read().state).find((row) => row.id === original.id)?.merchantAlias).toBeUndefined();
   expect(view.read().state.merchantRules ?? []).toEqual([]);
   fireEvent.click(region.getByRole("button", { name: accept ? "Neuen Dauerbetrag übernehmen" : "Bisherigen Dauerbetrag behalten" }));

@@ -54,7 +54,7 @@ describe("authoritative per-booking category selections", () => {
     ["Amazon", "Shopping"], ["BIPA", "Mittagessen"], ["Interne Überweisung", "Transfer intern"],
   ] as const)("keeps mandatory automatic/learned protections for %s", (description, expected) => {
     for (const manualCategory of [undefined, false])
-      expect(classify(booking({ description, category: "Gesundheit", categoryOverride: true, manualCategory })).category).toBe(expected);
+      expect(classify(booking({ description, date: "2026-09-14", category: "Gesundheit", categoryOverride: true, manualCategory })).category).toBe(expected);
   });
 
   it("derives fixed, transfer and planning flags from the selected purpose, not bank wording", () => {

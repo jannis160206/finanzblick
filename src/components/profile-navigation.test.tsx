@@ -22,7 +22,7 @@ vi.mock("./seasonal-theme-provider", () => ({ useSeasonalTheme: () => ({ theme: 
 vi.mock("./security-mode-provider", () => ({
   useSecurityMode: () => ({ ready: true, locked: navigation.locked, error: null, toggle: vi.fn(), retry: vi.fn() }),
 }));
-vi.mock("./finance-provider", () => ({ useFinance: vi.fn() }));
+vi.mock("./finance-provider", () => ({ useFinance: vi.fn(), useFinanceRestoration: () => vi.fn() }));
 const workspace: AccountWorkspace = { user: { id: "profile-account", username: "admin", role: "admin" }, loadServer: vi.fn() };
 
 function finance(saved = true) {
@@ -83,7 +83,7 @@ it("keeps unsynchronized logout protection in the profile area", () => {
   shell();
   const button = screen.getByRole("button", { name: "Abmelden" }) as HTMLButtonElement;
   expect(button.disabled).toBe(true);
-  expect(button.title).toBe("Bitte zuerst Änderungen synchronisieren.");
+  expect(document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Bitte zuerst Änderungen synchronisieren.");
 });
 
 it("keeps profile navigation available while the financial screen is locked", () => {
@@ -93,14 +93,17 @@ it("keeps profile navigation available while the financial screen is locked", ()
   expect(screen.getByRole("button", { name: "Abmelden" })).toBeTruthy();
 });
 
-it("surfaces logout failures inside the sidebar profile instead of the header", async () => {
+it("surfaces logout failures inside the backup dialog instead of the header", async () => {
   vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
   shell();
   const profile = screen.getByRole("region", { name: "Benutzerprofil" });
   fireEvent.click(within(profile).getByRole("button", { name: "Abmelden" }));
-  const error = await within(profile).findByRole("alert");
+  const dialog = await screen.findByRole("dialog", { name: "Vor dem Abmelden sichern" });
+  fireEvent.click(within(dialog).getByRole("checkbox", { name: /bewusst ohne Sicherung verwerfen/ }));
+  fireEvent.click(within(dialog).getByRole("button", { name: "Ohne Sicherung abmelden" }));
+  const error = await within(dialog).findByRole("alert");
   expect(error.textContent).toContain("Der Server ist nicht erreichbar");
-  expect((within(profile).getByRole("button", { name: "Abmelden" }) as HTMLButtonElement).disabled).toBe(false);
+  expect((within(dialog).getByRole("button", { name: "Ohne Sicherung abmelden" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
 it("shows a normal user's own profile and links to the existing settings sections", () => {

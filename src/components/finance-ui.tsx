@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import {
   Bike,
   CircleHelp,
@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { number } from "@/lib/format";
+import { parseMoneyText } from "@/lib/money-parse";
 import { type Pocket } from "@/lib/types";
 import { FinancialData } from "@/components/financial-data";
 
@@ -112,67 +113,64 @@ export function MoneyInput({
   className?: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+  const hintId = useId();
   function commit() {
     if (document.documentElement.dataset.securityMode === "locked") return;
     if (draft === null) return;
     if (nullable && draft.trim() === "") {
       onCommit(null);
       setDraft(null);
-      setError(false);
+      setError(null);
       return;
     }
-    const normalized = draft.trim().replace(/\s|€/g, "");
-    const parsed = Number(
-      normalized.includes(",")
-        ? normalized.replace(/\./g, "").replace(",", ".")
-        : normalized,
-    );
-    if (
-      !normalized ||
-      !Number.isFinite(parsed) ||
-      parsed < min ||
-      parsed > 1_000_000_000
-    ) {
-      setError(true);
+    const parsed = parseMoneyText(draft);
+    if (parsed === null) {
+      setError("Ungültiger Betrag. Beispiel: 1.500,50");
+      return;
+    }
+    if (parsed < min) {
+      setError(`Mindestens ${number(min)} €`);
       return;
     }
     onCommit(parsed);
     setDraft(null);
-    setError(false);
+    setError(null);
   }
   return (
+    <>
     <Input
       aria-label={label}
-      aria-invalid={error}
-      title={
-        error
-          ? `Gültigen Betrag ab ${min} eingeben`
-          : nullable
-            ? "Leer = automatisch berechnet"
-            : label
-      }
+      aria-invalid={error !== null}
+      aria-describedby={[error ? errorId : null, nullable ? hintId : null].filter(Boolean).join(" ") || undefined}
       inputMode="decimal"
       className={cn(
         "editable h-8 min-w-24 text-right font-mono text-xs",
-        error && "border-destructive",
         className,
       )}
       value={draft ?? (value === null ? "" : number(value))}
       placeholder={nullable ? "Auto" : "0,00"}
       onChange={(event) => {
         setDraft(event.target.value);
-        setError(false);
+        setError(null);
       }}
       onBlur={commit}
       onKeyDown={(event) => {
         if (event.key === "Enter") event.currentTarget.blur();
         if (event.key === "Escape") {
           setDraft(null);
-          setError(false);
+          setError(null);
         }
       }}
     />
+    {nullable && <span id={hintId} className="sr-only">Leer lassen: wird automatisch berechnet.</span>}
+    {error && (
+      <p id={errorId} role="alert" className="mt-1 text-right text-2xs font-medium text-destructive">
+        {error}
+      </p>
+    )}
+    </>
   );
 }
 export function InputLegend() {

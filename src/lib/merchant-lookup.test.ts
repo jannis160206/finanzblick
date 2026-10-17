@@ -123,7 +123,7 @@ describe("discreet merchant lookup", () => {
       appStateSchema.parse(JSON.parse(JSON.stringify(saved))),
       (await parseWorkbook(await exportWorkbook(saved))).state,
     ]) {
-      const prepared = prepareStatementImport([{ source: "Raiffeisen", file: "same.csv", rows: [original], issues: [], skipped: 0 }], restored);
+      const prepared = prepareStatementImport([{ source: "Raiffeisen", file: "same.csv", rows: [{ ...original, id: "reimported" }], issues: [], skipped: 0 }], restored);
       expect(prepared.duplicates).toBe(1);
       const reimported = queueLedgerReview(commitStatementImport(restored, prepared.automatic, [], prepared.metadata).state);
       expect(reimported.transactions).toHaveLength(1);

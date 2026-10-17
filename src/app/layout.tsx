@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
+import { appViewport } from "@/lib/viewport";
 import "./globals.css";
 import "./security-mode.css";
 
@@ -12,6 +13,8 @@ export const metadata: Metadata = {
     "Umsätze, Monatsplanung und Sparziele in deinem privaten Finanzdashboard.",
   robots: { index: false, follow: false },
 };
+
+export const viewport = appViewport;
 
 export default async function RootLayout({
   children,

@@ -234,7 +234,7 @@ export function AppShell({
             </div>
           )}
           {initialWarning && (
-            <p className="mb-5 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-muted-foreground">
+            <p className="mb-5 rounded-lg border border-amber-400/30 bg-amber-400/5 p-3 text-xs text-foreground">
               {initialWarning}
             </p>
           )}

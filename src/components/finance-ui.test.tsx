@@ -32,3 +32,47 @@ it("keeps a money draft uncommitted when privacy locking removes focus", () => {
   fireEvent.blur(input);
   expect(commit).toHaveBeenCalledExactlyOnceWith(125.5);
 });
+
+it.each([
+  ["1.500", 1500],
+  ["1.500,5", 1500.5],
+  ["1,5", 1.5],
+])("commits %s as %s euros", (text, value) => {
+  const commit = vi.fn();
+  render(<MoneyInput value={100} onCommit={commit} label="Planbetrag" />);
+  const input = screen.getByRole("textbox", { name: "Planbetrag" });
+  fireEvent.change(input, { target: { value: text } });
+  fireEvent.blur(input);
+  expect(commit).toHaveBeenCalledExactlyOnceWith(value);
+  expect(input.getAttribute("aria-invalid")).toBe("false");
+});
+
+it("keeps an invalid draft in the field with a linked visible error", () => {
+  const commit = vi.fn();
+  render(<MoneyInput value={100} onCommit={commit} label="Planbetrag" />);
+  const input = screen.getByRole("textbox", { name: "Planbetrag" });
+  fireEvent.change(input, { target: { value: "abc" } });
+  fireEvent.blur(input);
+  expect(commit).not.toHaveBeenCalled();
+  expect(input.getAttribute("value")).toBe("abc");
+  expect(input.getAttribute("aria-invalid")).toBe("true");
+  expect(input.hasAttribute("title")).toBe(false);
+  const message = screen.getByRole("alert");
+  expect(message.textContent).toContain("Ungültiger Betrag");
+  expect(input.getAttribute("aria-describedby")).toBe(message.id);
+  fireEvent.change(input, { target: { value: "12" } });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(input.hasAttribute("aria-describedby")).toBe(false);
+});
+
+it("explains amounts below the minimum and lets Escape discard the draft", () => {
+  const commit = vi.fn();
+  render(<MoneyInput value={100} onCommit={commit} label="Planbetrag" min={10} />);
+  const input = screen.getByRole("textbox", { name: "Planbetrag" });
+  fireEvent.change(input, { target: { value: "5" } });
+  fireEvent.blur(input);
+  expect(screen.getByRole("alert").textContent).toContain("Mindestens 10,00");
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(input.getAttribute("value")).toBe("100,00");
+});

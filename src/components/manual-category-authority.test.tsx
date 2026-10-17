@@ -35,7 +35,7 @@ const persisted = (): AppState => JSON.parse(localStorage.getItem("finanzdashboa
 it("saves Amazon pencil changes through the real updater, persists/reloads and reopens Prüfen", async () => {
   const seed = { ...createSeed(), transactions: [original], financeRows: [], fixedReceipts: [], reviewQueue: [] };
   const view = mount(seed);
-  fireEvent.click(screen.getByRole("button", { name: "Zuordnung ändern: Amazon" }));
+  fireEvent.click(screen.getByRole("button", { name: "Zuordnung ändern: Amazon Marketplace" }));
   let dialog = within(screen.getByRole("dialog", { name: "Zuordnung ändern" }));
   fireEvent.change(dialog.getByLabelText("Kategorie"), { target: { value: "Lebensmittel" } });
   expect(dialog.getByText("Manuell zugeordnet")).toBeTruthy();
@@ -51,7 +51,7 @@ it("saves Amazon pencil changes through the real updater, persists/reloads and r
   const loaded = mount(seed);
   expect(loaded.read().state.transactions[0].category).toBe("Lebensmittel");
   expect(screen.getByText("Geprüft", { exact: true })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Zuordnung ändern: Amazon" }));
+  fireEvent.click(screen.getByRole("button", { name: "Zuordnung ändern: Amazon Marketplace" }));
   dialog = within(screen.getByRole("dialog", { name: "Zuordnung ändern" }));
   fireEvent.change(dialog.getByLabelText("Kategorie"), { target: { value: "Prüfen" } });
   fireEvent.click(dialog.getByRole("button", { name: "Zuordnung übernehmen" }));
@@ -66,7 +66,7 @@ it("saves Amazon pencil changes through the real updater, persists/reloads and r
 it.each(["BIPA", "Interne Überweisung"])("accepts %s in the actual approval UI without passing manual authority to twins", async (description) => {
   const source = { ...original, description, merchantAlias: undefined, rawDescription: description, category: "Prüfen" as const,
     manualCategory: true, categoryOverride: true, reviewed: false };
-  const twin = { ...source, id: "twin", date: "2026-09-13", bankReference: "twin-reference", manualCategory: undefined, categoryOverride: undefined };
+  const twin = { ...source, id: "twin", date: "2026-09-14", bankReference: "twin-reference", manualCategory: undefined, categoryOverride: undefined };
   const seed = { ...createSeed(), transactions: [source, twin], financeRows: [], fixedReceipts: [], reviewQueue: [] };
   const view = mount(seed);
   fireEvent.click(screen.getByRole("button", { name: "Zuordnung prüfen" }));

@@ -72,7 +72,7 @@ describe("structured categories", () => {
 
   it.each([
     ["Spotify Premium", "Abonnements"], ["Netflix", "Abonnements"], ["PayPal Software Subscription", "Abonnements"],
-    ["Amazon Prime", "Shopping"], ["Disney Plus", "Abonnements"], ["Microsoft 365", "Abonnements"],
+    ["Amazon Prime", "Abonnements"], ["Disney Plus", "Abonnements"], ["Microsoft 365", "Abonnements"],
     ["Cineplexx", "Entertainment"], ["Steam Games", "Entertainment"], ["Nintendo", "Entertainment"],
     ["Fitinn", "Sport & Fitness"], ["Decathlon", "Sport & Fitness"], ["Udemy", "Bildung"],
     ["Fressnapf", "Haustiere"], ["Caritas Spende", "Geschenke & Spenden"], ["Apotheke", "Gesundheit"],
@@ -346,7 +346,7 @@ describe("grouped contracts and persistence", () => {
       expect(restored.financeRows).toEqual(original.financeRows);
       expect(calculateDashboard(restored).plan).toEqual(calculateDashboard(original).plan);
       expect(calculateDashboard(restored).current.actualSpending).toBe(calculateDashboard(original).current.actualSpending);
-      const repeated = prepareStatementImport([result(original.transactions)], restored);
+      const repeated = prepareStatementImport([result(original.transactions.map((row) => ({ ...row, id: `${row.id}-reimport` })))], restored);
       expect(repeated.duplicates).toBe(legacyCategories.length);
       expect(repeated.automatic).toEqual([]);
       const next = prepareStatementImport([result(original.transactions.map((row) => ({

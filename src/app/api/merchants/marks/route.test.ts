@@ -117,6 +117,7 @@ describe("private batched merchant marks API", () => {
       expect.any(Object),
       ["legacy"],
       "synthetic-account",
+      expect.any(Object),
     );
     for (const body of [
       { merchantIds: Array(100).fill("amazon"), bookingIds: ["legacy"] },
@@ -144,6 +145,7 @@ describe("private batched merchant marks API", () => {
       expect.any(Object),
       ["Audi"],
       "synthetic-account",
+      expect.any(Object),
     );
     for (const body of [
       { merchantIds: Array(100).fill("at-shell"), merchantNames: ["Audi"] },
@@ -211,6 +213,7 @@ describe("private batched merchant marks API", () => {
       expect.any(Object),
       { merchantIds: ["at-example", "unknown"] },
       "synthetic-account",
+      expect.any(Object),
     );
   });
 
@@ -353,6 +356,7 @@ describe("private batched merchant marks API", () => {
         merchantIds: ["unknown", "unknown"],
       },
       "synthetic-account",
+      expect.any(Object),
     );
   });
 

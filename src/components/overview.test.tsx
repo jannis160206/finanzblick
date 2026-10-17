@@ -102,9 +102,9 @@ it("does not display zero round-ups, but retains actual nonzero round-ups and po
 it("expands the six-month cashflow on demand without changing the saved state", () => {
   const state = fixture();
   const before = JSON.stringify(state);
-  const { container, dashboard, update, rerender } = mount(state);
+  const { dashboard, update, rerender } = mount(state);
   expect(screen.queryByTestId("cashflow-chart")).toBeNull();
-  const details = container.querySelector("details")!;
+  const details = screen.getByText("Einnahmen & Ausgaben").closest("details")!;
   details.open = true;
   fireEvent(details, new Event("toggle"));
   const rows = JSON.parse(screen.getByTestId("cashflow-chart").getAttribute("data-rows")!);

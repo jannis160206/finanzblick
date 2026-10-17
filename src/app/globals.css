@@ -471,6 +471,9 @@ body {
   border-color: var(--editable-focus) !important;
   --tw-ring-color: color-mix(in srgb, var(--editable-focus) 25%, transparent);
 }
+.editable[aria-invalid="true"] {
+  border-color: var(--destructive) !important;
+}
 .editable::placeholder {
   color: var(--editable-placeholder);
   opacity: 0.8;

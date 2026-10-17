@@ -1064,7 +1064,7 @@ describe("AccountLogout", () => {
     mount(<AccountLogout />, workspace("user"));
     const button = screen.getByRole("button", { name: "Abmelden" });
     expect((button as HTMLButtonElement).disabled).toBe(true);
-    expect(button.getAttribute("title")).toBe("Bitte zuerst Änderungen synchronisieren.");
+    expect(document.getElementById(button.getAttribute("aria-describedby") ?? "")?.textContent).toBe("Bitte zuerst Änderungen synchronisieren.");
     fireEvent.click(button);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(assign).not.toHaveBeenCalled();

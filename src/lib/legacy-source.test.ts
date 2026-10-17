@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import { calculateDashboard, calculatePlan, classify } from "@/lib/calc";
@@ -37,6 +37,8 @@ function legacyState(reference: AppState) {
     }),
   };
 }
+
+const privateWorkbook = new URL("../../data/Einnahmen_Ausgaben_2026_MotorradSparen.xlsx", import.meta.url);
 
 describe("legacy Excel source categories", () => {
   it("retains original categories even when Im Plan is an uncached formula", async () => {
@@ -170,13 +172,8 @@ describe("legacy Excel source categories", () => {
       calculatePlan(repaired.transactions, repaired.settings.asOf).rows,
     ).toHaveLength(1);
   });
-  it("fixes the supplied workbook's inflated Sonstiges and survives Excel backup", async () => {
-    const buffer = readFileSync(
-      new URL(
-        "../../data/Einnahmen_Ausgaben_2026_MotorradSparen.xlsx",
-        import.meta.url,
-      ),
-    );
+  it.skipIf(!existsSync(privateWorkbook))("fixes the supplied workbook's inflated Sonstiges and survives Excel backup", async () => {
+    const buffer = readFileSync(privateWorkbook);
     const reference = (await parseWorkbook(Uint8Array.from(buffer).buffer))
       .state;
     const state = legacyState(reference);

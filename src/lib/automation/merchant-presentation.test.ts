@@ -333,18 +333,21 @@ describe("bounded private merchant presentation", () => {
     expect(accounts.getFinance("display-account")).toEqual(before);
   });
 
-  it("does not select among duplicate booking IDs or conflicting account aliases", async () => {
+  it("rejects duplicate booking IDs on write and does not select among conflicting account aliases", async () => {
     await referenceLogos();
+    expect(() =>
+      accounts.putFinance(
+        "display-account",
+        { ...blankTestState(), transactions: [booking("Amazon", "duplicate"), booking("SHELL", "duplicate")] },
+        0,
+      ),
+    ).toThrow(/Doppelte Umsatz-ID/);
     const source = booking("BILLA", "alias-conflict");
     accounts.putFinance(
       "display-account",
       {
         ...blankTestState(),
-        transactions: [
-          booking("Amazon", "duplicate"),
-          booking("SHELL", "duplicate"),
-          source,
-        ],
+        transactions: [source],
         merchantRules: [
           {
             key: merchantRuleKey(source),
@@ -363,13 +366,10 @@ describe("bounded private merchant presentation", () => {
     expect(
       await accountMerchantBookingPresentations(
         store,
-        ["duplicate", "alias-conflict"],
+        ["alias-conflict"],
         "display-account",
       ),
-    ).toEqual([
-      { bookingId: "duplicate", logo: null },
-      { bookingId: "alias-conflict", logo: null },
-    ]);
+    ).toEqual([{ bookingId: "alias-conflict", logo: null }]);
   });
 
   it.each(["local", "external"])(

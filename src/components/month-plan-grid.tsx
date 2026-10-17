@@ -1,7 +1,8 @@
 "use client";
 
 import { Fragment, useEffect, useRef, type ReactNode } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Info, Pencil, Trash2 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { MoneyInput } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
@@ -198,9 +199,24 @@ function CalculatedMonthRow({
       <th
         scope="row"
         className={cn("sticky-label", strong ? "font-semibold" : "font-normal")}
-        title={title}
       >
         {label}
+        {title && (
+          <FinancialData as="span">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`${label}: Details`}
+                  className="ml-1 inline-flex size-6 items-center justify-center rounded-full align-middle text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+                >
+                  <Info aria-hidden="true" className="size-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 text-xs leading-relaxed">{title}</PopoverContent>
+            </Popover>
+          </FinancialData>
+        )}
       </th>
       {values.map((value, index) => (
         <td

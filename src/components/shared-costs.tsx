@@ -91,15 +91,25 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
       (!classify(row).isTransfer && !["Gehalt", "Rufbereitschaft"].includes(classify(row).category) &&
         items.some((item) => !item.bookingId.startsWith("planned:") && item.date <= row.date && item.fullAmount >= row.amount)))) : [];
   const overpaidItems = items.filter((item) => item.overpaid > 0);
-  const candidates = useMemo(() => open
-    ? bookings.filter((row) => row.amount < 0 && !isSharedHoliday(row) && !classify(row).isTransfer)
-    : [], [bookings, open]);
+  // Classify once per opened booking list; searching reuses the stored merchant name.
+  const { candidates, merchants } = useMemo(() => {
+    const rows: AccountedTransaction[] = [];
+    const names = new Map<string, string>();
+    if (open) for (const row of bookings) {
+      if (row.amount >= 0 || isSharedHoliday(row)) continue;
+      const result = classify(row);
+      if (result.isTransfer) continue;
+      rows.push(row);
+      names.set(row.id, result.merchant);
+    }
+    return { candidates: rows, merchants: names };
+  }, [bookings, open]);
   const filtered = useMemo(() => {
     const total = Math.abs(parseStatementAmount(amount) ?? NaN);
-    return candidates.filter((row) => matchesTransactionSearch(row, query) &&
+    return candidates.filter((row) => matchesTransactionSearch(row, query, merchants.get(row.id) ?? "") &&
       (!month || row.date.startsWith(month)) && (!amount || Math.abs(row.amount) === total))
       .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
-  }, [candidates, query, month, amount]);
+  }, [candidates, merchants, query, month, amount]);
   const invalidAmount = !!amount && parseStatementAmount(amount) === null;
   const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setSettlements({}); setLimit(50); };
   return <>
@@ -108,7 +118,7 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
     <DialogTrigger asChild>
     <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative size-11" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
       <Users className="size-3.5" />{!iconOnly && "Geteilt"}
-      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} className={`inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-2xs font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`}>{count}</FinancialData>}
+      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} data-count={count} className={`after:content-[attr(data-count)] inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-2xs font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`} />}
     </Button>
     </DialogTrigger>
     </Tooltip>

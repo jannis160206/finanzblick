@@ -67,7 +67,7 @@ describe("explicit category edits", () => {
     ]) {
       expect(restored.transactions[0]).toEqual(saved.transactions[0]);
       expect(restored.reviewQueue).toHaveLength(1);
-      const result = { source: "Raiffeisen" as const, file: "reviewed.csv", rows: [original], issues: [], skipped: 0 };
+      const result = { source: "Raiffeisen" as const, file: "reviewed.csv", rows: [{ ...original, id: "reimported" }], issues: [], skipped: 0 };
       const prepared = prepareStatementImport([result], restored);
       expect(prepared.duplicates).toBe(1);
       expect(prepared.review).toEqual([]);
@@ -148,8 +148,8 @@ describe("explicit category edits", () => {
     expect([2, 3, 4].map((index) => sheet.getRow(index).getCell(column).value)).toEqual(["Ja", "Nein", ""]);
     expect((await parseWorkbook(buffer)).state.transactions).toEqual(original.transactions);
     sheet.getRow(2).getCell(column).value = "vielleicht";
-    const invalid = await parseWorkbook(Uint8Array.from(new Uint8Array(await workbook.xlsx.writeBuffer())).buffer);
-    expect(invalid.skipped).toBe(1);
-    expect(invalid.state.transactions.some((row) => row.id === "reviewed")).toBe(false);
+    // Native backups are rejected as a whole instead of silently dropping a ledger row.
+    await expect(parseWorkbook(Uint8Array.from(new Uint8Array(await workbook.xlsx.writeBuffer())).buffer))
+      .rejects.toThrow(/Umsätze, Zeile 2/);
   });
 });

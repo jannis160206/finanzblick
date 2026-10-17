@@ -10,10 +10,16 @@ import { FinancialData } from "@/components/financial-data";
 import { BudgetCard, BudgetSummary } from "@/components/budget-cards";
 import { round, sum } from "@/lib/calc";
 import { dateLabel, monthLabel } from "@/lib/format";
+import { ledgerHref, parseBudgetGroup } from "@/lib/ledger-link";
+
+const ledgerHrefFor = (id: string, month: string) => {
+  const group = parseBudgetGroup(id);
+  return group ? ledgerHref({ month, group }) : undefined;
+};
 
 export function Plan() {
   const {
-    dashboard: { plan },
+    dashboard: { plan, currentMonth },
     state,
   } = useFinance();
   const [onlyOverBudget, setOnlyOverBudget] = useState(false);
@@ -73,7 +79,7 @@ export function Plan() {
           {visibleRows.length > 0 ? (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {visibleRows.map((row) => (
-                <BudgetCard key={row.id} row={row} />
+                <BudgetCard key={row.id} row={row} href={ledgerHrefFor(row.id, currentMonth)} />
               ))}
             </div>
           ) : (

@@ -29,7 +29,8 @@ describe("precise statement facts", () => {
       bank: "Raiffeisen", time: "16:55:00", category: "Cafés & Snacks", bankReference: "05.09.2026 08:02:01:001" });
     expect(parsed.rows[0].rawDescription).toContain("MARTIN AUER ATRIOVIL VILLACH 9500");
     expect(parsed.rows[1]).toMatchObject({ description: "SPAR 2361", time: "12:10:00", category: "Mittagessen" });
-    expect(parsed.rows[2]).toMatchObject({ category: "Mittagessen", date: "2026-09-13" });
+    // 13.09.2026 is a Sunday: the personal lunch rule for BIPA applies on working days only.
+    expect(parsed.rows[2]).toMatchObject({ category: "Drogerie", date: "2026-09-13" });
     expect(parsed.rows[3]).toMatchObject({ category: "Lebensmittel", amount: -10.38, time: "16:29:00" });
     expect(parsed.rows[4].category).toBe("Shopping");
     expect(parsed.rows[5]).toMatchObject({ amount: -700, category: "Transfer intern", time: "10:03:12" });
@@ -104,7 +105,7 @@ describe("precise statement facts", () => {
 
 describe("high-confidence merchant policy", () => {
   it.each([
-    ["BIPA", "Mittagessen"], ["Hotspot", "Mittagessen"], ["Mensa", "Mittagessen"],
+    ["BIPA", "Drogerie"], ["Hotspot", "Restaurants"], ["Mensa", "Restaurants"],
     ["Trafik Haas", "Shopping"], ["SHELL FURNITZ", "Mobilität"], ["OMV", "Mobilität"], ["ENI", "Mobilität"],
     ["McD", "Restaurants"], ["Burger King", "Restaurants"], ["Pizzeria", "Restaurants"], ["Bauernhof Gams", "Restaurants"],
     ["Sakura", "Restaurants"], ["Wolt", "Lieferdienste"], ["MARTIN AUER", "Cafés & Snacks"], ["DM-FIL", "Drogerie"],
@@ -113,6 +114,17 @@ describe("high-confidence merchant policy", () => {
     const parsed = prepareStatementImport([result([row(description, -8, { date: "2026-09-13" })])], createSeed());
     expect(parsed.review).toEqual([]);
     expect(parsed.automatic[0].category).toBe(category);
+  });
+
+  it.each(["BIPA", "Hotspot", "Mensa"])("files %s as Mittagessen on a working day without a clock time", (description) => {
+    const parsed = prepareStatementImport([result([row(description, -8, { date: "2026-09-14" })])], createSeed());
+    expect(parsed.review).toEqual([]);
+    expect(parsed.automatic[0].category).toBe("Mittagessen");
+  });
+
+  it.each(["BIPA", "Hotspot", "Mensa"])("never files %s as Mittagessen on a holiday", (description) => {
+    const parsed = prepareStatementImport([result([row(description, -8, { date: "2026-10-26" })])], createSeed());
+    expect(parsed.automatic[0].category).toBe(description === "BIPA" ? "Drogerie" : "Restaurants");
   });
 
   it.each(["BILLA", "SPAR", "PENNY"])("uses the exact calendar/clock/amount limits for %s", (description) => {

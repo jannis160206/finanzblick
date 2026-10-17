@@ -23,9 +23,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -34,12 +31,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
+import { ChartDataTable } from "@/components/chart-data-table";
+import { CategoryDonut } from "@/components/category-donut";
 import { SeasonalIcon } from "@/components/seasonal-icons";
 import {
   SectionHeading,
   pocketColors,
   pocketIcons,
 } from "@/components/finance-ui";
+import { ledgerHref } from "@/lib/ledger-link";
 import { currency, dateLabel, monthLabel, number, shortCurrency } from "@/lib/format";
 import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -54,14 +54,6 @@ const chartTooltip = {
   color: "var(--foreground)",
   fontSize: 12,
 };
-const chartColors = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-  "var(--chart-6)",
-];
 const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function Overview() {
@@ -139,7 +131,13 @@ export function Overview() {
             kpi.prominent ? cn("col-span-2 md:col-span-1", d.current.surplus >= 0 ? "border-primary/25 bg-primary/5" : "border-destructive/25 bg-destructive/5") :
               kpi.label === "Ersparnisse gesamt" ? "col-span-2 md:col-span-1" : "")}>
             <div className="flex items-start justify-between gap-2">
-              <p title={kpi.hint} className="pt-2 text-xs font-medium text-muted-foreground">{kpi.label}</p>
+              <p className="pt-2 text-xs font-medium text-muted-foreground">
+                {kpi.label === "Ausgaben · Ist" ? (
+                  <Link href={ledgerHref({ month: d.currentMonth })} className="inline-flex min-h-11 items-center gap-1 rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring -mt-2 sm:min-h-0 sm:mt-0">
+                    {kpi.label}<ArrowRight aria-hidden="true" className="size-3" />
+                  </Link>
+                ) : kpi.label}
+              </p>
               <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted/60", kpi.color)}>
                 {kpi.label === "Ausgaben · Ist" ? <SeasonalIcon slot="expense" className="seasonal-detail size-4" fallback={<kpi.icon aria-hidden="true" className="size-4" />} /> : <kpi.icon aria-hidden="true" className="size-4" />}
               </span>
@@ -148,7 +146,7 @@ export function Overview() {
               {currency(kpi.value)}
             </FinancialData>
             {kpi.note && <FinancialData as="p" className="mt-2 text-2xs text-muted-foreground">{kpi.note}</FinancialData>}
-            {kpi.hint && <span id={`overview-metric-${index}-hint`} className="sr-only">{kpi.hint}</span>}
+            {kpi.hint && <p id={`overview-metric-${index}-hint`} className="mt-2 text-2xs leading-relaxed text-muted-foreground">{kpi.hint}</p>}
           </section>
         ))}
       </div>
@@ -231,8 +229,8 @@ export function Overview() {
               className={cn(
                 "status-pill",
                 bikeSaved !== null && d.countdown.onTrack
-                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                  : "bg-orange-500/10 text-orange-600 dark:text-orange-300",
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  : "bg-orange-500/10 text-orange-700 dark:text-orange-300",
               )}
             >
               {bikeSaved !== null && d.countdown.onTrack ? (
@@ -356,7 +354,7 @@ export function Overview() {
             title="Vermögensentwicklung"
             subtitle={hasAssetForecast ? `Prognose · ${forecast.length} ${forecast.length === 1 ? "Monat" : "Monate"}${incompleteAssets ? " · unvollständige Datenbasis" : ""}` : undefined}
           />
-          {hasAssetForecast ? <FinancialData
+          {hasAssetForecast ? <><FinancialData
             className="h-64"
             role="img"
             aria-label={incompleteAssets ? "Prognose bekannter Pocket-Guthaben" : "Prognose des gesamten Pocket-Vermögens"}
@@ -400,7 +398,7 @@ export function Overview() {
                 />
               </AreaChart>
             </ResponsiveContainer>
-          </FinancialData> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
+          </FinancialData><ChartDataTable caption={incompleteAssets ? "Bekannte Pocket-Guthaben pro Monat" : "Pocket-Vermögen pro Monat"} columns={["Monat", "Vermögen"]} rows={forecast.map((row) => ({ key: row.month, cells: [row.label, currency(row.total)] }))} /></> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
             <Link href="/monate" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
           </div>}
         </section>
@@ -409,58 +407,7 @@ export function Overview() {
             title="Ausgaben nach Kategorie"
           ><span className="status-pill border text-muted-foreground">Ist</span></SectionHeading>
           {d.spending.length ? (
-            <FinancialData className="flex min-h-64 flex-col items-center gap-3 sm:flex-row">
-              <div
-                className="h-52 w-full sm:w-1/2"
-                role="img"
-                aria-label="Aktuelle Ausgaben nach Kategorie"
-              >
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={d.spending}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius="64%"
-                      outerRadius="88%"
-                      paddingAngle={3}
-                      stroke="none"
-                      isAnimationActive={false}
-                    >
-                      {d.spending.map((row, i) => (
-                        <Cell
-                          key={row.name}
-                          fill={chartColors[i % chartColors.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      contentStyle={chartTooltip}
-                      formatter={tooltipCurrency}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="w-full space-y-3 sm:w-1/2">
-                {d.spending.map((row, i) => (
-                  <div
-                    key={row.name}
-                    className="flex items-center justify-between gap-3 text-xs"
-                  >
-                    <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
-                      <span
-                        className="size-2 shrink-0 rounded-full"
-                        style={{
-                          background: chartColors[i % chartColors.length],
-                        }}
-                      />
-                      <span className="break-words">{row.name}</span>
-                    </span>
-                    <span className="shrink-0 font-medium tabular-nums">{currency(row.value)}</span>
-                  </div>
-                ))}
-              </div>
-            </FinancialData>
+            <CategoryDonut spending={d.spending} tooltipStyle={chartTooltip} />
           ) : (
             <EmptyState icon={ReceiptText} title="Noch keine Ausgaben" className="min-h-48">
               <Link href="/umsaetze" className="mt-1 inline-flex min-h-11 items-center gap-1 text-xs text-primary">Umsätze importieren <ArrowRight aria-hidden="true" className="size-3" /></Link>
@@ -548,6 +495,7 @@ export function Overview() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          <ChartDataTable caption="Einnahmen, Fixkosten und Alltagsbudget pro Monat" columns={["Monat", "Einnahmen", "Fixkosten", "Alltagsbudget"]} rows={forecast.slice(0, 6).map((row) => ({ key: row.month, cells: [row.label, currency(row.income), currency(row.fixed), currency(row.variablePlan)] }))} />
           </FinancialData>}
         </details>}
       </div>

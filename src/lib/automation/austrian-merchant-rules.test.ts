@@ -171,8 +171,8 @@ describe("expanded Austrian public purpose references", () => {
     },
   );
 
+  // "Trafik Haas" is deliberately a high-confidence silent rule (precise-import.test.ts).
   it.each([
-    "Trafik Haas",
     "NYX MyElite",
     "Kärnten Stand",
     "KaffeeMacher",

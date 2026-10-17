@@ -80,7 +80,7 @@ it("summarizes multiple OCR warnings without hiding their review drafts or detai
       target: { files: [new File(["pixels"], "Amex.jpeg", { type: "image/jpeg" })] },
     });
   });
-  expect(toast.error).toHaveBeenCalledWith("2 Importhinweise – Details unter „Importhinweise“.");
+  expect(toast.error).toHaveBeenCalledWith("2 Importhinweise – Details im Uploadstatus.");
   act(() => { vi.advanceTimersByTime(1); });
   const metadata = appendStatements.mock.calls[0][4];
   expect(metadata.reviewQueue).toHaveLength(2);

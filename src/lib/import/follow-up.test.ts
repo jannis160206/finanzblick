@@ -84,12 +84,13 @@ describe("real statement layouts", () => {
     ]);
     expect(result.issues).toEqual([]);
   });
-  it("reports malformed amounts without offering editable statement facts", () => {
+  it("reports malformed amounts as unbooked source-repair drafts, never as bookings", () => {
     const csv = `${fixture("raiffeisen-real.csv")}\n20.08.2026;BIPA;20.08.2026;unlesbar;EUR;20.08.2026 10:53:26:399\n`;
     const parsed = parseStatementCsv(csv);
     const prepared = prepareStatementImport([parsed], createSeed());
     expect(prepared.automatic).toHaveLength(3);
-    expect(prepared.review).toEqual([]);
+    expect(prepared.review).toHaveLength(1);
+    expect(prepared.review[0]).toMatchObject({ kind: "booking", sourceRepair: true, draft: { description: "BIPA", amount: null } });
     expect(prepared.issues).toHaveLength(1);
     expect(parsed.issues[0]).toMatchObject({
       draft: { date: "2026-08-20", description: "BIPA", amount: null },
@@ -126,7 +127,9 @@ describe("real statement layouts", () => {
     expect(prepareStatementImport([parsed], createSeed()).issues).toHaveLength(
       2,
     );
-    expect(prepareStatementImport([parsed], createSeed()).review).toEqual([]);
+    const review = prepareStatementImport([parsed], createSeed()).review;
+    expect(review).toHaveLength(2);
+    expect(review.every((item) => item.kind === "booking" && item.sourceRepair === true)).toBe(true);
     expect(parseAmexText([""]).issues[0].message).toContain("Scan");
   });
   const examples = new URL("../../../import-example/", import.meta.url);

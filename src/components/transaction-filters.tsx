@@ -33,10 +33,13 @@ import type {
   HolidayReceivable,
 } from "@/lib/shared-holiday";
 import type { Category } from "@/lib/types";
+import { budgetGroupLabel } from "@/lib/ledger-link";
+import type { VariableBudgetId } from "@/lib/variable-budgets";
 
 export type LedgerFilters = {
   query: string;
   month: string | null;
+  group: VariableBudgetId | null;
   category: Category | "";
   account: string;
   plan: "" | "yes" | "no";
@@ -48,6 +51,7 @@ export type LedgerFilters = {
 export const emptyLedgerFilters: LedgerFilters = {
   query: "",
   month: null,
+  group: null,
   category: "",
   account: "",
   plan: "",
@@ -98,6 +102,12 @@ export function TransactionFilters({
       id: "month",
       label: month ? monthLabel(month, true) : "Alle Monate",
       remove: () => change("month", null),
+    });
+  if (filters.group)
+    chips.push({
+      id: "group",
+      label: `Budget: ${budgetGroupLabel(filters.group)}`,
+      remove: () => change("group", null),
     });
   if (filters.category)
     chips.push({

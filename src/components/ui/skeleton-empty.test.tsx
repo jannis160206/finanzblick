@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
+import Link from "next/link";
 import { ReceiptText } from "lucide-react";
 import { afterEach, expect, it } from "vitest";
 import { EmptyState } from "./empty-state";
@@ -8,7 +9,7 @@ import { Skeleton } from "./skeleton";
 afterEach(cleanup);
 
 it("renders an empty state with title, icon and action while hiding the decorative icon", () => {
-  const { container } = render(<EmptyState icon={ReceiptText} title="Noch keine Ausgaben"><a href="/x">Importieren</a></EmptyState>);
+  const { container } = render(<EmptyState icon={ReceiptText} title="Noch keine Ausgaben"><Link href="/x">Importieren</Link></EmptyState>);
   expect(screen.getByText("Noch keine Ausgaben")).toBeTruthy();
   expect(screen.getByRole("link", { name: "Importieren" })).toBeTruthy();
   expect(container.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");

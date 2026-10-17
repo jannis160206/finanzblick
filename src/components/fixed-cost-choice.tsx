@@ -21,7 +21,7 @@ export function FixedCostChoice({
       ? "Diese Buchung zählt als Fixkosten. Es wird kein neuer Planbetrag angelegt."
       : "Ohne Markierung bleibt es eine normale Buchung.";
   return (
-    <label title={help} className={cn(
+    <label className={cn(
       "flex min-h-10 min-w-0 items-center gap-2.5 py-1 text-muted-foreground transition-colors",
       disabled || !eligible ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:text-foreground",
     )}>

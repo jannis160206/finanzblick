@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/app-shell";
 import FinancePage from "@/app/(dashboard)/[view]/page";
 import { PayrollTaxes } from "@/components/payroll-taxes";
+import { FinancialWorkspace } from "@/components/financial-data";
 import { Overview } from "@/components/overview";
 import { useFinance } from "@/components/finance-provider";
 import { createSeed } from "@/lib/seed";
@@ -34,7 +35,8 @@ function finance() {
 
 it("routes Gehalt & Steuern to its dedicated page", async () => {
   const page = await FinancePage({ params: Promise.resolve({ view: "gehalt-steuern" }) });
-  expect(page.props.children.type).toBe(PayrollTaxes);
+  expect(page.props.children.type).toBe(FinancialWorkspace);
+  expect(page.props.children.props.children.type).toBe(PayrollTaxes);
 });
 
 it("exposes the new navigation link and keeps settings last", () => {

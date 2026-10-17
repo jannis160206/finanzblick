@@ -1,6 +1,7 @@
 "use client";
 
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -43,6 +44,7 @@ import {
 import {
   TransactionFilters,
   emptyLedgerFilters,
+  type LedgerFilters,
 } from "@/components/transaction-filters";
 import {
   LedgerFooter,
@@ -60,7 +62,9 @@ import {
   classify,
   monthKey,
   sum,
+  variableBudgetGroup,
 } from "@/lib/calc";
+import { ledgerHref, parseLedgerLink } from "@/lib/ledger-link";
 import {
   personalAmount,
   reconcileSharedHoliday,
@@ -233,7 +237,28 @@ const TransactionLedger = memo(function TransactionLedger({
         .querySelector<HTMLInputElement>('[aria-label="Umsätze durchsuchen"]')
         ?.focus();
   }
-  const [filters, setFilters] = useState(emptyLedgerFilters);
+  const router = useRouter();
+  const parsedLink = parseLedgerLink(useSearchParams());
+  const [filters, setFiltersState] = useState<LedgerFilters>(() => ({
+    ...emptyLedgerFilters,
+    month: parsedLink.month ?? null,
+    group: parsedLink.group ?? null,
+  }));
+  // Monat und Budgetgruppe spiegeln die URL (Zurück-Navigation, Neuladen); alles andere bleibt lokal.
+  const urlKey = `${parsedLink.month ?? "-"}|${parsedLink.group ?? "-"}`;
+  const [seenUrlKey, setSeenUrlKey] = useState(urlKey);
+  if (seenUrlKey !== urlKey) {
+    setSeenUrlKey(urlKey);
+    setFiltersState((previous) => ({ ...previous, month: parsedLink.month ?? null, group: parsedLink.group ?? null }));
+  }
+  function setFilters(updater: SetStateAction<LedgerFilters>) {
+    const next = typeof updater === "function" ? updater(filters) : updater;
+    setFiltersState(next);
+    if (next.month !== filters.month || next.group !== filters.group) {
+      const link = { ...(next.month !== null ? { month: next.month } : {}), ...(next.group ? { group: next.group } : {}) };
+      router.replace(ledgerHref(link), { scroll: false });
+    }
+  }
   const currentMonth = monthKey(state.settings.asOf);
   const month = filters.month ?? currentMonth;
   const [sorting, setSorting] = useState<SortingState>([
@@ -248,7 +273,9 @@ const TransactionLedger = memo(function TransactionLedger({
             !result.isTransfer ||
             !!row.holidayReimbursementFor) &&
           matchesTransactionSearch(row, filters.query, result.merchant) &&
-          (!month || bookingMonth(row) === month) &&
+          (filters.group
+            ? variableBudgetGroup(row, month || monthKey(row.date), state.settings.asOf) === filters.group
+            : !month || bookingMonth(row) === month) &&
           (!filters.category || result.category === filters.category) &&
           (!filters.account || accountLabel(row) === filters.account) &&
           (!filters.plan ||
@@ -257,7 +284,7 @@ const TransactionLedger = memo(function TransactionLedger({
           (!filters.to || row.date <= filters.to)
         );
       }),
-    [ledger, classifications, filters, month],
+    [ledger, classifications, filters, month, state.settings.asOf],
   );
   const scope = JSON.stringify([filters, currentMonth]);
   const [selection, setSelection] = useState<{

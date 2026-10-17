@@ -13,6 +13,7 @@ import { ThemePicker, type ThemeChoice } from "@/components/theme-picker";
 import { InteractionSoundsSetting } from "@/components/interaction-sounds";
 import { SavingsGoals } from "@/components/savings-goals";
 import { ExcelActions } from "@/components/excel-actions";
+import { BackupAge } from "@/components/backup-age";
 import { ClearBookings } from "@/components/clear-bookings";
 import { AccountProfileSettings } from "@/components/account-profile";
 import { AccountSyncTools } from "@/components/account-tools";
@@ -117,7 +118,7 @@ export function Settings() {
         <div className="flex flex-wrap items-center justify-between gap-5 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:p-5">
           <div className="flex max-w-md items-start gap-3">
             <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
-            <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p></div>
+            <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p><BackupAge /></div>
           </div>
           <FinancialData><ExcelActions compact /></FinancialData>
         </div>

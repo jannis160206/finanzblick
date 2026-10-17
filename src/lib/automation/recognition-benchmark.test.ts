@@ -1112,7 +1112,7 @@ describe("operator benchmark privacy and immutability", () => {
         id TEXT, canonical_name TEXT, aliases_json TEXT, regex_json TEXT,
         default_category TEXT, region TEXT, source TEXT, updated_at INTEGER,
         city TEXT, license TEXT, attribution TEXT, logo_json TEXT, wikidata_id TEXT,
-        requires_category_evidence INTEGER DEFAULT 0
+        requires_category_evidence INTEGER DEFAULT 0, matchable INTEGER DEFAULT 1
       );
       CREATE TABLE automation_jobs (id TEXT);
     `);

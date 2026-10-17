@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { isRaiffeisenBank } from "@/lib/accounts";
+import { parseMoneyText } from "@/lib/money-parse";
 import {
   appStateSchema,
   categorySchema,
@@ -79,11 +80,7 @@ function numeric(cell: ExcelJS.Cell): number | null {
   const v = value(cell);
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
   if (typeof v !== "string" || !v.trim()) return null;
-  const clean = v.replace(/[\s€]/g, "");
-  const n = Number(
-    clean.includes(",") ? clean.replace(/\./g, "").replace(",", ".") : clean,
-  );
-  return Number.isFinite(n) ? n : null;
+  return parseMoneyText(v);
 }
 function isoDate(cell: ExcelJS.Cell, date1904 = false): string {
   const v = value(cell);

@@ -158,7 +158,8 @@ describe("one canonical Raiffeisen main account", () => {
     expect(saved.transactions).toEqual(state.transactions);
     expect(calculateDashboard(saved).actual).toEqual(calculateDashboard(original).actual);
     expect(saved.settings.balances).toEqual(original.settings.balances);
-    const again = prepareStatementImport([source([booking({ pocket: RAIFFEISEN_ACCOUNT })])], saved);
+    // A fresh parse always yields new row IDs; shared-holiday reconciliation keys rows by ID.
+    const again = prepareStatementImport([source([booking({ id: "reimported", pocket: RAIFFEISEN_ACCOUNT })])], saved);
     expect(again.duplicates).toBe(1);
     expect(again.automatic).toEqual([]);
   });
@@ -166,9 +167,9 @@ describe("one canonical Raiffeisen main account", () => {
   it("keeps foreign-currency statement drafts separate instead of importing them as euros", () => {
     const result = parseStatementCsv(csv("USD"));
     expect(result.rows).toEqual([]);
-    expect(result.issues[0]).toMatchObject({
-      draft: { bank: "Raiffeisen", pocket: "Raiffeisen Giro (USD)", amount: null, bankReference: "reference-123" },
-    });
+    // Foreign-currency rows are never offered as editable euro drafts; the file must be re-exported in EUR.
+    expect(result.issues[0]).toMatchObject({ action: "reupload", reason: "foreign-currency" });
+    expect(result.issues[0].draft).toBeUndefined();
   });
 
   it.each(["leasing", "payroll"] as const)("keeps %s source reconciliation stable without crossing accounts", (kind) => {

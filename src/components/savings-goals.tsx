@@ -42,9 +42,9 @@ export function SavingsGoals() {
   return (
     <SettingsSection sectionRef={sectionRef} id="sparziele" title="Sparziele" icon={Target}
       description={pauseVacation ? "Rest ins Sparkonto · Urlaub ab März 2027" : "Sparkonto → Ziele nach Termin → Urlaub"}
-      action={<Button ref={addButton} type="button" variant="outline" size="sm" className="min-h-11" aria-label="Sparziel hinzufügen" disabled={goals.length >= 50}
+      action={<Button ref={addButton} type="button" variant="outline" size="sm" className="min-h-11" disabled={goals.length >= 50}
           onClick={() => edit({ id: crypto.randomUUID(), name: "", pocket: "", target: 0, date: state.settings.asOf }, "add")}>
-          <Plus aria-hidden="true" className="size-4" />Neues Ziel
+          <Plus aria-hidden="true" className="size-4" />Sparziel hinzufügen
         </Button>}>
       {allocationBlocked && <FinancialData as="p" role="status" className="mb-4 text-xs text-muted-foreground">
         Automatische Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.

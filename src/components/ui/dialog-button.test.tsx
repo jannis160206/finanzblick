@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import Link from "next/link";
 import { Check } from "lucide-react";
 import { Button, buttonVariants } from "./button";
 import { Dialog, DialogBody, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogTrigger } from "./dialog";
@@ -31,7 +32,7 @@ describe("shared button", () => {
 
   it("preserves disabled actions and asChild links", () => {
     const click = vi.fn();
-    render(<><Button disabled onClick={click}>Disabled</Button><Button asChild><a href="/umsaetze">Bookings</a></Button></>);
+    render(<><Button disabled onClick={click}>Disabled</Button><Button asChild><Link href="/umsaetze">Bookings</Link></Button></>);
     fireEvent.click(screen.getByRole("button", { name: "Disabled" }));
     expect(click).not.toHaveBeenCalled();
     expect(screen.getByRole("link", { name: "Bookings" }).getAttribute("href")).toBe("/umsaetze");
@@ -66,7 +67,7 @@ describe("shared dialog", () => {
     expect(header.className).not.toContain("border-b");
     expect(header.className).toContain("p-6");
     expect(screen.getByRole("heading", { name: "Details" }).className).toContain("text-xl");
-    expect(dialog.querySelector('[data-slot="dialog-description"]')!.className).toContain("truncate");
+    expect(dialog.querySelector('[data-slot="dialog-description"]')!.className).not.toContain("truncate");
     expect(within(dialog).getByRole("button", { name: "Schließen" }).className).toContain("rounded-full");
     const footer = dialog.querySelector<HTMLElement>('[data-slot="dialog-footer"]')!;
     expect(footer.className).not.toContain("border-t");

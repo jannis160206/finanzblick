@@ -86,7 +86,8 @@ describe("Raiffeisen CSV", () => {
     });
     expect(result.rows[2]).toMatchObject({
       amount: -0.47,
-      category: "Mittagessen",
+      // 13.09.2026 is a Sunday: BIPA is lunch on working days only.
+      category: "Drogerie",
       includeInPlan: true,
     });
     expect(result.rows[3]).toMatchObject({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Download, LoaderCircle, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAccountWorkspace } from "@/components/account-context";
@@ -29,6 +29,7 @@ export function AccountLogout({ compact = false }: { compact?: boolean }) {
   const [discard, setDiscard] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const syncHintId = useId();
   if (!workspace) return null;
   const downloaded = review !== null && !review.unavailable && downloads.memory &&
     (!review.cacheNeedsDownload || downloads.cache) && (review.conflict === null || downloads.conflict);
@@ -123,10 +124,11 @@ export function AccountLogout({ compact = false }: { compact?: boolean }) {
     <Button variant="ghost" size={compact ? "icon" : "sm"} disabled={busy || !saved} onClick={preview}
       className={cn("text-muted-foreground hover:bg-destructive/10 hover:text-destructive", compact ? "size-11" : "w-full justify-start")}
       aria-busy={busy}
-      aria-label="Abmelden" title={!saved ? "Bitte zuerst Änderungen synchronisieren." : "Abmelden"}>
+      aria-label="Abmelden" aria-describedby={!saved ? syncHintId : undefined}>
       {busy ? <LoaderCircle aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" /> : <LogOut aria-hidden="true" className="size-4" />}
       {!compact && (busy ? "Meldet ab …" : "Abmelden")}
     </Button>
+    {!saved && <p id={syncHintId} className={cn("text-xs leading-relaxed text-muted-foreground", compact && "col-span-2 px-2 pb-1")}>Bitte zuerst Änderungen synchronisieren.</p>}
     {error && !review && <p role="alert" className={cn("text-xs leading-relaxed text-destructive", compact && "col-span-2 px-2 pb-1")}>{error}</p>}
     <Dialog open={review !== null && review.id === workspace.user.id} onOpenChange={(open) => { if (!open && !busy) { setReview(null); setError(""); } }}>
       <DialogContent variant="confirmation" showCloseButton={!busy} onEscapeKeyDown={(event) => { if (busy) event.preventDefault(); }}

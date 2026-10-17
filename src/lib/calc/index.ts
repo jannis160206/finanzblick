@@ -120,7 +120,22 @@ export function savingsPocket(account: string | null): Pocket | null {
   if (/^motorrad(?:konto|[- ]konto)?$/i.test(account)) return "Motorrad";
   return null;
 }
-export function classify(
+type ClassifyInput = Parameters<typeof classifyUncached>[0];
+type Classification = ReturnType<typeof classifyUncached>;
+const classificationCache = new WeakMap<object, { fields: Map<string, unknown>; result: Classification }>();
+const sameFields = (fields: Map<string, unknown>, entries: [string, unknown][]) =>
+  fields.size === entries.length && entries.every(([key, value]) => fields.has(key) && Object.is(fields.get(key), value));
+// classify is pure in its input. A cached result is reused only while every top-level
+// field of the very same booking object is unchanged, so in-place edits cannot go stale.
+export function classify(transaction: ClassifyInput): Classification {
+  const entries = Object.entries(transaction);
+  const hit = classificationCache.get(transaction);
+  if (hit && sameFields(hit.fields, entries)) return { ...hit.result };
+  const result = classifyUncached(transaction);
+  classificationCache.set(transaction, { fields: new Map(entries), result });
+  return { ...result };
+}
+function classifyUncached(
   transaction: Pick<
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
@@ -819,6 +834,17 @@ export function calculateMonthTotals(
     surplus: round(income - fixed - variablePlan - plannedOneOffs),
   };
 }
+const outsideSpending = (result: Classification) =>
+  ["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer;
+const budgetGroupFor = (transaction: AccountedTransaction, result: Classification) =>
+  result.includeInPlan ? variableBudgetId(result.category, transaction.fixedCost) : undefined;
+// The single rule that decides which bookings feed a variable budget line. The dashboard
+// totals and the ledger drilldown both use it, so a card and its list can never diverge.
+export function variableBudgetGroup(transaction: AccountedTransaction, month: string, asOf: string): VariableBudgetId | undefined {
+  if (monthKey(transaction.date) !== month || transaction.date > asOf) return undefined;
+  const result = classify(transaction);
+  return outsideSpending(result) ? undefined : budgetGroupFor(transaction, result);
+}
 export function actualBookings(state: AppState): AccountedTransaction[] {
   const account = (rows: Transaction[]) => reconcileSharedHoliday(accountHolidayRanges(
     reconcileLeasingSources(reconcilePayrollSources(rows.map(recoverMerchant)), (row) => classify(row).category),
@@ -996,9 +1022,9 @@ export function calculateDashboard(state: AppState) {
   for (const transaction of bookings) {
     if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf) continue;
     const result = classify(transaction);
-    if (["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category) || result.isTransfer) continue;
+    if (outsideSpending(result)) continue;
     categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - personalAmount(transaction));
-    const budgetId = result.includeInPlan ? variableBudgetId(result.category, transaction.fixedCost) : undefined;
+    const budgetId = budgetGroupFor(transaction, result);
     if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - personalAmount(transaction));
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);

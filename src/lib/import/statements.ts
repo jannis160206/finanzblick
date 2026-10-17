@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import { parseMoneyText as parseStatementAmount } from "@/lib/money-parse";
 import { classifyStatementRows, round, savingsPocket } from "@/lib/calc";
 import { isRaiffeisenBank, normalizeAccount, RAIFFEISEN_ACCOUNT } from "@/lib/accounts";
 import { statementTime } from "@/lib/holidays-at-kaernten";
@@ -104,39 +105,7 @@ const amountHeaders = [
   "geldausgezahlt-eingezahlt",
 ];
 
-export function parseStatementAmount(raw: string | number): number | null {
-  if (typeof raw === "number") return Number.isFinite(raw) ? round(raw) : null;
-  let text = raw
-    .trim()
-    .replace(/\u2212/g, "-")
-    .replace(/(?:EUR|€)/gi, "")
-    .replace(/[\s\u00a0']/g, "");
-  if (!text || !/^[+\-]?(?:\d[\d.,]*\d|\d)[-]?$|^\(\d[\d.,]*\)$/.test(text))
-    return null;
-  let sign = 1;
-  if (text.startsWith("(") && text.endsWith(")")) {
-    sign = -1;
-    text = text.slice(1, -1);
-  }
-  if (text.endsWith("-")) {
-    sign = -1;
-    text = text.slice(0, -1);
-  }
-  if (text.startsWith("-")) {
-    sign *= -1;
-    text = text.slice(1);
-  }
-  text = text.replace(/^\+/, "");
-  if (text.includes(",")) {
-    if (!/^(?:\d+|\d{1,3}(?:\.\d{3})+),\d{1,2}$/.test(text)) return null;
-    text = text.replace(/\./g, "").replace(",", ".");
-  } else if (/^\d{1,3}(?:\.\d{3})+$/.test(text)) text = text.replace(/\./g, "");
-  else if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return null;
-  const value = Number(text) * sign;
-  return Number.isFinite(value) && Math.abs(value) <= 1_000_000_000
-    ? round(value)
-    : null;
-}
+export { parseStatementAmount };
 
 export function parseStatementDate(raw: string): string | null {
   const text = raw.trim();

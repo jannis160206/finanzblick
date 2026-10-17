@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     "test-results/**",
     "playwright-report/**",
     "coverage/**",
+    // Local databases, recovery scripts and captured bundles are not project sources.
+    ".local-data/**",
   ]),
 ]);
 

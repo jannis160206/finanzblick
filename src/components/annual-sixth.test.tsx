@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AnnualSixthCard } from "@/components/annual-sixth";
@@ -17,7 +17,7 @@ afterEach(cleanup);
 
 function Fixture({ initial = createSeed() }: { initial?: AppState }) {
   const [state, setState] = useState(initial);
-  latest = state;
+  useEffect(() => { latest = state; }, [state]);
   vi.mocked(useFinance).mockReturnValue({
     state, get dashboard(): never { throw new Error("Annual sixth needs payslip inputs, not calculated net cashflow"); },
     update: (updater) => setState((current) => {

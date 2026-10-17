@@ -12,8 +12,8 @@ const row = (id: string, description: string, amount = -20, date = "2026-09-13")
 });
 
 describe("unconditional lunch names", () => {
-  it.each(["bIpA", "HOTSPOT", "mEnSa"])("always treats %s as lunch, including Sundays and holidays", (name) => {
-    for (const date of ["2026-09-13", "2026-10-10", "2026-10-26"]) {
+  it.each(["bIpA", "HOTSPOT", "mEnSa"])("treats %s as lunch on working days at any clock time", (name) => {
+    for (const date of ["2026-09-14", "2026-10-13", "2026-10-27"]) {
       for (const time of [undefined, "08:00:00", "12:15:00", "22:00:00"]) {
         const booking = { ...row(name, name, -200, date), time, category: "Transfer intern" as const, categoryOverride: true };
         expect(classify(booking)).toMatchObject({ category: "Mittagessen", isTransfer: false });
@@ -21,6 +21,10 @@ describe("unconditional lunch names", () => {
         expect(queueLedgerReview(state).reviewQueue).toEqual([]);
       }
     }
+  });
+  it.each([["bIpA", "Drogerie"], ["HOTSPOT", "Restaurants"], ["mEnSa", "Restaurants"]])("never treats %s as lunch on weekends or Kärnten holidays", (name, category) => {
+    for (const date of ["2026-09-13", "2026-10-10", "2026-10-26"])
+      expect(classify({ ...row(name, name, -200, date), time: "12:15:00" }).category).toBe(category);
   });
   it("keeps other merchants subject to time and the Kärnten calendar", () => {
     const booking = { ...row("billa", "BILLA", -8, "2026-09-14"), time: "12:00:00" };
