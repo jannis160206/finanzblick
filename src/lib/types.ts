@@ -130,6 +130,8 @@ const transactionFieldsSchema = z.object({
   afterBaseline: z.boolean().optional(),
   categoryOverride: z.boolean().optional(),
   manualCategory: z.boolean().optional(),
+  // Settled by the local NPU model instead of a person; kept for transparency.
+  aiAssigned: z.boolean().optional(),
   // Explicit acknowledgement of this booking, never inherited from a merchant rule.
   reviewed: z.boolean().optional(),
   // Only this booking: omission keeps legacy category-based accounting.

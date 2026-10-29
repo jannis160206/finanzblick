@@ -266,6 +266,10 @@ Die Saison folgt dem lokalen Kalender (Fasching, Ostern, Sommer, Halloween, Weih
 
 Änderungen an Akzentfarbe und Bewegung erscheinen sofort als Vorschau. **Einstellungen speichern** behält sie lokal; **Verwerfen** oder das Verlassen der Seite stellt die gespeicherte Auswahl wieder her. Sparziele, Auszugsuhrzeiten und Erscheinungsbild bleiben auch in Excel-Sicherungen erhalten.
 
+## Lokale KI
+
+Ein lokales Sprachmodell (Qwen3-8B auf der Intel-NPU über OpenVINO Model Server) ordnet offene Prüfungen selbst zu und holt Händlerlogos in den privaten `Logo/`-Ordner. Nur Fälle, bei denen es nicht sicher ist, bleiben zur manuellen Prüfung. `npm run ai:server` startet das Modell, `npm run mcp` stellt die Finanzwerkzeuge als MCP-Server bereit und `npm run ai:agent` bietet einen lokalen Chat. Details: [docs/local-ai.md](docs/local-ai.md).
+
 ## Prüfungen
 
 `npm test`, `npm run typecheck`, `npm run lint` und `npm run test:e2e` prüfen Parser, Berechnung, Excel-Roundtrips und Browserabläufe. Anonymisierte Layout-Fixtures liegen unter `src/lib/import/fixtures`. Zusätzliche Tests lesen die privaten Originale aus `import-example`, falls dieser Ordner vorhanden ist.

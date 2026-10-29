@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { FinanceProvider } from "@/components/finance-provider";
 import { AppShell } from "@/components/app-shell";
+import { AiReviewAssistant } from "@/components/ai-review-assistant";
 import { SeasonalThemeProvider } from "@/components/seasonal-theme-provider";
 import { SecurityModeProvider } from "@/components/security-mode-provider";
 import { InteractionSoundsProvider } from "@/components/interaction-sounds";
@@ -26,6 +27,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
             <AppShell initialWarning={initial.warning}>{children}</AppShell>
           </InteractionSoundsProvider>
         </SeasonalThemeProvider>
+        <AiReviewAssistant />
       </FinanceProvider>
     </SecurityModeProvider>
   </>;
