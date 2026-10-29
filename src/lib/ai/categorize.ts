@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { canonicalCategory, type Category } from "@/lib/categories";
+import { canonicalCategory, knownMerchantCategory, type Category } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
 import { chat, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
@@ -104,6 +104,54 @@ export function cleanMerchantName(value: string | null | undefined) {
 
 export const isPaymentProvider = (merchant: string) => PAYMENT_PROVIDER.test(merchant.trim());
 
+// The model reports ~95 % for nearly everything, so these technical categories need a matching bank rule.
+const RULE_ONLY: readonly Category[] = [
+  "Bankgebühren", "Rücklastschriftgebühren", "Guthabenkarten", "Leasing", "Miete", "Versicherungen",
+  "Gehalt", "Rufbereitschaft", "Einkommen", "Rückerstattungen", "Transfer", "Transfer intern", "Sonstiges",
+];
+// A rule naming the broad purpose still allows the model to pick the matching sub-category.
+const RULE_REFINEMENTS: Partial<Record<Category, readonly Category[]>> = {
+  "Mobilität": ["Tanken", "Öffentliche Verkehrsmittel"],
+};
+const comparable = (value: string) => value.toLocaleLowerCase("de-AT").replace(/[^\p{L}\p{N}]/gu, "");
+const CASH_WITHDRAWAL = /\batm\d*\b|\bbankomat\b|geldautomat|sb-behebung|bargeld|cash\s*withdrawal/i;
+const PAYMENT_PROVIDER_IN_TEXT = /\b(?:paypal|klarna|sumup|stripe|adyen)\b/i;
+
+// The merchant must be what the bank text starts with, not a city or payment reference further on.
+export function merchantMatchesText(merchant: string, text: string) {
+  const head = text.split("|").map((part) => part.trim()
+    .replace(/^(?:paypal|sumup|sq|zettle|klarna)\s*\*\s*/i, "").replace(/^www\./i, "").split(/\s+/)[0] ?? "");
+  const word = comparable(merchant.split(/\s+/)[0] ?? "");
+  return word.length >= 2 && head.some((token) => {
+    const first = comparable(token);
+    return first.length >= 2 && (first.includes(word) || word.includes(first));
+  });
+}
+
+export function plausibilityIssue(booking: AiBookingInput, category: Category, merchant: string | undefined) {
+  if (CASH_WITHDRAWAL.test(booking.text)) return "Bargeldbehebung";
+  if (!merchant && PAYMENT_PROVIDER_IN_TEXT.test(booking.text) && !category.startsWith("Transfer"))
+    return "Zahlungsdienst verdeckt den Händler";
+  const rule = knownMerchantCategory(booking.text, booking.amount);
+  if (rule && rule !== "Prüfen" && rule !== category && !RULE_REFINEMENTS[rule]?.includes(category))
+    return `widerspricht Händlerregel (${rule})`;
+  if (RULE_ONLY.includes(category) && rule !== category) return "Kategorie nur mit Bankregel";
+  if (merchant && !merchantMatchesText(merchant, booking.text)) return "Händler nicht eindeutig";
+  if (merchant && containsLocation(merchant, booking.text)) return "Händlername enthält den Ort";
+  return undefined;
+}
+
+// Card texts end with the terminal's town ("VILLACH ATRIO SHOPPING VILLACH"); a
+// merchant name starting with that word is a place, not a business name.
+function containsLocation(merchant: string, text: string) {
+  const first = comparable(merchant.split(/\s+/)[0] ?? "");
+  return first.length >= 3 && text.split("|").some((part) => {
+    const alpha = part.trim().replace(/^(?:paypal|sumup|sq|zettle|klarna)\s*\*\s*/i, "")
+      .split(/\s+/).filter((token) => !/\d/.test(token));
+    return alpha.length >= 2 && comparable(alpha[alpha.length - 1]) === first;
+  });
+}
+
 export function interpretCategorization(
   text: string, bookings: AiBookingInput[], minConfidence = readAiConfig().minConfidence,
 ): AiCategorization[] {
@@ -119,13 +167,12 @@ export function interpretCategorization(
     // A payment provider hides the real shop, so the category cannot be known from the bank text.
     if (merchant && isPaymentProvider(merchant) && !category.startsWith("Transfer"))
       return { ...base, merchant: undefined, category, accepted: false, reason: "Zahlungsdienst verdeckt den Händler" };
-    // "Sonstiges" without a recognised shop is a shrug, not a decision.
-    if (category === "Sonstiges" && !merchant)
-      return { ...base, category, accepted: false, reason: "kein Händler erkannt" };
     const income = isIncomeCategory(canonicalCategory(category));
     // Signs contradicting the category are model errors, never a confident answer.
     if ((income || category === "Rückerstattungen") !== booking.amount > 0 && !category.startsWith("Transfer"))
       return { ...base, category, accepted: false, reason: "Vorzeichen passt nicht" };
+    const issue = plausibilityIssue(booking, category, merchant);
+    if (issue) return { ...base, category, accepted: false, reason: issue };
     const threshold = SENSITIVE.includes(category) ? Math.max(minConfidence, 97) : minConfidence;
     return base.confidence >= threshold
       ? { ...base, category, accepted: true }

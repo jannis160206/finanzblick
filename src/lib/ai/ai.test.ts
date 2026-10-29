@@ -3,7 +3,9 @@ import { createSeed } from "@/lib/seed";
 import { queueLedgerReview } from "@/lib/import/review";
 import { appStateSchema, type AppState, type ReviewItem, type Transaction } from "@/lib/types";
 import { applyAiReviewDecisions } from "./apply-review-decisions";
-import { cleanMerchantName, extractJsonArray, interpretCategorization, resolveCategoryName } from "./categorize";
+import {
+  cleanMerchantName, extractJsonArray, interpretCategorization, merchantMatchesText, plausibilityIssue, resolveCategoryName,
+} from "./categorize";
 import { isLoopbackUrl } from "./config";
 import { logoFileName } from "./logo-finder";
 import { aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
@@ -61,6 +63,29 @@ describe("interpretCategorization", () => {
     expect(extractJsonArray("[broken")).toBeUndefined();
     expect(resolveCategoryName(" tanken ")).toBe("Tanken");
     expect(resolveCategoryName("Nichts")).toBeUndefined();
+  });
+});
+
+describe("plausibility checks", () => {
+  const card = (text: string, amount = -20) => ({ ref: "b1", text, amount, date: "2026-10-01", bank: "Raiffeisen" });
+
+  it("rejects answers that contradict bank rules or the booking text", () => {
+    expect(plausibilityIssue(card("DM DROGERIE MARKT 2361"), "Lebensmittel", "dm")).toBeTruthy();
+    expect(plausibilityIssue(card("H&M 123 VILLACH 9500"), "Shopping", "VILLACH")).toBeTruthy();
+    expect(plausibilityIssue(card("ATM S6EE1142 VILLACH 9500"), "Tanken", "ATM")).toBeTruthy();
+    expect(plausibilityIssue(card("PayPal Europe S.a.r.l. et Cie"), "Sport & Fitness", undefined)).toBeTruthy();
+    expect(plausibilityIssue(card("WIN2DAY WIEN 1030"), "Rücklastschriftgebühren", "WIN2DAY")).toBeTruthy();
+    expect(plausibilityIssue(card("VILLACH ATRIO SHOPPING VILLACH"), "Lebensmittel", "VILLACH")).toBeTruthy();
+    expect(plausibilityIssue(card("FALKENSTEINER SCHLOSSHOTEL VELDEN"), "Urlaub", "Falkensteiner Schlosshotel Velden")).toBeUndefined();
+  });
+
+  it("accepts consistent answers and rule refinements", () => {
+    expect(plausibilityIssue(card("SHELL | SHELL FURNITZ 8387 KAER FURNITZ"), "Tanken", "SHELL")).toBeUndefined();
+    expect(plausibilityIssue(card("OMV 2595 VILLACH 9500"), "Tanken", "OMV")).toBeUndefined();
+    expect(plausibilityIssue(card("OEBB TICKET 1020"), "Öffentliche Verkehrsmittel", "OEBB")).toBeUndefined();
+    expect(plausibilityIssue(card("PAYPAL *SWISS | SWISS INTERNATIONAL"), "Urlaub", "SWISS")).toBeUndefined();
+    expect(merchantMatchesText("Booking.com", "www.booking.com Amsterdam")).toBe(true);
+    expect(merchantMatchesText("VILLACH", "H&M 123 VILLACH 9500")).toBe(false);
   });
 });
 
