@@ -15,6 +15,7 @@ import {
   LayoutDashboard,
   LockKeyhole,
   Menu,
+  MessageSquareText,
   Moon,
   Settings2,
   Shield,
@@ -51,6 +52,7 @@ const navigation = [
   { href: "/pockets", label: "Pockets", icon: Wallet },
   { href: "/plan", label: "Budgetdetails", icon: ChartNoAxesCombined },
   { href: "/gehalt-steuern", label: "Gehalt & Steuern", icon: Calculator },
+  { href: "/assistent", label: "Finanz-Assistent", icon: MessageSquareText },
   { href: "/einstellungen", label: "Einstellungen", icon: Settings2 },
 ];
 export function AppShell({

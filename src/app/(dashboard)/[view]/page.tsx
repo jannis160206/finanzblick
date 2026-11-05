@@ -7,6 +7,7 @@ import { Plan } from "@/components/plan";
 import { Settings } from "@/components/settings";
 import { PayrollTaxes } from "@/components/payroll-taxes";
 import { FinancialWorkspace } from "@/components/financial-data";
+import { FinanceAssistant } from "@/components/finance-assistant";
 
 const views = {
   umsaetze: Transactions,
@@ -14,6 +15,7 @@ const views = {
   pockets: Pockets,
   plan: Plan,
   "gehalt-steuern": PayrollTaxes,
+  assistent: FinanceAssistant,
   einstellungen: Settings,
 };
 export default async function FinancePage({

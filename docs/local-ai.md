@@ -94,6 +94,16 @@ Die Übersicht zeigt den Block „KI-Einblicke“ (`src/lib/insights.ts`), der o
 - **Monatszusammenfassung:** `/api/ai/summary` lässt das Modell einen kurzen Text aus festen Zahlen schreiben. Der Text wird nur verwendet, wenn jede Zahl darin aus den übergebenen Fakten stammt. Sonst erscheint ein regelbasierter Text.
 - **Lernkurve („Automatisch zugeordnet“):** Pro Import (`appState.aiLearning`, max. 200 Einträge) der Anteil der Zeilen, die ohne manuelle Prüfung zugeordnet wurden: direkt importiert, beim Import automatisch zugeordnet oder später durch die KI. Dazu die Händler, die am häufigsten offen bleiben.
 
+## Finanz-Assistent
+
+Eigene Seite `/assistent` im Seitenmenü (`src/components/finance-assistant.tsx`).
+
+- **Nur Extraktion:** `/api/ai/assistant` (`src/lib/ai/assistant.ts`) lässt das Modell aus dem Freitext nur Absicht und Angaben herauslesen (Ziel, Betrag, Datum, Konto, Startkapital, Raten). Jede Angabe muss im Text vorkommen (`groundModelExtraction`), sonst wird sie verworfen. Ohne KI oder bei Fehlern übernimmt der Regel-Parser (`src/lib/assistant/intent.ts`). Fehlt eine Angabe, fragt der Assistent nach.
+- **Feste Rechnung:** `src/lib/assistant/plan.ts` rechnet mit dem Monatsplan: Monatsrate bzw. erreichbares Datum für Sparziele, Konflikte mit bestehenden Zielen, Monate ohne volle Rate.
+- **„Kann ich mir das leisten?“:** Ampel aus dem frei verfügbaren Betrag über dem Sparsockel. 🟢 reicht, 🟡 nur mit ausgesetzter Sparrate, 🔴 Fehlbetrag mit Alternativen (Raten, späterer Monat, Rücklage vom Sparkonto).
+- **Nichts automatisch:** Gespeichert wird erst bei „Anlegen“. „Ändern“ öffnet ein Formular, „Was-wäre-wenn“-Fragen werden nur berechnet.
+- **Verlauf:** `appState.assistantChat` (max. 100 Nachrichten) in der lokalen Datenbank, nicht im Excel-Backup.
+
 ## MCP-Server
 
 Werkzeuge: `ai_status`, `list_categories`, `finance_summary`, `finance_insights` (Abos, Preisänderungen, doppelte Abbuchungen, Prognose), `list_open_reviews`, `search_transactions`, `categorize_open_reviews` (`apply=false` liefert nur Vorschläge), `assign_category`, `find_merchant_logo`.

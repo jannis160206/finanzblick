@@ -367,6 +367,31 @@ export const annualSixthSchema = z.object({
   path: ["reportedSixth"],
 });
 export type AnnualSixth = z.infer<typeof annualSixthSchema>;
+// Finance assistant: the model only extracts these fields; every amount shown is calculated in code.
+export const assistantDraftSchema = z.object({
+  action: z.enum(["savings_goal", "expense", "affordability"]),
+  name: z.string().trim().min(1).max(80).optional(),
+  amount: moneySchema.positive().max(10_000_000).optional(),
+  date: dateSchema.optional(),
+  monthly: moneySchema.positive().max(1_000_000).optional(),
+  startCapital: moneySchema.nonnegative().max(10_000_000).optional(),
+  fromAccount: z.string().trim().min(1).max(60).optional(),
+  installments: z.number().int().min(1).max(120).optional(),
+  shared: z.boolean().optional(),
+  whatIf: z.boolean().optional(),
+}).strict();
+export type AssistantDraft = z.infer<typeof assistantDraftSchema>;
+export const assistantMessageSchema = z.object({
+  id: z.string().min(1).max(100),
+  role: z.enum(["user", "assistant"]),
+  text: z.string().max(2000),
+  at: z.number().nonnegative(),
+  draft: assistantDraftSchema.optional(),
+  status: z.enum(["question", "preview", "created", "dismissed"]).optional(),
+  source: z.enum(["KI", "Regel"]).optional(),
+}).strict();
+export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
+export const MAX_ASSISTANT_MESSAGES = 100;
 export const appStateSchema = z.object({
   version: z.literal(1),
   payslips: z.array(payslipSchema).max(240).refine(
@@ -455,6 +480,8 @@ export const appStateSchema = z.object({
     ai: z.number().int().nonnegative(),
     later: z.number().int().nonnegative().optional(),
   })).max(200).optional(),
+  // Finance assistant chat, stored only in the local account database.
+  assistantChat: z.array(assistantMessageSchema).max(MAX_ASSISTANT_MESSAGES).optional(),
   importStatus: z
     .object({ imported: z.number().nonnegative(), issues: z.array(z.string()) })
     .optional(),
