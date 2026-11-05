@@ -12,6 +12,8 @@ import { categorizeBookings, type AiCategorization } from "./categorize";
 import { decideReviewWithEvidence } from "./evidence";
 import { findMerchantLogo } from "./logo-finder";
 import { aiCategories, aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
+import { recordAiSuggestions, type AiSuggestionEntry } from "./suggestions";
+import { financeInsights } from "@/lib/insights";
 
 export type FinanceAccess = { database: AccountDatabase; userId: string };
 
@@ -45,26 +47,36 @@ export async function categorizeOpenReviews(
     const batch = aiReviewCandidates(state, attempted, Math.min(8, options.limit - attempted.size));
     if (!batch.length) break;
     for (const candidate of batch) attempted.add(candidate.reviewId);
-    const answers = await categorizeBookings(batch.map((candidate) => candidate.input), aiCategoryExamples(state), { signal: options.signal });
+    // Rules, own history and refunds decide without asking the model.
+    const direct = new Map(batch.map((candidate) =>
+      [candidate.reviewId, decideReviewWithEvidence(state, candidate.reviewId, candidate.input, undefined)]));
+    const ask = batch.filter((candidate) => !direct.get(candidate.reviewId)?.accepted);
+    const answers = ask.length
+      ? await categorizeBookings(ask.map((candidate) => candidate.input), aiCategoryExamples(state), { signal: options.signal })
+      : [];
     const decisions: AiReviewDecision[] = [];
+    const suggestions: AiSuggestionEntry[] = [];
     for (const candidate of batch) {
       const answer = answers.find((item) => item.ref === candidate.input.ref);
-      const decision = decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer);
+      const known = direct.get(candidate.reviewId)!;
+      const decision = known.accepted ? known : decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer);
       results.push({
         ...(answer ?? { ref: candidate.input.ref, category: "Prüfen", confidence: 0 }),
         ...(decision.accepted
-          ? { accepted: true, category: decision.category, merchant: decision.merchantAlias, reason: `bestätigt durch ${decision.source}` }
-          : { accepted: false, reason: decision.reason }),
+          ? { accepted: true, category: decision.category, merchant: decision.merchantAlias,
+            reason: `bestätigt durch ${decision.source}${decision.detail ? ` (${decision.detail})` : ""}` }
+          : { accepted: false, reason: decision.reason, ...(decision.suggestion ? { suggestion: decision.suggestion } : {}) }),
         reviewId: candidate.reviewId, text: candidate.input.text,
       });
       if (decision.accepted)
         decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
+      else suggestions.push({ reviewId: candidate.reviewId, reason: decision.reason, suggestion: decision.suggestion });
     }
-    if (options.apply && decisions.length) {
+    if (options.apply && (decisions.length || suggestions.length)) {
       write(access, (current) => {
         const outcome = applyAiReviewDecisions(current, decisions);
         applied += outcome.applied.length;
-        return outcome.state;
+        return recordAiSuggestions(outcome.state, suggestions);
       });
     }
   }
@@ -121,6 +133,12 @@ export const financeTools: FinanceTool[] = [
         spending: Object.fromEntries([...totals].sort((a, b) => a[1] - b[1]).map(([key, value]) => [key, money(value)])),
       });
     },
+  },
+  {
+    name: "finance_insights",
+    description: "Erkennt Abos und Preiserhöhungen, meldet mögliche doppelte Abbuchungen, fasst den Monat zusammen und prognostiziert die Monatsausgaben.",
+    input: {}, readOnly: true,
+    run: async (_args, access) => ok(financeInsights(read(access))),
   },
   {
     name: "list_open_reviews",

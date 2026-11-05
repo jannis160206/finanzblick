@@ -19,7 +19,7 @@ afterEach(() => { cleanup(); vi.clearAllTimers(); vi.useRealTimers(); vi.restore
 type Finance = ReturnType<typeof useFinance>;
 type Store = { state: AppState; result: Finance["statementImport"] };
 const row = (id: string): Transaction => ({
-  id, description: `Unbekannter Einkauf ${id}`, date: "2026-09-05", amount: -100,
+  id, description: `${id} Unbekannter Einkauf`, date: "2026-09-05", amount: -100,
   bank: "Revolut", pocket: null, category: "Prüfen", includeInPlan: false,
 });
 function fixture() {
@@ -65,7 +65,7 @@ function renderReview(initial = fixture()) {
     change: (updater: (state: AppState) => AppState) => act(() => setStore((store) => ({ ...store, state: updater(store.state) }))) };
 }
 function chooseFirst() {
-  const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+  const section = screen.getByLabelText("Buchung prüfen: first Unbekannter Einkauf");
   fireEvent.change(within(section).getByLabelText("Kategorie"), { target: { value: "Freizeit" } });
   return within(section).getByRole<HTMLButtonElement>("button", { name: "Zuordnung übernehmen" });
 }
@@ -88,8 +88,8 @@ describe("responsive review actions", () => {
     expect(view.read().transactions[0]).toMatchObject({ ...row("first"), category: "Freizeit", categoryOverride: true, includeInPlan: true });
     expect(view.read().transactions[2]).toEqual(concurrent);
     expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.queryByLabelText("Buchung prüfen: Unbekannter Einkauf first")).toBeNull();
-    expect(screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf second")).toBeTruthy();
+    expect(screen.queryByLabelText("Buchung prüfen: first Unbekannter Einkauf")).toBeNull();
+    expect(screen.getByLabelText("Buchung prüfen: second Unbekannter Einkauf")).toBeTruthy();
     expect(screen.getByRole<HTMLButtonElement>("button", { name: "Später prüfen" }).disabled).toBe(false);
   });
 
@@ -101,7 +101,7 @@ describe("responsive review actions", () => {
     act(() => { vi.advanceTimersByTime(1); });
     expect(JSON.stringify(view.read())).toBe(before);
     expect(screen.queryByRole("status")).toBeNull();
-    const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const section = screen.getByLabelText("Buchung prüfen: first Unbekannter Einkauf");
     expect(within(section).getByLabelText<HTMLSelectElement>("Kategorie").value).toBe("Freizeit");
     const button = within(section).getByRole<HTMLButtonElement>("button", { name: "Zuordnung übernehmen" });
     expect(button.disabled).toBe(false);
@@ -115,7 +115,7 @@ describe("responsive review actions", () => {
 
   it("defaults a reviewed phone payment to an ordinary booking without changing the fixed plan", () => {
     const view = renderReview();
-    const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const section = screen.getByLabelText("Buchung prüfen: first Unbekannter Einkauf");
     const checkbox = within(section).getByRole<HTMLInputElement>("checkbox", { name: "Als Fixkosten markieren" });
     const plan = view.read().financeRows;
     expect(checkbox.checked).toBe(false);
@@ -132,7 +132,7 @@ describe("responsive review actions", () => {
 
   it("retains a checked fixed-cost choice after failure and saves it once without creating a plan", () => {
     const view = renderReview();
-    const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const section = screen.getByLabelText("Buchung prüfen: first Unbekannter Einkauf");
     const checkbox = within(section).getByRole<HTMLInputElement>("checkbox", { name: "Als Fixkosten markieren" });
     const plan = view.read().financeRows;
     fireEvent.change(within(section).getByLabelText("Kategorie"), { target: { value: "Telefon & Internet" } });
@@ -159,8 +159,8 @@ describe("responsive review actions", () => {
     initial.transactions[1] = { ...row("second"), amount: 100 };
     initial.reviewQueue = initial.transactions.map((draft) => ({ kind: "booking", id: draft.id, draft, message: "Kategorie wählen" }));
     renderReview(initial);
-    const expense = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
-    const income = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf second");
+    const expense = screen.getByLabelText("Buchung prüfen: first Unbekannter Einkauf");
+    const income = screen.getByLabelText("Buchung prüfen: second Unbekannter Einkauf");
     expect(within(income).getByRole<HTMLInputElement>("checkbox").disabled).toBe(true);
     fireEvent.change(within(expense).getByLabelText("Kategorie"), { target: { value: "Transfer intern" } });
     expect(within(expense).getByRole<HTMLInputElement>("checkbox").disabled).toBe(true);

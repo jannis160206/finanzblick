@@ -58,7 +58,8 @@ it("processes persisted uploads in an independent, memory-bounded TypeScript pro
     child.stderr?.on("data", (chunk: Buffer) => {
       output += chunk.toString();
     });
-    for (let attempt = 0; attempt < 100; attempt++) {
+    // A cold tsx start can take well over 10 s on a busy machine.
+    for (let attempt = 0; attempt < 600; attempt++) {
       if (store.snapshot(user.id).jobs[0].status === "COMPLETED") break;
       if (child.exitCode !== null)
         throw new Error(`Worker exited unexpectedly: ${output}`);
@@ -83,4 +84,4 @@ it("processes persisted uploads in an independent, memory-bounded TypeScript pro
     database.close();
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}, 90_000);

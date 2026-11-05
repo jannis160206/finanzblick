@@ -437,6 +437,14 @@ export const appStateSchema = z.object({
   amexScreenshotValidation: z.object({ version: z.literal(1), date: dateSchema }).optional(),
   trBalances: z.array(trBalanceSchema).max(10_000).optional(),
   reviewQueue: z.array(reviewItemSchema).max(100_000).optional(),
+  // Unconfirmed local-AI proposals, keyed by review id; only pre-fill the review dialog.
+  aiSuggestions: z.array(z.object({
+    id: z.string().min(1).max(500),
+    category: categorySchema,
+    merchantAlias: z.string().trim().min(1).max(100).optional(),
+    reason: z.string().max(200),
+    source: z.enum(["KI", "Regel", "Historie"]),
+  })).max(100_000).optional(),
   importStatus: z
     .object({ imported: z.number().nonnegative(), issues: z.array(z.string()) })
     .optional(),

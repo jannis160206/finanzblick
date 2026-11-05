@@ -39,7 +39,7 @@ afterEach(() => {
 
 function booking(id: string): Transaction {
   return {
-    id, description: `Unbekannter Einkauf ${id}`, date: "2026-09-05", amount: -10,
+    id, description: `${id} Unbekannter Einkauf`, date: "2026-09-05", amount: -10,
     bank: "Revolut", pocket: null, category: "Prüfen", includeInPlan: false,
   };
 }
@@ -187,7 +187,7 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     expect(dashboard).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Zuordnung prüfen" }));
-    const section = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf first");
+    const section = screen.getByLabelText("Buchung prüfen: first Unbekannter Einkauf");
     fireEvent.change(within(section).getByLabelText("Kategorie"), { target: { value: "Freizeit" } });
     const submit = within(section).getByRole<HTMLButtonElement>("button", { name: "Zuordnung übernehmen" });
     fireEvent.click(submit);
@@ -212,11 +212,11 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     });
     expect(assigned.state.transactions.at(-1)).toEqual(concurrent);
     expect(assigned.openReviewCount).toBe(1);
-    expect(screen.queryByLabelText("Buchung prüfen: Unbekannter Einkauf first")).toBeNull();
-    expect(screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf second")).toBeTruthy();
+    expect(screen.queryByLabelText("Buchung prüfen: first Unbekannter Einkauf")).toBeNull();
+    expect(screen.getByLabelText("Buchung prüfen: second Unbekannter Einkauf")).toBeTruthy();
     expect(dashboard).not.toHaveBeenCalled();
 
-    const second = screen.getByLabelText("Buchung prüfen: Unbekannter Einkauf second");
+    const second = screen.getByLabelText("Buchung prüfen: second Unbekannter Einkauf");
     fireEvent.change(within(second).getByLabelText("Kategorie"), { target: { value: "Lebensmittel" } });
     fireEvent.click(within(second).getByRole("button", { name: "Zuordnung übernehmen" }));
     act(() => { vi.advanceTimersByTime(1); });
@@ -324,7 +324,7 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     expect(screen.getByLabelText<HTMLSelectElement>("Monat filtern").value).toBe("2026-10");
     expect(screen.queryByRole("button", { name: "Zurücksetzen" })).toBeNull();
     fireEvent.change(screen.getByLabelText("Monat filtern"), { target: { value: "2026-09" } });
-    expect(screen.getByRole("table").textContent).toContain("Unbekannter Einkauf first");
+    expect(screen.getByRole("table").textContent).toContain("first Unbekannter Einkauf");
     fireEvent.click(screen.getByRole("button", { name: "Zurücksetzen" }));
     expect(screen.getByLabelText<HTMLSelectElement>("Monat filtern").value).toBe("2026-10");
     expect(dashboard).not.toHaveBeenCalled();
@@ -354,7 +354,7 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     })));
     expect(classify).toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText("Kategorie filtern"), { target: { value: "Freizeit" } });
-    expect(screen.getByRole("table").textContent).toContain("Unbekannter Einkauf first");
+    expect(screen.getByRole("table").textContent).toContain("first Unbekannter Einkauf");
     expect(screen.getByRole("table").textContent).toContain("Freizeit");
     expect(dashboard).not.toHaveBeenCalled();
   });

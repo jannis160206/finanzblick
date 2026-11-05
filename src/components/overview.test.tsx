@@ -156,6 +156,7 @@ it("supports an empty account and non-motorcycle goals without inventing funding
 it.each([false, true])("shows the savings recommendation or the actual explicitly transferred amount (executed: %s)", (executed) => {
   const state = createEmptyAccountState();
   state.settings.asOf = "2026-10-07";
+  state.settings.baselineDate = "2026-10-01";
   state.financeRows = [{ id: "salary", kind: "income", label: "Gehalt", values: {
     "2026-10": monthlyVariableBudget("2026-10").total + 301.4,
   } }];
@@ -182,6 +183,7 @@ it.each([false, true])("shows the savings recommendation or the actual explicitl
 it.each([0, -478.6])("keeps the savings card visible at zero for surplus %s without changing the funding model", (surplus) => {
   const state = createEmptyAccountState();
   state.settings.asOf = "2026-10-07";
+  state.settings.baselineDate = "2026-10-01";
   state.financeRows = [{ id: "salary", kind: "income", label: "Gehalt", values: {
     "2026-10": monthlyVariableBudget("2026-10").total + 780 + surplus,
   } }];

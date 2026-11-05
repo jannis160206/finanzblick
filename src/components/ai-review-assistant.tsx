@@ -7,6 +7,7 @@ import { applyAiReviewDecisions, type AiReviewDecision } from "@/lib/ai/apply-re
 import type { AiCategorization } from "@/lib/ai/categorize";
 import { decideReviewWithEvidence } from "@/lib/ai/evidence";
 import { aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "@/lib/ai/review-candidates";
+import { recordAiSuggestions, type AiSuggestionEntry } from "@/lib/ai/suggestions";
 
 const STATUS_INTERVAL_MS = 60_000;
 
@@ -70,10 +71,34 @@ export function AiReviewAssistant() {
   }, []);
 
   const openKey = (state.reviewQueue ?? []).filter(isAiEligibleReview).map((item) => item.id).join("|");
+  const checked = useRef(new Set<string>());
+
+  // Fixed merchant rules, own history and refunds need no model, so they also run offline.
+  useEffect(() => {
+    if (!ready || storageError || !openKey) return;
+    const base = latest.current;
+    const candidates = aiReviewCandidates(base, checked.current, 10_000);
+    if (!candidates.length) return;
+    const decisions: AiReviewDecision[] = [];
+    for (const candidate of candidates) {
+      checked.current.add(candidate.reviewId);
+      const decision = decideReviewWithEvidence(base, candidate.reviewId, candidate.input, undefined);
+      if (decision.accepted)
+        decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
+    }
+    if (!decisions.length) return;
+    const preview = applyAiReviewDecisions(base, decisions);
+    if (!preview.applied.length) return;
+    update((current) => current === base ? preview.state : applyAiReviewDecisions(current, decisions).state);
+    const done = preview.applied.length;
+    toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
+  }, [ready, storageError, openKey, update]);
 
   useEffect(() => {
     if (!available || !ready || storageError || busy || !openKey) return;
-    const batch = aiReviewCandidates(latest.current, attempted.current);
+    // Bookings with a stored proposal already waited for the user; asking again would only repeat it.
+    const skip = new Set([...attempted.current, ...(latest.current.aiSuggestions ?? []).map((item) => item.id)]);
+    const batch = aiReviewCandidates(latest.current, skip);
     if (!batch.length) return;
     const signal = unmounted.current.signal;
     for (const candidate of batch) attempted.current.add(candidate.reviewId);
@@ -86,21 +111,27 @@ export function AiReviewAssistant() {
         }, signal);
         const byRef = new Map(results.map((result) => [result.ref, result]));
         const decisions: AiReviewDecision[] = [];
+        const suggestions: AiSuggestionEntry[] = [];
         const logos: { name: string; context: string }[] = [];
         for (const candidate of batch) {
           const result = byRef.get(candidate.input.ref);
           const decision = decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, result);
-          if (!decision.accepted) continue;
+          if (!decision.accepted) {
+            suggestions.push({ reviewId: candidate.reviewId, reason: decision.reason, suggestion: decision.suggestion });
+            continue;
+          }
           decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
           if (decision.merchantAlias) logos.push({ name: decision.merchantAlias, context: candidate.input.text });
         }
         let applied = 0;
-        if (decisions.length) {
+        if (decisions.length || suggestions.some((entry) => entry.suggestion)) {
           const base = latest.current;
+          const run = (current: typeof base) =>
+            recordAiSuggestions(applyAiReviewDecisions(current, decisions).state, suggestions);
           const preview = applyAiReviewDecisions(base, decisions);
           applied = preview.applied.length;
-          if (applied)
-            update((current) => current === base ? preview.state : applyAiReviewDecisions(current, decisions).state);
+          const next = recordAiSuggestions(preview.state, suggestions);
+          if (next !== base) update((current) => current === base ? next : run(current));
         }
         totals.current.applied += applied;
         totals.current.open += batch.length - applied;

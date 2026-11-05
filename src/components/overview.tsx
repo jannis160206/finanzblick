@@ -45,6 +45,7 @@ import { pocketNames } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
 import { EmptyState } from "@/components/ui/empty-state";
+import { FinanceInsightsPanel } from "@/components/finance-insights";
 import { goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
 
 const chartTooltip = {
@@ -326,6 +327,7 @@ export function Overview() {
           <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
         </section>}
       </div>
+      <FinanceInsightsPanel />
       <section className="panel mb-5 p-5 sm:p-6" aria-label="Monatsprognose">
         <SectionHeading title="Die nächsten 90 Tage"><span className="status-pill border text-muted-foreground">Prognose</span></SectionHeading>
         <FinancialData className="grid gap-3 lg:grid-cols-3">

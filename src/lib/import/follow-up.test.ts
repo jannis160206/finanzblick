@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   actualPockets,
@@ -133,14 +133,18 @@ describe("real statement layouts", () => {
     expect(parseAmexText([""]).issues[0].message).toContain("Scan");
   });
   const examples = new URL("../../../import-example/", import.meta.url);
-  it.skipIf(!existsSync(examples))(
+  // Private, git-ignored originals; the folder may also hold later, unrelated (e.g. encrypted) statements.
+  const originalFiles = [
+    "Umsatzliste_AT023928800000327551.csv",
+    "consolidated_statement_2026-08-19_2026-09-11.csv",
+    "11072026_-_10082026.pdf",
+  ];
+  it.skipIf(!originalFiles.every((name) => existsSync(new URL(name, examples))))(
     "parses all three supplied original files including binary PDF",
     async () => {
       const expected = { Raiffeisen: 40, Revolut: 173, Amex: 57 };
       const sources: string[] = [];
-      for (const name of readdirSync(examples).filter((name) =>
-        /\.(csv|pdf)$/i.test(name),
-      )) {
+      for (const name of originalFiles) {
         const data = readFileSync(new URL(name, examples));
         const parsed = await parseStatementFile({
           name,

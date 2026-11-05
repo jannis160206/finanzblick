@@ -11,11 +11,14 @@ const partner = (row: Transaction) => /\braphael\b/i.test(row.pocket ?? "");
 const source = (row: Transaction) => [row.description, row.rawDescription, ...(row.rawDetails ?? [])].join(" ");
 const cardPayment = (row: Transaction) => isCard(row) && row.amount > 0 &&
   /zahlung\s*\/\s*überweisung\s+erhalten/i.test(source(row));
+// Amex SEPA creditor ID; legacy workbook rows carry only this or their original category.
+const amexDirectDebit = (row: Transaction) => /GB03ZZZSDDDEUT0000000165752/i.test(source(row)) ||
+  /^amex abrechnung\b/i.test(row.sourceCategory ?? "");
 const bankPayment = (row: Transaction) => !isCard(row) && row.amount < 0 &&
   /^(raiffeisen|revolut)$/i.test(row.bank) &&
   !/einzustecken|einstecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)/i.test(source(row)) &&
   !/monatsgeb|mitgliedsgeb/i.test(source(row)) &&
-  (/american express|AT\s*20\s*1910\s*0000\s*1019\s*5000/i.test(source(row)) ||
+  (amexDirectDebit(row) || /american express|AT\s*20\s*1910\s*0000\s*1019\s*5000/i.test(source(row)) ||
     /amex.*(?:abrechnung|sammel|ausgleich|rückzahlung|ruckzahlung|lastschrift)/i.test(source(row)));
 
 function reservedBalance(state: AppState) {

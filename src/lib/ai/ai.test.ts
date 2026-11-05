@@ -4,7 +4,7 @@ import { queueLedgerReview } from "@/lib/import/review";
 import { appStateSchema, type AppState, type ReviewItem, type Transaction } from "@/lib/types";
 import { applyAiReviewDecisions } from "./apply-review-decisions";
 import {
-  cleanMerchantName, extractJsonArray, interpretCategorization, merchantMatchesText, plausibilityIssue, resolveCategoryName,
+  cleanMerchantName, extractJsonArray, interpretCategorization, merchantMatchesText, plausibilityIssue, providerMerchant, resolveCategoryName,
   type AiCategorization,
 } from "./categorize";
 import { brandKey, decideReviewWithEvidence, similarAmount } from "./evidence";
@@ -138,12 +138,51 @@ describe("evidence gate", () => {
     ]);
     const decide = (id: string, text: string, amount: number, category: string, merchant?: string) =>
       decideReviewWithEvidence(state, id, input(text, amount), answer(category, merchant));
-    expect(decide("snack", "SHELL FURNITZ 8387", -12.5, "Tanken", "SHELL")).toMatchObject({ accepted: false, reason: "widerspricht eigener Historie" });
+    expect(decide("snack", "SHELL FURNITZ 8387", -12.5, "Tanken", "SHELL")).toMatchObject({ accepted: true, category: "Cafés & Snacks", source: "Historie" });
     expect(decide("flowers", "BLUMEN B B FILNR902 VILLACH", -34, "Cafés & Snacks", "BLUMEN B B")).toMatchObject({ accepted: false });
     expect(decide("fuel", "OMV 2595 2040OM2595 Villach", -67, "Tanken", "OMV")).toMatchObject({ accepted: true, category: "Tanken", source: "Regel" });
     expect(decide("dm", "DM-FIL. A055 DM-FIL. A0 Villach", -11.15, "Drogerie", "dm")).toMatchObject({ accepted: true, category: "Drogerie" });
-    expect(decide("dm", "DM-FIL. A055 DM-FIL. A0 Villach", -11.15, "Shopping", "dm")).toMatchObject({ accepted: false });
-    expect(decideReviewWithEvidence(state, "dm", input("DM", -11.15), undefined)).toMatchObject({ accepted: false });
+    // The fixed merchant rule decides on its own, whatever the model says.
+    expect(decide("dm", "DM-FIL. A055 DM-FIL. A0 Villach", -11.15, "Shopping", "dm")).toMatchObject({ accepted: true, category: "Drogerie", source: "Regel" });
+    expect(decideReviewWithEvidence(state, "dm", input("DM-FIL. A055 DM-FIL. A0 Villach", -11.15), undefined))
+      .toMatchObject({ accepted: true, category: "Drogerie", source: "Regel" });
+  });
+
+  it("does not apply a rule the household contradicted or that does not fit", () => {
+    const state = withOpen([history("t1", "DM", -60, "Gesundheit")], [
+      booking("dm", { description: "DM-FIL. A055 Villach", amount: -5 }),
+      booking("shell", { description: "SHELL 8387 VILLACH", amount: -6.4 }),
+    ]);
+    expect(decideReviewWithEvidence(state, "dm", input("DM-FIL. A055 Villach", -5), undefined)).toMatchObject({ accepted: false });
+    expect(decideReviewWithEvidence(state, "shell", input("SHELL 8387 VILLACH", -6.4), undefined)).toMatchObject({ accepted: false });
+  });
+
+  it("reads the shop behind PayPal and Klarna", () => {
+    expect(providerMerchant("PAYPAL *RENOVARO 06136922270")).toBe("Renovaro");
+    expect(providerMerchant("PAYPAL *G2A COM LTD 4029357733")).toBe("G2A");
+    expect(providerMerchant("PAYPAL *PAYPAL EEA 07517591951")).toBeUndefined();
+    expect(providerMerchant("1051861566294/PAYPAL")).toBeUndefined();
+    expect(plausibilityIssue({ ref: "b1", text: "PAYPAL *ETSY 4029357733", amount: -20, date: "2026-10-01", bank: "Amex" }, "Shopping", undefined))
+      .toBeUndefined();
+    const [etsy] = interpretCategorization(`[{"ref":"b1","category":"Shopping","merchant":"PayPal","confidence":99}]`,
+      [{ ref: "b1", text: "PAYPAL *ETSY 4029357733", amount: -20, date: "2026-10-01", bank: "Amex" }], 90);
+    expect(etsy).toMatchObject({ merchant: "Etsy", accepted: true });
+  });
+
+  it("books a merchant credit for an earlier purchase as its refund", () => {
+    const purchase = { ...history("buy", "OBI", -19.51, "Wohnen & Haushalt"), date: "2026-08-20" };
+    const state = withOpen([purchase], [booking("credit", { description: "OBI 4711 VILLACH", amount: 19.51, date: "2026-09-02" })]);
+    expect(decideReviewWithEvidence(state, "credit", input("OBI 4711 VILLACH", 19.51), undefined))
+      .toMatchObject({ accepted: true, category: "Rückerstattungen", source: "Erstattung", merchantAlias: "OBI" });
+    const other = withOpen([purchase], [booking("credit", { description: "OBI 4711 VILLACH", amount: 7, date: "2026-09-02" })]);
+    expect(decideReviewWithEvidence(other, "credit", input("OBI 4711 VILLACH", 7), undefined)).toMatchObject({ accepted: false });
+  });
+
+  it("suggests a category for bookings it leaves open", () => {
+    const state = withOpen([], [booking("etsy", { description: "PAYPAL *ETSY 4029357733", amount: -20 })]);
+    const decision = decideReviewWithEvidence(state, "etsy", input("PAYPAL *ETSY 4029357733", -20),
+      { ref: "b1", category: "Shopping", merchant: "Etsy", confidence: 80, accepted: false, reason: "Sicherheit 80 % < 90 %" });
+    expect(decision).toMatchObject({ accepted: false, suggestion: { category: "Shopping", merchantAlias: "Etsy", source: "KI" } });
   });
 
   it("does not learn from open reviews or earlier AI decisions", () => {

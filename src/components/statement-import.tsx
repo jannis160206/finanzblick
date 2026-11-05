@@ -22,8 +22,11 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import {
   categories,
   transactionSchema,
+  type Category,
   type Transaction,
 } from "@/lib/types";
+import { groupReviews, suggestedDraft, type ReviewGroup } from "@/lib/ai/review-groups";
+import type { AiSuggestion } from "@/lib/ai/suggestions";
 import {
   parseStatementFile,
   parseStatementAmount,
@@ -78,6 +81,7 @@ const BookingReview = memo(function BookingReview({
   reuploadOnly,
   save,
   skip,
+  suggestion,
 }: {
   item: Extract<ReviewItem, { kind: "booking" }>;
   draft: StatementDraft;
@@ -86,6 +90,7 @@ const BookingReview = memo(function BookingReview({
   reuploadOnly: boolean;
   save: (row: Transaction, id: string) => void;
   skip: () => void;
+  suggestion?: AiSuggestion;
 }) {
   const repairOcr = isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:");
   const repairSource = item.sourceRepair === true;
@@ -122,6 +127,11 @@ const BookingReview = memo(function BookingReview({
         {repairFacts && item.draft.amount === null && " Ausgaben −, Gutschriften +."}
         {repairSource && " Quellwerte bleiben bis zur ausdrücklichen Bestätigung unverbucht."}
       </p>
+      {suggestion && item.draft.category === "Prüfen" && draft.category === suggestion.category && (
+        <p className="text-xs text-primary break-words">
+          {suggestionLabel(suggestion)} – bitte prüfen ({suggestion.reason}).
+        </p>
+      )}
       <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
         <label className="space-y-1 text-xs">
           Datum
@@ -236,6 +246,52 @@ const BookingReview = memo(function BookingReview({
           Zuordnung übernehmen
         </Button>
       </div>
+    </section>
+  );
+});
+
+function suggestionLabel(suggestion: AiSuggestion) {
+  return suggestion.source === "Historie" ? "Vorschlag aus deiner Historie"
+    : suggestion.source === "Regel" ? "Vorschlag laut Händlerregel" : "KI-Vorschlag";
+}
+
+const MerchantGroupReview = memo(function MerchantGroupReview({
+  group,
+  children,
+  disabled,
+  save,
+}: {
+  group: ReviewGroup;
+  children: React.ReactNode;
+  disabled: boolean;
+  save: (group: ReviewGroup, category: Category) => void;
+}) {
+  const [category, setCategory] = useState<Category>(group.suggestion?.category ?? "Prüfen");
+  const [expanded, setExpanded] = useState(false);
+  const income = group.total > 0;
+  return (
+    <section className="panel space-y-3 p-4" aria-label={`Händlergruppe prüfen: ${group.name}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-medium break-words">{group.name}</p>
+        <p className="text-sm tabular-nums text-muted-foreground">
+          {group.items.length} {income ? "Gutschriften" : "Buchungen"} · {currency(group.total)}
+        </p>
+      </div>
+      {group.suggestion && category === group.suggestion.category && (
+        <p className="text-xs text-primary">{suggestionLabel(group.suggestion)} – bitte prüfen.</p>
+      )}
+      <CategorySelect label={`Kategorie für ${group.name}`} value={category} disabled={disabled}
+        onValueChange={setCategory} excludeReview />
+      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+        <Button variant="ghost" size="sm" disabled={disabled} aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "Einzelbuchungen ausblenden" : "Einzeln prüfen"}
+        </Button>
+        <Button size="sm" disabled={disabled || category === "Prüfen"} onClick={() => save(group, category)}>
+          Alle {group.items.length} übernehmen
+        </Button>
+      </div>
+      {expanded && <div className="space-y-3">{children}</div>}
     </section>
   );
 });
@@ -452,6 +508,24 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
       importMetadata.current = { ...importMetadata.current, amexReconciliation: { rows: [row] } };
     commit([row], 0, id);
   }, [commit]);
+  const saveGroup = useCallback((group: ReviewGroup, category: Category) => {
+    const suggestions = latestState.current.aiSuggestions ?? [];
+    const rows: Transaction[] = [];
+    for (const item of group.items) {
+      const draft = localUI.drafts[item.id] ?? suggestedDraft(item.draft, suggestions.find((entry) => entry.id === item.id));
+      const parsed = transactionSchema.safeParse({
+        ...draft, category, categoryOverride: true, manualCategory: true, reviewed: true, includeInPlan: true, fixedCost: false,
+      });
+      if (!parsed.success) {
+        toast.error(`${bookingDescription(item.draft)} braucht eine Einzelprüfung.`);
+        return;
+      }
+      rows.push({ ...parsed.data, includeInPlan: classify(parsed.data).includeInPlan });
+    }
+    const imported = group.items.flatMap((item, index) => item.importUploadId ? [{ ...item, draft: rows[index] }] : []);
+    if (imported.length) importMetadata.current = { ...importMetadata.current, reviewQueue: imported };
+    commit(rows, 0, group.items[0].id);
+  }, [commit, localUI.drafts]);
   const skip = useCallback(() => {
     setUI({ open: false, drafts: {} });
   }, []);
@@ -701,18 +775,22 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           </DialogHeader>
           <DialogBody>
           <fieldset disabled={!!ui.pending} className="min-w-0 space-y-4">
-            {ui.review.slice(0, 20).map((item) =>
-              item.kind === "booking" ? (
+            {(() => {
+              const reuploadOnly = (item: ReviewItem) => (state.importResults ?? []).some((result) =>
+                result.issues.some((issue) => issue.reviewId === item.id && issue.action === "reupload"));
+              const suggestionOf = (id: string) => state.aiSuggestions?.find((entry) => entry.id === id);
+              const { groups, singles } = groupReviews(ui.review, state.aiSuggestions, reuploadOnly);
+              const renderItem = (item: ReviewItem) => item.kind === "booking" ? (
                 <BookingReview
                   key={item.id}
                   item={item}
-                  draft={ui.drafts[item.id] ?? item.draft}
+                  draft={ui.drafts[item.id] ?? suggestedDraft(item.draft, suggestionOf(item.id))}
                   changeDraft={changeDraft}
                   disabled={ui.pending?.removeId === item.id}
-                  reuploadOnly={(state.importResults ?? []).some((result) =>
-                    result.issues.some((issue) => issue.reviewId === item.id && issue.action === "reupload"))}
+                  reuploadOnly={reuploadOnly(item)}
                   save={saveBooking}
                   skip={skip}
+                  suggestion={suggestionOf(item.id)}
                 />
               ) : (
                 <FixedReview
@@ -721,13 +799,24 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
                   disabled={!!ui.pending}
                   save={(decision) => commit([], 0, item.id, [decision])}
                 />
-              ),
-            )}
-            {ui.review.length > 20 && (
-              <p className="text-xs text-muted-foreground">
-                Weitere Einträge folgen nach der Prüfung.
-              </p>
-            )}
+              );
+              const units = [
+                ...groups.map((group) => (
+                  <MerchantGroupReview key={group.key} group={group} disabled={!!ui.pending} save={saveGroup}>
+                    {group.items.map(renderItem)}
+                  </MerchantGroupReview>
+                )),
+                ...singles.map(renderItem),
+              ];
+              return <>
+                {units.slice(0, 20)}
+                {units.length > 20 && (
+                  <p className="text-xs text-muted-foreground">
+                    Weitere Einträge folgen nach der Prüfung.
+                  </p>
+                )}
+              </>;
+            })()}
           </fieldset>
           </DialogBody>
           <DialogFooter>

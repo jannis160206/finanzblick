@@ -113,6 +113,20 @@ export function cleanMerchantName(value: string | null | undefined) {
 
 export const isPaymentProvider = (merchant: string) => PAYMENT_PROVIDER.test(merchant.trim());
 
+const PROVIDER_MERCHANT = /\b(?:paypal|klarna|sumup|sq|zettle|stripe)\s*\*\s*([^|]+)/i;
+const LEGAL_WORDS = /^(?:com|ltd|inc|gmbh|llc|bv|sa|sl|srl|ag|kg|eea|europe|eu|limited|co)$/i;
+
+// The shop behind a payment provider: "PAYPAL *RENOVARO 06136922270" => "Renovaro".
+// Plain PayPal debits ("1051861566294/PAYPAL") carry no shop name.
+export function providerMerchant(text: string): string | undefined {
+  const match = PROVIDER_MERCHANT.exec(text.normalize("NFKC"));
+  if (!match) return undefined;
+  const word = match[1].trim().split(/\s+/)
+    .find((token) => /\p{L}/u.test(token) && !/\d{4,}/.test(token) && !LEGAL_WORDS.test(token));
+  if (!word || /^(?:paypal|klarna)$/i.test(word) || word.length < 2) return undefined;
+  return /\d/.test(word) || word.length <= 3 ? word.toUpperCase() : word[0].toUpperCase() + word.slice(1).toLowerCase();
+}
+
 // The model reports ~95 % for nearly everything, so these technical categories need a matching bank rule.
 const RULE_ONLY: readonly Category[] = [
   "Bankgebühren", "Rücklastschriftgebühren", "Guthabenkarten", "Leasing", "Miete", "Versicherungen",
@@ -141,7 +155,7 @@ export function plausibilityIssue(booking: AiBookingInput, category: Category, m
   if (CASH_WITHDRAWAL.test(booking.text)) return "Bargeldbehebung";
   // Small station receipts are snacks or car wash, not fuel.
   if (category === "Tanken" && Math.abs(booking.amount) < 10) return "Betrag zu klein zum Tanken";
-  if (!merchant && PAYMENT_PROVIDER_IN_TEXT.test(booking.text) && !category.startsWith("Transfer"))
+  if (!merchant && PAYMENT_PROVIDER_IN_TEXT.test(booking.text) && !providerMerchant(booking.text) && !category.startsWith("Transfer"))
     return "Zahlungsdienst verdeckt den Händler";
   const rule = knownMerchantCategory(booking.text, booking.amount);
   if (rule && rule !== "Prüfen" && rule !== category && !RULE_REFINEMENTS[rule]?.includes(category))
@@ -171,10 +185,12 @@ export function interpretCategorization(
     const answer = answers.get(booking.ref);
     if (!answer) return { ref: booking.ref, category: "Prüfen", confidence: 0, accepted: false, reason: "keine Antwort" };
     const category = resolveCategoryName(answer.category);
-    const merchant = cleanMerchantName(answer.merchant);
+    const named = cleanMerchantName(answer.merchant);
+    const shop = providerMerchant(booking.text);
+    // "PAYPAL *ZALANDO" names the shop; the provider alone hides it.
+    const merchant = named && isPaymentProvider(named) ? shop ?? named : named ?? shop;
     const base = { ref: booking.ref, merchant, confidence: Math.round(answer.confidence) };
     if (!category) return { ...base, category: "Prüfen", accepted: false, reason: "unsicher" };
-    // A payment provider hides the real shop, so the category cannot be known from the bank text.
     if (merchant && isPaymentProvider(merchant) && !category.startsWith("Transfer"))
       return { ...base, merchant: undefined, category, accepted: false, reason: "Zahlungsdienst verdeckt den Händler" };
     const income = isIncomeCategory(canonicalCategory(category));
