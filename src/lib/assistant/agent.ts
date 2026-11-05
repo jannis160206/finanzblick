@@ -10,13 +10,14 @@ import { accountBalances, amexQuestion, amexSettlement, monthBudget } from "./ac
 import { explainDashboard } from "./explain";
 import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
+import { marketAnswer, realValue, type MarketSnapshot } from "./market";
 import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
 import { matchName, type AssistantTool } from "./tools";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[] };
-type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[] };
+type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const plannedTotal = (item: PlannedOneOff) => item.total ?? Math.round(item.amount * item.installments * 100) / 100;
@@ -263,14 +264,19 @@ function undo({ state }: Context): AgentResult {
   return { text: `Soll ich „${last.title}“ rückgängig machen? ${last.summary.slice(0, 3).join("; ")}`.slice(0, 2000), undoId: last.id };
 }
 
-function depot({ asOf }: Context, text: string): AgentResult {
+function depot({ asOf, market }: Context, text: string): AgentResult {
   const parsed = parseAssistantMessage(text, asOf);
   const years = /(\d{1,2})\s*jahr/i.exec(text);
   const yearCount = years ? Math.min(50, Math.max(1, Number(years[1]))) : 10;
   const numbers = amountsIn(text.replace(/(\d{1,2})\s*jahr\w*/gi, "").replace(/\d{1,2}\s*%/g, "")).filter((value) => value > 0);
   const monthly = parsed.monthly ?? (numbers.length ? numbers.find((value) => value !== parsed.startCapital) : undefined);
   if (!monthly) return { text: "Wie viel möchtest du monatlich investieren und wie viele Jahre? Zum Beispiel „100 € im Monat in einen ETF, 10 Jahre“." };
-  return depotProjection(monthly, yearCount, parsed.startCapital ?? 0);
+  const result = depotProjection(monthly, yearCount, parsed.startCapital ?? 0);
+  const middle = result.card.lines[2]?.value;
+  const real = middle === undefined ? undefined : realValue(middle, yearCount, market);
+  if (real === undefined || !market?.inflation) return result;
+  return { ...result, card: { ...result.card, lines: [...result.card.lines, { label: "Mittel, in heutiger Kaufkraft", value: real, tone: "info",
+    detail: `bei ${market.inflation.value.toLocaleString("de-AT", { maximumFractionDigits: 1 })} % Inflation (Eurostat, live)` }] } };
 }
 
 function taxYear(text: string, asOf: string) {
@@ -295,6 +301,7 @@ function help(): AgentResult {
     { label: "Monatsbudget", detail: "„Was bleibt mir diesen Monat übrig?“" },
     { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 €“, „Puffer immer 500 €“" },
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
+    { label: "Live aus dem Internet", detail: "„Wie hoch ist die Inflation?“, „Welche Zinsen fürs Sparkonto?“, „3.000 € in Yen“" },
   ];
   return { text: "Gern! Ich kenne deine Buchungen, Sparziele und geplanten Ausgaben und kann damit rechnen, planen und Dinge für dich einstellen. Am besten fragst du einfach drauflos:",
     card: { kind: "answer", title: "Womit ich dir helfen kann", lines, note: "Alle Zahlen rechnet der Code nach. Geändert wird nur, wenn du bestätigst." },
@@ -317,6 +324,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
       return savingsCoach(state, asOf, target);
     }
     case "depot": return depot(context, text);
+    case "market": return marketAnswer(text, context.market, dashboard);
     case "tax": return tax(context, text);
     case "homeoffice": return homeOfficeStart(state, taxYear(text, asOf));
     case "edit": return edit(context, text);

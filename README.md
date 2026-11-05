@@ -269,7 +269,7 @@ Die Saison folgt dem lokalen Kalender (Fasching, Ostern, Sommer, Halloween, Weih
 
 ## Lokale KI
 
-Ein lokales Sprachmodell (Qwen3-8B auf der Intel-NPU über OpenVINO Model Server) ordnet offene Prüfungen selbst zu und holt Händlerlogos in den privaten `Logo/`-Ordner. Nur Fälle, bei denen es nicht sicher ist, bleiben zur manuellen Prüfung. `npm run ai:server` startet das Modell, `npm run mcp` stellt die Finanzwerkzeuge als MCP-Server bereit und `npm run ai:agent` bietet einen lokalen Chat. Details: [docs/local-ai.md](docs/local-ai.md).
+Ein lokales Sprachmodell (Qwen3-8B auf der Intel-NPU über OpenVINO Model Server) ordnet offene Prüfungen selbst zu und holt Händlerlogos in den privaten `Logo/`-Ordner. Nur Fälle, bei denen es nicht sicher ist, bleiben zur manuellen Prüfung. `npm run ai:server` startet das Modell, `npm run mcp` stellt die Finanzwerkzeuge als MCP-Server bereit, `npm run mcp:web` liefert öffentliche Marktdaten (Inflation, Sparzinsen, Wechselkurse) für den Finanz-Assistenten und `npm run ai:agent` bietet einen lokalen Chat. Details: [docs/local-ai.md](docs/local-ai.md).
 
 ## Prüfungen
 

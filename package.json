@@ -29,6 +29,7 @@
     "format": "prettier --write src tests *.ts *.json *.mjs README.md",
     "ai:server": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/ai-server.ps1",
     "mcp": "tsx --env-file-if-exists=.env.local scripts/mcp-server.ts",
+    "mcp:web": "tsx scripts/web-mcp-server.ts",
     "ai:agent": "tsx --env-file-if-exists=.env.local scripts/ai-agent.ts"
   },
   "dependencies": {

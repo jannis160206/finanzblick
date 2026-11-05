@@ -20,6 +20,7 @@ import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
+import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
 import { resolveFollowUp } from "@/lib/assistant/followup";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
@@ -49,7 +50,8 @@ const followUps: Partial<Record<AssistantTool, string[]>> = {
   briefing: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
   check: ["Wo könnte ich kürzen?", "Wie haben sich meine Ausgaben entwickelt?"],
   coach: ["Wie viel geht für Abos weg?", "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?"],
-  depot: ["Und mit 200 € im Monat?", "Wie viel kann ich monatlich sparen?"],
+  depot: ["Und mit 200 € im Monat?", "Wie hoch ist die Inflation gerade?"],
+  market: ["Welche Zinsen bekomme ich fürs Sparkonto?", "Wie viel sind 3.000 € in Yen?"],
   tax: ["Was bekomme ich für Home-Office-Sachen zurück?"],
   memory: ["Merk dir: Puffer immer 500 €"],
   changes: ["Mach das rückgängig"],
@@ -108,6 +110,7 @@ export function FinanceAssistant() {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const briefed = useRef(false);
+  const marketCache = useRef(new Map<string, { at: number; value: MarketSnapshot }>());
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy]);
 
   const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) =>
@@ -215,6 +218,22 @@ export function FinanceAssistant() {
     }
   }
 
+  // Public market data from the finanzblick-web MCP server; only currency codes leave the browser, never personal data.
+  async function loadMarket(text: string): Promise<MarketSnapshot | undefined> {
+    const codes = currenciesIn(text).sort().join(",");
+    const cached = marketCache.current.get(codes);
+    if (cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.value;
+    try {
+      const response = await fetch(`/api/market?currencies=${encodeURIComponent(codes)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+      if (!response.ok) return cached?.value;
+      const value = await response.json() as MarketSnapshot;
+      marketCache.current.set(codes, { at: Date.now(), value });
+      return value;
+    } catch {
+      return cached?.value;
+    }
+  }
+
   async function send(event?: FormEvent, preset?: string) {
     event?.preventDefault();
     const text = (preset ?? input).trim().slice(0, 1000);
@@ -273,8 +292,9 @@ export function FinanceAssistant() {
       else addResult({ text: "Was soll ich mir merken? Zum Beispiel „Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“." }, reply.source);
     } else if (tool) {
       let result: AgentResult;
+      const market = tool === "market" || tool === "depot" ? await loadMarket(text) : undefined;
       try {
-        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous });
+        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }

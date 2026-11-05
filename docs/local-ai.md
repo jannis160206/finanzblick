@@ -126,7 +126,8 @@ Die KI wählt nur ein Werkzeug (`src/lib/assistant/tools.ts`) und nennt Namen au
 - **Gedächtnis:** `appState.assistantMemory` (max. 50), einsehbar und löschbar. Der Puffer wird bei „Kann ich mir das leisten?“ abgezogen, der Gehaltstag erscheint im Wochenüberblick.
   „Merk dir …“ wird sofort gespeichert. Zusätzlich liest `extractMemories` (`src/lib/assistant/memory.ts`) aus jeder Nachricht dauerhafte Fakten heraus, etwa Gehaltstag, Puffer oder Aussagen wie „Ich wohne in Wien“, und speichert höchstens drei davon. Fragen, Pläne, einmalige Ereignisse und bereits bekannte Fakten werden ignoriert. Jeder Eintrag erscheint als „Gemerkt: …“ mit dem Button „Nicht merken“.
 - **Freie Formulierungen:** `normalizeMessage` (`src/lib/assistant/normalize.ts`) vereinheitlicht jede Nachricht, bevor Router, Werkzeugwahl und Parser sie lesen. Es ersetzt Umlaute in ASCII-Schreibweise (fuer → für), Umgangssprache (wv, nen, tv, krieg), Monatskürzel, kurze Jahreszahlen (Juli 27 → Juli 2027), Kurzbeträge (3k, 1,5k) und Regelkürzel („X = Y“ → „X ist immer Y“). Die Abdeckung prüft `phrasing.test.ts`.
-- **Depot-Rechner:** Endwert bei 3 %, 5 % und 7 % p. a. mit monatlicher Verzinsung. Eine reine Rechnung, keine Anlageberatung.
+- **Depot-Rechner:** Endwert bei 3 %, 5 % und 7 % p. a. mit monatlicher Verzinsung. Mit Live-Daten kommt der mittlere Wert zusätzlich in heutiger Kaufkraft dazu. Eine reine Rechnung, keine Anlageberatung.
+- **Marktdaten aus dem Internet:** „Wie hoch ist die Inflation?“, „Welche Zinsen bekomme ich fürs Sparkonto?“, „Wie viel sind 3.000 € in Yen?“, „Was sind 10.000 € in 10 Jahren wert?“. Der Browser holt die Werte über `/api/market` vom MCP-Server `finanzblick-web` (siehe unten), `src/lib/assistant/market.ts` rechnet damit (Kaufkraftverlust und Zinsen auf die Reserve, Umrechnung, Zinsvergleich). Ohne Internet sagt der Assistent das, statt Zahlen zu raten.
 - **Arbeitnehmerveranlagung (Österreich):** Spenden, Kirchenbeitrag, Gewerkschaft, Fortbildung, Arbeitsmittel und Krankheitskosten eines Jahres als Liste. Ersetzt keine Steuerberatung.
 - **Home-Office-Rechner (Österreich):** „Was bekomme ich für meine Home-Office-Sachen zurück?“ öffnet eine Karte im Chat. Du wählst die Käufe aus (Vorschläge plus Suche über alle Ausgaben des Jahres), gibst je Buchung an, was es war, und trägst Homeoffice-Tage, die Telearbeitspauschale vom Arbeitgeber und das Jahreseinkommen ein. Das Einkommen wird aus den Lohnzetteln geschätzt. Gerechnet wird in `src/lib/assistant/homeoffice.ts`:
   - Geräte mit 40 % Privatanteil (änderbar).
@@ -156,6 +157,19 @@ Beispielkonfiguration für einen MCP-Client:
 ```
 
 Der MCP-Server schreibt direkt in die SQLite-Datenbank. Ein geöffneter Browser lädt den neuen Stand beim nächsten Fokus nach.
+
+### Web-MCP-Server `finanzblick-web`
+
+`npm run mcp:web` startet einen zweiten MCP-Server (stdio) mit öffentlichen Marktdaten für die Sparplanung. Er hat keinen Zugriff auf die Datenbank, nur Lesewerkzeuge:
+
+| Werkzeug | Quelle |
+| --- | --- |
+| `get_inflation` | Eurostat, HVPI Österreich (`prc_hicp_minr`), Veränderung zum Vorjahresmonat |
+| `get_interest_rates` | EZB-Einlagesatz und Ø Zinsen österreichischer Banken für täglich fällige und bis 1 Jahr gebundene Spareinlagen (EZB MIR) |
+| `get_exchange_rates` | EZB-Referenzkurse, z. B. `["JPY", "USD"]` |
+| `get_market_snapshot` | alles zusammen, Teilausfälle stehen in `errors` |
+
+Der Finanz-Assistent nutzt denselben Server im Prozess (`src/lib/web/mcp-client.ts`, In-Memory-Transport) über `GET /api/market?currencies=JPY`. Ins Internet gehen nur feste öffentliche Abfragen und Währungscodes, nie Beträge oder Buchungen. Werte werden 6 Stunden zwischengespeichert; fällt eine Quelle aus, bleibt der letzte Wert. Eintrag für einen MCP-Client wie oben, mit `"mcp:web"` statt `"mcp"`.
 
 ## Lokaler Agent
 
