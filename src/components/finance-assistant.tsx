@@ -20,6 +20,7 @@ import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
+import { resolveFollowUp } from "@/lib/assistant/followup";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
@@ -41,7 +42,7 @@ const intro = "Hallo! Ich bin dein Finanz-Assistent. Frag mich einfach, wie du e
   "oder ob du dir etwas leisten kannst. Ich rechne alles mit deinen echten Zahlen und ändere nur etwas, wenn du bestätigst.";
 // Natural next questions after an answer, shown as quick replies.
 const followUps: Partial<Record<AssistantTool, string[]>> = {
-  query: ["Was war meine größte Ausgabe dieses Jahr?", "Wie viel geht für Abos weg?", "Ich will 200 € mehr im Monat sparen"],
+  query: ["Mehr als im Vormonat?", "Was war meine größte Ausgabe dieses Jahr?", "Wo könnte ich kürzen?"],
   accounts: ["Wie viel muss ich auf Amex Rückzahlung überweisen?", "Was bleibt mir diesen Monat?"],
   amex: ["Was habe ich seit 11.10. mit Amex bezahlt?", "Zeig mir meine Kontostände"],
   budget: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
@@ -241,7 +242,10 @@ export function FinanceAssistant() {
     setBusy(true);
     save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
     let reply: { tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
-    try {
+    // "und im September?" reuses the previous question instead of asking the model again.
+    const follow = pending ? undefined : resolveFollowUp(text, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
+    if (follow) reply = { tool: follow.tool, source: "Regel" };
+    else try {
       const response = await fetch("/api/ai/assistant", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ message: text, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned } }),
@@ -269,7 +273,7 @@ export function FinanceAssistant() {
     } else if (tool) {
       let result: AgentResult;
       try {
-        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints });
+        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }

@@ -65,17 +65,28 @@ export function parseDateRange(text: string, today: string): Period | undefined 
   return undefined;
 }
 
+const monthPeriodOf = (month: string, today: string): Period => ({ from: `${month}-01`, to: monthEnd(month) < today ? monthEnd(month) : today,
+  label: monthLabel(month), month, months: 1 });
+const yearPeriodOf = (value: number, today: string): Period => {
+  const year = Number(today.slice(0, 4));
+  return { from: `${value}-01-01`, to: value === year ? today : `${value}-12-31`,
+    label: value === year ? `${value} bis heute` : String(value), months: value === year ? Number(today.slice(5, 7)) : 12 };
+};
+
 // Questions look back: a month without a year means its latest occurrence up to today.
 export function parsePeriod(text: string, today: string): Period {
+  return findPeriod(text, today) ?? yearPeriodOf(Number(today.slice(0, 4)), today);
+}
+
+// Like parsePeriod, but undefined when the text names no period, so follow-up questions can keep the previous one.
+export function findPeriod(text: string, today: string): Period | undefined {
   const range = parseDateRange(text, today);
   if (range) return range;
   const lower = text.toLowerCase();
   const year = Number(today.slice(0, 4));
   const current = today.slice(0, 7);
-  const monthPeriod = (month: string): Period => ({ from: `${month}-01`, to: monthEnd(month) < today ? monthEnd(month) : today,
-    label: monthLabel(month), month, months: 1 });
-  const yearPeriod = (value: number): Period => ({ from: `${value}-01-01`, to: value === year ? today : `${value}-12-31`,
-    label: value === year ? `${value} bis heute` : String(value), months: value === year ? Number(today.slice(5, 7)) : 12 });
+  const monthPeriod = (month: string) => monthPeriodOf(month, today);
+  const yearPeriod = (value: number) => yearPeriodOf(value, today);
   if (/\b(?:diese|dieser)\s+woche\b/.test(lower)) {
     const weekday = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
     return { from: shiftDate(today, -weekday), to: today, label: "diese Woche", months: 1 };
@@ -107,7 +118,29 @@ export function parsePeriod(text: string, today: string): Period {
   }
   const explicitYear = /\b(20\d{2})\b/.exec(lower);
   if (explicitYear && Number(explicitYear[1]) <= year) return yearPeriod(Number(explicitYear[1]));
-  return yearPeriod(year);
+  if (/\bheuer\b|\bdieses\s+jahr\b|\bdiesem\s+jahr\b/.test(lower)) return yearPeriod(year);
+  return undefined;
+}
+
+// Months named in the text, in reading order: "Oktober mit September" → [Oktober, September].
+export function monthsIn(text: string, today: string): Period[] {
+  const lower = text.toLowerCase();
+  const year = Number(today.slice(0, 4));
+  const current = today.slice(0, 7);
+  const found: { index: number; month: string }[] = [];
+  for (const [word, value] of monthWords) {
+    for (const match of lower.matchAll(new RegExp(`\\b${word}\\b(?:\\s+(20\\d{2}))?`, "g"))) {
+      const explicit = match[1] ? Number(match[1]) : undefined;
+      let month = `${explicit ?? year}-${pad(value)}`;
+      if (!explicit && month > current) month = `${year - 1}-${pad(value)}`;
+      found.push({ index: match.index ?? 0, month });
+    }
+  }
+  if (/\b(?:diesen|diesem|dieser|laufenden|aktuellen)\s+monat\b/.exec(lower)) found.push({ index: lower.search(/\b(?:diesen|diesem|dieser|laufenden|aktuellen)\s+monat\b/), month: current });
+  if (/\b(?:letzten|letzter|vorigen|voriger|vergangenen)\s+monat\b|\bvormonat\b/.test(lower))
+    found.push({ index: lower.search(/\b(?:letzten|letzter|vorigen|voriger|vergangenen)\s+monat\b|\bvormonat\b/), month: addMonths(current, -1) });
+  const seen = new Set<string>();
+  return found.sort((a, b) => a.index - b.index).filter(({ month }) => !seen.has(month) && seen.add(month)).map(({ month }) => monthPeriodOf(month, today));
 }
 
 const eating: Category[] = ["Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks"];
@@ -186,11 +219,14 @@ export function findMerchant(state: AppState, text: string, hint?: string): stri
   return undefined;
 }
 
-type QueryMetric = "subscriptions" | "largest" | "income" | "count" | "average" | "breakdown" | "sum";
+type QueryMetric = "subscriptions" | "largest" | "income" | "count" | "average" | "breakdown" | "compare" | "sum";
+export const comparePattern = /vergleich|verglichen|gegenüber|\bvs\.?(?=\s)|\bversus\b|mehr oder weniger|(?:mehr|weniger)\b[^?.!]{0,30}?\bals (?:im |in |letzten |vorigen |den |der )?(?:vormonat|monat davor|letzten monat|vorigen monat|jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember)/;
 export function queryMetric(text: string): QueryMetric {
   const lower = text.toLowerCase();
+  if (comparePattern.test(lower)) return "compare";
   if (/\babos?\b|abonnement/.test(lower) && !/\bbei\b/.test(lower)) return "subscriptions";
   if (/größte|grösste|teuerste|höchste|meiste geld|top\s*\d*/.test(lower)) return "largest";
+  if (/\b(?:warum|wieso|weshalb)\b.*\bso\s+(?:viel|hoch|teuer)|woher kommt/.test(lower)) return "largest";
   if (/verdient|einnahmen|eingenommen|reinbekommen|gehalt bekommen|eingegangen/.test(lower)) return "income";
   if (/wie oft|wie viele (?:mal|male|buchungen|käufe|einkäufe)|wievielmal/.test(lower)) return "count";
   if (/durchschnitt|im schnitt|pro monat|monatlich|je monat/.test(lower)) return "average";
@@ -201,8 +237,10 @@ export function queryMetric(text: string): QueryMetric {
 const idsOf = (rows: Transaction[]) => [...rows].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 50).map((row) => row.id);
 
 // Answers a data question with fixed queries; the model never produces a number.
-export function answerQuestion(state: AppState, text: string, today: string, hints: { merchant?: string; category?: string } = {}): { text: string; card: AssistantCard } {
-  const metric = queryMetric(text);
+// `previous` holds earlier questions (latest first), so "und im September?" keeps the category of the question before.
+export function answerQuestion(state: AppState, text: string, today: string, hints: { merchant?: string; category?: string } = {}, previous: string[] = []): { text: string; card: AssistantCard } {
+  const ownMetric = queryMetric(text);
+  const metric = ownMetric === "sum" ? previous.map(queryMetric).find((item) => item !== "sum" && item !== "compare") ?? "sum" : ownMetric;
   if (metric === "subscriptions") {
     const subscriptions = detectSubscriptions(state, today);
     const total = round(subscriptions.reduce((sum, item) => sum + item.monthlyCost, 0));
@@ -217,13 +255,19 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
       })), note: "Beträge pro Monat; Jahresabos sind auf 12 Monate verteilt." },
     };
   }
-  const period = parsePeriod(text, today);
-  const bank = findBank(text);
+  const ownFilter = findCategories(text);
+  const ownMerchant = findMerchant(state, text, hints.merchant && !findBank(hints.merchant) ? hints.merchant : undefined);
+  // A follow-up that names a new category or merchant replaces both; otherwise the earlier scope stays.
+  const inherit = !ownFilter && !ownMerchant ? previous.find((item) => findCategories(item) || findMerchant(state, item)) : undefined;
+  const bank = findBank(text) ?? previous.map(findBank).find(Boolean);
+  if (metric === "compare") return compareMonths(state, text, today, {
+    filter: ownFilter ?? (inherit ? findCategories(inherit) : undefined),
+    merchant: ownMerchant ?? (inherit ? findMerchant(state, inherit) : undefined), bank, previous });
+  const period = findPeriod(text, today) ?? earlierPeriod(previous, today) ?? parsePeriod(text, today);
   const hintCategory = hints.category && categories.includes(hints.category as never) ? { categories: [hints.category as Category], label: hints.category } : undefined;
   // A bank or card question is about the account, so a model category guess like "Abonnements" is ignored.
-  const filter = findCategories(text) ?? (bank ? undefined : hintCategory);
-  const hintMerchant = hints.merchant && !findBank(hints.merchant) ? hints.merchant : undefined;
-  const merchant = findMerchant(state, text, hintMerchant);
+  const filter = ownFilter ?? (inherit ? findCategories(inherit) : undefined) ?? (bank ? undefined : hintCategory);
+  const merchant = ownMerchant ?? (inherit && !ownFilter ? findMerchant(state, inherit) : undefined);
   const wanted = filter ? new Set(filter.categories.map(canonicalCategory)) : undefined;
   const entries = ledger(state).filter(({ row, category }) => row.date >= period.from && row.date <= period.to &&
     (!wanted || wanted.has(category)) && (!merchant || matchesTransactionSearch(row, merchant)) && (!bank || bank.pattern.test(row.bank.trim())));
@@ -271,6 +315,71 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
 
 const goalRate = (goal: Dashboard["goals"][number]) => goal.funding?.monthly ?? 0;
 
+type Scope = { filter?: { categories: Category[]; label: string }; merchant?: string; bank?: { pattern: RegExp; label: string }; previous: string[] };
+// The period of the latest earlier question; a comparison counts with its first month.
+function earlierPeriod(previous: string[], today: string, monthOnly = false): Period | undefined {
+  for (const [index, item] of previous.entries()) {
+    const period = comparePattern.test(item.toLowerCase()) ? compareSelection(item, today, previous.slice(index + 1))[0] : findPeriod(item, today);
+    if (period && (!monthOnly || period.month)) return period;
+  }
+  return undefined;
+}
+
+// Which two months a comparison means; earlier questions fill in the month when the text names none.
+export function compareSelection(text: string, today: string, previous: string[]): [Period, Period] {
+  let months = monthsIn(text, today);
+  const earlier = earlierPeriod(previous, today, true);
+  const lower = text.toLowerCase();
+  // "mehr als im Vormonat?" compares the month asked before (or this month) with its previous one; "mehr als im September?" with September.
+  if (/\bals\s+(?:im\s+|in\s+|der\s+)?(?:vormonat|monat davor|letzten monat|vorigen monat)/.test(lower) && months.length <= 1) {
+    const base = earlier ?? monthPeriodOf(today.slice(0, 7), today);
+    months = [base, monthPeriodOf(addMonths(base.month!, -1), today)];
+  } else if (months.length === 1 && /\bals\s+(?:im\s+|in\s+)?[a-zäöü]+/.test(lower)) {
+    const base = earlier && earlier.month !== months[0].month ? earlier : monthPeriodOf(today.slice(0, 7), today);
+    months = [base, months[0]];
+  }
+  if (!months.length) months = [earlier ?? monthPeriodOf(today.slice(0, 7), today)];
+  if (months.length === 1) months.push(monthPeriodOf(addMonths(months[0].month!, -1), today));
+  return [months[0], months[1]];
+}
+
+// "Vergleich Oktober mit September", "mehr als im Vormonat?": two months side by side, computed from the ledger.
+export function compareMonths(state: AppState, text: string, today: string, scope: Scope): { text: string; card: AssistantCard } {
+  const [a, b] = compareSelection(text, today, scope.previous);
+  const wanted = scope.filter ? new Set(scope.filter.categories.map(canonicalCategory)) : undefined;
+  const all = ledger(state);
+  const spend = (period: Period) => all.filter(({ row, category }) => row.amount < 0 && row.date >= period.from && row.date <= period.to &&
+    (!wanted || wanted.has(category)) && (!scope.merchant || matchesTransactionSearch(row, scope.merchant)) && (!scope.bank || scope.bank.pattern.test(row.bank.trim())));
+  const left = spend(a), right = spend(b);
+  const sum = (entries: typeof left) => round(entries.reduce((total, { row }) => total - row.amount, 0));
+  const totalA = sum(left), totalB = sum(right);
+  const diff = round(totalA - totalB);
+  const byCategory = !scope.merchant && (!scope.filter || scope.filter.categories.length > 1);
+  const key = ({ row, category }: (typeof left)[number]) => byCategory ? category : merchantOf(row);
+  const groups = new Map<string, [number, number]>();
+  for (const entry of left) { const item = groups.get(key(entry)) ?? [0, 0]; item[0] = round(item[0] - entry.row.amount); groups.set(key(entry), item); }
+  for (const entry of right) { const item = groups.get(key(entry)) ?? [0, 0]; item[1] = round(item[1] - entry.row.amount); groups.set(key(entry), item); }
+  const changes = [...groups].map(([label, [x, y]]) => ({ label, x, y, delta: round(x - y) })).filter((item) => Math.abs(item.delta) >= 1)
+    .sort((p, q) => Math.abs(q.delta) - Math.abs(p.delta)).slice(0, 8);
+  const label = [scope.bank?.label, scope.merchant, scope.filter?.label].filter(Boolean).join(" · ");
+  const forWhat = label ? ` für ${label}` : "";
+  const running = a.to === today && a.month === today.slice(0, 7) ? " (Monat läuft noch)" : "";
+  const sentence = diff === 0
+    ? `Im ${a.label} hast du${forWhat} genauso viel ausgegeben wie im ${b.label}: ${currency(totalA)}.`
+    : `Im ${a.label}${running} hast du${forWhat} ${currency(totalA)} ausgegeben, ${currency(Math.abs(diff))} ${diff > 0 ? "mehr" : "weniger"} als im ${b.label} (${currency(totalB)}).`;
+  const top = changes[0];
+  const reason = top && diff !== 0 && Math.sign(top.delta) === Math.sign(diff)
+    ? ` Am meisten ${diff > 0 ? "dazu kam" : "weniger war"} bei ${top.label} (${top.delta > 0 ? "+" : "−"}${currency(Math.abs(top.delta))}).` : "";
+  return { text: sentence + reason, card: { kind: "answer", title: `Vergleich${label ? ` · ${label}` : ""} · ${a.label} vs ${b.label}`, total: diff,
+    transactionIds: idsOf(left.map(({ row }) => row)),
+    lines: [
+      { label: a.label, value: totalA, detail: `${plural(left.length, "Buchung", "Buchungen")}${running}`, transactionIds: idsOf(left.map(({ row }) => row)) },
+      { label: b.label, value: totalB, detail: plural(right.length, "Buchung", "Buchungen"), transactionIds: idsOf(right.map(({ row }) => row)) },
+      ...changes.map((item): Line => ({ label: item.label, value: item.delta, detail: `${currency(item.x)} statt ${currency(item.y)}`,
+        tone: item.delta > 0 ? "warn" : "good" })),
+    ], note: "Differenz = erster minus zweiter Monat; positive Werte heißen mehr ausgegeben." } };
+}
+
 // Proactive start message: what is due this week, what changed, which goals fall behind.
 export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: string, salaryDay?: number): { text: string; card: AssistantCard } {
   const end = shiftDate(today, 6);
@@ -314,8 +423,16 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
     const days = Math.round((Date.parse(`${next}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS);
     lines.push({ label: days === 0 ? "Heute kommt dein Gehalt" : `Gehalt in ${plural(days, "Tag", "Tagen")}`, detail: dateLabel(next), tone: "good" });
   }
+  const amexShortfall = round(dashboard.amex?.shortfall ?? 0);
+  if (amexShortfall > 0.5) lines.push({ label: "Noch auf Amex-Rückzahlung überweisen", value: amexShortfall,
+    detail: `offen ${currency(dashboard.amex.outstanding)} · reserviert ${currency(dashboard.amex.reserved)}`, tone: "warn" });
+  const surplus = dashboard.current?.surplus;
+  if (surplus !== undefined && surplus < 0) lines.push({ label: `${monthLabel(today.slice(0, 7))} geht sich nicht aus`, value: round(surplus),
+    detail: "Einnahmen minus Fixkosten, Amex und Plan sind negativ", tone: "bad" });
   const parts = [
     due.length ? `diese Woche ${due.length === 1 ? "ist" : "sind"} ${currency(dueTotal)} fällig` : "diese Woche ist nichts Größeres fällig",
+    ...(amexShortfall > 0.5 ? [`für die Amex fehlen noch ${currency(amexShortfall)}`] : []),
+    ...(surplus !== undefined && surplus < 0 ? [`der Monat liegt ${currency(-surplus)} im Minus`] : []),
     ...increases.slice(0, 2).map((item) => `${item.merchant} wurde teurer`),
     ...behind.slice(0, 2),
     ...(duplicates.length ? [`${plural(duplicates.length, "Abbuchung sieht", "Abbuchungen sehen")} doppelt aus`] : []),

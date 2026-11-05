@@ -1,4 +1,5 @@
 import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
+import { comparePattern } from "./answers";
 import { detectAction, findExtra } from "./intent";
 import { normalizeMessage } from "./normalize";
 
@@ -100,8 +101,11 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
     /\b(?:anlegen|veranlagen|anleg)\b/.test(lower) && /\d+\s*jahre?n?\b/.test(lower) && !/sparziel|\bziel\b|\bbis\b/.test(lower)) return "depot";
   if (/wochenüberblick|wochenueberblick|überblick|ueberblick|was steht (?:an|diese woche)|was ist (?:diese woche )?fällig|briefing|was gibt'?s neues|zusammenfassung der woche|status/.test(lower) &&
     !/\b(?:im|in|seit)\s+(?:jänner|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(lower)) return "briefing";
-  if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:[\w€.,]+ ){0,3}(?:ein)?sparen|einsparen|einzusparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach|wo (?:kann|könnte) ich (?:noch )?(?:was |etwas )?(?:ein)?sparen/.test(lower)) return "coach";
+  if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:[\w€.,]+ ){0,3}(?:ein)?sparen|einsparen|einzusparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach|wo (?:kann|könnte) ich (?:noch )?(?:was |etwas )?(?:ein)?sparen|\b(?:kürzen|kuerzen|zurückschrauben|einschränken)\b|wo spare ich (?:am besten|am ehesten)|wo (?:kann|könnte|soll|sollte) ich (?:am ehesten |am besten )?(?:ansetzen|reduzieren)/.test(lower) &&
+    !/\b(?:rate|sparziel|ziel)\b.*\bkürzen\b/.test(lower)) return "coach";
   if (strictRule.test(lower) || looseRule.test(lower) && !known && !/\d+\s*(?:€|euro)/.test(lower)) return "rule";
+  if (comparePattern.test(lower) && (periodWords.test(lower) || /ausgab|ausgegeben|monat/.test(lower)) && !known &&
+    !/sparziel|\brate\b|leisten|leistbar|variante|szenario/.test(lower)) return "query";
   if (amexQuestion(lower)) return "amex";
   if (balanceQuestion(lower) && !/leisten|leistbar|reicht (?:das|es) für/.test(lower)) return "accounts";
   if (budgetQuestion(lower) && !/leisten|leistbar|\d+\s*(?:€|euro)/.test(lower)) return "budget";

@@ -15,7 +15,7 @@ import { matchName, type AssistantTool } from "./tools";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[] };
-type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints };
+type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[] };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const plannedTotal = (item: PlannedOneOff) => item.total ?? Math.round(item.amount * item.installments * 100) / 100;
@@ -285,7 +285,8 @@ function tax({ state, asOf }: Context, text: string): AgentResult {
 
 function help(): AgentResult {
   const lines = [
-    { label: "Ausgaben verstehen", detail: "„Wie viel ging im Oktober fürs Essen weg?“" },
+    { label: "Ausgaben verstehen", detail: "„Wie viel ging im Oktober fürs Essen weg?“, dann einfach „und im September?“" },
+    { label: "Vergleichen", detail: "„Vergleich Oktober mit September“, „Mehr als im Vormonat?“" },
     { label: "Sparen und planen", detail: "„3.000 € für Japan bis Juli 2027“" },
     { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
     { label: "Konten und Amex", detail: "„Was muss ich noch auf Amex Rückzahlung überweisen?“" },
@@ -303,7 +304,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
   const { state, dashboard, asOf } = context;
   const text = normalizeMessage(input);
   switch (tool) {
-    case "query": return answerQuestion(state, text, asOf, context.hints);
+    case "query": return answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage));
     case "amex": return amexSettlement(state, dashboard, text, asOf);
     case "accounts": return amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
     case "budget": return monthBudget(dashboard, text);
