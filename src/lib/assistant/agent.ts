@@ -15,7 +15,8 @@ import { knowledgeAnswer, knowledgeList, knowledgeListQuestion } from "./knowled
 import { marketAnswer, realValue, type MarketSnapshot } from "./market";
 import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
-import { matchName, type AssistantTool } from "./tools";
+import { detectTool, matchName, splitCommands, type AssistantTool } from "./tools";
+import { bookingEdit } from "./bookings";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[] };
@@ -119,11 +120,14 @@ function editGoal(goal: SavingsGoal, text: string, asOf: string): { operations: 
 function editPlanned(item: PlannedOneOff, text: string, asOf: string): { operations: AssistantOperation[]; title: string } | string {
   const lower = text.toLowerCase();
   const parsed = parseAssistantMessage(text, asOf);
-  if (/lösch|loesch|entfern|streich|fällt weg|faellt weg|brauch\w* (?:ich )?(?:nicht|kein)|erledigt/.test(lower))
+  if (/lösch|loesch|entfern|streich|fällt weg|faellt weg|brauch\w* (?:ich )?(?:nicht|kein)|erledigt|aus (?:dem plan|der planung)/.test(lower))
     return { operations: [{ op: "planned_delete", plannedId: item.id }], title: `„${item.name}“ aus der Planung nehmen` };
   const rename = /(?:umbenennen|benenn\w*|nenn\w*)\b.*?\b(?:in|zu)\s+[„"']?([^"“”'.,!?]{2,60})/i.exec(text);
   if (rename) return { operations: [{ op: "planned_update", plannedId: item.id, name: rename[1].trim() }], title: `„${item.name}“ umbenennen` };
   const update: Extract<AssistantOperation, { op: "planned_update" }> = { op: "planned_update", plannedId: item.id };
+  if (/(?:vom|übers|ueber|über das|aus dem|mit dem|von meinem)\s+sparkonto/.test(lower)) update.pocket = "Sparkonto";
+  else if (/(?:vom|übers|ueber|über das|aus dem|mit dem|von meinem)\s+giro(?:konto)?/.test(lower)) update.pocket = "Giro";
+  if (/raphael/.test(lower)) update.shared = !/\bnicht\b|\bohne\b|allein|alleine|selber|selbst/.test(lower);
   if (parsed.date) update.date = resolveDate(parsed.date, "expense", asOf);
   if (parsed.installments) update.installments = parsed.installments;
   const amountText = text.replace(/\b\d{1,3}\s*(?:monats)?raten\b/gi, "");
@@ -131,7 +135,7 @@ function editPlanned(item: PlannedOneOff, text: string, asOf: string): { operati
     const value = editAmount(amountText, plannedTotal(item));
     if (value !== undefined && value >= 1) update.total = value;
   }
-  if (Object.keys(update).length === 2) return `Was soll ich bei „${item.name}“ ändern? Zum Beispiel „Schieb ${item.name} auf April“, „${item.name} kostet 450 €“ oder „${item.name} in 3 Raten“.`;
+  if (Object.keys(update).length === 2) return `Was soll ich bei „${item.name}“ ändern? Zum Beispiel „Schieb ${item.name} auf April“, „${item.name} kostet 450 €“, „${item.name} in 3 Raten“ oder „Zahl ${item.name} vom Sparkonto“.`;
   return { operations: [update], title: `Geplante Ausgabe „${item.name}“ ändern` };
 }
 
@@ -161,6 +165,36 @@ function edit({ state, asOf, hints }: Context, text: string): AgentResult {
 
 function run(state: AppState, plan: { operations: AssistantOperation[]; title: string } | string, asOf: string): AgentResult {
   return typeof plan === "string" ? { text: plan } : previewChange(state, plan.operations, plan.title, asOf);
+}
+
+function booking({ state, asOf, hints }: Context, text: string): AgentResult {
+  const plan = bookingEdit(state, text, asOf, hints?.merchant);
+  if (typeof plan === "string") return { text: plan };
+  const preview = previewChange(state, plan.operations, plan.title, asOf);
+  return { ...preview, card: plan.card, text: preview.change ? `${plan.title}. Bitte prüfen und bestätigen:` : preview.text };
+}
+
+const nameList = (state: AppState, asOf: string) => [...savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name),
+  ...(state.plannedOneOffs ?? []).filter((item) => item.date.slice(0, 7) >= asOf.slice(0, 7) || item.installments > 1).map((item) => item.name)];
+
+// Several commands in one message become one preview and one undo step.
+function batch(context: Context, text: string): AgentResult {
+  const { state, asOf } = context;
+  const names = nameList(state, asOf);
+  const parts = splitCommands(text, names);
+  if (!parts) return edit(context, text);
+  const operations: AssistantOperation[] = [];
+  const titles: string[] = [];
+  for (const part of parts) {
+    const tool = detectTool(part, names);
+    const result = tool && tool !== "batch" ? executeTool(tool, part, { ...context, hints: undefined }) : { text: "Das verstehe ich nicht." } as AgentResult;
+    if (!result.change) return { text: `Bei „${part}“ hänge ich: ${result.text}`.slice(0, 2000) };
+    operations.push(...result.change.operations);
+    titles.push(result.change.title);
+  }
+  if (operations.length > 20) return { text: "Das sind zu viele Änderungen auf einmal. Bitte teil sie auf zwei Nachrichten auf." };
+  const preview = previewChange(state, operations, `${titles.length} Änderungen: ${[...new Set(titles)].join(" · ")}`.slice(0, 200), asOf);
+  return preview.change ? { ...preview, text: `${titles.length} Änderungen auf einmal, mit einem Klick bestätigt und mit einem Klick rückgängig:` } : preview;
 }
 
 // "Lieferando ist immer Essen", "Ordne Spar Lebensmittel zu", "Kategorisiere Amazon als Shopping".
@@ -304,7 +338,8 @@ function help(): AgentResult {
     { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
     { label: "Konten und Amex", detail: "„Was muss ich noch auf Amex Rückzahlung überweisen?“" },
     { label: "Monatsbudget", detail: "„Was bleibt mir diesen Monat übrig?“" },
-    { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 €“, „Puffer immer 500 €“" },
+    { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 € und schieb es auf Juli“, „Zahl das Pickerl vom Sparkonto“, „Puffer immer 500 €“" },
+    { label: "Buchungen bearbeiten", detail: "„Benenne BILLA DANKT in Billa um“, „Netflix ist Fixkosten“, „Nimm die Buchung vom 3.11. aus dem Plan“" },
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
     { label: "Live aus dem Internet", detail: "„Wie hoch ist die Inflation?“, „Welche Zinsen fürs Sparkonto?“, „3.000 € in Yen“" },
     { label: "Begriffe erklären und dazulernen", detail: "„Was ist ein ETF?“, „Was bedeutet KESt?“, „Was hast du gelernt?“" },
@@ -339,6 +374,8 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "tax": return tax(context, text);
     case "homeoffice": return homeOfficeStart(state, taxYear(text, asOf));
     case "edit": return edit(context, text);
+    case "booking": return booking(context, text);
+    case "batch": return batch(context, text);
     case "rule": return rule(context, text);
     case "remember": {
       const operation = parseMemory(text);

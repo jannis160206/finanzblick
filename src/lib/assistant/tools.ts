@@ -1,5 +1,6 @@
 import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
+import { bookingRequest } from "./bookings";
 import { checkQuestion } from "./check";
 import { loanQuestion, reminderListQuestion, reminderRequest, reviewQuestion } from "./extras";
 import { detectAction, findExtra } from "./intent";
@@ -9,7 +10,7 @@ import { normalizeMessage } from "./normalize";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
-  "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "rule",
+  "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask",
 ] as const;
@@ -28,7 +29,9 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   budget: "Monatsplan: was diesen oder einen kommenden Monat übrig bleibt, wie viel man noch ausgeben kann",
   briefing: "Wochenüberblick: was ist fällig, was hat sich geändert",
   check: "Finanz-Check: Bewertung der eigenen Finanzen (Sparquote, Fixkosten, Reserve), z. B. „Bin ich sparsam?“, „Wie stehe ich finanziell da?“",
-  edit: "bestehendes Sparziel, geplante Ausgabe oder Notgroschen-/Urlaubs-/Sparkonto-Ziel ändern, verschieben, aussetzen, umbenennen, löschen oder als erreicht markieren",
+  edit: "bestehendes Sparziel, geplante Ausgabe oder Notgroschen-/Urlaubs-/Sparkonto-Ziel ändern, verschieben, aussetzen, umbenennen, löschen, als erreicht markieren, vom Sparkonto zahlen oder mit Raphael teilen",
+  booking: "bestehende Buchungen bearbeiten: Anzeigename ändern („Benenne BILLA DANKT in Billa um“), aus dem Monatsplan nehmen, als Fixkosten oder geprüft markieren",
+  batch: "mehrere Änderungen in einer Nachricht, z. B. „Erhöhe Japan auf 4.000 € und schieb das Pickerl auf April“",
   rule: "Händler oder Buchungen einer Kategorie zuordnen, z. B. „Lieferando ist immer Essen“",
   remember: "sich etwas merken, z. B. Puffer oder Gehaltstag",
   forget: "einen gemerkten Eintrag vergessen",
@@ -95,6 +98,33 @@ const looseRule = /\bgehör(?:t|en)\s+(?:immer\s+)?(?:zu|in|unter)\b|\bzählt\s+
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
 export function detectTool(input: string, names: string[] = []): AssistantTool | undefined {
   const text = normalizeMessage(input);
+  if (splitCommands(text, names)) return "batch";
+  return detectSingle(text, names);
+}
+
+const batchTools: readonly AssistantTool[] = ["edit", "booking", "rule", "remember", "forget", "reminder"];
+// "Erhöhe Japan auf 4.000 € und schieb es auf Juli": every part must be a change on its own;
+// a part without a name inherits the name of the part before ("es" → Japan).
+export function splitCommands(input: string, names: string[] = []): string[] | undefined {
+  const text = normalizeMessage(input);
+  const raw = text.split(/\s*;\s*|(?<!\d\.\d{1,2})\.\s+(?=\p{Lu})|,?\s+und\s+(?:dann\s+|außerdem\s+|ausserdem\s+|zusätzlich\s+|danach\s+)?(?=\p{L})|,\s+(?:dann|außerdem|ausserdem|danach)\s+/u)
+    .map((part) => part.trim().replace(/[.!]+$/, "")).filter((part) => part.length >= 3);
+  if (raw.length < 2 || raw.length > 6) return undefined;
+  const parts: string[] = [];
+  let last: string | undefined;
+  for (const part of raw) {
+    const name = matchName(part, names, (entry) => entry);
+    let command = part;
+    if (!name && last && !bookingRequest(part, false) && editVerbs.test(part.toLowerCase())) command = `${part} ${last}`;
+    const tool = detectSingle(command, names);
+    if (!tool || !batchTools.includes(tool)) return undefined;
+    parts.push(command);
+    last = name ?? last;
+  }
+  return parts;
+}
+
+function detectSingle(text: string, names: string[]): AssistantTool | undefined {
   const lower = text.toLowerCase().trim();
   const known = mentionsName(text, names);
   const hasAmount = /\d/.test(lower);
@@ -108,6 +138,7 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   if (/\bvergiss\b|vergessen/.test(lower) && !/vergiss nicht/.test(lower)) return "forget";
   if (/merk dir|merke dir|vergiss nicht|denk dran|denk daran|notier|\bpuffer\b.*\bimmer\b|\bimmer\b.*\bpuffer\b|\bpuffer\b.*\d|\d.*\bpuffer\b|\breserve\b.*\d|\d.*\breserve\b|nie unter \d|(?:gehalt|lohn)\b.*\bam\s+\d{1,2}\b|\bam\s+\d{1,2}\.?\s+(?:kommt|gibt'?s)\s+(?:mein|das)\s+(?:gehalt|lohn)|gehalt geht/.test(lower) &&
     !/\bbis\b.*\b(?:sparen|zurücklegen)\b|leisten|leistbar|reicht|geht sich/.test(lower)) return "remember";
+  if (bookingRequest(text, known)) return "booking";
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
   if (loanQuestion(lower)) return "loan";
@@ -136,6 +167,10 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   if (explainPattern.test(lower)) return "explain";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
   if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
+  // "Zahl das Pickerl vom Sparkonto", "Teil den Urlaub mit Raphael", "Nimm das Pickerl aus dem Plan".
+  if (known && !newGoal && !/leisten|leistbar|reicht|geht sich/.test(lower) &&
+    (/(?:vom|übers|über das|aus dem|mit dem|von meinem)\s+(?:sparkonto|giro)|raphael/.test(lower) && /zahl|buch|teil|übernimm|uebernimm|hälfte|haelfte|halb/.test(lower) ||
+      /aus (?:dem plan|der planung)/.test(lower))) return "edit";
   if (editVerbs.test(lower) && !/\bneue[snr]?\b|anlegen|erstell/.test(lower)) {
     // "Setz mir ein Sparziel …" is a new item unless it names something that already exists.
     const action = detectAction(text);
@@ -146,6 +181,6 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   if (known && !newGoal && !/leisten|leistbar|\bdrin\b|reicht|geht sich/.test(lower) &&
     (hasAmount && /\b(?:mach|soll|ziel|stell|statt|neu|insgesamt|gesamt|hoch|runter|rauf)\b/.test(lower) && lower.split(" ").length <= 8 ||
       /\b(?:erst|doch|lieber|schon)\s+(?:im|am|ab|in|zum)\b|\b(?:später|früher)\b/.test(lower))) return "edit";
-  if (/\bhilfe\b|was kannst du|wie funktionierst du|was geht hier|^\?$/.test(lower)) return "help";
+  if (/\bhilfe\b|was kannst du|was kann ich (?:mit dir |bei dir |hier )?(?:alles )?(?:bearbeiten|erledigen lassen)|wie funktionierst du|was geht hier|^\?$/.test(lower)) return "help";
   return detectAction(text);
 }

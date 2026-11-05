@@ -5,7 +5,7 @@ import { assignTransactions } from "@/lib/transaction-tools";
 import { addMonth } from "./intent";
 import {
   assistantMemorySchema, emptyMonth, MAX_ASSISTANT_CHANGES, MAX_ASSISTANT_MEMORY, plannedOneOffSchema, savingsGoalSchema,
-  type AppState, type AssistantChangeLog, type AssistantOperation, type AssistantUndo, type PlannedOneOff, type SavingsGoal,
+  type AppState, type AssistantChangeLog, type AssistantOperation, type AssistantUndo, type PlannedOneOff, type SavingsGoal, type Transaction,
 } from "@/lib/types";
 
 export type Diff = { label: string; before: string; after: string };
@@ -42,6 +42,20 @@ function snapshotSetting(undo: AssistantUndo, state: AppState, key: NonNullable<
   undo.settings ??= [];
   if (!undo.settings.some((entry) => entry.key === key)) undo.settings.push({ key, before: state.settings[key] });
 }
+function snapshotTransactions(undo: AssistantUndo, rows: Transaction[]) {
+  undo.transactions ??= [];
+  const known = new Set(undo.transactions.map((entry) => entry.id));
+  for (const row of rows) if (!known.has(row.id)) undo.transactions.push({
+    id: row.id, category: row.category, includeInPlan: row.includeInPlan, merchantAlias: row.merchantAlias ?? "",
+    ...(row.categoryOverride !== undefined ? { categoryOverride: row.categoryOverride } : {}),
+    ...(row.manualCategory !== undefined ? { manualCategory: row.manualCategory } : {}),
+    ...(row.reviewed !== undefined ? { reviewed: row.reviewed } : {}),
+    ...(row.aiAssigned !== undefined ? { aiAssigned: row.aiAssigned } : {}),
+    ...(row.fixedCost !== undefined ? { fixedCost: row.fixedCost } : {}),
+    ...(row.merchantNameConfirmed !== undefined ? { merchantNameConfirmed: row.merchantNameConfirmed } : {}),
+  });
+}
+const yesNo = (value: boolean | undefined) => value ? "ja" : "nein";
 
 function findGoal(state: AppState, id: string) {
   const goal = savingsGoals(state).find((item) => item.id === id);
@@ -168,7 +182,11 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       const total = operation.total ?? plannedTotal(item);
       const installments = operation.installments ?? item.installments;
       const amount = installments > 1 ? Math.floor(total * 100 / installments) / 100 : total;
-      const candidate: PlannedOneOff = { ...item, name: operation.name ?? item.name, date: operation.date ?? item.date, amount, installments };
+      const candidate: PlannedOneOff = { ...item, name: operation.name ?? item.name, date: operation.date ?? item.date, amount, installments,
+        pocket: operation.pocket ?? item.pocket };
+      if (operation.shared !== undefined) {
+        if (operation.shared) candidate.sharedWithRaphael = true; else delete candidate.sharedWithRaphael;
+      }
       delete candidate.total;
       if (installments > 1 && Math.round(amount * installments * 100) !== Math.round(total * 100)) candidate.total = total;
       if (candidate.date.slice(0, 7) < context.asOf.slice(0, 7)) throw new OperationError("Der neue Termin liegt in der Vergangenheit.");
@@ -176,9 +194,13 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       if (!parsed.success) throw new OperationError("Die neuen Werte für die geplante Ausgabe sind ungültig.");
       const before = plannedText(item);
       const after = plannedText(parsed.data);
-      if (before === after && candidate.name === item.name) throw new OperationError(`An „${item.name}“ würde sich nichts ändern.`);
+      const pocketChanged = parsed.data.pocket !== item.pocket;
+      const sharedChanged = Boolean(parsed.data.sharedWithRaphael) !== Boolean(item.sharedWithRaphael);
+      if (before === after && candidate.name === item.name && !pocketChanged && !sharedChanged) throw new OperationError(`An „${item.name}“ würde sich nichts ändern.`);
       if (candidate.name !== item.name) diffs.push({ label: `${item.name}: Name`, before: item.name, after: candidate.name });
       if (before !== after) diffs.push({ label: candidate.name, before, after });
+      if (pocketChanged) diffs.push({ label: `${candidate.name}: bezahlt von`, before: item.pocket, after: parsed.data.pocket });
+      if (sharedChanged) diffs.push({ label: `${candidate.name}: mit Raphael geteilt`, before: yesNo(item.sharedWithRaphael), after: yesNo(parsed.data.sharedWithRaphael) });
       return { ...state, plannedOneOffs: (state.plannedOneOffs ?? []).map((entry) => entry.id === item.id ? parsed.data : entry) };
     }
     case "planned_delete": {
@@ -191,16 +213,7 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       const byId = new Map(state.transactions.map((row) => [row.id, row]));
       const rows = operation.ids.map((id) => byId.get(id)).filter((row) => row !== undefined);
       if (!rows.length) throw new OperationError("Die Buchungen gibt es nicht mehr.");
-      undo.transactions ??= [];
-      const known = new Set(undo.transactions.map((entry) => entry.id));
-      for (const row of rows) if (!known.has(row.id)) undo.transactions.push({
-        id: row.id, category: row.category, includeInPlan: row.includeInPlan,
-        ...(row.categoryOverride !== undefined ? { categoryOverride: row.categoryOverride } : {}),
-        ...(row.manualCategory !== undefined ? { manualCategory: row.manualCategory } : {}),
-        ...(row.reviewed !== undefined ? { reviewed: row.reviewed } : {}),
-        ...(row.aiAssigned !== undefined ? { aiAssigned: row.aiAssigned } : {}),
-        ...(row.fixedCost !== undefined ? { fixedCost: row.fixedCost } : {}),
-      });
+      snapshotTransactions(undo, rows);
       const counts = new Map<string, number>();
       for (const row of rows) {
         const current = classify(row).category;
@@ -226,6 +239,38 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         after: operation.category });
       if (operation.learn) diffs.push({ label: "Künftige Importe", before: "wie bisher", after: `automatisch ${operation.category}` });
       return next;
+    }
+    case "transaction_update": {
+      const ids = new Set(operation.ids);
+      const rows = state.transactions.filter((row) => ids.has(row.id));
+      if (!rows.length) throw new OperationError("Die Buchungen gibt es nicht mehr.");
+      const label = `${rows.length} ${rows.length === 1 ? "Buchung" : "Buchungen"}`;
+      const start = diffs.length;
+      const changed = (pick: (row: Transaction) => unknown, value: unknown) => rows.filter((row) => pick(row) !== value).length;
+      const tally = (pick: (row: Transaction) => string) => {
+        const counts = new Map<string, number>();
+        for (const row of rows) counts.set(pick(row), (counts.get(pick(row)) ?? 0) + 1);
+        return [...counts].sort((a, b) => b[1] - a[1]).map(([value, count]) => rows.length === 1 ? value : `${value} (${count})`).join(", ").slice(0, 200);
+      };
+      if (operation.alias !== undefined && changed((row) => row.merchantAlias, operation.alias))
+        diffs.push({ label: `${label}: Anzeigename`, before: tally((row) => row.merchantAlias || row.description.slice(0, 40)), after: operation.alias });
+      if (operation.includeInPlan !== undefined && changed((row) => row.includeInPlan, operation.includeInPlan))
+        diffs.push({ label: `${label}: im Monatsplan`, before: tally((row) => yesNo(row.includeInPlan)), after: yesNo(operation.includeInPlan) });
+      if (operation.fixedCost !== undefined && changed((row) => Boolean(row.fixedCost), operation.fixedCost))
+        diffs.push({ label: `${label}: Fixkosten`, before: tally((row) => yesNo(row.fixedCost)), after: yesNo(operation.fixedCost) });
+      if (operation.reviewed !== undefined && changed((row) => Boolean(row.reviewed), operation.reviewed))
+        diffs.push({ label: `${label}: geprüft`, before: tally((row) => yesNo(row.reviewed)), after: yesNo(operation.reviewed) });
+      if (diffs.length === start) throw new OperationError(`An ${rows.length === 1 ? "dieser Buchung" : "diesen Buchungen"} würde sich nichts ändern.`);
+      snapshotTransactions(undo, rows);
+      return { ...state, transactions: state.transactions.map((row) => {
+        if (!ids.has(row.id)) return row;
+        const next: Transaction = { ...row };
+        if (operation.alias !== undefined) { next.merchantAlias = operation.alias; next.merchantNameConfirmed = true; }
+        if (operation.includeInPlan !== undefined) next.includeInPlan = operation.includeInPlan;
+        if (operation.fixedCost !== undefined) next.fixedCost = operation.fixedCost;
+        if (operation.reviewed !== undefined) next.reviewed = operation.reviewed;
+        return next;
+      }) };
     }
     case "setting": {
       snapshotSetting(undo, state, operation.key);
@@ -344,7 +389,10 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
       if (!before) return row;
       const restored = { ...row };
       for (const key of ["categoryOverride", "manualCategory", "reviewed", "aiAssigned", "fixedCost"] as const) delete restored[key];
-      return { ...restored, ...before };
+      if (before.merchantAlias !== undefined) delete restored.merchantNameConfirmed;
+      const result = { ...restored, ...before };
+      if (result.merchantAlias === "") delete result.merchantAlias;
+      return result;
     });
   }
   if (undo.merchantRules?.length) {

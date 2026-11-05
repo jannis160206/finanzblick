@@ -417,8 +417,18 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     date: dateSchema.optional(),
     total: moneySchema.positive().max(10_000_000).optional(),
     installments: z.number().int().min(1).max(120).optional(),
+    pocket: z.enum(["Giro", "Sparkonto"]).optional(),
+    shared: z.boolean().optional(),
   }).strict(),
   z.object({ op: z.literal("planned_delete"), plannedId: agentIdSchema }).strict(),
+  // Edits on existing bookings: display name, plan inclusion, fixed-cost flag, reviewed mark.
+  z.object({
+    op: z.literal("transaction_update"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
+    alias: z.string().trim().min(1).max(200).optional(),
+    includeInPlan: z.boolean().optional(),
+    fixedCost: z.boolean().optional(),
+    reviewed: z.boolean().optional(),
+  }).strict(),
   z.object({
     op: z.literal("categorize"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
     category: categorySchema, learn: z.boolean(),
@@ -519,7 +529,9 @@ const undoTransactionSchema = z.object({
   includeInPlan: z.boolean(),
   aiAssigned: z.boolean().optional(),
   fixedCost: z.boolean().optional(),
+  // "" means the booking had no alias; undefined (older entries) leaves the alias untouched.
   merchantAlias: z.string().max(200).optional(),
+  merchantNameConfirmed: z.boolean().optional(),
 }).strict();
 // Snapshot of exactly the entities an agent change touched, so it can be reverted.
 export const assistantUndoSchema = z.object({
