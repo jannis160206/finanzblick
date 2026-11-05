@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Brain, Bot, CalendarClock, Check, CircleHelp, Columns2, History, MessageSquareText, Pencil, PiggyBank, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { Brain, Bot, CalendarClock, Check, CircleHelp, Columns2, History, LoaderCircle, MessageSquareText, Pencil, PiggyBank, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
 import { useFinance } from "@/components/finance-provider";
@@ -15,6 +15,7 @@ import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResul
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
 import { extractMemories } from "@/lib/assistant/memory";
+import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
@@ -35,9 +36,20 @@ const examples = [
   "Was kann ich im Dashboard alles einstellen?",
 ];
 const extraSources: string[] = [...extraSourceSchema.options];
-const intro = "Frag mich zu deinen Ausgaben, plane Sparziele und Ausgaben, ändere Bestehendes oder lass dir beim Sparen helfen. Schreib ruhig locker, " +
-  "z. B. „essen oktober wie viel“ oder „mach Japan 4000“. Wichtige Dinge wie Puffer oder Gehaltstag merke ich mir automatisch. " +
-  "Alle Beträge rechnet der Code nach. Geändert wird erst, wenn du bestätigst, und jede Änderung lässt sich rückgängig machen.";
+const intro = "Hallo! Ich bin dein Finanz-Assistent. Frag mich einfach, wie du es sagen würdest: zu deinen Ausgaben, deinen Sparzielen " +
+  "oder ob du dir etwas leisten kannst. Ich rechne alles mit deinen echten Zahlen und ändere nur etwas, wenn du bestätigst.";
+// Natural next questions after an answer, shown as quick replies.
+const followUps: Partial<Record<AssistantTool, string[]>> = {
+  query: ["Was war meine größte Ausgabe dieses Jahr?", "Wie viel geht für Abos weg?", "Ich will 200 € mehr im Monat sparen"],
+  briefing: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
+  coach: ["Wie viel geht für Abos weg?", "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?"],
+  depot: ["Und mit 200 € im Monat?", "Wie viel kann ich monatlich sparen?"],
+  tax: ["Was bekomme ich für Home-Office-Sachen zurück?"],
+  memory: ["Merk dir: Puffer immer 500 €"],
+  changes: ["Mach das rückgängig"],
+  explain: ["Wie funktionieren die Sparziele?", "Wie funktioniert der Import?"],
+};
+const thinkingSteps = ["Lese deine Nachricht", "Suche die passenden Daten", "Rechne nach", "Formuliere die Antwort"];
 const sameDay = (at: number, now: number) => new Date(at).toDateString() === new Date(now).toDateString();
 const lights = {
   green: { label: "Geht sich aus", dot: "🟢", tone: "border-emerald-500/40 bg-emerald-500/5" },
@@ -90,7 +102,7 @@ export function FinanceAssistant() {
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const briefed = useRef(false);
-  useEffect(() => { endRef.current?.scrollIntoView({ block: "end" }); }, [messages.length]);
+  useEffect(() => { endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy]);
 
   const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) =>
     update((current) => {
@@ -110,6 +122,7 @@ export function FinanceAssistant() {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
       ...(result.card ? { card: result.card } : {}), ...(result.change ? { change: result.change } : {}),
       ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.change || result.undoId ? { status: "preview" as const } : {}),
+      ...(result.suggestions?.length ? { suggestions: [...new Set(result.suggestions)].slice(0, 4) } : {}),
     };
     const parsed = assistantMessageSchema.safeParse(message);
     save((items) => [...items, parsed.success ? parsed.data : { id: message.id, role: "assistant", text: message.text, at: message.at }]);
@@ -169,19 +182,37 @@ export function FinanceAssistant() {
     const now = Date.now();
     if ((state.assistantChat ?? []).some((item) => item.card?.kind === "briefing" && sameDay(item.at, now))) return;
     try {
-      addResult(weeklyBriefing(state, dashboard, state.settings.asOf, memoryValue(state, "salaryDay")), "Regel");
+      const briefing = weeklyBriefing(state, dashboard, state.settings.asOf, memoryValue(state, "salaryDay"));
+      const message = assistantMessageSchema.safeParse({ id: newId(), role: "assistant", text: briefing.text.slice(0, 2000), at: now, source: "Regel",
+        ...(briefing.card ? { card: briefing.card } : {}), suggestions: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"] });
+      // Checked again inside the update, so two quick page loads never add the overview twice.
+      if (message.success) save((items) => items.some((item) => item.card?.kind === "briefing" && sameDay(item.at, now)) ? items : [...items, message.data]);
     } catch {
       // The overview is optional; the chat still works without it.
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, storageError]);
 
-  async function send(event?: FormEvent) {
+  async function send(event?: FormEvent, preset?: string) {
     event?.preventDefault();
-    const text = input.trim().slice(0, 1000);
+    const text = (preset ?? input).trim().slice(0, 1000);
     if (!text || busy || storageError) return;
     const pending = [...messages].reverse().find((item) => item.role === "assistant" && item.draft && (item.status === "question" || item.status === "preview"))?.draft;
     const asOf = state.settings.asOf;
+    const startedAt = Date.now();
+    // Short pause, so instant rule answers still read like a reply instead of a page jump.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, Math.max(0, 650 - (Date.now() - startedAt))));
+    const chat = pending ? undefined : smallTalk(text, { hour: new Date().getHours(), seed: messages.length });
+    if (chat) {
+      setInput("");
+      setBusy(true);
+      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
+      await settle();
+      addResult(chat, "Regel");
+      setBusy(false);
+      inputRef.current?.focus();
+      return;
+    }
     const history = messages.slice(-6).map((item) => ({ role: item.role, text: item.text.slice(0, 500) }));
     const goals = savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50);
     const planned = [...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth)
@@ -208,6 +239,7 @@ export function FinanceAssistant() {
     }
     const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) ? reply.tool : undefined;
     const parsed = !tool && reply.draft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
+    await settle();
     if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
       const operation = parseMemory(text);
@@ -220,10 +252,10 @@ export function FinanceAssistant() {
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
-      addResult(result, reply.source);
+      addResult(result.suggestions || result.change || result.undoId ? result : { ...result, suggestions: followUps[tool] }, reply.source);
     } else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
-    else save((items) => [...items, { id: newId(), role: "assistant", at: Date.now(),
-      text: "Das habe ich nicht verstanden. Frag mich zum Beispiel „Wie viel hab ich im Oktober fürs Essen ausgegeben?“, „Erhöhe Japan auf 4.000 €“ oder schreib „Hilfe“ für alles, was ich kann." }]);
+    else addResult({ text: "Da bin ich mir nicht sicher, was du meinst. Magst du es anders formulieren? Du kannst mich zum Beispiel nach deinen Ausgaben fragen, " +
+      "ein Sparziel planen oder prüfen lassen, ob du dir etwas leisten kannst.", suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel");
     // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.
     if (tool !== "remember") {
       const memories = extractMemories(text, state, tool ?? (parsed?.success ? parsed.data.action : undefined));
@@ -294,10 +326,7 @@ export function FinanceAssistant() {
     <section className="panel flex min-h-[60vh] flex-col p-4 sm:p-6" aria-label="Chat mit dem Finanz-Assistenten">
       <FinancialData className="flex flex-1 flex-col gap-4" aria-live="polite">
         <Bubble role="assistant" text={intro} />
-        {messages.length <= 1 && <div className="flex flex-wrap gap-2 pl-11">
-          {examples.map((example) => <button key={example} type="button" onClick={() => { setInput(example); inputRef.current?.focus(); }}
-            className="rounded-full border border-border/70 bg-background/40 px-3 py-1.5 text-left text-xs text-muted-foreground transition hover:border-primary/50 hover:text-foreground">{example}</button>)}
-        </div>}
+        {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
         {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
           <Bubble role={message.role} text={message.text} source={message.source} faded={message.status === "dismissed"} />
           {message.card && <div className="pl-11">{message.card.kind === "homeoffice"
@@ -329,8 +358,10 @@ export function FinanceAssistant() {
                 onCreateGoal={(draft) => createGoal(message, draft)} onCreateExpense={(draft) => createExpense(message, draft)}
                 onUndo={() => message.undoId && undo(message.undoId)} />}
           </div>}
+          {message.suggestions && !busy && message.id === messages.at(-1)?.id &&
+            <QuickReplies items={message.suggestions} disabled={!!storageError} onPick={(text) => void send(undefined, text)} />}
         </div>)}
-        {busy && <Bubble role="assistant" text="Ich rechne …" />}
+        {busy && <Thinking />}
         <div ref={endRef} />
       </FinancialData>
       <form onSubmit={send} className="mt-5 flex items-end gap-2 border-t border-border/60 pt-4">
@@ -346,9 +377,38 @@ export function FinanceAssistant() {
     </section>
   </div>;
 }
+function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: boolean; onPick: (text: string) => void }) {
+  return <div className="flex flex-wrap gap-2 pl-11" aria-label="Vorschläge">
+    {[...new Set(items)].map((item) => <button key={item} type="button" disabled={disabled} onClick={() => onPick(item)}
+      className="assistant-reveal rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-left text-xs text-foreground/80 transition hover:border-primary/60 hover:bg-primary/10 hover:text-foreground disabled:opacity-50">{item}</button>)}
+  </div>;
+}
+
+// Live "thinking" state: spinning ring around the avatar, shimmering status text that walks through the steps.
+function Thinking() {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setStep((value) => Math.min(value + 1, thinkingSteps.length - 1)), 1400);
+    return () => clearInterval(timer);
+  }, []);
+  return <div className="assistant-reveal flex items-start gap-3" role="status" aria-live="polite">
+    <span className="relative flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+      <LoaderCircle aria-hidden="true" className="absolute size-8 animate-spin text-primary/60 [animation-duration:1.1s] motion-reduce:animate-none" strokeWidth={1.5} />
+      <Sparkles aria-hidden="true" className="size-3.5 animate-pulse motion-reduce:animate-none" />
+    </span>
+    <div className="flex items-center gap-3 rounded-2xl bg-muted/50 px-4 py-2.5 text-sm">
+      <span className="assistant-shimmer font-medium">Denkt nach</span>
+      <span className="flex gap-1" aria-hidden="true">
+        {[0, 1, 2].map((dot) => <span key={dot} className="assistant-dot size-1.5 rounded-full bg-primary/70" style={{ animationDelay: `${dot * 160}ms` }} />)}
+      </span>
+      <span key={step} className="assistant-reveal text-xs text-muted-foreground">{thinkingSteps[step]} …</span>
+    </div>
+  </div>;
+}
+
 function Bubble({ role, text, source, faded }: { role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; faded?: boolean }) {
   const mine = role === "user";
-  return <div className={cn("flex items-start gap-3", mine && "flex-row-reverse", faded && "opacity-60")}>
+  return <div className={cn("assistant-reveal flex items-start gap-3", mine && "flex-row-reverse", faded && "opacity-60")}>
     <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-xl", mine ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary")}>
       {mine ? <MessageSquareText aria-hidden="true" className="size-4" /> : <Bot aria-hidden="true" className="size-4" />}
     </span>

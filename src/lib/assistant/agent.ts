@@ -10,10 +10,10 @@ import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
 import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
-import { matchName, toolDescriptions, type AssistantTool } from "./tools";
+import { matchName, type AssistantTool } from "./tools";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
-export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string };
+export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[] };
 type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
@@ -283,9 +283,16 @@ function tax({ state, asOf }: Context, text: string): AgentResult {
 }
 
 function help(): AgentResult {
-  const lines = (Object.entries(toolDescriptions) as [AssistantTool, string][]).filter(([tool]) => tool !== "help").map(([, description]) => ({ label: description }));
-  return { text: "Ich rechne alles im Code nach und ändere nur etwas, wenn du bestätigst. Das kann ich:",
-    card: { kind: "answer", title: "Was ich kann", lines, note: "Beispiele: „Wie viel hab ich im Oktober fürs Essen ausgegeben?“, „Erhöhe Japan auf 4.000 €“, „Lieferando ist immer Lieferdienste“, „Merk dir: Puffer immer 500 €“." } };
+  const lines = [
+    { label: "Ausgaben verstehen", detail: "„Wie viel ging im Oktober fürs Essen weg?“" },
+    { label: "Sparen und planen", detail: "„3.000 € für Japan bis Juli 2027“" },
+    { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
+    { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 €“, „Puffer immer 500 €“" },
+    { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
+  ];
+  return { text: "Gern! Ich kenne deine Buchungen, Sparziele und geplanten Ausgaben und kann damit rechnen, planen und Dinge für dich einstellen. Am besten fragst du einfach drauflos:",
+    card: { kind: "answer", title: "Womit ich dir helfen kann", lines, note: "Alle Zahlen rechnet der Code nach. Geändert wird nur, wenn du bestätigst." },
+    suggestions: ["Gib mir den Wochenüberblick", "Was kann ich im Dashboard alles einstellen?", "Ich will 200 € mehr im Monat sparen"] };
 }
 
 // Executes a non-draft tool deterministically on the local data. Draft tools (goal, expense, affordability) use the draft flow.

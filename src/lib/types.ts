@@ -472,6 +472,8 @@ export const assistantMessageSchema = z.object({
   undoId: agentIdSchema.optional(),
   status: z.enum(["question", "preview", "created", "dismissed", "applied", "undone"]).optional(),
   source: z.enum(["KI", "Regel"]).optional(),
+  // Quick replies shown under the latest assistant message.
+  suggestions: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
 }).strict();
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 export const MAX_ASSISTANT_MESSAGES = 100;

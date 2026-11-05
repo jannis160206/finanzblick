@@ -307,6 +307,42 @@
   }
 }
 
+/* Finanz-Assistent: message entrance, thinking text shimmer and typing dots. */
+.assistant-reveal {
+  animation: assistant-reveal 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.assistant-shimmer {
+  background: linear-gradient(90deg, var(--muted-foreground) 0%, var(--primary) 45%, var(--foreground) 50%, var(--primary) 55%, var(--muted-foreground) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: assistant-shimmer 2s linear infinite;
+}
+.assistant-dot {
+  animation: assistant-dot 1.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@keyframes assistant-reveal {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes assistant-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -150% 0; }
+}
+@keyframes assistant-dot {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-3px); }
+}
+:root[data-reduce-motion="true"] :is(.assistant-reveal, .assistant-shimmer, .assistant-dot) {
+  animation: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .assistant-reveal, .assistant-shimmer, .assistant-dot {
+    animation: none;
+  }
+}
+
 :root[data-reduce-motion="true"] .automation-progress-shimmer::after {
   animation: none;
   opacity: 0;
