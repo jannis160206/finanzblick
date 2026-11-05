@@ -51,6 +51,7 @@ import { useAccountWorkspace } from "@/components/account-context";
 import { useAutomation } from "@/components/automation-context";
 import { useUploadActivity, type UploadActivity } from "@/components/upload-activity";
 import { UploadStatus } from "@/components/upload-status";
+import { PaypalActivityImport } from "@/components/paypal-activity-import";
 import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "@/lib/automation/schema";
 import { type UploadedStatementResult } from "@/lib/import/results";
 import { automationFailure, classifyParserError } from "@/lib/automation/errors";
@@ -252,7 +253,9 @@ const BookingReview = memo(function BookingReview({
 
 function suggestionLabel(suggestion: AiSuggestion) {
   return suggestion.source === "Historie" ? "Vorschlag aus deiner Historie"
-    : suggestion.source === "Regel" ? "Vorschlag laut Händlerregel" : "KI-Vorschlag";
+    : suggestion.source === "Regel" ? "Vorschlag laut Händlerregel"
+    : suggestion.source === "Branche" ? "Vorschlag laut Branche des Händlers"
+    : suggestion.source === "Abo" ? "Gleicher PayPal-Betrag in mehreren Monaten – wohl ein Abo" : "KI-Vorschlag";
 }
 
 const MerchantGroupReview = memo(function MerchantGroupReview({
@@ -772,6 +775,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           {ui.pending && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
             <LoaderCircle className="size-4 animate-spin" />Zuordnung wird übernommen …
           </p>}
+          <PaypalActivityImport review={ui.review} disabled={!!ui.pending} />
           </DialogHeader>
           <DialogBody>
           <fieldset disabled={!!ui.pending} className="min-w-0 space-y-4">

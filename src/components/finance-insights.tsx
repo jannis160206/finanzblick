@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CopyX, Repeat, Sparkles, TrendingUp } from "lucide-react";
+import { CopyX, GraduationCap, Repeat, Sparkles, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
@@ -43,7 +43,7 @@ export function FinanceInsightsPanel() {
   const key = JSON.stringify(facts);
   const text = written?.key === key ? written.text : fallbackSummary(facts);
   const monthlySubscriptions = insights.subscriptions.reduce((sum, item) => sum + item.monthlyCost, 0);
-  const { forecast } = insights;
+  const { forecast, learning } = insights;
 
   const write = async () => {
     setBusy(true);
@@ -113,6 +113,22 @@ export function FinanceInsightsPanel() {
           </li>)}
         </ul>
       </article>}
+      <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4 lg:col-span-2" aria-label="Lernkurve der Zuordnung">
+        <h3 className="flex items-center gap-2 text-sm font-medium"><GraduationCap aria-hidden="true" className="size-4 text-primary" />Automatisch zugeordnet
+          {learning.share !== undefined && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{learning.share} % über die letzten Importe</span>}</h3>
+        {learning.imports.length ? <ul className="mt-3 grid gap-2">
+          {learning.imports.map((entry) => <li key={entry.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs">
+            <span className="min-w-0 truncate">{entry.name} <span className="text-muted-foreground">· {dateLabel(new Date(entry.at).toISOString().slice(0, 10))}</span></span>
+            <span className="tabular-nums">{entry.assigned} / {entry.rows} · {entry.share} %</span>
+            <span className="col-span-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+              <span className="block h-full rounded-full bg-primary" style={{ width: `${entry.share}%` }} />
+            </span>
+          </li>)}
+        </ul> : <p className="mt-3 text-xs text-muted-foreground">Ab dem nächsten Import siehst du hier, wie viel ohne Prüfung zugeordnet wurde.</p>}
+        {learning.openMerchants.length > 0 && <p className="mt-3 text-xs text-muted-foreground">
+          Am häufigsten offen: {learning.openMerchants.map((item) => `${item.merchant} (${item.count})`).join(", ")}
+        </p>}
+      </article>
     </FinancialData>
   </section>;
 }

@@ -174,8 +174,10 @@ describe("evidence gate", () => {
     const state = withOpen([purchase], [booking("credit", { description: "OBI 4711 VILLACH", amount: 19.51, date: "2026-09-02" })]);
     expect(decideReviewWithEvidence(state, "credit", input("OBI 4711 VILLACH", 19.51), undefined))
       .toMatchObject({ accepted: true, category: "Rückerstattungen", source: "Erstattung", merchantAlias: "OBI" });
-    const other = withOpen([purchase], [booking("credit", { description: "OBI 4711 VILLACH", amount: 7, date: "2026-09-02" })]);
-    expect(decideReviewWithEvidence(other, "credit", input("OBI 4711 VILLACH", 7), undefined)).toMatchObject({ accepted: false });
+    const partial = withOpen([purchase], [booking("credit", { description: "OBI 4711 VILLACH", amount: 7, date: "2026-09-02" })]);
+    expect(decideReviewWithEvidence(partial, "credit", input("OBI 4711 VILLACH", 7), undefined)).toMatchObject({ accepted: true, source: "Erstattung" });
+    const larger = withOpen([purchase], [booking("credit", { description: "OBI 4711 VILLACH", amount: 25, date: "2026-09-02" })]);
+    expect(decideReviewWithEvidence(larger, "credit", input("OBI 4711 VILLACH", 25), undefined)).toMatchObject({ accepted: false });
   });
 
   it("suggests a category for bookings it leaves open", () => {

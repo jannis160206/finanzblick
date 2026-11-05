@@ -1,8 +1,13 @@
 import { classify } from "@/lib/calc";
-import { canonicalCategory, knownMerchantCategory, type Category } from "@/lib/categories";
+import { allCategories, canonicalCategory, knownMerchantCategory, type Category } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { isIncomeCategory } from "@/lib/fixed";
 import type { AppState, Transaction } from "@/lib/types";
+import { isRaphaelPayment } from "@/lib/shared-holiday";
+import {
+  amexEntertainmentCredit, amexReversalPair, isRefundableSpending, partnerContribution, paypalCreditPair, paypalRecurringMonths,
+  returnedDebitPair, type MatcherDraft,
+} from "./booking-matchers";
 import { providerMerchant, RULE_REFINEMENTS, type AiCategorization } from "./categorize";
 import type { AiBookingInput } from "./review-candidates";
 
@@ -83,22 +88,25 @@ export function brandHistory(state: AppState, draft: BrandSource & Pick<Transact
 
 const DAY_MS = 86_400_000;
 
-// A merchant credit for exactly the amount of an earlier purchase there is its refund.
+// A merchant credit for an earlier purchase there is its refund: the exact amount first,
+// else (partial refund) the latest larger purchase of that brand.
 export function refundOrigin(state: AppState, draft: BrandSource & Pick<Transaction, "id" | "amount" | "date">) {
-  if (draft.amount <= 0) return undefined;
+  if (draft.amount <= 0 || isRaphaelPayment(draft)) return undefined;
   const brand = brandKey(draft);
   const date = Date.parse(draft.date);
   if (!brand || Number.isNaN(date)) return undefined;
   const open = openReviewIds(state);
-  let origin: Transaction | undefined;
+  let exact: Transaction | undefined;
+  let partial: Transaction | undefined;
   for (const row of state.transactions) {
-    if (row.amount >= 0 || Math.abs(row.amount + draft.amount) >= 0.005 || row.id === draft.id || row.aiAssigned || open.has(row.id)) continue;
+    if (row.amount >= 0 || row.id === draft.id || row.aiAssigned || open.has(row.id)) continue;
     const age = date - Date.parse(row.date);
-    if (!(age >= 0 && age <= 180 * DAY_MS) || brandKey(row) !== brand) continue;
-    if (canonicalCategory(classify(row).category) === "Prüfen") continue;
-    if (!origin || row.date > origin.date) origin = row;
+    if (!(age >= 0 && age <= 180 * DAY_MS) || brandKey(row) !== brand || !isRefundableSpending(row)) continue;
+    if (Math.abs(row.amount + draft.amount) < 0.005) {
+      if (!exact || row.date > exact.date) exact = row;
+    } else if (-row.amount > draft.amount && (!partial || row.date > partial.date)) partial = row;
   }
-  return origin;
+  return exact ?? partial;
 }
 
 export function categoryFitsSign(category: Category, amount: number) {
@@ -119,20 +127,34 @@ function usableRule(input: AiBookingInput, history: BrandHistory): Category | un
   return rule;
 }
 
-export type EvidenceSource = "Historie" | "Regel" | "Erstattung";
-export type AiSuggestionDraft = { category: Category; merchantAlias?: string; source: "KI" | "Regel" | "Historie" };
+export type EvidenceSource = "Historie" | "Regel" | "Erstattung" | "Branche";
+export type AiSuggestionDraft = { category: Category; merchantAlias?: string; source: "KI" | "Regel" | "Historie" | "Branche" | "Abo" };
 export type EvidenceDecision =
   | { accepted: true; category: Category; merchantAlias?: string; source: EvidenceSource; detail?: string }
   | { accepted: false; reason: string; suggestion?: AiSuggestionDraft };
+// Extra, independent facts about the merchant (e.g. its industry from Wikidata or its web shop).
+export type EvidenceContext = { industry?: { category: Category; label: string } };
+
+// Bank facts that settle a booking without any model: fixed pairs and the partner's notes.
+function specialCase(state: AppState, draft: MatcherDraft): EvidenceDecision | undefined {
+  const pair = amexEntertainmentCredit(draft) ?? returnedDebitPair(state, draft) ?? amexReversalPair(state, draft) ??
+    paypalCreditPair(state, draft) ?? partnerContribution(state, draft);
+  if (!pair) return undefined;
+  return { accepted: true, category: pair.category, source: pair.refund ? "Erstattung" : "Regel", detail: pair.detail,
+    ...(pair.merchantAlias && !draft.merchantAlias ? { merchantAlias: pair.merchantAlias } : {}) };
+}
 
 // The model reports ~95 % for right and wrong answers alike, so an answer is
 // only applied when the household's own history or a fixed bank rule backs it.
 export function decideWithEvidence(
   state: AppState,
-  draft: BrandSource & Pick<Transaction, "id" | "amount"> & Partial<Pick<Transaction, "date">>,
+  draft: MatcherDraft,
   input: AiBookingInput,
   answer: AiCategorization | undefined,
+  context: EvidenceContext = {},
 ): EvidenceDecision {
+  const special = specialCase(state, draft);
+  if (special) return special;
   const history = brandHistory(state, draft);
   const seen = [...history.categories.keys()];
   const shopName = providerMerchant(input.text);
@@ -145,8 +167,10 @@ export function decideWithEvidence(
   const origin = draft.date ? refundOrigin(state, { ...draft, date: draft.date }) : undefined;
   if (origin) {
     const alias = !draft.merchantAlias ? origin.merchantAlias ?? shopName : undefined;
+    const partial = Math.abs(origin.amount + draft.amount) >= 0.005;
     return { accepted: true, category: "Rückerstattungen", source: "Erstattung",
-      detail: `Kauf vom ${origin.date} (${canonicalCategory(classify(origin).category)})`, ...(alias ? { merchantAlias: alias } : {}) };
+      detail: `${partial ? "Teil-Erstattung zum " : ""}Kauf vom ${origin.date} (${canonicalCategory(classify(origin).category)})`,
+      ...(alias ? { merchantAlias: alias } : {}) };
   }
   const rule = usableRule(input, history);
   if (rule) {
@@ -156,22 +180,32 @@ export function decideWithEvidence(
     return { accepted: true, category: refined, source: "Regel", ...(alias ? { merchantAlias: alias } : {}) };
   }
   const reject = (reason: string): EvidenceDecision => {
-    const suggestion = suggestCategory(history, input, answer, shopName);
+    const suggestion = suggestCategory(state, draft, history, input, answer, shopName, context);
     return { accepted: false, reason, ...(suggestion ? { suggestion } : {}) };
   };
   if (!answer) return reject("keine Antwort");
   if (!answer.accepted || answer.category === "Prüfen") return reject(answer.reason ?? "unsicher");
   const category = canonicalCategory(answer.category);
   if (seen.some((item) => item !== category)) return reject("widerspricht eigener Historie");
+  // The merchant's own industry is independent of the model, so agreement of both is evidence.
+  const industry = context.industry && canonicalCategory(context.industry.category);
+  if (industry && [...history.confirmedCategories].every((item) => item === category) && categoryFitsSign(category, input.amount) &&
+    (industry === category || RULE_REFINEMENTS[industry]?.includes(category))) {
+    const alias = draft.merchantAlias ? undefined : answer.merchant ?? shopName;
+    return { accepted: true, category, source: "Branche", detail: context.industry!.label.slice(0, 80),
+      ...(alias ? { merchantAlias: alias } : {}) };
+  }
   const known = knownMerchantCategory(input.text, input.amount);
   if (!known || known === "Prüfen" || (known !== category && !RULE_REFINEMENTS[known]?.includes(category)))
     return reject("keine Bestätigung durch Regel oder eigene Historie");
   return { accepted: true, category, source: "Regel", ...(answer.merchant ? { merchantAlias: answer.merchant } : {}) };
 }
 
-// What the review dialog pre-fills: the household's own majority, else the bank rule, else the model.
+// What the review dialog pre-fills: the household's own majority, else the bank rule,
+// else a recurring PayPal amount, else the merchant's industry, else the model.
 function suggestCategory(
-  history: BrandHistory, input: AiBookingInput, answer: AiCategorization | undefined, shopName: string | undefined,
+  state: AppState, draft: MatcherDraft, history: BrandHistory, input: AiBookingInput,
+  answer: AiCategorization | undefined, shopName: string | undefined, context: EvidenceContext,
 ): AiSuggestionDraft | undefined {
   const name = answer?.merchant && !isPaymentProviderName(answer.merchant) ? answer.merchant : shopName;
   const withName = (suggestion: AiSuggestionDraft): AiSuggestionDraft => name ? { ...suggestion, merchantAlias: name } : suggestion;
@@ -180,6 +214,9 @@ function suggestCategory(
   const known = knownMerchantCategory(input.text, input.amount);
   if (known && known !== "Prüfen" && categoryFitsSign(canonicalCategory(known), input.amount))
     return withName({ category: canonicalCategory(known), source: "Regel" });
+  if (paypalRecurringMonths(state, draft) >= 3) return { category: "Abonnements", source: "Abo" };
+  const industry = context.industry && canonicalCategory(context.industry.category);
+  if (industry && categoryFitsSign(industry, input.amount)) return withName({ category: industry, source: "Branche" });
   if (answer && answer.category !== "Prüfen" && answer.confidence >= 50) {
     const category = canonicalCategory(answer.category);
     if (categoryFitsSign(category, input.amount)) return withName({ category, source: "KI" });
@@ -189,10 +226,22 @@ function suggestCategory(
 
 const isPaymentProviderName = (name: string) => /^(?:paypal|klarna|sumup|stripe|adyen)\b/i.test(name.trim());
 
+// The shop whose industry is worth looking up: the model's name, else the one behind PayPal/Klarna.
+export function industryLookupName(input: AiBookingInput, answer: AiCategorization | undefined) {
+  const name = answer?.merchant && !isPaymentProviderName(answer.merchant) ? answer.merchant : providerMerchant(input.text);
+  return name && name.trim().length >= 3 ? name.trim().slice(0, 90) : undefined;
+}
+
+export function industryContext(value: { category?: string; label?: string } | undefined): EvidenceContext {
+  if (!value?.category || !(allCategories as readonly string[]).includes(value.category)) return {};
+  return { industry: { category: value.category as Category, label: value.label ?? "" } };
+}
+
 export function decideReviewWithEvidence(
   state: AppState, reviewId: string, input: AiBookingInput, answer: AiCategorization | undefined,
+  context: EvidenceContext = {},
 ): EvidenceDecision {
   const item = state.reviewQueue?.find((entry) => entry.id === reviewId);
   if (item?.kind !== "booking" || item.draft.amount === null) return { accepted: false, reason: "Prüfung nicht mehr offen" };
-  return decideWithEvidence(state, { ...item.draft, amount: item.draft.amount }, input, answer);
+  return decideWithEvidence(state, { ...item.draft, amount: item.draft.amount }, input, answer, context);
 }

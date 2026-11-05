@@ -27,7 +27,7 @@ const normalize = (text: string) =>
 const refund =
   /\b(?:r(?:ue|u)ck(?:erstattung|verg(?:ue|u)tung)|erstattung|refund|retoure|storno)\b/;
 const returnedFee =
-  /\br(?:ue|u)cklastschrift[-\s]*(?:geb(?:ue|u)hr(?:en)?|entgelte?|kosten)\b|\b(?:geb(?:ue|u)hr(?:en)?|entgelte?|kosten)\s+(?:f(?:ue|u)r|wegen)\s+(?:(?:eine|einer|der)\s+)?r(?:ue|u)cklastschrift\b/;
+  /\br(?:ue|u)cklastschrift[-\s]*(?:geb(?:ue|u)hr(?:en)?|entgelte?|kosten)\b|\b(?:geb(?:ue|u)hr(?:en)?|entgelte?|kosten)\s+(?:f(?:ue|u)r|wegen)\s+(?:(?:eine|einer|der)\s+)?r(?:ue|u)cklastschrift\b|\bgeb(?:ue|u)hr(?:en)?\s+f(?:ue|u)r\s+(?:eine\s+)?retournierte\s+lastschrift\b/;
 const accountFee =
   /\b(?:kontof(?:ue|u)hrung(?:s(?:geb(?:ue|u)hr(?:en)?|entgelte?|kosten))?|konto(?:geb(?:ue|u)hr(?:en)?|entgelte?|kosten|spesen)|bank(?:geb(?:ue|u)hr(?:en)?|spesen)|karten(?:geb(?:ue|u)hr(?:en)?|entgelte?)|buchungs(?:geb(?:ue|u)hr(?:en)?|entgelte?)|(?:sepa[-\s]*)?(?:ue|u)berweisungs(?:geb(?:ue|u)hr(?:en)?|entgelte?)|transfer[-\s]*geb(?:ue|u)hr(?:en)?)\b|\b(?:entgelte?|geb(?:ue|u)hr(?:en)?)\s+f(?:ue|u)r\s+(?:die\s+)?(?:konto|karten)f(?:ue|u)hrung\b|\b(?:geb(?:ue|u)hr(?:en)?|entgelte?)\s+f(?:ue|u)r\s+(?:eine\s+)?(?:sepa[-\s]*)?(?:ue|u)berweisung\b|\b(?:amex|american\s*express)\b.*\b(?:monats|mitglieds|jahres)geb(?:ue|u)hr\b|\b(?:account\s+maintenance\s+fee|monthly\s+account\s+fee|annual\s+card\s+fee|bank\s+charges?|transfer\s+fee)\b/;
 const internal =

@@ -58,12 +58,22 @@ Optionale Variablen in `.env.local`:
    - Tanken unter 10 € wird abgelehnt, weil kleine Tankstellenbeträge meist Snacks sind.
 5. Danach folgt das Beleg-Gate in `src/lib/ai/evidence.ts`. Es prüft in dieser Reihenfolge, und die ersten drei Stufen brauchen kein Modell:
    - **Historie:** Alle bisherigen Buchungen des Händlers mit demselben Vorzeichen liegen in einer Kategorie, und mindestens eine davon ist bestätigt. Dann gilt diese Kategorie.
-   - **Erstattung:** Eine Gutschrift mit genau dem Betrag eines früheren Kaufs bei derselben Marke (höchstens 180 Tage zurück) wird als „Rückerstattungen“ zugeordnet.
+   - **Erstattung:** Eine Gutschrift derselben Marke (höchstens 180 Tage nach dem Kauf) übernimmt die Kategorie des Kaufs. Exakte Beträge haben Vorrang. Kleinere Beträge zählen als Teil-Erstattung, etwa „OBI SAGT DANKE +19,51 €“. Der Kauf muss schon entschieden sein; ist er selbst noch offen, folgt die Gutschrift, sobald er bestätigt ist.
+   - **Feste Bank-Paare** (`src/lib/ai/booking-matchers.ts`):
+     - Amex-Vorteilsgutschriften („Entertainment“, „Gourmet“ …) → Rückerstattungen.
+     - Amex „RÜCKLASTSCHRIFT“ und „Zahlung erhalten“ mit gleichem Betrag innerhalb von 14 Tagen → beide „Transfer intern“.
+     - Amex „SONSTIGE GUTSCHRIFT“ / „UMBUCHUNG DER BELASTUNG“ → Rückerstattungen, wenn genau eine Amex-Abbuchung desselben Betrags in den 30 Tagen davor liegt.
+     - Anonyme PayPal-Gutschrift („YYW…/PAYPAL“) → Rückerstattungen, wenn eine PayPal-Abbuchung desselben Betrags am selben Konto höchstens 60 Tage davor liegt.
+     - Überweisung von Raphael mit Notiz → Kostenbeteiligung in der passenden Kategorie (Tanken, Cafés & Snacks, Urlaub, Parken & Maut, Geschenke, Restaurants, Lebensmittel, Shopping, Energie). Nur ein Stichwort darf passen. Rückzahlungen geteilter Buchungen bleiben dem Ausgleich zugeordnet.
    - **Feste Händlerregel:** Die Regel aus `categories.ts` gilt direkt, etwa dm → Drogerie oder G2A → Guthabenkarten. Das Modell darf sie nur verfeinern (Mobilität → Tanken). Die Regel gilt nicht, wenn das Vorzeichen nicht passt, wenn Mobilität oder Tanken unter 15 € liegt oder wenn bestätigte Buchungen des Händlers eine andere Kategorie haben.
+   - **Branche** (nur mit Modell): Für unbekannte Shops sucht `src/lib/ai/industry.ts` die Branche auf Wikidata (genau ein Eintrag mit exakt gleichem Namen) oder auf der Startseite des Shops (`www.<name>.de/.at/.com`, nur HTTPS, keine fremden oder geparkten Domains). Stimmen Branche und Modell überein, wird zugeordnet. Vorübergehende Fehler wie Drosselung werden nicht zwischengespeichert.
    - Alles andere bleibt zur manuellen Prüfung offen und erhält einen Vorschlag.
-   - Der Browser-Assistent wendet Historie, Erstattung und Regel auch ohne laufendes Modell an.
+   - Der Browser-Assistent wendet Historie, Erstattung, Bank-Paare und Regel auch ohne laufendes Modell an.
+   - **Schon beim Import:** Diese modellfreien Stufen laufen direkt nach jedem Upload (Browser und Hintergrund-Worker). Die Prüfliste kommt dadurch bereits verkleinert an.
 6. **PayPal und Klarna:** `providerMerchant` liest den Shop hinter dem Zahlungsdienst aus dem Text, etwa „PAYPAL \*ZALANDO“ → Zalando. Ohne erkennbaren Shop (zum Beispiel „PAYPAL EEA“) bleibt die Buchung offen.
-7. **Vorschläge im Prüfdialog:** Für jede offene Prüfung wird ein Vorschlag aus Historie, Regel oder Modell (ab 50 % Sicherheit) in `appState.aiSuggestions` gespeichert. Der Dialog füllt die Kategorie damit vor; ein Klick bestätigt. Bestätigte Buchungen zählen danach als Historie.
+   - **PayPal-Kontoauszug:** Bei anonymen Buchungen wie „1051861566294/PAYPAL“ zeigt der Prüfdialog „PayPal-CSV abgleichen“. Dort lädst du den PayPal-Export (Aktivitäten → Herunterladen → CSV) hoch. Jede Buchung mit gleichem Betrag und höchstens 4 Tagen Abstand erhält den Shop als Namen, aber nur, wenn alle passenden PayPal-Zahlungen denselben Empfänger haben. Danach greifen Historie und Regeln erneut. Die CSV wird nicht gespeichert.
+   - **Abo-Vorschlag:** Derselbe anonyme PayPal-Betrag (ab 1,50 €) in mindestens drei Monaten wird als „Abonnements“ vorgeschlagen, aber nicht automatisch übernommen.
+7. **Vorschläge im Prüfdialog:** Für jede offene Prüfung wird ein Vorschlag aus Historie, Regel, Abo-Muster, Branche oder Modell (ab 50 % Sicherheit) in `appState.aiSuggestions` gespeichert. Der Dialog füllt die Kategorie damit vor; ein Klick bestätigt. Bestätigte Buchungen zählen danach als Historie.
 8. **Gruppen:** Offene Prüfungen derselben Marke und Richtung (ab zwei) erscheinen als Gruppe. „Alle N übernehmen“ ordnet die ganze Gruppe mit einer Entscheidung zu, „Einzeln prüfen“ zeigt die Buchungen einzeln.
 9. Übernommene Antworten werden committet, ohne dass eine Händler- oder Namensregel entsteht. Sie werden nie auf gleichnamige andere Buchungen übertragen. Die Buchung erhält `aiAssigned: true`. Eine manuelle Kategorieänderung entfernt die Markierung.
 10. Das Modell antwortet als JSON-Liste. Fehlerhafte Einträge werden einzeln verworfen, und fehlende Antworten werden einzeln nachgefragt.
@@ -71,6 +81,8 @@ Optionale Variablen in `.env.local`:
 12. Ein Hinweis meldet, wie viele Buchungen zugeordnet wurden und wie viele zur manuellen Prüfung bleiben.
 
 Nie automatisch bearbeitet werden Prüfungen mit Importproblemen, OCR-Hinweisen, fehlendem Betrag oder Datum, Amex-Screenshots und fehlendem POS-Händler. Diese brauchen Daten vom Nutzer.
+
+Beim Import werden Bank-Texte vereinheitlicht: Kleingeschriebene Umlaute in Großbuchstaben-Wörtern („GEBüHREN FüR“) werden zu „GEBÜHREN FÜR“, damit Regeln wie Rücklastschriftgebühren greifen.
 
 ## Auswertungen
 
@@ -80,6 +92,7 @@ Die Übersicht zeigt den Block „KI-Einblicke“ (`src/lib/insights.ts`), der o
 - **Doppelte Abbuchungen:** gleicher Text und Betrag (ab 5 €) innerhalb von drei Tagen in den letzten 60 Tagen.
 - **Budgetprognose:** Hochrechnung der Ausgaben des laufenden Monats.
 - **Monatszusammenfassung:** `/api/ai/summary` lässt das Modell einen kurzen Text aus festen Zahlen schreiben. Der Text wird nur verwendet, wenn jede Zahl darin aus den übergebenen Fakten stammt. Sonst erscheint ein regelbasierter Text.
+- **Lernkurve („Automatisch zugeordnet“):** Pro Import (`appState.aiLearning`, max. 200 Einträge) der Anteil der Zeilen, die ohne manuelle Prüfung zugeordnet wurden: direkt importiert, beim Import automatisch zugeordnet oder später durch die KI. Dazu die Händler, die am häufigsten offen bleiben.
 
 ## MCP-Server
 

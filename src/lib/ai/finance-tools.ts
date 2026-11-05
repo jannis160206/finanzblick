@@ -7,9 +7,11 @@ import { refreshPlanning } from "@/lib/planning";
 import type { AccountDatabase } from "@/lib/server/database";
 import { appStateSchema, transactionSchema, type AppState } from "@/lib/types";
 import { applyAiReviewDecisions, type AiReviewDecision } from "./apply-review-decisions";
+import { applyAndCount } from "./auto-assign";
 import { aiStatus } from "./client";
 import { categorizeBookings, type AiCategorization } from "./categorize";
-import { decideReviewWithEvidence } from "./evidence";
+import { decideReviewWithEvidence, industryContext, industryLookupName } from "./evidence";
+import { lookupIndustry } from "./industry";
 import { findMerchantLogo } from "./logo-finder";
 import { aiCategories, aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "./suggestions";
@@ -59,7 +61,12 @@ export async function categorizeOpenReviews(
     for (const candidate of batch) {
       const answer = answers.find((item) => item.ref === candidate.input.ref);
       const known = direct.get(candidate.reviewId)!;
-      const decision = known.accepted ? known : decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer);
+      let decision = known.accepted ? known : decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer);
+      const name = !decision.accepted ? industryLookupName(candidate.input, answer) : undefined;
+      if (name && !options.signal?.aborted) {
+        const industry = await lookupIndustry(name, { signal: options.signal }).catch(() => undefined);
+        if (industry) decision = decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer, industryContext(industry));
+      }
       results.push({
         ...(answer ?? { ref: candidate.input.ref, category: "Prüfen", confidence: 0 }),
         ...(decision.accepted
@@ -74,7 +81,7 @@ export async function categorizeOpenReviews(
     }
     if (options.apply && (decisions.length || suggestions.length)) {
       write(access, (current) => {
-        const outcome = applyAiReviewDecisions(current, decisions);
+        const outcome = applyAndCount(current, decisions);
         applied += outcome.applied.length;
         return recordAiSuggestions(outcome.state, suggestions);
       });

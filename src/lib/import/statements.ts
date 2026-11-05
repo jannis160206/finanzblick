@@ -95,7 +95,11 @@ const normalized = (text: string) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
-const clean = (text: string) => text.replace(/\s+/g, " ").trim();
+// Some exports lower-case umlauts inside upper-case words ("GEBüHREN FüR").
+export const fixUmlautCase = (text: string) => text.replace(/\p{L}+/gu, (word) =>
+  /[äöü]/.test(word) && /[A-Z].*[A-Z]/.test(word) && !/[a-z]/.test(word)
+    ? word.replace(/[äöü]/g, (letter) => letter.toUpperCase()) : word);
+const clean = (text: string) => fixUmlautCase(text.replace(/\s+/g, " ").trim());
 const amountHeaders = [
   "betrag",
   "amount",
@@ -137,7 +141,7 @@ function delimiterFor(text: string): string {
   return [...scores].sort((a, b) => b[1] - a[1])[0][0];
 }
 
-function readCsv(text: string): TableRow[] {
+export function readCsv(text: string): TableRow[] {
   const delimiter = delimiterFor(text);
   const rows: TableRow[] = [];
   let cells: string[] = [],

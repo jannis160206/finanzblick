@@ -27,6 +27,7 @@ import {
 import { localToday, refreshPlanning, synchronizePlan } from "@/lib/planning";
 import { restoreLegacySourceCategories } from "@/lib/legacy-source";
 import { approveReviewedBooking } from "@/lib/import/approve-review";
+import { assignAfterImport } from "@/lib/ai/auto-assign";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
 import { initializeMotorcycleGoal } from "@/lib/goals";
@@ -105,10 +106,12 @@ function reducer(store: Store, action: Action | AppendAction): Store {
           action.decisions,
           action.metadata,
         );
+        const uploadIds = (action.metadata?.imports ?? []).map((source) => source.uploadId);
+        const committed = approval ? refreshPlanning(result.state)
+          : appStateSchema.parse(refreshPlanning(queueLedgerReview(result.state)));
         return {
           ...store,
-          data: approval ? refreshPlanning(result.state)
-            : appStateSchema.parse(refreshPlanning(queueLedgerReview(result.state))),
+          data: uploadIds.length ? assignAfterImport(committed, uploadIds) : committed,
           saved: false,
           planCapacityBlocked: false,
           actionError: undefined,

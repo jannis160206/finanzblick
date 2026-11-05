@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
-import { applyAiReviewDecisions, type AiReviewDecision } from "@/lib/ai/apply-review-decisions";
+import type { AiReviewDecision } from "@/lib/ai/apply-review-decisions";
+import { applyAndCount, autoAssignOpenReviews } from "@/lib/ai/auto-assign";
 import type { AiCategorization } from "@/lib/ai/categorize";
-import { decideReviewWithEvidence } from "@/lib/ai/evidence";
+import { decideReviewWithEvidence, industryContext, industryLookupName } from "@/lib/ai/evidence";
 import { aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "@/lib/ai/review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "@/lib/ai/suggestions";
 
@@ -71,27 +72,16 @@ export function AiReviewAssistant() {
   }, []);
 
   const openKey = (state.reviewQueue ?? []).filter(isAiEligibleReview).map((item) => item.id).join("|");
-  const checked = useRef(new Set<string>());
 
   // Fixed merchant rules, own history and refunds need no model, so they also run offline.
   useEffect(() => {
     if (!ready || storageError || !openKey) return;
     const base = latest.current;
-    const candidates = aiReviewCandidates(base, checked.current, 10_000);
-    if (!candidates.length) return;
-    const decisions: AiReviewDecision[] = [];
-    for (const candidate of candidates) {
-      checked.current.add(candidate.reviewId);
-      const decision = decideReviewWithEvidence(base, candidate.reviewId, candidate.input, undefined);
-      if (decision.accepted)
-        decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
-    }
-    if (!decisions.length) return;
-    const preview = applyAiReviewDecisions(base, decisions);
-    if (!preview.applied.length) return;
-    update((current) => current === base ? preview.state : applyAiReviewDecisions(current, decisions).state);
+    const preview = autoAssignOpenReviews(base);
+    if (preview.state === base) return;
+    update((current) => current === base ? preview.state : autoAssignOpenReviews(current).state);
     const done = preview.applied.length;
-    toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
+    if (done) toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
   }, [ready, storageError, openKey, update]);
 
   useEffect(() => {
@@ -110,12 +100,28 @@ export function AiReviewAssistant() {
           examples: aiCategoryExamples(latest.current),
         }, signal);
         const byRef = new Map(results.map((result) => [result.ref, result]));
+        // Shops nobody knows yet: their industry from Wikidata or their website is independent evidence.
+        const lookups = new Map<string, string>();
+        for (const candidate of batch) {
+          const answer = byRef.get(candidate.input.ref);
+          if (decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, answer).accepted) continue;
+          const name = industryLookupName(candidate.input, answer);
+          if (name) lookups.set(candidate.reviewId, name);
+        }
+        const industries = new Map<string, { category?: string; label?: string }>();
+        if (lookups.size) {
+          const { results: found } = await postJson<{ results: { name: string; category?: string; label?: string }[] }>(
+            "/api/ai/industry", { names: [...new Set(lookups.values())].slice(0, 12) }, signal,
+          ).catch(() => ({ results: [] }));
+          for (const item of found) industries.set(item.name, item);
+        }
         const decisions: AiReviewDecision[] = [];
         const suggestions: AiSuggestionEntry[] = [];
         const logos: { name: string; context: string }[] = [];
         for (const candidate of batch) {
           const result = byRef.get(candidate.input.ref);
-          const decision = decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, result);
+          const context = industryContext(industries.get(lookups.get(candidate.reviewId) ?? ""));
+          const decision = decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, result, context);
           if (!decision.accepted) {
             suggestions.push({ reviewId: candidate.reviewId, reason: decision.reason, suggestion: decision.suggestion });
             continue;
@@ -127,8 +133,8 @@ export function AiReviewAssistant() {
         if (decisions.length || suggestions.some((entry) => entry.suggestion)) {
           const base = latest.current;
           const run = (current: typeof base) =>
-            recordAiSuggestions(applyAiReviewDecisions(current, decisions).state, suggestions);
-          const preview = applyAiReviewDecisions(base, decisions);
+            recordAiSuggestions(applyAndCount(current, decisions).state, suggestions);
+          const preview = applyAndCount(base, decisions);
           applied = preview.applied.length;
           const next = recordAiSuggestions(preview.state, suggestions);
           if (next !== base) update((current) => current === base ? next : run(current));

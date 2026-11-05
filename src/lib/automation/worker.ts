@@ -9,6 +9,7 @@ import {
 import { refreshPlanning } from "@/lib/planning";
 import { isAccountError } from "@/lib/server/errors";
 import { appStateSchema } from "@/lib/types";
+import { assignAfterImport } from "@/lib/ai/auto-assign";
 import { MerchantIndex } from "./merchants";
 import { PARSER_BUDGET_MS, parseStatementInChild, type ParserRuntimeOptions } from "./parser-runtime";
 import { automationFailure, ParserFailure } from "./errors";
@@ -122,12 +123,12 @@ export class AutomationWorker {
           [],
           prepared.metadata,
         );
-        const next = appStateSchema.parse(
+        const next = assignAfterImport(appStateSchema.parse(
           retainLockedAssignments(
             state,
             refreshPlanning(queueLedgerReview(committed.state)),
           ),
-        );
+        ), [job.id]);
         outcome = next.importResults?.find((item) => item.uploadId === job.id);
         if (!outcome) throw new Error("Statement outcome missing");
         checkCancellation();

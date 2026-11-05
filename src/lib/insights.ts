@@ -43,6 +43,12 @@ export type BudgetForecast = {
   averageSpending?: number;
   daysLeft: number;
 };
+export type LearningCurve = {
+  imports: { id: string; name: string; at: number; rows: number; assigned: number; share: number }[];
+  share?: number;
+  openTotal: number;
+  openMerchants: { merchant: string; count: number }[];
+};
 export type FinanceInsights = {
   subscriptions: Subscription[];
   priceIncreases: Subscription[];
@@ -50,7 +56,33 @@ export type FinanceInsights = {
   summary: MonthSummary;
   previousSummary?: MonthSummary;
   forecast: BudgetForecast;
+  learning: LearningCurve;
 };
+
+// Share of each import that needed no manual review, and which merchants still wait for a person.
+export function learningCurve(state: AppState, limit = 8): LearningCurve {
+  const imports = (state.aiLearning ?? []).slice(-limit).map((entry) => {
+    const assigned = Math.min(entry.rows, entry.automatic + entry.ai + (entry.later ?? 0));
+    return { id: entry.id, name: entry.name, at: entry.at, rows: entry.rows, assigned,
+      share: Math.round((assigned / entry.rows) * 100) };
+  });
+  const rows = imports.reduce((sum, entry) => sum + entry.rows, 0);
+  const open = (state.reviewQueue ?? []).flatMap((item) => item.kind === "booking" ? [item.draft] : []);
+  const merchants = new Map<string, { merchant: string; count: number }>();
+  for (const draft of open) {
+    const key = brandKey(draft) ?? draft.description.trim().toLowerCase();
+    const entry = merchants.get(key) ?? { merchant: draft.merchantAlias?.trim() || draft.description.trim().slice(0, 40), count: 0 };
+    entry.count++;
+    merchants.set(key, entry);
+  }
+  return {
+    imports,
+    ...(rows ? { share: Math.round((imports.reduce((sum, entry) => sum + entry.assigned, 0) / rows) * 100) } : {}),
+    openTotal: open.length,
+    openMerchants: [...merchants.values()].filter((entry) => entry.count > 1)
+      .sort((left, right) => right.count - left.count || left.merchant.localeCompare(right.merchant)).slice(0, 5),
+  };
+}
 
 const merchantName = (row: Transaction) => row.merchantAlias?.trim() || row.description.trim().slice(0, 40);
 
@@ -223,5 +255,6 @@ export function financeInsights(state: AppState, today = new Date().toISOString(
       }),
     },
     forecast: forecastMonth(state, subscriptions, today),
+    learning: learningCurve(state),
   };
 }

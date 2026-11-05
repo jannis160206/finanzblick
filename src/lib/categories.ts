@@ -37,7 +37,7 @@ export const isTravelCategory = (category: Category) => travelCategories.include
 
 const suggestions: [RegExp, Category][] = [
   [/kontof[uü]hrungsgeb[uü]hr|kontogeb[uü]hr|kartengeb[uü]hr|bankgeb[uü]hr|kontof[uü]hrungsentgelt|\bkontokosten\b|\bentgelt\s+f[uü]r\s+(?:die\s+)?kontof[uü]hrung\b|(?:amex|american\s*express).*monatsgeb/i, "Bankgebühren"],
-  [/\br(?:ü|ue|u)cklastschrift[-\s]*(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\b|\b(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\s+(?:f[uü]r|wegen)\s+(?:(?:eine|einer|der)\s+)?r(?:ü|ue|u)cklastschrift\b/i, "Rücklastschriftgebühren"],
+  [/\br(?:ü|ue|u)cklastschrift[-\s]*(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\b|\b(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\s+(?:f[uü]r|wegen)\s+(?:(?:eine|einer|der)\s+)?r(?:ü|ue|u)cklastschrift\b|\bgeb(?:ü|ue|u)hr(?:en)?\s+f(?:ü|ue|u)r\s+(?:eine\s+)?retournierte\s+lastschrift\b/i, "Rücklastschriftgebühren"],
   [/\bspotify\b|\bnetflix\b|disney\s*\+|disney\s*plus|youtube\s*premium|apple\s*music|icloud\s*\+?|microsoft\s*365|adobe\s*(?:creative|acrobat)|chatgpt|nordvpn/i, "Abonnements"],
   [/\b(?:abo|abonnement|subscription|recurring)\b|wiederkehrend/i, "Abonnements"],
   [/\bkino\b|cinema|cineplexx|cinemaxx|eventim|ticketmaster|oeticket|\bsteam(?:games)?\b|playstation|nintendo|xbox/i, "Entertainment"],

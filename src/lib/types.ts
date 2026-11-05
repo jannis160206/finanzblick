@@ -443,8 +443,18 @@ export const appStateSchema = z.object({
     category: categorySchema,
     merchantAlias: z.string().trim().min(1).max(100).optional(),
     reason: z.string().max(200),
-    source: z.enum(["KI", "Regel", "Historie"]),
+    source: z.enum(["KI", "Regel", "Historie", "Branche", "Abo"]),
   })).max(100_000).optional(),
+  // Per import: how many new bookings needed no manual review (learning curve of the auto-assignment).
+  aiLearning: z.array(z.object({
+    id: z.string().min(1).max(100),
+    name: z.string().max(255),
+    at: z.number().nonnegative(),
+    rows: z.number().int().nonnegative(),
+    automatic: z.number().int().nonnegative(),
+    ai: z.number().int().nonnegative(),
+    later: z.number().int().nonnegative().optional(),
+  })).max(200).optional(),
   importStatus: z
     .object({ imported: z.number().nonnegative(), issues: z.array(z.string()) })
     .optional(),
