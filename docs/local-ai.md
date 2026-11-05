@@ -104,6 +104,21 @@ Eigene Seite `/assistent` im Seitenmenü (`src/components/finance-assistant.tsx`
 - **Nichts automatisch:** Gespeichert wird erst bei „Anlegen“. „Ändern“ öffnet ein Formular, „Was-wäre-wenn“-Fragen werden nur berechnet.
 - **Verlauf:** `appState.assistantChat` (max. 100 Nachrichten) in der lokalen Datenbank, nicht im Excel-Backup.
 
+### Agent
+
+Die KI wählt nur ein Werkzeug (`src/lib/assistant/tools.ts`) und nennt Namen aus dem mitgeschickten Kontext (Ziel-, Ausgaben-, Kategorie- und Händlernamen). Namen, die weder im Kontext noch im Text vorkommen, werden verworfen. Klare Befehle („rückgängig“, „merk dir“, „ist immer“) erkennt der Regel-Router auch ohne Modell. Ausgeführt wird alles in `src/lib/assistant/agent.ts`.
+
+- **Fragen zu den Daten** (`answers.ts`): Summe, Aufteilung, größte Ausgabe, Einnahmen, Abos, Anzahl, Durchschnitt für Monat, Woche, „letzte N Monate“ oder Jahr. Unter der Antwort lassen sich die zugrunde liegenden Buchungen aufklappen.
+- **Bestehendes ändern:** Sparziele (Betrag, Datum, Rate, Name, Rate in Monaten aussetzen, erreicht, löschen), geplante Ausgaben (verschieben, Betrag, Raten, umbenennen, löschen), Notgroschen-, Urlaubs- und Sparkonto-Ziel. Erlaubt sind nur die Operationen aus `assistantOperationSchema`.
+- **Vorschau und Rückgängig** (`operations.ts`): Die Karte zeigt Vorher/Nachher, angewendet wird erst bei „Bestätigen“. Jede Änderung (auch im Chat angelegte Ziele und Ausgaben) kommt in `appState.assistantChanges` (max. 200) mit einem Schnappschuss genau der betroffenen Einträge und lässt sich einzeln zurücknehmen.
+- **Wochenüberblick:** Beim Öffnen einmal pro Tag: fällige Abos und geplante Ausgaben der nächsten 7 Tage, Preiserhöhungen, Ziele hinter Plan, doppelte Abbuchungen, Monatsprognose, offene Prüfungen.
+- **Bedienelemente:** Schieberegler für Datum, Rate, Monat und Raten, Balkendiagramm „frei pro Monat vorher/danach“ für 12 Monate und Vergleich zweier Varianten.
+- **Spar-Coach:** Vorschläge mit Betrag aus Abos und frei gestaltbaren Kategorien (Durchschnitt der letzten 3 Monate) bis zum Wunschbetrag.
+- **Regeln per Chat:** „Lieferando ist immer Lieferdienste“ zeigt die betroffenen Buchungen und legt nach Bestätigung eine Händlerregel an. Mit Zeitraum („im Oktober“) gilt es nur für diese Buchungen.
+- **Gedächtnis:** `appState.assistantMemory` (max. 50), einsehbar und löschbar. Der Puffer wird bei „Kann ich mir das leisten?“ abgezogen, der Gehaltstag erscheint im Wochenüberblick.
+- **Depot-Rechner:** Endwert bei 3 %, 5 % und 7 % p. a. mit monatlicher Verzinsung. Eine reine Rechnung, keine Anlageberatung.
+- **Arbeitnehmerveranlagung (Österreich):** Spenden, Kirchenbeitrag, Gewerkschaft, Fortbildung, Arbeitsmittel und Krankheitskosten eines Jahres als Liste. Ersetzt keine Steuerberatung.
+
 ## MCP-Server
 
 Werkzeuge: `ai_status`, `list_categories`, `finance_summary`, `finance_insights` (Abos, Preisänderungen, doppelte Abbuchungen, Prognose), `list_open_reviews`, `search_transactions`, `categorize_open_reviews` (`apply=false` liefert nur Vorschläge), `assign_category`, `find_merchant_logo`.

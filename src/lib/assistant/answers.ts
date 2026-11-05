@@ -1,0 +1,381 @@
+import { addMonths, round, type Dashboard } from "@/lib/calc";
+import { canonicalCategory, categories, type Category } from "@/lib/categories";
+import { isIncomeCategory } from "@/lib/fixed";
+import { currency, dateLabel, monthLabel } from "@/lib/format";
+import { detectDuplicateCharges, detectSubscriptions, forecastMonth, ledger } from "@/lib/insights";
+import { plannedOccurrences } from "@/lib/planned-one-offs";
+import { matchesTransactionSearch, normalizeSearch } from "@/lib/transaction-tools";
+import type { AppState, AssistantCard, Transaction } from "@/lib/types";
+
+type Line = AssistantCard["lines"][number];
+const DAY_MS = 86_400_000;
+const pad = (value: number) => String(value).padStart(2, "0");
+const shiftDate = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
+const monthEnd = (month: string) => {
+  const [year, value] = month.split("-").map(Number);
+  return `${month}-${pad(new Date(Date.UTC(year, value, 0)).getUTCDate())}`;
+};
+const merchantOf = (row: Transaction) => row.merchantAlias?.trim() || row.description.trim().slice(0, 60);
+const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+const list = (items: string[]) => items.length > 1 ? `${items.slice(0, -1).join(", ")} und ${items.at(-1)}` : items[0] ?? "";
+
+const monthWords: [string, number][] = [
+  ["jänner", 1], ["jaenner", 1], ["januar", 1], ["februar", 2], ["feber", 2], ["märz", 3], ["maerz", 3], ["april", 4], ["mai", 5],
+  ["juni", 6], ["juli", 7], ["august", 8], ["september", 9], ["oktober", 10], ["november", 11], ["dezember", 12],
+];
+const numberWords: Record<string, number> = { zwei: 2, drei: 3, vier: 4, fünf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, zwölf: 12 };
+
+export type Period = { from: string; to: string; label: string; month?: string; months: number };
+
+// Questions look back: a month without a year means its latest occurrence up to today.
+export function parsePeriod(text: string, today: string): Period {
+  const lower = text.toLowerCase();
+  const year = Number(today.slice(0, 4));
+  const current = today.slice(0, 7);
+  const monthPeriod = (month: string): Period => ({ from: `${month}-01`, to: monthEnd(month) < today ? monthEnd(month) : today,
+    label: monthLabel(month), month, months: 1 });
+  const yearPeriod = (value: number): Period => ({ from: `${value}-01-01`, to: value === year ? today : `${value}-12-31`,
+    label: value === year ? `${value} bis heute` : String(value), months: value === year ? Number(today.slice(5, 7)) : 12 });
+  if (/\b(?:diese|dieser)\s+woche\b/.test(lower)) {
+    const weekday = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+    return { from: shiftDate(today, -weekday), to: today, label: "diese Woche", months: 1 };
+  }
+  if (/\b(?:letzte|letzten|vorige|vorigen)\s+woche\b/.test(lower)) {
+    const weekday = (new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7;
+    return { from: shiftDate(today, -weekday - 7), to: shiftDate(today, -weekday - 1), label: "letzte Woche", months: 1 };
+  }
+  const lastMonths = /\b(?:letzten|vergangenen)\s+(\d{1,2}|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf)\s+monat/.exec(lower);
+  if (lastMonths) {
+    const count = Math.min(24, numberWords[lastMonths[1]] ?? Number(lastMonths[1]));
+    return { from: `${addMonths(current, -count)}-01`, to: today, label: `letzte ${count} Monate`, months: count };
+  }
+  if (/\b(?:diesen|diesem|dieser|laufenden|aktuellen)\s+monat\b/.test(lower)) return monthPeriod(current);
+  if (/\b(?:letzten|letzter|vorigen|voriger|vergangenen)\s+monat\b|\bvormonat\b/.test(lower)) return monthPeriod(addMonths(current, -1));
+  if (/\b(?:letztes|letzten|voriges|vorigen|vergangenes)\s+jahr\b|\bvorjahr\b/.test(lower)) return yearPeriod(year - 1);
+  const since = new RegExp(`\\bseit\\s+(${monthWords.map(([word]) => word).join("|")})\\b`).exec(lower);
+  for (const [word, value] of monthWords) {
+    const match = new RegExp(`\\b${word}\\b(?:\\s+(20\\d{2}))?`).exec(lower);
+    if (!match) continue;
+    const explicit = match[1] ? Number(match[1]) : undefined;
+    let month = `${explicit ?? year}-${pad(value)}`;
+    if (!explicit && month > current) month = `${year - 1}-${pad(value)}`;
+    if (since && since[1] === word) {
+      const months = (Number(current.slice(0, 4)) - Number(month.slice(0, 4))) * 12 + Number(current.slice(5)) - Number(month.slice(5)) + 1;
+      return { from: `${month}-01`, to: today, label: `seit ${monthLabel(month)}`, months };
+    }
+    return monthPeriod(month);
+  }
+  const explicitYear = /\b(20\d{2})\b/.exec(lower);
+  if (explicitYear && Number(explicitYear[1]) <= year) return yearPeriod(Number(explicitYear[1]));
+  return yearPeriod(year);
+}
+
+const eating: Category[] = ["Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks"];
+const categoryWords: [RegExp, Category[], string][] = [
+  [/essen gehen|auswärts essen|restaurant|lokal/, ["Restaurants"], "Restaurants"],
+  [/lieferdienst|lieferung|essen bestellen/, ["Lieferdienste"], "Lieferdienste"],
+  [/lebensmittel|supermarkt|einkäufe|einkaufen|groceries/, ["Lebensmittel"], "Lebensmittel"],
+  [/kaffee|café|cafe|snack/, ["Cafés & Snacks"], "Cafés & Snacks"],
+  [/mittagessen|\bmittag\b/, ["Mittagessen"], "Mittagessen"],
+  [/\bessen\b|verpflegung|ernährung|\bfood\b/, eating, "Essen"],
+  [/\babos?\b|abonnement/, ["Abonnements"], "Abonnements"],
+  [/tanken|sprit|benzin|diesel/, ["Tanken"], "Tanken"],
+  [/öffis|öffentlich|\bzug\b|\bbahn\b|\bbus\b/, ["Öffentliche Verkehrsmittel"], "Öffis"],
+  [/parken|maut|vignette/, ["Parken & Maut"], "Parken & Maut"],
+  [/\bauto\b|mobilität|fahrzeug/, ["Mobilität", "Tanken", "Parken & Maut", "Fahrzeugwartung", "Leasing"], "Auto & Mobilität"],
+  [/\bmiete\b/, ["Miete"], "Miete"],
+  [/strom|energie|nebenkosten|heizung|\bgas\b/, ["Energie & Nebenkosten"], "Energie & Nebenkosten"],
+  [/wohnen|haushalt|möbel|einrichtung/, ["Wohnen & Haushalt", "Möbel & Einrichtung", "Reparaturen & Instandhaltung"], "Wohnen & Haushalt"],
+  [/versicherung/, ["Versicherungen"], "Versicherungen"],
+  [/handy|internet|telefon/, ["Telefon & Internet"], "Telefon & Internet"],
+  [/shopping|kleidung|klamotten|elektronik|online.?shop/, ["Shopping"], "Shopping"],
+  [/urlaub|reise|flug|hotel/, ["Urlaub"], "Urlaub"],
+  [/sport|fitness|\bgym\b/, ["Sport & Fitness"], "Sport & Fitness"],
+  [/freizeit|hobby|hobbys/, ["Freizeit", "Entertainment"], "Freizeit"],
+  [/entertainment|kino|streaming|games|spiele/, ["Entertainment"], "Entertainment"],
+  [/gesundheit|apotheke|\barzt\b/, ["Gesundheit"], "Gesundheit"],
+  [/drogerie/, ["Drogerie"], "Drogerie"],
+  [/körperpflege|friseur|frisör|barber/, ["Körperpflege"], "Körperpflege"],
+  [/geschenk|spende/, ["Geschenke & Spenden"], "Geschenke & Spenden"],
+  [/weiterbildung|fortbildung|bildung|\bkurs|bücher/, ["Bildung", "Weiterbildung"], "Bildung"],
+  [/haustier|katze|hund/, ["Haustiere"], "Haustiere"],
+  [/gebühr/, ["Bankgebühren", "Rücklastschriftgebühren"], "Gebühren"],
+  [/guthaben/, ["Guthabenkarten"], "Guthabenkarten"],
+];
+
+export function findCategories(text: string): { categories: Category[]; label: string } | undefined {
+  const plain = normalizeSearch(text);
+  const exact = [...categories].sort((a, b) => b.length - a.length).find((category) => {
+    const name = normalizeSearch(category);
+    return plain.includes(name) || (name.length > 5 && plain.includes(name.slice(0, -1)));
+  });
+  if (exact) return { categories: [exact], label: exact };
+  const lower = text.toLowerCase();
+  const match = categoryWords.find(([pattern]) => pattern.test(lower));
+  return match ? { categories: match[1], label: match[2] } : undefined;
+}
+
+const nonMerchant = /^(?:essen|lebensmittel|abos?|monat|jahr|woche|heuer|urlaub|auto|miete|tanken|kaffee|shopping|kategorie|ausgaben|einnahmen|mich|mir|das|die|der|den|dem|ein|eine)$/i;
+// A merchant only counts when it really appears in bookings.
+export function findMerchant(state: AppState, text: string, hint?: string): string | undefined {
+  const rows = state.transactions;
+  const candidates: string[] = [];
+  if (hint) candidates.push(hint);
+  for (const match of text.matchAll(/\b(?:bei|an|für|fuer|von|auf)\s+([A-Za-zÄÖÜäöü0-9][\w&.'+-]*(?:\s+[A-ZÄÖÜ][\w&.'+-]*)?)/g)) candidates.push(match[1]);
+  for (const match of text.matchAll(/(?<=\s)([A-ZÄÖÜ][\w&.'+-]{2,})/g)) candidates.push(match[1]);
+  for (const candidate of candidates) {
+    const name = candidate.replace(/[.,!?]+$/, "").trim();
+    if (name.length < 2 || nonMerchant.test(name) || monthWords.some(([word]) => word === name.toLowerCase()) || findCategories(name)) continue;
+    if (rows.some((row) => matchesTransactionSearch(row, name))) return name;
+    const first = name.split(/\s+/)[0];
+    if (first !== name && first.length >= 3 && !nonMerchant.test(first) && rows.some((row) => matchesTransactionSearch(row, first))) return first;
+  }
+  return undefined;
+}
+
+type QueryMetric = "subscriptions" | "largest" | "income" | "count" | "average" | "breakdown" | "sum";
+export function queryMetric(text: string): QueryMetric {
+  const lower = text.toLowerCase();
+  if (/\babos?\b|abonnement/.test(lower) && !/\bbei\b/.test(lower)) return "subscriptions";
+  if (/größte|grösste|teuerste|höchste|meiste geld|top\s*\d*/.test(lower)) return "largest";
+  if (/verdient|einnahmen|eingenommen|reinbekommen|gehalt bekommen|eingegangen/.test(lower)) return "income";
+  if (/wie oft|wie viele (?:mal|male|buchungen|käufe|einkäufe)|wievielmal/.test(lower)) return "count";
+  if (/durchschnitt|im schnitt|pro monat|monatlich|je monat/.test(lower)) return "average";
+  if (/wofür|wohin|aufteilung|aufgeteilt|nach kategorie|welche kategorie|verteilt/.test(lower)) return "breakdown";
+  return "sum";
+}
+
+const idsOf = (rows: Transaction[]) => [...rows].sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount)).slice(0, 50).map((row) => row.id);
+
+// Answers a data question with fixed queries; the model never produces a number.
+export function answerQuestion(state: AppState, text: string, today: string, hints: { merchant?: string; category?: string } = {}): { text: string; card: AssistantCard } {
+  const metric = queryMetric(text);
+  if (metric === "subscriptions") {
+    const subscriptions = detectSubscriptions(state, today);
+    const total = round(subscriptions.reduce((sum, item) => sum + item.monthlyCost, 0));
+    return {
+      text: subscriptions.length
+        ? `Für ${plural(subscriptions.length, "Abo", "Abos")} gehen im Schnitt ${currency(total)} pro Monat weg (${currency(round(total * 12))} im Jahr).`
+        : "Ich habe keine laufenden Abos in deinen Buchungen erkannt.",
+      card: { kind: "answer", title: "Laufende Abos", total, lines: subscriptions.slice(0, 40).map((item) => ({
+        label: item.merchant, value: item.monthlyCost,
+        detail: `${item.interval === "jährlich" ? `jährlich ${currency(item.amount)}` : "monatlich"} · nächste ${dateLabel(item.nextDate)}${item.priceChange ? ` · teurer seit ${dateLabel(item.priceChange.date)} (${currency(item.priceChange.from)} → ${currency(item.priceChange.to)})` : ""}`,
+        ...(item.priceChange ? { tone: "warn" as const } : {}),
+      })), note: "Beträge pro Monat; Jahresabos sind auf 12 Monate verteilt." },
+    };
+  }
+  const period = parsePeriod(text, today);
+  const hintCategory = hints.category && categories.includes(hints.category as never) ? { categories: [hints.category as Category], label: hints.category } : undefined;
+  const filter = findCategories(text) ?? hintCategory;
+  const merchant = findMerchant(state, text, hints.merchant);
+  const wanted = filter ? new Set(filter.categories.map(canonicalCategory)) : undefined;
+  const entries = ledger(state).filter(({ row, category }) => row.date >= period.from && row.date <= period.to &&
+    (!wanted || wanted.has(category)) && (!merchant || matchesTransactionSearch(row, merchant)));
+  const scope = [merchant, filter?.label].filter(Boolean).join(" · ") || "Alle Ausgaben";
+  const title = `${metric === "income" ? "Einnahmen" : scope} · ${period.label}`;
+  const month = period.month;
+  if (metric === "income") {
+    const rows = entries.filter(({ row, category }) => row.amount > 0 && isIncomeCategory(category)).map(({ row }) => row);
+    const total = round(rows.reduce((sum, row) => sum + row.amount, 0));
+    const bySource = new Map<string, number>();
+    for (const row of rows) bySource.set(merchantOf(row), round((bySource.get(merchantOf(row)) ?? 0) + row.amount));
+    return { text: `Eingenommen hast du ${period.label === "diese Woche" ? "diese Woche" : `im Zeitraum ${period.label}`} ${currency(total)}.`,
+      card: { kind: "answer", title, total, ...(month ? { month } : {}), transactionIds: idsOf(rows),
+        lines: [...bySource].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([label, value]) => ({ label, value })) } };
+  }
+  const spending = entries.filter(({ row }) => row.amount < 0);
+  const rows = spending.map(({ row }) => row);
+  const total = round(rows.reduce((sum, row) => sum - row.amount, 0));
+  if (!rows.length) return { text: `Im Zeitraum ${period.label} finde ich keine passenden Ausgaben${merchant || filter ? ` für ${scope}` : ""}.`,
+    card: { kind: "answer", title, total: 0, lines: [], ...(month ? { month } : {}) } };
+  if (metric === "largest") {
+    const top = [...rows].sort((a, b) => a.amount - b.amount).slice(0, 10);
+    const first = top[0];
+    return { text: `Deine größte Ausgabe im Zeitraum ${period.label} war ${merchantOf(first)} mit ${currency(-first.amount)} am ${dateLabel(first.date)}.`,
+      card: { kind: "answer", title: `Größte Ausgaben · ${period.label}`, total: round(-first.amount), ...(month ? { month } : {}),
+        transactionIds: top.map((row) => row.id),
+        lines: top.map((row) => ({ label: merchantOf(row), value: round(-row.amount), detail: `${dateLabel(row.date)} · ${canonicalCategory(row.category)}`, transactionIds: [row.id] })) } };
+  }
+  const byCategory = new Map<string, number>();
+  for (const { row, category } of spending) byCategory.set(category, round((byCategory.get(category) ?? 0) - row.amount));
+  const byMerchant = new Map<string, number>();
+  for (const row of rows) byMerchant.set(merchantOf(row), round((byMerchant.get(merchantOf(row)) ?? 0) - row.amount));
+  const breakdown = (metric === "breakdown" || (!filter && !merchant) || (filter && filter.categories.length > 1)) && byCategory.size > 1 ? byCategory : byMerchant;
+  const lines: Line[] = [...breakdown].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([label, value]) => ({
+    label, value, detail: `${Math.round(value / total * 100)} %` }));
+  const card: AssistantCard = { kind: "answer", title, total, lines, transactionIds: idsOf(rows), ...(month ? { month } : {}) };
+  if (metric === "count") return { text: `${plural(rows.length, "Buchung", "Buchungen")} im Zeitraum ${period.label} für ${scope}, zusammen ${currency(total)}.`, card };
+  if (metric === "average") {
+    const average = round(total / Math.max(1, period.months));
+    return { text: `Im Schnitt ${currency(average)} pro Monat für ${scope} (${period.label}, gesamt ${currency(total)}).`, card: { ...card, total: average,
+      note: `Durchschnitt über ${plural(period.months, "Monat", "Monate")}; der laufende Monat zählt mit.` } };
+  }
+  return { text: `Für ${scope} hast du im Zeitraum ${period.label} ${currency(total)} ausgegeben (${plural(rows.length, "Buchung", "Buchungen")}).`, card };
+}
+
+const goalRate = (goal: Dashboard["goals"][number]) => goal.funding?.monthly ?? 0;
+
+// Proactive start message: what is due this week, what changed, which goals fall behind.
+export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: string, salaryDay?: number): { text: string; card: AssistantCard } {
+  const end = shiftDate(today, 6);
+  const lines: Line[] = [];
+  const subscriptions = detectSubscriptions(state, today);
+  const due = [
+    ...subscriptions.filter((item) => item.nextDate >= today && item.nextDate <= end).map((item) => ({ name: item.merchant, date: item.nextDate, amount: item.amount })),
+    ...plannedOccurrences(state.plannedOneOffs).filter((item) => item.date >= today && item.date <= end && !item.bookingId)
+      .map((item) => ({ name: item.name, date: item.date, amount: item.ownAmount })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+  const dueTotal = round(due.reduce((sum, item) => sum + item.amount, 0));
+  for (const item of due.slice(0, 8)) lines.push({ label: `Fällig: ${item.name}`, value: item.amount, detail: dateLabel(item.date), tone: "info" });
+  const increases = subscriptions.filter((item) => item.priceChange && item.priceChange.date >= shiftDate(today, -60));
+  for (const item of increases.slice(0, 4)) lines.push({ label: `${item.merchant} wurde teurer`, value: item.priceChange!.to,
+    detail: `vorher ${currency(item.priceChange!.from)} (+${item.priceChange!.percent.toLocaleString("de-AT")} %)`, tone: "warn" });
+  const behind: string[] = [];
+  for (const goal of dashboard.goals) {
+    if (goal.completedAt || goal.date < today) continue;
+    const goalMonth = goal.date.slice(0, 7);
+    const projected = dashboard.timeline.find((row) => row.month === goalMonth)?.goalEnd[goal.id];
+    if (projected === undefined || projected === null || projected + 0.5 >= goal.target) continue;
+    const missing = round(goal.target - projected);
+    const monthly = goalRate(goal);
+    const months = monthly > 0 ? Math.ceil(missing / monthly) : undefined;
+    behind.push(months ? `${goal.name} liegt ${plural(months, "Monat", "Monate")} hinter dem Plan` : `${goal.name} wird nicht rechtzeitig fertig`);
+    lines.push({ label: `${goal.name} hinter Plan`, value: missing, detail: `fehlen bis ${dateLabel(goal.date)}${months ? ` · ca. ${plural(months, "Monat", "Monate")} Verzug` : ""}`, tone: "bad" });
+  }
+  const duplicates = detectDuplicateCharges(state, shiftDate(today, -30));
+  for (const item of duplicates.slice(0, 3)) lines.push({ label: `Doppelt abgebucht? ${item.merchant}`, value: -item.amount,
+    detail: `${dateLabel(item.dates[0])} und ${dateLabel(item.dates[1])}`, tone: "warn", transactionIds: item.ids });
+  const forecast = forecastMonth(state, subscriptions, today);
+  if (forecast.averageSpending && forecast.projectedSpending > forecast.averageSpending * 1.1)
+    lines.push({ label: `Prognose ${monthLabel(forecast.month)}`, value: forecast.projectedSpending,
+      detail: `über deinem Schnitt von ${currency(forecast.averageSpending)}`, tone: "warn" });
+  const reviews = (state.reviewQueue ?? []).filter((item) => item.kind === "booking").length;
+  if (reviews) lines.push({ label: `${plural(reviews, "Buchung wartet", "Buchungen warten")} auf Prüfung`, tone: "info" });
+  if (salaryDay) {
+    const day = Number(today.slice(8, 10));
+    const thisMonth = `${today.slice(0, 7)}-${pad(Math.min(salaryDay, Number(monthEnd(today.slice(0, 7)).slice(8))))}`;
+    const next = day <= salaryDay ? thisMonth : `${addMonths(today.slice(0, 7), 1)}-${pad(salaryDay)}`;
+    const days = Math.round((Date.parse(`${next}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / DAY_MS);
+    lines.push({ label: days === 0 ? "Heute kommt dein Gehalt" : `Gehalt in ${plural(days, "Tag", "Tagen")}`, detail: dateLabel(next), tone: "good" });
+  }
+  const parts = [
+    due.length ? `diese Woche ${due.length === 1 ? "ist" : "sind"} ${currency(dueTotal)} fällig` : "diese Woche ist nichts Größeres fällig",
+    ...increases.slice(0, 2).map((item) => `${item.merchant} wurde teurer`),
+    ...behind.slice(0, 2),
+    ...(duplicates.length ? [`${plural(duplicates.length, "Abbuchung sieht", "Abbuchungen sehen")} doppelt aus`] : []),
+  ];
+  const sentence = list(parts);
+  return { text: `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`,
+    card: { kind: "briefing", title: `Wochenüberblick bis ${dateLabel(end)}`, total: dueTotal, lines } };
+}
+
+const discretionary: [Category, number][] = [
+  ["Lieferdienste", 0.4], ["Restaurants", 0.25], ["Cafés & Snacks", 0.3], ["Mittagessen", 0.2], ["Shopping", 0.25],
+  ["Entertainment", 0.25], ["Freizeit", 0.2], ["Guthabenkarten", 0.5], ["Körperpflege", 0.15], ["Lebensmittel", 0.1],
+];
+
+// Concrete savings ideas with amounts: cancel subscriptions or spend less where the last three months were high.
+export function savingsCoach(state: AppState, today: string, target: number): { text: string; card: AssistantCard } {
+  const current = today.slice(0, 7);
+  const months = [1, 2, 3].map((offset) => addMonths(current, -offset));
+  const spent = new Map<Category, number>();
+  for (const { row, category } of ledger(state)) {
+    if (row.amount >= 0 || !months.includes(row.date.slice(0, 7))) continue;
+    spent.set(category, (spent.get(category) ?? 0) - row.amount);
+  }
+  const ideas: (Line & { value: number })[] = [];
+  for (const [category, share] of discretionary) {
+    const average = (spent.get(category) ?? 0) / 3;
+    const saving = Math.floor(average * share / 5) * 5;
+    if (saving >= 10) ideas.push({ label: `${category}: ${Math.round(share * 100)} % weniger`, value: saving,
+      detail: `bisher Ø ${currency(round(average))} pro Monat`, tone: "info" });
+  }
+  for (const item of detectSubscriptions(state, today)) {
+    if (item.monthlyCost < 3) continue;
+    ideas.push({ label: `Abo ${item.merchant} kündigen`, value: item.monthlyCost,
+      detail: `${item.interval}${item.priceChange ? ", zuletzt teurer geworden" : ""}`, tone: item.priceChange ? "warn" : "info" });
+  }
+  ideas.sort((a, b) => b.value - a.value);
+  const picked: typeof ideas = [];
+  let sum = 0;
+  for (const idea of ideas) {
+    if (sum >= target) break;
+    picked.push(idea);
+    sum = round(sum + idea.value);
+  }
+  const reached = sum >= target;
+  return {
+    text: !ideas.length ? "Ich finde in den letzten drei Monaten keine Ausgaben, bei denen sich Sparen spürbar lohnt."
+      : reached ? `So kommst du auf ${currency(sum)} mehr im Monat: ${list(picked.slice(0, 3).map((item) => item.label))}${picked.length > 3 ? " und mehr" : ""}.`
+        : `Mit allen Vorschlägen kommst du auf ${currency(sum)} von ${currency(target)} im Monat. Den Rest bräuchte es über Fixkosten oder mehr Einnahmen.`,
+    card: { kind: "coach", title: `Spar-Coach · Ziel ${currency(target)} pro Monat`, total: sum, lines: picked.slice(0, 20),
+      note: "Basis sind deine Ausgaben der letzten drei vollen Monate. Kündigungen erst prüfen, bevor du sie umsetzt." },
+  };
+}
+
+export const depotScenarios = [
+  { label: "Vorsichtig", rate: 0.03 }, { label: "Mittel", rate: 0.05 }, { label: "Gut", rate: 0.07 },
+] as const;
+export function futureValue(monthly: number, years: number, start: number, rate: number) {
+  const months = Math.round(years * 12);
+  const monthlyRate = rate / 12;
+  const growth = (1 + monthlyRate) ** months;
+  return round(start * growth + (monthlyRate ? monthly * (growth - 1) / monthlyRate : monthly * months));
+}
+
+// Compound interest with three assumed returns; a calculation, not investment advice.
+export function depotProjection(monthly: number, years: number, start = 0): { text: string; card: AssistantCard } {
+  const paid = round(start + monthly * years * 12);
+  const lines = depotScenarios.map((scenario) => {
+    const value = futureValue(monthly, years, start, scenario.rate);
+    return { label: `${scenario.label} (${Math.round(scenario.rate * 100)} % p. a.)`, value, detail: `Ertrag ${currency(round(value - paid))}` };
+  });
+  return {
+    text: `Mit ${currency(monthly)} im Monat${start ? ` und ${currency(start)} Start` : ""} hast du nach ${plural(years, "Jahr", "Jahren")} ${currency(paid)} eingezahlt. ` +
+      `Je nach Rendite wären es etwa ${currency(lines[0].value)} bis ${currency(lines[2].value)}.`,
+    card: { kind: "depot", title: `Depot-Rechner · ${currency(monthly)} / Monat · ${plural(years, "Jahr", "Jahre")}`, total: paid,
+      lines: [{ label: "Eingezahlt", value: paid }, ...lines],
+      note: "Reine Rechnung mit angenommenen Renditen, keine Anlageberatung. Kosten, Steuern (KESt 27,5 %) und Kursschwankungen sind nicht berücksichtigt." },
+  };
+}
+
+const taxGroups: { label: string; detail: string; test: (text: string, category: Category) => boolean }[] = [
+  { label: "Spenden", detail: "Sonderausgabe, wird von begünstigten Organisationen meist automatisch gemeldet",
+    test: (text, category) => /spende|caritas|rotes kreuz|ärzte ohne grenzen|aerzte ohne grenzen|unicef|greenpeace|wwf|diakonie|licht ins dunkel|volkshilfe|hilfswerk|sos.?kinderdorf|amnesty|tierschutz|vier pfoten/.test(text) ||
+      (category === "Geschenke & Spenden" && /spende/.test(text)) },
+  { label: "Kirchenbeitrag", detail: "Sonderausgabe bis 600 € pro Jahr, wird automatisch gemeldet",
+    test: (text) => /kirchenbeitrag|diözese|dioezese|erzdiözese|kirchenbeitragsstelle|evangelische kirche/.test(text) },
+  { label: "Gewerkschaft & Berufsverband", detail: "Werbungskosten",
+    test: (text) => /gewerkschaft|\bögb\b|\boegb\b|\bgpa\b|\bgöd\b|\bvida\b|younion|berufsverband|kammerumlage/.test(text) },
+  { label: "Fortbildung & Fachliteratur", detail: "Werbungskosten, wenn beruflich veranlasst",
+    test: (text, category) => (category === "Weiterbildung" || category === "Bildung") &&
+      /kurs|seminar|schulung|fortbildung|weiterbildung|udemy|coursera|\bwifi\b|\bbfi\b|zertifi|prüfung|pruefung|fachbuch|fachliteratur|linkedin learning|pluralsight/.test(text) },
+  { label: "Arbeitsmittel", detail: "Werbungskosten, nur der beruflich genutzte Anteil; ab 1.000 € über die Nutzungsdauer verteilt",
+    test: (text) => /laptop|notebook|macbook|monitor|bildschirm|computer|\bpc\b|drucker|bürosessel|buerosessel|schreibtisch|headset|tastatur|dockingstation|arbeitskleidung|werkzeug/.test(text) },
+  { label: "Krankheitskosten", detail: "Außergewöhnliche Belastung, wirkt erst über dem Selbstbehalt",
+    test: (text, category) => category === "Gesundheit" && /arzt|ärztin|zahn|apotheke|optiker|brille|kontaktlinse|physio|therap|krankenhaus|klinik|kieferorth|hörgerät|labor/.test(text) },
+];
+
+// Collects bookings that may be deductible in the Austrian employee tax assessment.
+export function taxDeductibles(state: AppState, year: number): { text: string; card: AssistantCard } {
+  const groups = taxGroups.map((group) => ({ ...group, rows: [] as Transaction[] }));
+  for (const { row, category } of ledger(state)) {
+    if (row.amount >= 0 || !row.date.startsWith(String(year))) continue;
+    const text = [row.description, row.merchantAlias, row.rawDescription, ...(row.rawDetails ?? [])].filter(Boolean).join(" ").toLowerCase();
+    const group = groups.find((item) => item.test(text, category));
+    group?.rows.push(row);
+  }
+  const lines: Line[] = groups.filter((group) => group.rows.length).map((group) => ({
+    label: `${group.label} (${group.rows.length})`, value: round(group.rows.reduce((sum, row) => sum - row.amount, 0)),
+    detail: group.detail, transactionIds: idsOf(group.rows),
+  }));
+  const total = round(lines.reduce((sum, line) => sum + (line.value ?? 0), 0));
+  const all = groups.flatMap((group) => group.rows);
+  return {
+    text: lines.length
+      ? `Für die Arbeitnehmerveranlagung ${year} habe ich ${plural(all.length, "Buchung", "Buchungen")} über ${currency(total)} gefunden, die absetzbar sein könnten.`
+      : `Für ${year} habe ich keine Buchungen gefunden, die typischerweise absetzbar sind.`,
+    card: { kind: "tax", title: `Arbeitnehmerveranlagung ${year}`, total, lines, transactionIds: idsOf(all),
+      note: "Ohne Gewähr, keine Steuerberatung. Belege aufheben; Pendlerpauschale, Familienbonus und Homeoffice-Pauschale stehen nicht in deinen Umsätzen." },
+  };
+}

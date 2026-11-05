@@ -87,7 +87,7 @@ export function learningCurve(state: AppState, limit = 8): LearningCurve {
 const merchantName = (row: Transaction) => row.merchantAlias?.trim() || row.description.trim().slice(0, 40);
 
 // Rows that count as household spending or income: no transfers, nothing still under review.
-function ledger(state: AppState) {
+export function ledger(state: AppState) {
   const open = new Set((state.reviewQueue ?? []).flatMap((item) => item.kind === "booking" ? [item.draft.id] : []));
   return state.transactions.flatMap((row) => {
     if (open.has(row.id) || !row.amount) return [];

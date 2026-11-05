@@ -197,23 +197,25 @@ function costMonths(draft: AssistantDraft) {
   return months;
 }
 
-function evaluate(state: AppState, dashboard: Dashboard, draft: AssistantDraft) {
+function evaluate(state: AppState, dashboard: Dashboard, draft: AssistantDraft, buffer = 0) {
   const rows: AffordabilityMonth[] = [];
   for (const [month, cost] of costMonths(draft)) {
     const basis = monthBasis(state, dashboard, month);
     if (!basis) return undefined;
     const pausable = round(sum(dashboard.goals.map((goal) =>
       Math.max(0, (basis.goalRates[goal.id] ?? 0) - (basis.goalExtras[goal.id] ?? 0)))));
-    rows.push({ month, cost, free: basis.free, after: round(basis.free - cost), pausable });
+    const free = round(basis.free - buffer);
+    rows.push({ month, cost, free, after: round(free - cost), pausable });
   }
   return rows;
 }
 
-export function checkAffordability(state: AppState, dashboard: Dashboard, draft: AssistantDraft): Affordability {
+// buffer: money the user wants to keep untouched every month (remembered by the assistant).
+export function checkAffordability(state: AppState, dashboard: Dashboard, draft: AssistantDraft, buffer = 0): Affordability {
   const empty: Affordability = { light: "unknown", months: [], shortfall: 0, pause: [], alternatives: [] };
   if (!draft.amount || !draft.date) return { ...empty, error: "Betrag oder Monat fehlt." };
   if (draft.date.slice(0, 7) < dashboard.currentMonth) return { ...empty, error: "Der Monat liegt in der Vergangenheit." };
-  const rows = evaluate(state, dashboard, draft);
+  const rows = evaluate(state, dashboard, draft, buffer);
   const horizon = planningHorizon(dashboard);
   if (!rows) return { ...empty, error: `Der Monatsplan reicht nur bis ${horizon.slice(5)}/${horizon.slice(0, 4)}.` };
   const tightest = [...rows].sort((a, b) => a.after - b.after)[0];
@@ -237,7 +239,7 @@ export function checkAffordability(state: AppState, dashboard: Dashboard, draft:
   const alternatives: Affordability["alternatives"] = [];
   const total = draft.amount;
   for (let count = Math.max(2, (draft.installments ?? 1) + 1); count <= 12; count++) {
-    const option = evaluate(state, dashboard, { ...draft, installments: count });
+    const option = evaluate(state, dashboard, { ...draft, installments: count }, buffer);
     if (option && option.every((row) => row.after >= 0)) {
       alternatives.push({ kind: "installments", installments: count, rate: Math.floor(total * 100 / count) / 100 });
       break;
@@ -246,7 +248,7 @@ export function checkAffordability(state: AppState, dashboard: Dashboard, draft:
   for (let offset = 1; offset <= 12; offset++) {
     const month = addMonths(draft.date.slice(0, 7), offset);
     if (month > horizon) break;
-    const option = evaluate(state, dashboard, { ...draft, date: `${month}-01` });
+    const option = evaluate(state, dashboard, { ...draft, date: `${month}-01` }, buffer);
     if (option && option.every((row) => row.after >= 0)) { alternatives.push({ kind: "later", month }); break; }
   }
   const reserve = bankPocketBalance(state, "Sparkonto", dashboard.actual);

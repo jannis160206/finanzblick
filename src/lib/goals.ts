@@ -223,7 +223,9 @@ export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: R
     const gap = complete || outsideBikeWindow ? 0 : balance == null
       ? goal.funding ? Infinity : 0
       : cents(goal.target - balance);
-    const amount = Math.min(remaining, gap, goal.funding ? cents(goal.funding.monthly) : Infinity);
+    const amount = goal.funding?.paused?.includes(month)
+      ? 0
+      : Math.min(remaining, gap, goal.funding ? cents(goal.funding.monthly) : Infinity);
     // Earmarked extras are additional income, not another claim on normal salary.
     funding[goal.id] = amount / 100 + (outsideBikeWindow ? 0 : goalExtraIncome(goal, month));
     remaining -= amount;

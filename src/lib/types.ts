@@ -330,6 +330,8 @@ export const savingsGoalSchema = z.object({
   funding: z.object({
     monthly: moneySchema.nonnegative(),
     extras: z.record(z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/), moneySchema.nonnegative()),
+    // Months without the regular rate (extras still count), e.g. set via the finance assistant.
+    paused: z.array(z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/)).max(24).optional(),
   }).optional(),
 });
 export type SavingsGoal = z.infer<typeof savingsGoalSchema>;
@@ -381,17 +383,128 @@ export const assistantDraftSchema = z.object({
   whatIf: z.boolean().optional(),
 }).strict();
 export type AssistantDraft = z.infer<typeof assistantDraftSchema>;
+const monthKeySchema = z.string().regex(/^20\d\d-(0[1-9]|1[0-2])$/);
+const agentIdSchema = z.string().min(1).max(100);
+// Allowlisted agent operations: the assistant can only propose these, the user applies them with a click.
+export const assistantOperationSchema = z.discriminatedUnion("op", [
+  z.object({
+    op: z.literal("goal_update"), goalId: agentIdSchema,
+    name: z.string().trim().min(1).max(80).optional(),
+    target: moneySchema.positive().max(10_000_000).optional(),
+    date: dateSchema.optional(),
+    monthly: moneySchema.nonnegative().max(1_000_000).optional(),
+  }).strict(),
+  z.object({ op: z.literal("goal_pause"), goalId: agentIdSchema, month: monthKeySchema, resume: z.boolean().optional() }).strict(),
+  z.object({ op: z.literal("goal_complete"), goalId: agentIdSchema }).strict(),
+  z.object({ op: z.literal("goal_delete"), goalId: agentIdSchema }).strict(),
+  z.object({
+    op: z.literal("planned_update"), plannedId: agentIdSchema,
+    name: z.string().trim().min(1).max(100).optional(),
+    date: dateSchema.optional(),
+    total: moneySchema.positive().max(10_000_000).optional(),
+    installments: z.number().int().min(1).max(120).optional(),
+  }).strict(),
+  z.object({ op: z.literal("planned_delete"), plannedId: agentIdSchema }).strict(),
+  z.object({
+    op: z.literal("categorize"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
+    category: categorySchema, learn: z.boolean(),
+  }).strict(),
+  z.object({
+    op: z.literal("setting"), key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget"]),
+    value: moneySchema.nonnegative().max(10_000_000),
+  }).strict(),
+  z.object({
+    op: z.literal("memory_add"), text: z.string().trim().min(1).max(200),
+    key: z.enum(["buffer", "salaryDay", "note"]), value: z.number().min(0).max(10_000_000).optional(),
+  }).strict(),
+  z.object({ op: z.literal("memory_delete"), memoryId: agentIdSchema }).strict(),
+]);
+export type AssistantOperation = z.infer<typeof assistantOperationSchema>;
+const assistantLineSchema = z.object({
+  label: z.string().max(200),
+  value: z.number().finite().optional(),
+  detail: z.string().max(300).optional(),
+  tone: z.enum(["good", "warn", "bad", "info"]).optional(),
+  transactionIds: z.array(z.string().max(500)).max(50).optional(),
+}).strict();
+// Calculated result cards (answers, briefing, coach, depot, tax); every number comes from code.
+export const assistantCardSchema = z.object({
+  kind: z.enum(["answer", "briefing", "coach", "depot", "tax", "rule", "memory", "changes"]),
+  title: z.string().max(200),
+  total: z.number().finite().optional(),
+  lines: z.array(assistantLineSchema).max(40),
+  transactionIds: z.array(z.string().max(500)).max(50).optional(),
+  month: monthKeySchema.optional(),
+  note: z.string().max(400).optional(),
+}).strict();
+export type AssistantCard = z.infer<typeof assistantCardSchema>;
+export const assistantChangeSchema = z.object({
+  title: z.string().max(200),
+  operations: z.array(assistantOperationSchema).min(1).max(20),
+  diffs: z.array(z.object({ label: z.string().max(200), before: z.string().max(200), after: z.string().max(200) }).strict()).max(80),
+  logId: agentIdSchema.optional(),
+}).strict();
+export type AssistantChange = z.infer<typeof assistantChangeSchema>;
 export const assistantMessageSchema = z.object({
   id: z.string().min(1).max(100),
   role: z.enum(["user", "assistant"]),
   text: z.string().max(2000),
   at: z.number().nonnegative(),
   draft: assistantDraftSchema.optional(),
-  status: z.enum(["question", "preview", "created", "dismissed"]).optional(),
+  card: assistantCardSchema.optional(),
+  change: assistantChangeSchema.optional(),
+  // "Mach das rückgängig": the change the user still has to confirm.
+  undoId: agentIdSchema.optional(),
+  status: z.enum(["question", "preview", "created", "dismissed", "applied", "undone"]).optional(),
   source: z.enum(["KI", "Regel"]).optional(),
 }).strict();
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 export const MAX_ASSISTANT_MESSAGES = 100;
+export const assistantMemorySchema = z.object({
+  id: agentIdSchema,
+  text: z.string().trim().min(1).max(200),
+  key: z.enum(["buffer", "salaryDay", "note"]),
+  value: z.number().min(0).max(10_000_000).optional(),
+  at: z.number().nonnegative(),
+}).strict();
+export type AssistantMemory = z.infer<typeof assistantMemorySchema>;
+export const MAX_ASSISTANT_MEMORY = 50;
+const undoTransactionSchema = z.object({
+  id: z.string().min(1).max(500),
+  category: categorySchema,
+  categoryOverride: z.boolean().optional(),
+  manualCategory: z.boolean().optional(),
+  reviewed: z.boolean().optional(),
+  includeInPlan: z.boolean(),
+  aiAssigned: z.boolean().optional(),
+  fixedCost: z.boolean().optional(),
+  merchantAlias: z.string().max(200).optional(),
+}).strict();
+// Snapshot of exactly the entities an agent change touched, so it can be reverted.
+export const assistantUndoSchema = z.object({
+  goalsUnset: z.boolean().optional(),
+  goals: z.array(z.object({ id: agentIdSchema, before: savingsGoalSchema.nullable() }).strict()).max(50).optional(),
+  planned: z.array(z.object({ id: agentIdSchema, before: plannedOneOffSchema.nullable() }).strict()).max(500).optional(),
+  settings: z.array(z.object({
+    key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget", "bikeTarget", "bikePurchaseDate"]),
+    before: z.union([moneySchema, dateSchema]),
+  }).strict()).max(5).optional(),
+  memory: z.array(z.object({ id: agentIdSchema, before: assistantMemorySchema.nullable() }).strict()).max(50).optional(),
+  transactions: z.array(undoTransactionSchema).max(2000).optional(),
+  merchantRules: z.array(z.object({ key: z.string().min(1).max(1200), before: merchantRuleSchema.nullable() }).strict()).max(2000).optional(),
+  fixedReceipts: z.array(z.object({ key: z.string().max(2000), before: fixedReceiptSchema }).strict()).max(2000).optional(),
+}).strict();
+export type AssistantUndo = z.infer<typeof assistantUndoSchema>;
+export const assistantChangeLogSchema = z.object({
+  id: agentIdSchema,
+  at: z.number().nonnegative(),
+  title: z.string().max(200),
+  summary: z.array(z.string().max(300)).max(80),
+  undo: assistantUndoSchema,
+  undoneAt: z.number().nonnegative().optional(),
+}).strict();
+export type AssistantChangeLog = z.infer<typeof assistantChangeLogSchema>;
+export const MAX_ASSISTANT_CHANGES = 200;
 export const appStateSchema = z.object({
   version: z.literal(1),
   payslips: z.array(payslipSchema).max(240).refine(
@@ -482,6 +595,10 @@ export const appStateSchema = z.object({
   })).max(200).optional(),
   // Finance assistant chat, stored only in the local account database.
   assistantChat: z.array(assistantMessageSchema).max(MAX_ASSISTANT_MESSAGES).optional(),
+  // Facts the user asked the assistant to remember; visible and deletable in the chat.
+  assistantMemory: z.array(assistantMemorySchema).max(MAX_ASSISTANT_MEMORY).optional(),
+  // Every change the assistant applied, with the data needed to undo it.
+  assistantChanges: z.array(assistantChangeLogSchema).max(MAX_ASSISTANT_CHANGES).optional(),
   importStatus: z
     .object({ imported: z.number().nonnegative(), issues: z.array(z.string()) })
     .optional(),
