@@ -443,7 +443,7 @@ const assistantLineSchema = z.object({
 }).strict();
 // Calculated result cards (answers, briefing, coach, depot, tax); every number comes from code.
 export const assistantCardSchema = z.object({
-  kind: z.enum(["answer", "briefing", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes"]),
+  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes"]),
   title: z.string().max(200),
   total: z.number().finite().optional(),
   lines: z.array(assistantLineSchema).max(40),

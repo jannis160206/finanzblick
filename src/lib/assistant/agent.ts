@@ -4,6 +4,7 @@ import { currency, dateLabel } from "@/lib/format";
 import { savingsGoals } from "@/lib/goals";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, AssistantChange, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
+import { financialCheck } from "./check";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
 import { accountBalances, amexQuestion, amexSettlement, monthBudget } from "./accounts";
 import { explainDashboard } from "./explain";
@@ -286,7 +287,8 @@ function tax({ state, asOf }: Context, text: string): AgentResult {
 function help(): AgentResult {
   const lines = [
     { label: "Ausgaben verstehen", detail: "„Wie viel ging im Oktober fürs Essen weg?“, dann einfach „und im September?“" },
-    { label: "Vergleichen", detail: "„Vergleich Oktober mit September“, „Mehr als im Vormonat?“" },
+    { label: "Vergleichen", detail: "„Vergleich Oktober mit September“, „Wie haben sich meine Ausgaben entwickelt?“" },
+    { label: "Finanz-Check", detail: "„Bin ich sparsam?“, „Wie stehe ich finanziell da?“" },
     { label: "Sparen und planen", detail: "„3.000 € für Japan bis Juli 2027“" },
     { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
     { label: "Konten und Amex", detail: "„Was muss ich noch auf Amex Rückzahlung überweisen?“" },
@@ -309,6 +311,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "accounts": return amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
     case "budget": return monthBudget(dashboard, text);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));
+    case "check": return financialCheck(state, dashboard, asOf);
     case "coach": {
       const target = amountsIn(text).find((value) => value > 0 && value < 100_000) ?? 100;
       return savingsCoach(state, asOf, target);

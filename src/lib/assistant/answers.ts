@@ -219,11 +219,13 @@ export function findMerchant(state: AppState, text: string, hint?: string): stri
   return undefined;
 }
 
-type QueryMetric = "subscriptions" | "largest" | "income" | "count" | "average" | "breakdown" | "compare" | "sum";
+type QueryMetric = "subscriptions" | "largest" | "income" | "count" | "average" | "breakdown" | "compare" | "trend" | "sum";
+export const trendPattern = /entwickelt|entwicklung|verlauf|\btrend\b|monat für monat|monat fuer monat|jeden monat|über die (?:letzten )?monate|ueber die monate|monatsverlauf|von monat zu monat/;
 export const comparePattern = /vergleich|verglichen|gegenüber|\bvs\.?(?=\s)|\bversus\b|mehr oder weniger|(?:mehr|weniger)\b[^?.!]{0,30}?\bals (?:im |in |letzten |vorigen |den |der )?(?:vormonat|monat davor|letzten monat|vorigen monat|jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember)/;
 export function queryMetric(text: string): QueryMetric {
   const lower = text.toLowerCase();
   if (comparePattern.test(lower)) return "compare";
+  if (trendPattern.test(lower)) return "trend";
   if (/\babos?\b|abonnement/.test(lower) && !/\bbei\b/.test(lower)) return "subscriptions";
   if (/größte|grösste|teuerste|höchste|meiste geld|top\s*\d*/.test(lower)) return "largest";
   if (/\b(?:warum|wieso|weshalb)\b.*\bso\s+(?:viel|hoch|teuer)|woher kommt/.test(lower)) return "largest";
@@ -263,6 +265,12 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
   if (metric === "compare") return compareMonths(state, text, today, {
     filter: ownFilter ?? (inherit ? findCategories(inherit) : undefined),
     merchant: ownMerchant ?? (inherit ? findMerchant(state, inherit) : undefined), bank, previous });
+  if (metric === "trend") {
+    const named = findPeriod(text, today) ?? earlierPeriod(previous, today);
+    return spendingTrend(state, today, named && !named.month && named.months > 1 ? named.months : 6, {
+      filter: ownFilter ?? (inherit ? findCategories(inherit) : undefined),
+      merchant: ownMerchant ?? (inherit && !ownFilter ? findMerchant(state, inherit) : undefined), bank, previous });
+  }
   const period = findPeriod(text, today) ?? earlierPeriod(previous, today) ?? parsePeriod(text, today);
   const hintCategory = hints.category && categories.includes(hints.category as never) ? { categories: [hints.category as Category], label: hints.category } : undefined;
   // A bank or card question is about the account, so a model category guess like "Abonnements" is ignored.
@@ -378,6 +386,45 @@ export function compareMonths(state: AppState, text: string, today: string, scop
       ...changes.map((item): Line => ({ label: item.label, value: item.delta, detail: `${currency(item.x)} statt ${currency(item.y)}`,
         tone: item.delta > 0 ? "warn" : "good" })),
     ], note: "Differenz = erster minus zweiter Monat; positive Werte heißen mehr ausgegeben." } };
+}
+
+// "Wie haben sich meine Ausgaben entwickelt?": one line per full month, compared with the average.
+export function spendingTrend(state: AppState, today: string, count: number, scope: Scope): { text: string; card: AssistantCard } {
+  const current = today.slice(0, 7);
+  const n = Math.max(2, Math.min(24, count));
+  const months = Array.from({ length: n }, (_, index) => addMonths(current, index - n));
+  const wanted = scope.filter ? new Set(scope.filter.categories.map(canonicalCategory)) : undefined;
+  const byMonth = new Map(months.map((month) => [month, [] as Transaction[]]));
+  for (const { row, category } of ledger(state)) {
+    const list = byMonth.get(row.date.slice(0, 7));
+    if (!list || row.amount >= 0 || (wanted && !wanted.has(category)) || (scope.merchant && !matchesTransactionSearch(row, scope.merchant)) ||
+      (scope.bank && !scope.bank.pattern.test(row.bank.trim()))) continue;
+    list.push(row);
+  }
+  const totals = months.map((month) => ({ month, rows: byMonth.get(month)!, total: round(byMonth.get(month)!.reduce((sum, row) => sum - row.amount, 0)) }));
+  const label = [scope.bank?.label, scope.merchant, scope.filter?.label].filter(Boolean).join(" · ");
+  const forWhat = label ? ` für ${label}` : "";
+  const range = `${monthLabel(months[0])} bis ${monthLabel(months[months.length - 1])}`;
+  const title = `Verlauf${label ? ` · ${label}` : " · Ausgaben"} · ${range}`;
+  const all = totals.flatMap((item) => item.rows);
+  if (!all.length) return { text: `Von ${range} finde ich keine passenden Ausgaben${forWhat}.`, card: { kind: "answer", title, total: 0, lines: [] } };
+  const average = round(totals.reduce((sum, item) => sum + item.total, 0) / totals.length);
+  const highest = totals.reduce((a, b) => (b.total > a.total ? b : a));
+  const lowest = totals.reduce((a, b) => (b.total < a.total ? b : a));
+  const half = Math.floor(totals.length / 2);
+  const firstHalf = totals.slice(0, half).reduce((sum, item) => sum + item.total, 0) / Math.max(1, half);
+  const secondHalf = totals.slice(totals.length - half).reduce((sum, item) => sum + item.total, 0) / Math.max(1, half);
+  const direction = firstHalf > 0 && secondHalf > firstHalf * 1.1 ? "steigt"
+    : firstHalf > 0 && secondHalf < firstHalf * 0.9 ? "sinkt" : "bleibt ziemlich gleich";
+  const text = `Deine Ausgaben${forWhat} lagen von ${range} im Schnitt bei ${currency(average)} pro Monat und ${direction === "bleibt ziemlich gleich" ? "blieben ziemlich gleich" : direction === "steigt" ? "sind zuletzt gestiegen" : "sind zuletzt gesunken"}.` +
+    ` Am meisten war es im ${monthLabel(highest.month)} (${currency(highest.total)}), am wenigsten im ${monthLabel(lowest.month)} (${currency(lowest.total)}).`;
+  return { text, card: { kind: "answer", title, total: average, transactionIds: idsOf(all),
+    lines: totals.map((item): Line => {
+      const delta = round(item.total - average);
+      return { label: monthLabel(item.month), value: item.total, transactionIds: idsOf(item.rows),
+        detail: `${plural(item.rows.length, "Buchung", "Buchungen")} · ${delta === 0 ? "genau im Schnitt" : `${delta > 0 ? "+" : "−"}${currency(Math.abs(delta))} zum Schnitt`}`,
+        ...(average > 0 && item.total > average * 1.15 ? { tone: "warn" as const } : average > 0 && item.total < average * 0.85 ? { tone: "good" as const } : {}) };
+    }), note: "Nur volle Monate; der laufende Monat zählt nicht mit. Summe oben = Durchschnitt pro Monat." } };
 }
 
 // Proactive start message: what is due this week, what changed, which goals fall behind.

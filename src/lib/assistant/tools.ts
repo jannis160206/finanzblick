@@ -1,11 +1,12 @@
 import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
-import { comparePattern } from "./answers";
+import { comparePattern, trendPattern } from "./answers";
+import { checkQuestion } from "./check";
 import { detectAction, findExtra } from "./intent";
 import { normalizeMessage } from "./normalize";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
-  "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "edit", "rule",
+  "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "homeoffice", "explain", "help", "ask",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
@@ -22,6 +23,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   amex: "Amex-Kreditkartenabrechnung: wie viel offen ist und wie viel noch auf das Amex-Rückzahlungs-Pocket überwiesen werden muss",
   budget: "Monatsplan: was diesen oder einen kommenden Monat übrig bleibt, wie viel man noch ausgeben kann",
   briefing: "Wochenüberblick: was ist fällig, was hat sich geändert",
+  check: "Finanz-Check: Bewertung der eigenen Finanzen (Sparquote, Fixkosten, Reserve), z. B. „Bin ich sparsam?“, „Wie stehe ich finanziell da?“",
   edit: "bestehendes Sparziel, geplante Ausgabe oder Notgroschen-/Urlaubs-/Sparkonto-Ziel ändern, verschieben, aussetzen, umbenennen, löschen oder als erreicht markieren",
   rule: "Händler oder Buchungen einer Kategorie zuordnen, z. B. „Lieferando ist immer Essen“",
   remember: "sich etwas merken, z. B. Puffer oder Gehaltstag",
@@ -106,6 +108,8 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   if (strictRule.test(lower) || looseRule.test(lower) && !known && !/\d+\s*(?:€|euro)/.test(lower)) return "rule";
   if (comparePattern.test(lower) && (periodWords.test(lower) || /ausgab|ausgegeben|monat/.test(lower)) && !known &&
     !/sparziel|\brate\b|leisten|leistbar|variante|szenario/.test(lower)) return "query";
+  if (checkQuestion(lower)) return "check";
+  if (trendPattern.test(lower) && /ausgab|ausgegeben|kosten|einnahmen|essen|abos?\b|\bfür\b|fuer/.test(lower) && !known && !/sparziel|depot|etf/.test(lower)) return "query";
   if (amexQuestion(lower)) return "amex";
   if (balanceQuestion(lower) && !/leisten|leistbar|reicht (?:das|es) für/.test(lower)) return "accounts";
   if (budgetQuestion(lower) && !/leisten|leistbar|\d+\s*(?:€|euro)/.test(lower)) return "budget";

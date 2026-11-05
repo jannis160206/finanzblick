@@ -47,6 +47,7 @@ const followUps: Partial<Record<AssistantTool, string[]>> = {
   amex: ["Was habe ich seit 11.10. mit Amex bezahlt?", "Zeig mir meine Kontostände"],
   budget: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
   briefing: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
+  check: ["Wo könnte ich kürzen?", "Wie haben sich meine Ausgaben entwickelt?"],
   coach: ["Wie viel geht für Abos weg?", "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?"],
   depot: ["Und mit 200 € im Monat?", "Wie viel kann ich monatlich sparen?"],
   tax: ["Was bekomme ich für Home-Office-Sachen zurück?"],
@@ -394,7 +395,14 @@ export function FinanceAssistant() {
         <Label htmlFor="assistant-input" className="sr-only">Nachricht an den Finanz-Assistenten</Label>
         <textarea id="assistant-input" ref={inputRef} value={input} rows={2} maxLength={1000} disabled={busy}
           onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); } }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); return; }
+            if (event.key === "ArrowUp" && !input) {
+              const last = messages.findLast((item) => item.role === "user");
+              if (last) { event.preventDefault(); setInput(last.text); }
+            }
+          }}
+          aria-keyshortcuts="ArrowUp"
           placeholder="z. B. „Was war meine größte Ausgabe dieses Jahr?“ oder „Schieb das Pickerl auf April“"
           className="min-h-11 flex-1 resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <Button type="submit" className="min-h-11" disabled={busy || !input.trim() || !!storageError}><Send aria-hidden="true" className="size-4" />Senden</Button>

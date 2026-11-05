@@ -69,7 +69,8 @@ const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du w
   "\"100 im monat anlegen 10 jahre\" = depot; \"wie läuft das mit den sparzielen\" = explain; \"nimm das zurück\" = undo; " +
   "\"wie viel muss ich noch auf amex rückzahlung überweisen\" = amex; \"was hab ich seit 11.10. mit amex bezahlt\" = query; " +
   "\"wie viel ist am sparkonto\" = accounts; \"meine kontostände\" = accounts; \"was bleibt mir diesen monat\" = budget; " +
-  "\"wie viel kann ich noch ausgeben\" = budget; andere Fragen zu den eigenen Finanzen = ask.";
+  "\"wie viel kann ich noch ausgeben\" = budget; \"bin ich sparsam\" = check; \"wie stehe ich finanziell da\" = check; " +
+  "\"wie haben sich meine ausgaben entwickelt\" = query; andere Fragen zu den eigenen Finanzen = ask.";
 
 const fold = (value: string) => value.toLowerCase().normalize("NFKC");
 
