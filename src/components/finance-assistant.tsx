@@ -11,9 +11,10 @@ import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { executeTool, memoryValue, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
+import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
+import { extractMemories } from "@/lib/assistant/memory";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
@@ -44,7 +45,8 @@ const examples = [
   "Wie funktionieren die Sparziele?",
 ];
 const extraSources: string[] = [...extraSourceSchema.options];
-const intro = "Frag mich zu deinen Ausgaben, plane Sparziele und Ausgaben, ändere Bestehendes oder lass dir beim Sparen helfen. " +
+const intro = "Frag mich zu deinen Ausgaben, plane Sparziele und Ausgaben, ändere Bestehendes oder lass dir beim Sparen helfen. Schreib ruhig locker, " +
+  "z. B. „essen oktober wie viel“ oder „mach Japan 4000“. Wichtige Dinge wie Puffer oder Gehaltstag merke ich mir automatisch. " +
   "Alle Beträge rechnet der Code nach. Geändert wird erst, wenn du bestätigst, und jede Änderung lässt sich rückgängig machen.";
 const sameDay = (at: number, now: number) => new Date(at).toDateString() === new Date(now).toDateString();
 const lights = {
@@ -162,6 +164,13 @@ export function FinanceAssistant() {
     const at = timestamp();
     if (commit((current) => recordChange(current, applyOperations(current, [operation], { now: at }), { id: newId(), at, title: `Vergessen: ${entry?.text ?? "Eintrag"}` }))) toast.success("Vergessen");
   }
+  function remember(operations: Extract<AssistantOperation, { op: "memory_add" }>[]) {
+    const logId = newId();
+    const at = timestamp();
+    const text = `Gemerkt: ${operations.map((operation) => operation.text).join(" · ")}`.slice(0, 300);
+    commit((current) => recordChange(current, applyOperations(current, operations, { asOf: current.settings.asOf, now: at }), { id: logId, at, title: text }),
+      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel" }]);
+  }
 
   // Proactive start: one weekly overview per day, built only from your own data.
   useEffect(() => {
@@ -209,7 +218,12 @@ export function FinanceAssistant() {
     }
     const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) ? reply.tool : undefined;
     const parsed = !tool && reply.draft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
-    if (tool) {
+    if (tool === "remember") {
+      // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
+      const operation = parseMemory(text);
+      if (operation) remember([operation]);
+      else addResult({ text: "Was soll ich mir merken? Zum Beispiel „Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“." }, reply.source);
+    } else if (tool) {
       let result: AgentResult;
       try {
         result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints });
@@ -220,6 +234,11 @@ export function FinanceAssistant() {
     } else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
     else save((items) => [...items, { id: newId(), role: "assistant", at: Date.now(),
       text: "Das habe ich nicht verstanden. Frag mich zum Beispiel „Wie viel hab ich im Oktober fürs Essen ausgegeben?“, „Erhöhe Japan auf 4.000 €“ oder schreib „Hilfe“ für alles, was ich kann." }]);
+    // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.
+    if (tool !== "remember") {
+      const memories = extractMemories(text, state, tool ?? (parsed?.success ? parsed.data.action : undefined));
+      if (memories.length) remember(memories);
+    }
     setBusy(false);
     inputRef.current?.focus();
   }
@@ -303,7 +322,9 @@ export function FinanceAssistant() {
             {message.status === "preview" ? <>
               <Button type="button" size="sm" className="min-h-10" disabled={!!storageError} onClick={() => undo(message.undoId!)}><Undo2 aria-hidden="true" className="size-4" />Rückgängig machen</Button>
               <Button type="button" size="sm" variant="ghost" className="min-h-10" onClick={() => setMessage(message.id, { status: "dismissed" })}><X aria-hidden="true" className="size-4" />Doch nicht</Button>
-            </> : message.status === "undone" && <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Undo2 aria-hidden="true" className="size-3.5" />Rückgängig gemacht</p>}
+            </> : message.status === "applied" ? <Button type="button" size="sm" variant="ghost" className="min-h-10 text-muted-foreground" disabled={!!storageError}
+              onClick={() => undo(message.undoId!)}><Undo2 aria-hidden="true" className="size-4" />Nicht merken</Button>
+              : message.status === "undone" && <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Undo2 aria-hidden="true" className="size-3.5" />Rückgängig gemacht</p>}
           </div>}
           {message.draft && message.status !== "question" && <div className="pl-11">
             {editing === message.id

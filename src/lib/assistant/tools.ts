@@ -1,4 +1,5 @@
 import { detectAction, findExtra } from "./intent";
+import { normalizeMessage } from "./normalize";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
@@ -54,40 +55,62 @@ const editVerbs = /\b(?:erhöh|erhoeh|senk|reduzier|änder|aender|setz\w*|schieb
 
 const explainPattern = new RegExp([
   "wie funktionier(?:t|en)\\b", "wie geht (?:das|die|der)\\b", "erklär", "erklaer", "wo finde ich", "wo sehe ich", "wofür ist", "wofuer ist", "wozu (?:ist|sind|dient|gibt)",
+  "wie läuft (?:das|es)\\b", "wie laeuft (?:das|es)\\b", "was geht alles", "was hat es mit .{2,30} auf sich", "was bringt (?:mir )?(?:ein |eine |der |die |das )?(?:pocket|sparziel|notgroschen|monatsplan)",
   "was (?:ist|sind|bedeutet|bedeuten|macht|machen) (?:ein |eine |der |die |das |den )?(?:pockets?|sparziele?|notgroschen|überschuss|ueberschuss|monatsplan|budgetdetails|prüfliste|pruefliste|händlerregeln?|extra-?beträge|stichtag)\\b",
   "was kann ich (?:hier |im dashboard |damit )?(?:alles )?(?:einstellen|ändern|aendern|konfigurieren|machen|anpassen)", "welche (?:möglichkeiten|moeglichkeiten|einstellungen|funktionen|bereiche)",
   "was gibt es (?:alles|für|fuer)",
 ].join("|"));
 
+const months = "jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember";
+const periodWords = new RegExp(`\\b(?:${months})\\b|letzte[nrs]? (?:monat|woche|jahr)|vorigen? (?:monat|jahr)|diese[nrs]? (?:monat|woche|jahr)|\\bheuer\\b|\\bvorjahr\\b|\\b20\\d{2}\\b`);
+const spentWords = /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|kosten mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt|draufgegangen|drauf gegangen|gelassen|verballert|verprasst|rausgehauen|ausgeben|gebe ich|geb ich|liegen gelassen|gezahlt|verbraten/;
+const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert)\b/;
+const spendingQuestion = (lower: string) =>
+  /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:mein|das|unser) geld/.test(lower) ||
+  /^(?:ausgaben|einnahmen|kosten|umsätze|umsaetze)\b/.test(lower) && periodWords.test(lower) ||
+  /\bwie ?viel\b/.test(lower) && periodWords.test(lower) && !/bleib|übrig|reicht|leist|spar|brauch|monatlich|rate|\bbis\b/.test(lower) ||
+  /^(?:wie ?viel|was|wo|wann|wofür|wohin|welche[rsn]?|wie oft|hab(?:e)? ich|zeig|liste)\b/.test(lower) && spentWords.test(lower);
+
+// "Lieferando ist immer Essen"; looser forms: "Lieferando gehört zu Lieferdienste", "mach Lieferando zu Lieferdienste", "Lieferando soll unter Lieferdienste laufen".
+const strictRule = /\bist\s+immer\b|\bsind\s+immer\b|immer als\b|\bordne\b.*\bzu\b|kategorisier|als .{2,30} (?:verbuchen|buchen|einordnen|zuordnen)|in die kategorie|der kategorie/;
+const looseRule = /\bgehör(?:t|en)\s+(?:immer\s+)?(?:zu|in|unter)\b|\bzählt\s+(?:immer\s+)?(?:als|zu)\b|\bsoll(?:en)?\s+(?:immer\s+)?(?:unter|in|als|zu)\s+.{2,30}\s+(?:laufen|fallen|stehen|landen|gehen|sein|gebucht|verbucht)\b|^(?:mach|pack|steck|tu)\w*\s+\S.{0,30}\s+(?:zu|in|unter)\s+(?:die\s+|den\s+)?(?:kategorie\s+)?\S/;
+
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
-export function detectTool(text: string, names: string[] = []): AssistantTool | undefined {
+export function detectTool(input: string, names: string[] = []): AssistantTool | undefined {
+  const text = normalizeMessage(input);
   const lower = text.toLowerCase().trim();
-  if (/rückgängig|rueckgaengig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|zuruecknehmen/.test(lower)) return "undo";
+  const known = mentionsName(text, names);
+  const hasAmount = /\d/.test(lower);
+  if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:geändert|gemacht)|protokoll/.test(lower)) return "changes";
-  if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b|\bgedaechtnis\b/.test(lower) &&
+  if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (/\bvergiss\b|vergessen/.test(lower) && !/vergiss nicht/.test(lower)) return "forget";
-  if (/merk dir|merke dir|vergiss nicht|denk dran|denk daran|notier|\bpuffer\b.*\bimmer\b|\bimmer\b.*\bpuffer\b|gehalt kommt|gehalt ist (?:immer )?am|gehalt geht/.test(lower)) return "remember";
+  if (/merk dir|merke dir|vergiss nicht|denk dran|denk daran|notier|\bpuffer\b.*\bimmer\b|\bimmer\b.*\bpuffer\b|\bpuffer\b.*\d|\d.*\bpuffer\b|\breserve\b.*\d|\d.*\breserve\b|nie unter \d|(?:gehalt|lohn)\b.*\bam\s+\d{1,2}\b|\bam\s+\d{1,2}\.?\s+(?:kommt|gibt'?s)\s+(?:mein|das)\s+(?:gehalt|lohn)|gehalt geht/.test(lower) &&
+    !/\bbis\b.*\b(?:sparen|zurücklegen)\b|leisten|leistbar|reicht|geht sich/.test(lower)) return "remember";
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
-  if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline/.test(lower)) return "tax";
-  if (/\betfs?\b|\bdepot\b|investier|aktien|zinseszins|\bsparplan\b|\bmsci\b|\brendite\b|\bfonds\b|vanguard|ishares/.test(lower)) return "depot";
+  if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer/.test(lower)) return "tax";
+  if (/\betfs?\b|\bdepot\b|investier|aktien|zinseszins|\bsparplan\b|\bmsci\b|\brendite\b|\bfonds\b|vanguard|ishares/.test(lower) ||
+    /\b(?:anlegen|veranlagen|anleg)\b/.test(lower) && /\d+\s*jahre?n?\b/.test(lower) && !/sparziel|\bziel\b|\bbis\b/.test(lower)) return "depot";
   if (/wochenüberblick|wochenueberblick|überblick|ueberblick|was steht (?:an|diese woche)|was ist (?:diese woche )?fällig|briefing|was gibt'?s neues|zusammenfassung der woche|status/.test(lower) &&
     !/\b(?:im|in|seit)\s+(?:jänner|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(lower)) return "briefing";
-  if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:\w+ )?sparen|einsparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach/.test(lower)) return "coach";
-  if (/\bist\s+immer\b|\bsind\s+immer\b|immer als\b|\bordne\b.*\bzu\b|kategorisier|als .{2,30} (?:verbuchen|buchen|einordnen|zuordnen)|in die kategorie|der kategorie/.test(lower)) return "rule";
-  if (/^(?:wie ?viel|wieviel|was|wo|wann|wofür|wofuer|wohin|welche[rsn]?|wie oft|hab(?:e)? ich|zeig|liste)\b/.test(lower) && !detectAction(lower) &&
-    /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt/.test(lower)) return "query";
-  if (/^(?:wie ?viel|wieviel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient)\b/.test(lower)) return "query";
+  if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:[\w€.,]+ ){0,3}(?:ein)?sparen|einsparen|einzusparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach|wo (?:kann|könnte) ich (?:noch )?(?:was |etwas )?(?:ein)?sparen/.test(lower)) return "coach";
+  if (strictRule.test(lower) || looseRule.test(lower) && !known && !/\d+\s*(?:€|euro)/.test(lower)) return "rule";
+  if (!detectAction(text) && spendingQuestion(lower) || pastSpending.test(lower)) return "query";
   if (explainPattern.test(lower)) return "explain";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
-  if (mentionsName(text, names) && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
+  if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
   if (editVerbs.test(lower) && !/\bneue[snr]?\b|anlegen|erstell/.test(lower)) {
     // "Setz mir ein Sparziel …" is a new item unless it names something that already exists.
     const action = detectAction(text);
-    const known = mentionsName(text, names) || /notgroschen|urlaubs?(?:ziel|topf|konto)|sparkonto|\b(?:spar)?rate\b|sparziel/.test(lower);
-    return action && !known ? action : "edit";
+    const existing = known || /notgroschen|urlaubs?(?:ziel|topf|konto)|sparkonto|\b(?:spar)?rate\b|sparziel/.test(lower);
+    return action && !existing ? action : "edit";
   }
+  // Short commands on an existing item: "mach Japan 4000", "Japan soll 4000 sein", "Pickerl erst im April".
+  if (known && !newGoal && !/leisten|leistbar|\bdrin\b|reicht|geht sich/.test(lower) &&
+    (hasAmount && /\b(?:mach|soll|ziel|stell|statt|neu|insgesamt|gesamt|hoch|runter|rauf)\b/.test(lower) && lower.split(" ").length <= 8 ||
+      /\b(?:erst|doch|lieber|schon)\s+(?:im|am|ab|in|zum)\b|\b(?:später|früher)\b/.test(lower))) return "edit";
   if (/\bhilfe\b|was kannst du|wie funktionierst du|was geht hier|^\?$/.test(lower)) return "help";
   return detectAction(text);
 }

@@ -8,6 +8,7 @@ import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCo
 import { explainDashboard } from "./explain";
 import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
+import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
 import { matchName, toolDescriptions, type AssistantTool } from "./tools";
 
@@ -100,7 +101,7 @@ function editGoal(goal: SavingsGoal, text: string, asOf: string): { operations: 
   if (/\brate\b|monatlich|pro monat|im monat|sparrate|monatsrate/.test(lower)) {
     const value = editAmount(text.replace(/pro monat|im monat|monatlich/gi, ""), goal.funding?.monthly ?? 0);
     if (value !== undefined) update.monthly = value;
-  } else if (/erhöh|erhoeh|senk|reduzier|ziel|betrag|auf\s+\d|um\s+\d/.test(lower) && !update.date) {
+  } else if (/erhöh|erhoeh|senk|reduzier|ziel|betrag|auf\s+\d|um\s+\d|\bmach|\bsoll\b|\bstell|statt|insgesamt|gesamt|\bhoch\b|\brauf\b|\brunter\b/.test(lower) && !update.date) {
     const value = editAmount(text, goal.target);
     if (value !== undefined) update.target = value;
   }
@@ -165,6 +166,8 @@ export function parseRule(text: string): { merchant?: string; category?: string 
     /^(?:bitte\s+)?(?:ordne|buche|verbuche|stell)\s+(.+?)\s+(?:immer\s+|künftig\s+|ab jetzt\s+)*(?:als\s+|der kategorie\s+|in die kategorie\s+|zu\s+|unter\s+)?(.+?)\s+(?:zu|ein|um)\s*[.!]?$/i,
     /^(?:bitte\s+)?kategorisier\w*\s+(.+?)\s+(?:immer\s+)?(?:als|zu|in)\s+(.+)$/i,
     /^(.+?)\s+(?:immer\s+)?(?:als|unter)\s+(.+?)\s+(?:verbuchen|buchen|einordnen|zuordnen|kategorisieren)/i,
+    /^(.+?)\s+soll(?:en)?\s+(?:immer\s+)?(?:unter|in|als|zu)\s+(.+?)(?:\s+(?:laufen|fallen|stehen|landen|gehen|sein|gebucht|verbucht))?\s*[.!]?$/i,
+    /^(?:bitte\s+)?(?:mach|pack|steck|tu)\w*\s+(.+?)\s+(?:immer\s+)?(?:zu|in|unter)\s+(.+?)\s*[.!]?$/i,
   ];
   for (const pattern of patterns) {
     const match = pattern.exec(text.trim());
@@ -210,14 +213,16 @@ function rule({ state, asOf, hints }: Context, text: string): AgentResult {
   return { ...preview, card, text: preview.change ? `${plural(changing.length, "Buchung", "Buchungen")} von ${merchant} würden zu ${category}. Bitte bestätigen:` : preview.text };
 }
 
-export function parseMemory(text: string): Extract<AssistantOperation, { op: "memory_add" }> | undefined {
+export function parseMemory(input: string): Extract<AssistantOperation, { op: "memory_add" }> | undefined {
+  const text = normalizeMessage(input);
   const lower = text.toLowerCase();
-  const buffer = /puffer\D{0,40}?(\d[\d.\s]*(?:,\d{1,2})?)\s*(?:€|euro)?/.exec(lower) ?? /(\d[\d.\s]*(?:,\d{1,2})?)\s*(?:€|euro)?\s*(?:als\s+)?puffer/.exec(lower);
+  const buffer = /(?:puffer|reserve|polster|nie unter|nicht unter)\D{0,40}?(\d[\d.\s]*(?:,\d{1,2})?)\s*(?:€|euro)?/.exec(lower) ??
+    /(\d[\d.\s]*(?:,\d{1,2})?)\s*(?:€|euro)?\s*(?:als\s+)?(?:puffer|reserve|polster)/.exec(lower);
   if (buffer) {
     const value = parseAmount(buffer[1].trim());
     if (value !== undefined) return { op: "memory_add", key: "buffer", value, text: `Puffer: immer ${currency(value)} pro Monat übrig lassen` };
   }
-  const salary = /gehalt\D{0,30}?\b(?:am|zum|jeweils am)\s+(\d{1,2})\.?/.exec(lower);
+  const salary = /(?:gehalt|lohn)\D{0,30}?\b(?:am|zum|jeweils am)\s+(\d{1,2})\.?/.exec(lower) ?? /\bam\s+(\d{1,2})\.?\s+(?:kommt|gibt'?s)\s+(?:mein|das)\s+(?:gehalt|lohn)/.exec(lower);
   if (salary && Number(salary[1]) >= 1 && Number(salary[1]) <= 31)
     return { op: "memory_add", key: "salaryDay", value: Number(salary[1]), text: `Gehalt kommt am ${Number(salary[1])}.` };
   const note = text.replace(/^\s*(?:bitte\s+)?(?:merk(?:e)?\s+dir|vergiss nicht|denk(?:e)?\s+da?ran|notier(?:e)?(?:\s+dir)?)\s*[,:]?\s*(?:dass\s+)?/i, "").trim();
@@ -284,8 +289,9 @@ function help(): AgentResult {
 }
 
 // Executes a non-draft tool deterministically on the local data. Draft tools (goal, expense, affordability) use the draft flow.
-export function executeTool(tool: AssistantTool, text: string, context: Context): AgentResult {
+export function executeTool(tool: AssistantTool, input: string, context: Context): AgentResult {
   const { state, dashboard, asOf } = context;
+  const text = normalizeMessage(input);
   switch (tool) {
     case "query": return answerQuestion(state, text, asOf, context.hints);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));

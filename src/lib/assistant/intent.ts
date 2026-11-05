@@ -1,4 +1,5 @@
 import { assistantDraftSchema, type AssistantDraft } from "@/lib/types";
+import { normalizeMessage } from "./normalize";
 
 export type AssistantAction = AssistantDraft["action"];
 export type DateHint = { month: string; day?: number | "end" };
@@ -31,7 +32,8 @@ const accounts: [RegExp, string][] = [
 ];
 const numberWords: Record<string, number> = { einen: 1, ein: 1, einem: 1, zwei: 2, drei: 3, vier: 4, "fünf": 5, fuenf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, "zwölf": 12 };
 const countPattern = "(\\d{1,2}|einen|ein|einem|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf)";
-const moneyPattern = "(\\d{1,3}(?:[.\\s]\\d{3})+|\\d+)(?:,(\\d{1,2}))?\\s*(?:€|euro|eur)";
+// A currency sign may be missing when "extra", "zusätzlich" or the source follows: "je 50 extra aus dem Notgroschen".
+const moneyPattern = "(\\d{1,3}(?:[.\\s]\\d{3})+|\\d+)(?:,(\\d{1,2}))?\\s*(?:€|euro|eur|(?=\\s+(?:extra|zusätzlich|zusaetzlich|vom|von|aus)\\b))";
 const extraSources: [RegExp, NonNullable<AssistantDraft["extra"]>["from"]][] = [
   [/sparkonto/i, "Sparkonto"], [/notgroschen|trade republic|tagesgeld/i, "Notgroschen"], [/urlaub/i, "Urlaub"],
   [/motorrad/i, "Motorrad"], [/giro|raiffeisen|hauptkonto|gehalt/i, "Giro"],
@@ -73,7 +75,8 @@ const stopWords = new Set(["ich", "du", "wir", "im", "in", "am", "an", "bis", "a
   "jahren", "sparen", "ausgabe", "ausgaben", "und", "oder", "mit", "für", "von", "vom", "zum", "zur", "noch", "schon", "bereits",
   "jetzt", "heute", "nächsten", "nächster", "übernächsten", "geht", "sich", "leisten", "neues", "neuen", "neue", "neuer", "plane",
   "planen", "will", "möchte", "würde", "brauche", "kommt", "habe", "hab", "liegen", "liegt", "es", "er", "sie", "mir", "mich",
-  "lege", "zurück", "wäre", "wenn", "angenommen", "monatlich", "pro", "je", "dann", "also", "bitte", "hallo", "hi", "danke", "ja", "nein"]);
+  "lege", "zurück", "wäre", "wenn", "angenommen", "monatlich", "pro", "je", "dann", "also", "bitte", "hallo", "hi", "danke", "ja", "nein",
+  "anlegen", "erstellen", "machen", "ist", "sind", "soll", "sollen", "auf", "drin", "leistbar", "reicht", "hey", "ok", "okay"]);
 
 const cents = (value: number) => Math.round(value * 100) / 100;
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -175,6 +178,7 @@ function findName(text: string): string | undefined {
   const stop = "(?=\\s+(?:bis|ab|im|in|um|mit|und|von|vom|am|zu|für|über|sparen|ansparen|zurücklegen|kaufen|leisten|planen|kostet|ca\\.?|etwa|rund|\\d)|\\s*[,.!?;:]|\\s*$)";
   const word = "[A-Za-zÄÖÜäöüß][\\wÄÖÜäöüß'-]*";
   const patterns = [
+    new RegExp(`\\b(?:sparziel|spartopf|neues ziel)\\s+(?:für\\s+|namens\\s+)?(${word})${stop}`, "i"),
     new RegExp(`\\b(?:für|fuer)\\s+((?:(?:ein|eine|einen|den|die|das|mein|meine|meinen|unser|unsere|neue[snr]?)\\s+){0,2}${word}(?:\\s+(?:nach|in)\\s+[A-ZÄÖÜ][\\wÄÖÜäöüß-]*|\\s+[A-ZÄÖÜ][\\wÄÖÜäöüß-]*){0,2})${stop}`),
     new RegExp(`\\b(?:kommt|kommen|fällig ist|kaufe|kaufen|brauche|zahle|plane)\\s+((?:(?:ein|eine|einen|der|die|das|den|mein|meine|meinen|neue[snr]?)\\s+){0,2}[A-ZÄÖÜ][\\wÄÖÜäöüß-]*)${stop}`),
     /\b(?:ein|eine|einen|neue[snr]?|das|den|die|der)\s+((?:neue[snr]?\s+)?[A-ZÄÖÜ][\wÄÖÜäöüß-]*)/,
@@ -185,21 +189,27 @@ function findName(text: string): string | undefined {
     const name = match ? clean(match[1]) : undefined;
     if (name) return name;
   }
-  return undefined;
+  // Lower-case chat input: fall back to typical things people save for or buy.
+  const item = /\b(fernseher|laptop|notebook|handy|iphone|smartphone|tablet|ipad|konsole|playstation|ps5|kamera|auto|motorrad|fahrrad|e-bike|ebike|roller|urlaub|reise|hochzeit|umzug|kaution|wohnung|couch|sofa|bett|küche|kueche|waschmaschine|kühlschrank|kuehlschrank|geschirrspüler|staubsauger|monitor|bildschirm|pc|computer|uhr|brille|zahnarzt|pickerl|service|reifen|führerschein|fuehrerschein|geschenk|weihnachten|geburtstag|möbel|moebel|japan|thailand|malaysia|italien|kroatien|spanien|griechenland|amerika|usa)\b/i.exec(text);
+  return item ? item[1].charAt(0).toUpperCase() + item[1].slice(1).toLowerCase() : undefined;
 }
 
-export function detectAction(text: string): AssistantAction | undefined {
-  const lower = text.toLowerCase();
-  if (/leisten|geht\s+sich\b.*\baus|ausgehen|geht das\b|reicht (?:das|es)|schaffe ich|kann ich mir/.test(lower)) return "affordability";
-  if (/sparziel|\bspar(?:e|en|t)\b|anspar|zurückleg|zuruecklegen|zurück legen|auf die seite/.test(lower)) return "savings_goal";
+export function detectAction(input: string): AssistantAction | undefined {
+  const lower = normalizeMessage(input).toLowerCase();
+  if (/leisten|leistbar|geht\s+sich\b.*\baus|ausgehen|geht das\b|reicht (?:das|es|mein|unser|das)\b|reicht\b.*\bfür\b|schaffe ich|kann ich mir/.test(lower) ||
+    /\bdrin(?:nen)?\b/.test(lower) && /\d/.test(lower)) return "affordability";
+  if (/sparziel|\bspar(?:e|en|t)\b|\bspar\s+(?:mir|ich|uns|für|bis|\d)|anspar|zusammenspar|zurückleg|zuruecklegen|zurück legen|auf die seite|zur seite|beiseite|weglegen/.test(lower) ||
+    /\bbrauch\w*\b.*\bbis\b|\bbis\b.*\bbrauch\w*\b/.test(lower) && /\d/.test(lower)) return "savings_goal";
   if (/geplante ausgabe|\braten?\b|\bkommt\b|fällig|faellig|\bplane?n?\b|kaufe|kaufen|bezahlen|zahlen|anschaff|rechnung|pickerl|versicherung|reparatur|service/.test(lower)) return "expense";
+  // "Japan Reise 3000 bis Juli 2027, 500 hab ich schon": an amount with a deadline is a goal.
+  if (/\bbis\b/.test(lower) && /\d/.test(lower) && /reise|urlaub|trip|hab ich schon|habe ich schon|liegen schon|liegt schon|bereits|ziel|\d+\s*(?:€|euro)?\s+bis\b/.test(lower)) return "savings_goal";
   return undefined;
 }
 
 type AmountToken = { value: number; before: string; after: string };
 
 export function parseAssistantMessage(text: string, asOf: string): ParsedMessage {
-  const input = text.slice(0, 1000);
+  const input = normalizeMessage(text);
   const lower = input.toLowerCase();
   const date = findDate(input, asOf);
   const result: ParsedMessage = { numbers: [] };

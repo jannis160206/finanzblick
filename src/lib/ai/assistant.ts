@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { assistantDraftSchema, dateSchema, type AssistantDraft } from "@/lib/types";
 import { groundModelExtraction, mergeDraft, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
+import { normalizeMessage } from "@/lib/assistant/normalize";
 import { assistantTools, detectTool, isAssistantTool, isDraftTool, matchName, toolDescriptions, type AssistantTool } from "@/lib/assistant/tools";
 import { categories } from "@/lib/categories";
 import { chat, type ChatOptions } from "./client";
@@ -60,7 +61,12 @@ const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du w
   "Für savings_goal, expense und affordability: name = kurzer Name (z. B. \"Japan\", \"Pickerl\", \"Laptop\"), amount = Zielbetrag bzw. Gesamtpreis, " +
   "monthly = monatlicher Betrag, startCapital = schon vorhandenes Geld, installments = Anzahl der Raten, fromAccount = Konto, " +
   "shared = mit Raphael geteilt, whatIf = nur durchrechnen. Übernimm Zahlen exakt. Nicht genannte Felder sind null. " +
-  "Ist ein offener Entwurf angegeben und beantwortet die Nachricht nur dessen Rückfrage, nimm dessen action als tool.";
+  "Ist ein offener Entwurf angegeben und beantwortet die Nachricht nur dessen Rückfrage, nimm dessen action als tool. " +
+  "Nachrichten sind oft locker, kurz oder ohne Satzbau geschrieben. Erkenne die Absicht trotzdem, z. B.: " +
+  "\"essen oktober wie viel\" = query; \"wo geht mein geld hin\" = query; \"Japan Reise 3000 bis Juli 2027, 500 hab ich schon\" = savings_goal; " +
+  "\"ist ein 900 € Fernseher im Mai drin?\" = affordability; \"mach Japan 4000\" = edit; \"Pickerl erst im April\" = edit; " +
+  "\"lieferando gehört zu lieferdienste\" = rule; \"lass immer 500 € reserve\" = remember; \"wo kann ich 200 € sparen\" = coach; " +
+  "\"100 im monat anlegen 10 jahre\" = depot; \"wie läuft das mit den sparzielen\" = explain; \"nimm das zurück\" = undo.";
 
 const fold = (value: string) => value.toLowerCase().normalize("NFKC");
 
@@ -80,7 +86,9 @@ function groundHints(model: z.infer<typeof modelSchema> | undefined, input: Assi
   return hints;
 }
 
-export async function interpretAssistantMessage(input: AssistantRequest, options: ChatOptions = {}): Promise<AssistantReply> {
+export async function interpretAssistantMessage(request: AssistantRequest, options: ChatOptions = {}): Promise<AssistantReply> {
+  // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
+  const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
   const parsed = parseAssistantMessage(input.message, input.asOf);
   const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
   const ruleTool = detectTool(input.message, names);
