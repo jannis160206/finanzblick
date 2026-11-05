@@ -30,7 +30,7 @@ import {
 } from "./merchant-logo-raster";
 import { merchantLogoNameSchema } from "./merchant-presentation-schema";
 
-const MAX_FILES = 200;
+const MAX_FILES = 1000;
 const MAX_NAMES = 4200;
 export const localLogoAliasesSchema = z.record(
   z.string().min(1).max(240),

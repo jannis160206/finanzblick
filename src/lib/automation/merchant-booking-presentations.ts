@@ -13,7 +13,12 @@ import {
 } from "./merchant-logo-presentations";
 import { merchantLogoBookingId, merchantLogoName } from "./merchant-mark-name";
 import { merchantMarksRequestSchema } from "./merchant-presentation-schema";
-import { MerchantIndex, normalizeMerchantDescriptor, isPaymentProviderText } from "./merchants";
+import {
+  MerchantIndex,
+  normalizeMerchantDescriptor,
+  isPaymentProviderText,
+  type Merchant,
+} from "./merchants";
 import type { AutomationStore } from "./store";
 import { isIncomeCategory } from "@/lib/fixed";
 import { normalizeLocalLogoName } from "./merchant-local-logos";
@@ -147,10 +152,23 @@ export async function accountMerchantBookingPresentations(
       )?.grant;
       if (!local || qualifiedCompany(text, local.canonicalName)) return null;
       const publicMatch = index.match(text);
+      const showsLocal = (merchant: Merchant) =>
+        [merchant.canonicalName, ...merchant.aliases].some(
+          (name) =>
+            supplied.get(normalizeLocalLogoName(name))?.merchantId ===
+            local.merchantId,
+        );
+      // Public map copies of one brand (many "Spar" outlets) are ambiguous
+      // for an identity, not for its artwork.
+      const ambiguous = index.ambiguousCandidates(text);
+      const sameBrand =
+        ambiguous.length > 0 &&
+        ambiguous.every((merchants) => merchants.every(showsLocal));
       if (
         publicMatch.requiresManualReview &&
         publicMatch.method !== "none" &&
-        !publicMatch.merchant
+        !publicMatch.merchant &&
+        !sameBrand
       )
         return null;
       if (

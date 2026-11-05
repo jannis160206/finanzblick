@@ -8,7 +8,8 @@ Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledi
 | --- | --- |
 | OpenVINO Model Server (OVMS) | Stellt `Qwen3-8B-int4-cw-ov` auf der NPU als OpenAI-kompatible API unter `http://127.0.0.1:8000/v3` bereit |
 | `AiReviewAssistant` (Browser) | Schickt offene Prüfungen in Achterpaketen an `/api/ai/categorize` und übernimmt nur sichere Antworten |
-| `/api/ai/logo` | Sucht das Händlerlogo über Wikidata (Eigenschaft P154) und lädt es von Wikimedia Commons in den privaten `Logo/`-Ordner |
+| `/api/ai/logo` | Sucht ein Händlerlogo (Wikidata/Commons, offizielle Webseite, Marken-Domain) und legt es in den privaten `Logo/`-Ordner |
+| `/api/ai/logos` | Sucht der Reihe nach Logos für alle Zahlungsempfänger, die noch keines haben (siehe „Händler-Logos“) |
 | `/api/ai/web-categories` | Schlägt den Geschäftstyp unbekannter Händler bei OpenStreetMap, Wikidata oder auf der Händler-Webseite nach (braucht kein Modell) |
 | `npm run mcp` | MCP-Server (stdio) mit Finanzwerkzeugen für Claude Desktop, VS Code, Copilot oder den lokalen Agenten |
 | `npm run ai:agent` | Freier Chat mit dem lokalen Modell, das die MCP-Werkzeuge selbst aufruft |
@@ -169,9 +170,25 @@ Der Browser-Assistent schlägt unbekannte Geschäfte offener Kartenzahlungen sel
 - **Gedächtnis:** Ergebnisse speichert der Zustand in `webCategories` (max. 3000), also bleiben sie über Neustarts erhalten. „Nichts gefunden“ wird nach 30 Tagen erneut versucht.
 - **Höflich zu den Diensten:** Nominatim bekommt höchstens 1 Anfrage pro Sekunde, Wikidata höchstens 2. Nach einer Drosselung (HTTP 429/503) pausiert der Dienst bis `Retry-After`, sonst 10 Minuten, und die Geschäfte kommen später erneut dran.
 
+## Händler-Logos
+
+Der Browser-Assistent sucht nach dem Laden im Hintergrund Logos für alle Zahlungsempfänger, deren Buchungen ein Händlerzeichen zeigen würden, aber noch keines haben (`/api/ai/logos`, je 5 Händler, bis zu 40 Runden, meiste Buchungen zuerst). Neue Logos erscheinen sofort.
+
+- **Wer ein Logo bekommt:** Händlernamen (Alias) und Geschäfte aus Kartenzahlungen. Überweisungen an Personen, Umbuchungen, Gebühren und reine Branchenwörter („Tankstelle“, „Hotel“) nicht.
+- **Suchnamen:** Aus „SPAR Fil. 6423 Spar Fil Finkenstein“ werden der Reihe nach „Spar Finkenstein“ und „Spar“ gesucht. Der Dateiname besteht so nur aus Wörtern der Buchung und passt später sicher.
+- **Quellen der Reihe nach:**
+  1. Wikidata-Logo (P154) von Wikimedia Commons.
+  2. Icon der offiziellen Webseite aus Wikidata (P856).
+  3. Bei Geschäften aus Kartenzahlungen: `www.<name>.at`, `.de` oder `.com`, aber nur, wenn Titel oder Seitenname der Seite die Marke tragen und die Domain nicht geparkt ist.
+- **Icon-Auswahl auf einer Webseite:** `apple-touch-icon`, SVG-Icon, große Icons ab 96 px, `<img>` mit „logo“, `og:image` mit „logo“. Raster unter 64 px werden verworfen. SVGs mit Skripten, eingebetteten Bildern oder externen Verweisen werden abgelehnt.
+- **Sicherheit:** Nur HTTPS, keine IP-Adressen oder `localhost`, begrenzte Dateigröße. Alles wird als PNG neu gerendert.
+- **Gedächtnis:** Nicht gefundene Händler stehen in `Logo/.logo-misses.json` und werden erst nach 30 Tagen erneut gesucht. Drosselungen merkt er sich nicht, der nächste Lauf macht dort weiter.
+- **Erkennung vorhandener Logos:** Gleichnamige Filialen aus dem öffentlichen Katalog (z. B. mehrere „Spar“) blockieren das eigene Logo nicht mehr. Bei mehreren Dateien derselben Marke gewinnt der Markenname (`amazon.png` vor `AMZNPRIME.png`). „Uber Trip“ findet `uber.png` über den Wortanfang.
+- **Ordner:** bis zu 1000 Logos. Der Live-Sync liest nur neue oder geänderte Dateien ein.
+
 ## MCP-Server
 
-Werkzeuge: `ai_status`, `list_categories`, `finance_summary`, `finance_insights` (Abos, Preisänderungen, doppelte Abbuchungen, Prognose), `list_open_reviews`, `search_transactions`, `categorize_open_reviews` (`apply=false` liefert nur Vorschläge; `apply=true` schlägt vorher unbekannte Geschäfte im Internet nach), `learn_categories_from_web` (Internet-Kategorisierung wie oben), `assign_category`, `find_merchant_logo`.
+Werkzeuge: `ai_status`, `list_categories`, `finance_summary`, `finance_insights` (Abos, Preisänderungen, doppelte Abbuchungen, Prognose), `list_open_reviews`, `search_transactions`, `categorize_open_reviews` (`apply=false` liefert nur Vorschläge; `apply=true` schlägt vorher unbekannte Geschäfte im Internet nach), `learn_categories_from_web` (Internet-Kategorisierung wie oben), `assign_category`, `find_merchant_logo`, `find_all_merchant_logos` (Logos für alle Zahlungsempfänger ohne Logo, siehe „Händler-Logos“).
 
 Beispielkonfiguration für einen MCP-Client:
 

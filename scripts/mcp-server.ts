@@ -23,6 +23,8 @@ export function openFinanceAccess(): FinanceAccess & { close: () => void } {
   return { database, userId: user.id, close: () => database.close() };
 }
 
+const OPEN_WORLD = new Set(["find_merchant_logo", "find_all_merchant_logos", "learn_categories_from_web"]);
+
 async function main() {
   const access = openFinanceAccess();
   const server = new McpServer({ name: "finanzblick", version: "1.0.0" });
@@ -30,7 +32,7 @@ async function main() {
     server.registerTool(tool.name, {
       description: tool.description,
       inputSchema: tool.input,
-      annotations: { readOnlyHint: tool.readOnly, openWorldHint: tool.name === "find_merchant_logo" },
+      annotations: { readOnlyHint: tool.readOnly, openWorldHint: OPEN_WORLD.has(tool.name) },
     }, async (args: Record<string, unknown>) => {
       try {
         return await tool.run(args, access);

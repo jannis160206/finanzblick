@@ -14,6 +14,8 @@ import { decideReviewWithEvidence, industryContext, industryLookupName } from ".
 import { lookupIndustry, lookupIndustryResult, type Industry } from "./industry";
 import { pendingWebLookups, recordWebCategories, webTargetForReview, type WebTarget } from "./web-categories";
 import { findMerchantLogo } from "./logo-finder";
+import { sweepMissingLogos } from "./logo-sweep";
+import { AutomationStore } from "@/lib/automation/store";
 import { aiCategories, aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "./suggestions";
 import { financeInsights } from "@/lib/insights";
@@ -276,9 +278,18 @@ export const financeTools: FinanceTool[] = [
   },
   {
     name: "find_merchant_logo",
-    description: "Sucht das offizielle Logo eines Händlers (Wikidata/Wikimedia Commons) und legt es privat im Logo-Ordner ab.",
+    description: "Sucht das offizielle Logo eines Händlers (Wikidata/Wikimedia Commons, offizielle Webseite, Marken-Domain) und legt es privat im Logo-Ordner ab.",
     input: { name: z.string().trim().min(2).max(90), context: z.string().max(300).optional() },
     readOnly: false,
     run: async (args) => ok(await findMerchantLogo(String(args.name), typeof args.context === "string" ? args.context : undefined)),
+  },
+  {
+    name: "find_all_merchant_logos",
+    description: "Sucht für alle Zahlungsempfänger ohne Logo (meiste Buchungen zuerst) das Logo im Internet und legt es privat im Logo-Ordner ab. Nicht gefundene werden erst nach 30 Tagen erneut gesucht; mehrfach aufrufen, solange remaining > 0.",
+    input: { limit: z.number().int().min(1).max(25).optional() },
+    readOnly: false,
+    run: async (args, access) => ok(await sweepMissingLogos(new AutomationStore(access.database), access.userId, read(access), {
+      limit: typeof args.limit === "number" ? args.limit : 10,
+    })),
   },
 ];

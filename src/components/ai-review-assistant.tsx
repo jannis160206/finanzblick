@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
+import { MERCHANT_LOGOS_CHANGED } from "@/components/merchant-marks-provider";
 import type { AiReviewDecision } from "@/lib/ai/apply-review-decisions";
 import { applyAndCount, autoAssignAndCount, autoAssignOpenReviews, webContextFor } from "@/lib/ai/auto-assign";
 import type { AiCategorization } from "@/lib/ai/categorize";
@@ -14,6 +15,10 @@ import { pendingWebLookups, recordWebCategories, webHabits, type WebTarget } fro
 
 const STATUS_INTERVAL_MS = 60_000;
 const WEB_BATCH = 8;
+const LOGO_SWEEP_ROUNDS = 40;
+const LOGO_SWEEP_PAUSE_MS = 3_000;
+const LOGO_SWEEP_LIMIT_PAUSE_MS = 60_000;
+const logoSweep = { started: false };
 
 async function postJson<T>(url: string, body: unknown, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, {
@@ -136,6 +141,37 @@ export function AiReviewAssistant() {
       }
     })();
   }, [ready, storageError, webBusy, openKey, retry, update]);
+
+  // Payees without a logo get one from the internet (Wikidata/Commons, the official website, the brand's
+  // own domain), a few at a time in the background. Not found ones are retried by the server after 30 days.
+  const hasBookings = state.transactions.length > 0;
+  useEffect(() => {
+    if (!ready || storageError || !hasBookings || logoSweep.started) return;
+    logoSweep.started = true;
+    // Not tied to this component: the sweep goes on in the background while the user navigates.
+    const signal = new AbortController().signal;
+    void (async () => {
+      let saved = 0;
+      try {
+        for (let round = 0; round < LOGO_SWEEP_ROUNDS; round++) {
+          const result = await postJson<{ saved: unknown[]; checked: number; remaining: number; rateLimited: boolean }>(
+            "/api/ai/logos", { limit: 5 }, signal,
+          );
+          saved += result.saved.length;
+          if (result.saved.length) window.dispatchEvent(new Event(MERCHANT_LOGOS_CHANGED));
+          if (!result.remaining || (!result.checked && !result.rateLimited)) break;
+          // Wikidata asks for a pause after a burst of lookups; the sweep continues once it is over.
+          await new Promise((resolve) => setTimeout(resolve, result.rateLimited ? LOGO_SWEEP_LIMIT_PAUSE_MS : LOGO_SWEEP_PAUSE_MS));
+        }
+      } catch {
+        // Offline, logged out or another sweep running; the next page load continues.
+      }
+      if (saved)
+        toast.success(`${saved} neue${saved === 1 ? "s" : ""} Händler-Logo${saved === 1 ? "" : "s"} aus dem Internet geladen`, {
+          description: "Quellen: Wikidata/Wikimedia Commons und die offiziellen Webseiten der Händler.",
+        });
+    })();
+  }, [ready, storageError, hasBookings]);
 
   useEffect(() => {
     if (!available || !ready || storageError || busy || !openKey) return;

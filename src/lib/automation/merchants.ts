@@ -1031,6 +1031,19 @@ export class MerchantIndex {
       name: chain.canonicalName };
   }
 
+  /** Merchants behind each ambiguous exact phrase of the text. */
+  ambiguousCandidates(text: string): Merchant[][] {
+    if (text.length > MAX_INPUT) return [];
+    const normalized = normalizeMerchantDescriptor(text);
+    if (!normalized) return [];
+    const tokens = normalized.split(" ");
+    if (tokens.length > MAX_TOKENS) return [];
+    return windows(tokens).flatMap((phrase) => {
+      const entry = this.exact.get(phrase);
+      return entry?.ambiguous ? [[...entry.merchants]] : [];
+    });
+  }
+
   match(text: string, preferredId?: string): MerchantMatch {
     if (text.length > MAX_INPUT) return unresolved();
     // Remove IDs before providers: stripping "Stripe" inside an ID must not

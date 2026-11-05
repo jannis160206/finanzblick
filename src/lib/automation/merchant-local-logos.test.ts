@@ -1122,3 +1122,46 @@ it("falls back when the private cached file disappears", async () => {
     )[0].logo,
   ).toBeNull();
 });
+
+function publicMerchant(id: string, canonicalName: string, aliases: string[] = []) {
+  return merchantSchema.parse({
+    id, canonicalName, aliases, defaultCategory: null, regexPatterns: [], region: "AT", source: "osm", updatedAt: 1,
+  });
+}
+
+function cardBooking(id: string, description: string, merchantId?: string) {
+  return transactionSchema.parse({
+    id, date: "2026-10-01", bank: "Raiffeisen", pocket: null, description, amount: -12,
+    category: "Lebensmittel", categoryOverride: true, includeInPlan: true, ...(merchantId ? { merchantId } : {}),
+  });
+}
+
+it("shows a supplied brand logo although the public catalogue lists several branches of that brand", async () => {
+  await supplied("Spar.png");
+  store.upsertMerchants([publicMerchant("osm-spar-1", "Spar"), publicMerchant("osm-spar-2", "SPAR", ["Spar Markt"])]);
+  accounts.putFinance(userId, { ...blankTestState(), transactions: [cardBooking("spar", "SPAR DANKT 6423 Spar Fil Finkenstein")] }, 0);
+  await importLogos();
+  const grant = localLogoGrants(store, userId).get("spar")!;
+  const [mark] = await accountMerchantBookingPresentations(store, ["spar"], userId);
+  expect(mark.logo?.merchantId).toBe(grant.merchantId);
+});
+
+it("prefers the supplied file of the main brand name and falls back to the brand word of longer names", async () => {
+  await supplied("Amazon.png");
+  await supplied("AMZN Prime.webp", await padded("webp"));
+  await supplied("Uber.png");
+  store.upsertMerchants([
+    publicMerchant("brand-amazon", "Amazon", ["AMZN Prime"]),
+    publicMerchant("brand-uber-trip", "Uber Trip"),
+    publicMerchant("brand-ub", "Ub Shop"),
+  ]);
+  await importLogos();
+  const grants = localLogoGrants(store, userId);
+  const marks = await accountMerchantPresentations(
+    store, { merchantIds: ["brand-amazon", "brand-uber-trip", "brand-ub"] }, userId,
+  );
+  const byId = new Map(marks.map((mark) => [mark.merchantId, mark.logo]));
+  expect(byId.get("brand-amazon")?.merchantId).toBe(grants.get("amazon")!.merchantId);
+  expect(byId.get("brand-uber-trip")?.merchantId).toBe(grants.get("uber")!.merchantId);
+  expect(byId.get("brand-ub") ?? null).toBeNull();
+});

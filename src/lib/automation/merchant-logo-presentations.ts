@@ -27,23 +27,36 @@ export async function accountMerchantPresentations(
   const supplied = await request.localLogos();
   for (const merchantId of new Set(merchantIds)) {
     const merchant = store.getMerchant(merchantId);
-    const matches = [
+    const named = (name: string) => {
+      const grant = supplied.get(normalizeLocalLogoName(name));
+      return grant ? [grant] : [];
+    };
+    let matches = [
       ...new Map(
         [...supplied.values()]
           .filter((grant) => grant.merchantId === merchantId)
           .concat(
             merchant
-              ? [merchant.canonicalName, ...merchant.aliases].flatMap(
-                  (name) => {
-                    const grant = supplied.get(normalizeLocalLogoName(name));
-                    return grant ? [grant] : [];
-                  },
-                )
+              ? [merchant.canonicalName, ...merchant.aliases].flatMap(named)
               : [],
           )
           .map((grant) => [grant.merchantId, grant]),
       ).values(),
     ];
+    // Several supplied files (Amazon, AMZNPrime): the main name decides.
+    if (matches.length > 1 && merchant) {
+      const main = named(merchant.canonicalName);
+      if (main.length) matches = main;
+    }
+    // "Uber Trip" shows the supplied brand logo "Uber".
+    if (!matches.length && merchant) {
+      const words = merchant.canonicalName.trim().split(/\s+/);
+      for (let size = words.length - 1; size > 0 && !matches.length; size--) {
+        const prefix = words.slice(0, size).join(" ");
+        if ((prefix.match(/\p{L}/gu)?.length ?? 0) >= 3)
+          matches = named(prefix);
+      }
+    }
     if (matches.length === 1)
       privateMarks.set(merchantId, {
         merchantId: matches[0].merchantId,

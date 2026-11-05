@@ -14,7 +14,7 @@ export const LIVE_LOGO_USAGE_FILE = ".private-usage.json";
 const IMAGE_FILE = /\.(?:png|jpe?g|webp|avif)$/i;
 const CHECK_INTERVAL_MS = 2_000;
 const MAX_USAGE_FILE_BYTES = 64 * 1024;
-const MAX_SIGNATURE_FILES = 200;
+const MAX_SIGNATURE_FILES = 1000;
 
 const usageSchema = z.object({
   accounts: z
@@ -29,6 +29,7 @@ const usageSchema = z.object({
 
 type AccountState = {
   signature?: string;
+  files?: Map<string, string>;
   checkedAt: number;
   running?: Promise<void>;
 };
@@ -81,6 +82,7 @@ async function directorySignature(directory: string) {
   files.sort((a, b) => a.name.localeCompare(b.name));
   return {
     names: files.map((file) => file.name),
+    files: new Map(files.map((file) => [file.name, file.signature])),
     hash: createHash("sha256")
       .update(files.map((file) => file.signature).join("\n"))
       .digest("hex"),
@@ -93,13 +95,15 @@ async function importChanged(
   directory: string,
   rightsReference: string,
   names: string[],
+  incremental: boolean,
 ) {
   try {
     await importSuppliedLocalLogos(store, {
       userId,
       directory,
       rightsReference,
-      signal: AbortSignal.timeout(120_000),
+      ...(incremental ? { files: new Set(names) } : {}),
+      signal: AbortSignal.timeout(300_000),
     });
     return;
   } catch (error) {
@@ -137,9 +141,25 @@ async function synchronize(
   if (!rightsReference) return;
   const current = await directorySignature(directory);
   if (!current || current.hash === state.signature) return;
-  if (current.names.length)
-    await importChanged(store, userId, directory, rightsReference, current.names);
+  // Only new or changed files are imported again; the importer never removes
+  // grants, so this matches a full import without re-reading every logo.
+  const previous = state.files;
+  const changed = previous
+    ? current.names.filter(
+        (name) => previous.get(name) !== current.files.get(name),
+      )
+    : current.names;
+  if (changed.length)
+    await importChanged(
+      store,
+      userId,
+      directory,
+      rightsReference,
+      changed,
+      !!previous,
+    );
   state.signature = current.hash;
+  state.files = current.files;
 }
 
 /**

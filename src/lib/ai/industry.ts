@@ -111,10 +111,10 @@ async function fromWikidata(name: string, fetcher: typeof fetch, signal: AbortSi
   return category ? { category, label: text.slice(0, 160), source: "Wikidata" } : undefined;
 }
 
-const PARKED = /domain (?:is )?for sale|domain kaufen|zu verkaufen|parked|sedo|this domain|diese domain|coming soon|baustelle/i;
-const IP_HOST = /^(?:\d{1,3}\.){3}\d{1,3}$|^\[|:/;
+export const PARKED = /domain (?:is )?for sale|domain kaufen|zu verkaufen|parked|sedo|this domain|diese domain|coming soon|baustelle/i;
+export const IP_HOST = /^(?:\d{1,3}\.){3}\d{1,3}$|^\[|:/;
 
-function decodeEntities(text: string) {
+export function decodeEntities(text: string) {
   return text.replace(/&amp;/g, "&").replace(/&quot;/g, "\"").replace(/&#39;|&apos;/g, "'")
     .replace(/&auml;/g, "ä").replace(/&ouml;/g, "ö").replace(/&uuml;/g, "ü").replace(/&szlig;/g, "ß")
     .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code))).replace(/\s+/g, " ").trim();
@@ -144,7 +144,7 @@ async function readCapped(response: Response) {
 }
 
 // Only the shop's own https page; redirects are followed manually so they cannot reach local hosts.
-async function fetchPage(start: URL, fetcher: typeof fetch, signal?: AbortSignal): Promise<{ url: URL; html: string } | undefined> {
+export async function fetchPage(start: URL, fetcher: typeof fetch, signal?: AbortSignal): Promise<{ url: URL; html: string } | undefined> {
   let url = start;
   for (let hop = 0; hop < 3; hop++) {
     if (url.protocol !== "https:" || IP_HOST.test(url.hostname) || url.hostname === "localhost") return undefined;
@@ -164,7 +164,7 @@ async function fetchPage(start: URL, fetcher: typeof fetch, signal?: AbortSignal
   return undefined;
 }
 
-function domainSlug(name: string) {
+export function domainSlug(name: string) {
   const slug = name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/&/g, "und")
     .replace(/[^a-z0-9]+/g, "");
   return slug.length >= 3 && slug.length <= 40 ? slug : undefined;
@@ -263,13 +263,13 @@ function osmPlaceMatches(place: MerchantPlace, address: string) {
 }
 
 const OSM_INTERVAL_MS = 1_100;
-const WIKIDATA_INTERVAL_MS = 500;
+const WIKIDATA_INTERVAL_MS = 1_500;
 const BACKOFF_MS = 10 * 60_000;
 const nextAt = new Map<string, number>();
 const blockedUntil = new Map<string, number>();
 // Nominatim's usage policy allows one request per second; Wikidata asks for serial, unhurried requests.
 // After a 429/503 the host is left alone until Retry-After (else ten minutes) has passed.
-async function politeSlot(host: string, signal: AbortSignal | undefined, interval: number) {
+export async function politeSlot(host: string, signal: AbortSignal | undefined, interval: number) {
   const now = Date.now();
   if ((blockedUntil.get(host) ?? 0) > now) throw new Error(`${host} rate limited`);
   const at = Math.max(now, nextAt.get(host) ?? 0);
@@ -280,7 +280,7 @@ async function politeSlot(host: string, signal: AbortSignal | undefined, interva
   });
 }
 
-function checkLimit(host: string, response: Response) {
+export function checkLimit(host: string, response: Response) {
   if (response.status !== 429 && response.status !== 503) return;
   const seconds = Number(response.headers.get("retry-after"));
   blockedUntil.set(host, Date.now() + (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 3_600_000) : BACKOFF_MS));

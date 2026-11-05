@@ -38,6 +38,8 @@ const MerchantLogoFailureContext = createContext<(() => void) | null>(null);
 const CACHE_LIMIT = 500;
 const RESPONSE_LIMIT = 64 * 1024;
 const FOCUS_REFRESH_INTERVAL = 30_000;
+/** Dispatched on window after new logo files were stored, so visible marks reload at once. */
+export const MERCHANT_LOGOS_CHANGED = "finanzblick:merchant-logos-changed";
 const MAX_CONCURRENT_BATCHES = 3;
 type WorkspaceMarksCache = {
   accountId: string;
@@ -239,9 +241,11 @@ function AccountMerchantMarks({
     }
     window.addEventListener("focus", onReturn);
     document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener(MERCHANT_LOGOS_CHANGED, refreshMarks);
     return () => {
       window.removeEventListener("focus", onReturn);
       document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener(MERCHANT_LOGOS_CHANGED, refreshMarks);
     };
   }, [enabled, refreshMarks]);
 
