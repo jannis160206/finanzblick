@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CopyX, GraduationCap, Repeat, Sparkles, TrendingUp } from "lucide-react";
+import { CopyX, Repeat, Sparkles, TrendingUp, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { SectionHeading } from "@/components/finance-ui";
-import { fallbackSummary, type SummaryFacts } from "@/lib/ai/summary";
+import { type SummaryFacts } from "@/lib/ai/summary";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { financeInsights, type FinanceInsights as Insights } from "@/lib/insights";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,13 @@ export function summaryFacts(insights: Insights): SummaryFacts {
   };
 }
 
+function shortSummary(facts: SummaryFacts) {
+  const month = facts.monthLabel.split(" ")[0];
+  const change = facts.previousSpending === undefined ? "" : ` – ${currency(Math.abs(facts.spending - facts.previousSpending))} ${facts.spending > facts.previousSpending ? "mehr" : "weniger"} als im Vormonat`;
+  const top = facts.topCategories[0];
+  return `${month}: ${currency(facts.spending)} ausgegeben, ${currency(facts.income)} eingenommen${change}.${top ? ` Meiste Ausgaben: ${top.category}.` : ""}`;
+}
+
 export function FinanceInsightsPanel() {
   const { state } = useFinance();
   const insights = useMemo(() => financeInsights(state), [state]);
@@ -41,7 +48,7 @@ export function FinanceInsightsPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const key = JSON.stringify(facts);
-  const text = written?.key === key ? written.text : fallbackSummary(facts);
+  const text = written?.key === key ? written.text : shortSummary(facts);
   const monthlySubscriptions = insights.subscriptions.reduce((sum, item) => sum + item.monthlyCost, 0);
   const { forecast, learning } = insights;
 
@@ -62,73 +69,59 @@ export function FinanceInsightsPanel() {
     }
   };
 
-  return <section className="panel mb-5 p-5 sm:p-6" aria-label="KI-Einblicke">
-    <SectionHeading title="KI-Einblicke" subtitle="Abos, Auffälligkeiten und Prognose aus deinen Buchungen">
+  const hints = [
+    ...insights.duplicates.map((item) => ({
+      key: item.ids.join("-"), merchant: item.merchant,
+      text: `${currency(Math.abs(item.amount))} zweimal abgebucht (${dateLabel(item.dates[0])}, ${dateLabel(item.dates[1])})`,
+    })),
+    ...insights.priceIncreases.flatMap((item) => item.priceChange ? [{
+      key: `price-${item.merchant}`, merchant: item.merchant,
+      text: `teurer geworden: ${currency(item.priceChange.from)} → ${currency(item.priceChange.to)}`,
+    }] : []),
+  ];
+  const high = forecast.averageSpending !== undefined && forecast.projectedSpending > forecast.averageSpending * 1.1;
+
+  return <section className="panel mb-5 p-5 sm:p-6" aria-label="Einblicke">
+    <SectionHeading title="Einblicke" subtitle="Dein Monat auf einen Blick">
       <Sparkles aria-hidden="true" className="size-4 text-primary" />
     </SectionHeading>
-    <FinancialData className="grid gap-3 lg:grid-cols-2">
-      <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4 lg:col-span-2" aria-label="Monatszusammenfassung">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-medium">Monatszusammenfassung</h3>
-          <Button type="button" size="sm" variant="outline" onClick={write} disabled={busy}>
-            <Sparkles aria-hidden="true" className="size-3.5" />{busy ? "KI schreibt …" : "Von KI formulieren"}
-          </Button>
-        </div>
-        <p className="mt-3 text-sm leading-relaxed" aria-live="polite">{text}</p>
-        {written?.key === key && <p className="mt-2 text-2xs text-muted-foreground">
-          {written.source === "KI" ? "Von der lokalen KI formuliert, Zahlen geprüft." : "KI-Text enthielt ungeprüfte Zahlen – sichere Zusammenfassung angezeigt."}
-        </p>}
-        {error && <p className="mt-2 text-2xs text-destructive">{error}</p>}
-      </article>
-      <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4" aria-label="Budgetprognose">
-        <h3 className="flex items-center gap-2 text-sm font-medium"><TrendingUp aria-hidden="true" className="size-4 text-primary" />Budgetprognose {monthLabel(forecast.month)}</h3>
-        <p className={cn("mt-3 text-2xl font-semibold tabular-nums", forecast.averageSpending !== undefined && forecast.projectedSpending > forecast.averageSpending * 1.1 ? "text-destructive" : "text-primary")}>
-          {currency(forecast.projectedSpending)}
-        </p>
-        <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-xs">
-          <dt className="text-muted-foreground">Bisher ausgegeben</dt><dd className="text-right tabular-nums">{currency(forecast.spentSoFar)}</dd>
-          <dt className="text-muted-foreground">Erwartete Abos</dt><dd className="text-right tabular-nums">{currency(forecast.expectedSubscriptions)}</dd>
-          <dt className="text-muted-foreground">Erwartet variabel ({forecast.daysLeft} Tage)</dt><dd className="text-right tabular-nums">{currency(forecast.expectedVariable)}</dd>
-          {forecast.averageSpending !== undefined && <><dt className="text-muted-foreground">Ø letzte 3 Monate</dt><dd className="text-right tabular-nums">{currency(forecast.averageSpending)}</dd></>}
-        </dl>
-      </article>
-      <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4" aria-label="Erkannte Abos">
-        <h3 className="flex items-center gap-2 text-sm font-medium"><Repeat aria-hidden="true" className="size-4 text-primary" />Erkannte Abos
-          <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{currency(monthlySubscriptions)} / Monat</span></h3>
-        {insights.subscriptions.length ? <ul className="mt-3 grid gap-2">
-          {insights.subscriptions.map((item) => <li key={`${item.merchant}-${item.interval}`} className="flex min-w-0 items-center justify-between gap-3 text-xs">
-            <span className="min-w-0 truncate">{item.merchant} <span className="text-muted-foreground">· {item.interval} · nächste ca. {dateLabel(item.nextDate)}</span></span>
-            <span className={cn("shrink-0 tabular-nums", item.priceChange && "text-destructive")}>{currency(-item.amount)}</span>
-          </li>)}
-        </ul> : <p className="mt-3 text-xs text-muted-foreground">Keine laufenden Abos erkannt.</p>}
-      </article>
-      {(insights.priceIncreases.length > 0 || insights.duplicates.length > 0) && <article className="min-w-0 rounded-2xl border border-destructive/40 bg-destructive/5 p-4 lg:col-span-2" aria-label="Auffälligkeiten">
-        <h3 className="flex items-center gap-2 text-sm font-medium"><CopyX aria-hidden="true" className="size-4 text-destructive" />Auffälligkeiten</h3>
-        <ul className="mt-3 grid gap-2 text-xs">
-          {insights.priceIncreases.map((item) => item.priceChange && <li key={`price-${item.merchant}`}>
-            Preiserhöhung bei <strong>{item.merchant}</strong>: {currency(item.priceChange.from)} → {currency(item.priceChange.to)} (+{item.priceChange.percent.toLocaleString("de-AT")} %) seit {dateLabel(item.priceChange.date)}
-          </li>)}
-          {insights.duplicates.map((item) => <li key={item.ids.join("-")}>
-            Mögliche Doppelabbuchung: <strong>{item.merchant}</strong> {currency(item.amount)} am {dateLabel(item.dates[0])} und {dateLabel(item.dates[1])} – bitte prüfen.
+    <FinancialData className="grid gap-3">
+      <div className="flex items-start gap-3">
+        <p className="min-w-0 flex-1 text-sm leading-relaxed" aria-live="polite">{text}</p>
+        <Button type="button" size="icon-sm" variant="ghost" onClick={write} disabled={busy}
+          aria-label="Von der KI neu formulieren" title="Von der KI neu formulieren">
+          <Sparkles aria-hidden="true" className={cn("size-4", busy && "animate-pulse")} />
+        </Button>
+      </div>
+      {error && <p className="text-2xs text-destructive">{error}</p>}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Tile icon={TrendingUp} label={`Prognose ${monthLabel(forecast.month)}`} value={currency(forecast.projectedSpending)}
+          tone={high ? "text-destructive" : "text-primary"}
+          note={forecast.averageSpending !== undefined ? `sonst ca. ${currency(forecast.averageSpending)}` : `bisher ${currency(forecast.spentSoFar)}`} />
+        <Tile icon={Repeat} label="Abos" value={`${currency(monthlySubscriptions)} / Monat`}
+          note={insights.subscriptions.length ? insights.subscriptions.slice(0, 3).map((item) => item.merchant).join(", ") : "keine erkannt"} />
+        <Tile icon={Wand2} label="Automatisch sortiert" value={learning.share !== undefined ? `${learning.share} %` : "–"}
+          note="deiner importierten Buchungen" />
+      </div>
+      {hints.length > 0 && <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4" aria-label="Bitte prüfen">
+        <h3 className="flex items-center gap-2 text-sm font-medium"><CopyX aria-hidden="true" className="size-4 text-destructive" />Bitte prüfen</h3>
+        <ul className="mt-2 grid gap-1.5 text-xs">
+          {hints.slice(0, 3).map((hint) => <li key={hint.key} className="min-w-0 truncate">
+            <strong className="font-medium">{hint.merchant}</strong> <span className="text-muted-foreground">· {hint.text}</span>
           </li>)}
         </ul>
-      </article>}
-      <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4 lg:col-span-2" aria-label="Lernkurve der Zuordnung">
-        <h3 className="flex items-center gap-2 text-sm font-medium"><GraduationCap aria-hidden="true" className="size-4 text-primary" />Automatisch zugeordnet
-          {learning.share !== undefined && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{learning.share} % über die letzten Importe</span>}</h3>
-        {learning.imports.length ? <ul className="mt-3 grid gap-2">
-          {learning.imports.map((entry) => <li key={entry.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 text-xs">
-            <span className="min-w-0 truncate">{entry.name} <span className="text-muted-foreground">· {dateLabel(new Date(entry.at).toISOString().slice(0, 10))}</span></span>
-            <span className="tabular-nums">{entry.assigned} / {entry.rows} · {entry.share} %</span>
-            <span className="col-span-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-              <span className="block h-full rounded-full bg-primary" style={{ width: `${entry.share}%` }} />
-            </span>
-          </li>)}
-        </ul> : <p className="mt-3 text-xs text-muted-foreground">Ab dem nächsten Import siehst du hier, wie viel ohne Prüfung zugeordnet wurde.</p>}
-        {learning.openMerchants.length > 0 && <p className="mt-3 text-xs text-muted-foreground">
-          Am häufigsten offen: {learning.openMerchants.map((item) => `${item.merchant} (${item.count})`).join(", ")}
-        </p>}
-      </article>
+        {hints.length > 3 && <p className="mt-2 text-2xs text-muted-foreground">und {hints.length - 3} weitere</p>}
+      </div>}
     </FinancialData>
   </section>;
+}
+
+function Tile({ icon: Icon, label, value, note, tone }: {
+  icon: typeof Repeat; label: string; value: string; note: string; tone?: string;
+}) {
+  return <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4" aria-label={label}>
+    <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Icon aria-hidden="true" className="size-3.5" />{label}</p>
+    <p className={cn("mt-1.5 text-xl font-semibold tabular-nums", tone)}>{value}</p>
+    <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p>
+  </article>;
 }
