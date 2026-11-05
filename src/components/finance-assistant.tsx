@@ -32,17 +32,7 @@ const examples = [
   "Wie viel hab ich im Oktober fürs Essen ausgegeben?",
   "Ich will bis Juli 2027 3.000 € für Japan sparen, 500 € liegen schon am Sparkonto.",
   "Kann ich mir im Mai einen Fernseher um 900 € leisten?",
-  "Erhöhe Japan auf 4.000 €",
-  "Ich will 200 € mehr im Monat sparen.",
-  "Lieferando ist immer Lieferdienste",
-  "Merk dir: Puffer immer 500 €",
-  "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?",
-  "Was kann ich bei der Arbeitnehmerveranlagung absetzen?",
-  "Was bekomme ich für meine Home-Office-Sachen beim Steuerausgleich zurück?",
-  "Ich will bis Dezember 2027 2.000 € für ein Auto sparen, die ersten 2 Monate je 60 € vom Sparkonto.",
-  "Nimm für Japan die nächsten 3 Monate je 50 € extra aus dem Notgroschen.",
   "Was kann ich im Dashboard alles einstellen?",
-  "Wie funktionieren die Sparziele?",
 ];
 const extraSources: string[] = [...extraSourceSchema.options];
 const intro = "Frag mich zu deinen Ausgaben, plane Sparziele und Ausgaben, ändere Bestehendes oder lass dir beim Sparen helfen. Schreib ruhig locker, " +
