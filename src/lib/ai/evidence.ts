@@ -133,7 +133,8 @@ export type EvidenceDecision =
   | { accepted: true; category: Category; merchantAlias?: string; source: EvidenceSource; detail?: string }
   | { accepted: false; reason: string; suggestion?: AiSuggestionDraft };
 // Extra, independent facts about the merchant (e.g. its industry from Wikidata or its web shop).
-export type EvidenceContext = { industry?: { category: Category; label: string } };
+// strong: a specific shop type under this exact name at this place (OpenStreetMap), or the household's habit for that type.
+export type EvidenceContext = { industry?: { category: Category; label: string; strong?: boolean } };
 
 // Bank facts that settle a booking without any model: fixed pairs and the partner's notes.
 function specialCase(state: AppState, draft: MatcherDraft): EvidenceDecision | undefined {
@@ -183,6 +184,17 @@ export function decideWithEvidence(
     const suggestion = suggestCategory(state, draft, history, input, answer, shopName, context);
     return { accepted: false, reason, ...(suggestion ? { suggestion } : {}) };
   };
+  // A shop OpenStreetMap knows by name and place needs no model; the household's own choices still win.
+  const web = context.industry?.strong ? canonicalCategory(context.industry.category) : undefined;
+  if (web && !seen.some((item) => item !== web) && [...history.confirmedCategories].every((item) => item === web) &&
+    categoryFitsSign(web, input.amount) && !(web === "Tanken" && Math.abs(input.amount) < 15) &&
+    (!answer?.accepted || answer.category === "Prüfen" || canonicalCategory(answer.category) === web ||
+      !!RULE_REFINEMENTS[web]?.includes(canonicalCategory(answer.category)) || answer.confidence < 50)) {
+    const category = answer?.accepted && RULE_REFINEMENTS[web]?.includes(canonicalCategory(answer.category))
+      ? canonicalCategory(answer.category) : web;
+    return { accepted: true, category, source: "Branche", detail: context.industry!.label.slice(0, 80),
+      ...(!draft.merchantAlias && shopName ? { merchantAlias: shopName } : {}) };
+  }
   if (!answer) return reject("keine Antwort");
   if (!answer.accepted || answer.category === "Prüfen") return reject(answer.reason ?? "unsicher");
   const category = canonicalCategory(answer.category);
@@ -232,9 +244,9 @@ export function industryLookupName(input: AiBookingInput, answer: AiCategorizati
   return name && name.trim().length >= 3 ? name.trim().slice(0, 90) : undefined;
 }
 
-export function industryContext(value: { category?: string; label?: string } | undefined): EvidenceContext {
+export function industryContext(value: { category?: string; label?: string; strong?: boolean } | undefined): EvidenceContext {
   if (!value?.category || !(allCategories as readonly string[]).includes(value.category)) return {};
-  return { industry: { category: value.category as Category, label: value.label ?? "" } };
+  return { industry: { category: value.category as Category, label: value.label ?? "", ...(value.strong ? { strong: true } : {}) } };
 }
 
 export function decideReviewWithEvidence(

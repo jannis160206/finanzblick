@@ -9,6 +9,7 @@ Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledi
 | OpenVINO Model Server (OVMS) | Stellt `Qwen3-8B-int4-cw-ov` auf der NPU als OpenAI-kompatible API unter `http://127.0.0.1:8000/v3` bereit |
 | `AiReviewAssistant` (Browser) | Schickt offene Prüfungen in Achterpaketen an `/api/ai/categorize` und übernimmt nur sichere Antworten |
 | `/api/ai/logo` | Sucht das Händlerlogo über Wikidata (Eigenschaft P154) und lädt es von Wikimedia Commons in den privaten `Logo/`-Ordner |
+| `/api/ai/web-categories` | Schlägt den Geschäftstyp unbekannter Händler bei OpenStreetMap, Wikidata oder auf der Händler-Webseite nach (braucht kein Modell) |
 | `npm run mcp` | MCP-Server (stdio) mit Finanzwerkzeugen für Claude Desktop, VS Code, Copilot oder den lokalen Agenten |
 | `npm run ai:agent` | Freier Chat mit dem lokalen Modell, das die MCP-Werkzeuge selbst aufruft |
 
@@ -66,7 +67,8 @@ Optionale Variablen in `.env.local`:
      - Anonyme PayPal-Gutschrift („YYW…/PAYPAL“) → Rückerstattungen, wenn eine PayPal-Abbuchung desselben Betrags am selben Konto höchstens 60 Tage davor liegt.
      - Überweisung von Raphael mit Notiz → Kostenbeteiligung in der passenden Kategorie (Tanken, Cafés & Snacks, Urlaub, Parken & Maut, Geschenke, Restaurants, Lebensmittel, Shopping, Energie). Nur ein Stichwort darf passen. Rückzahlungen geteilter Buchungen bleiben dem Ausgleich zugeordnet.
    - **Feste Händlerregel:** Die Regel aus `categories.ts` gilt direkt, etwa dm → Drogerie oder G2A → Guthabenkarten. Das Modell darf sie nur verfeinern (Mobilität → Tanken). Die Regel gilt nicht, wenn das Vorzeichen nicht passt, wenn Mobilität oder Tanken unter 15 € liegt oder wenn bestätigte Buchungen des Händlers eine andere Kategorie haben.
-   - **Branche** (nur mit Modell): Für unbekannte Shops sucht `src/lib/ai/industry.ts` die Branche auf Wikidata (genau ein Eintrag mit exakt gleichem Namen) oder auf der Startseite des Shops (`www.<name>.de/.at/.com`, nur HTTPS, keine fremden oder geparkten Domains). Stimmen Branche und Modell überein, wird zugeordnet. Vorübergehende Fehler wie Drosselung werden nicht zwischengespeichert.
+   - **Internet (OpenStreetMap):** Für Kartenzahlungen an unbekannten Geschäften liest `src/lib/ai/web-categories.ts` Name, Ort und Postleitzahl aus dem Banktext (etwa „MARTIN AUER ATRIOVIL VILLACH 9500“). `src/lib/ai/industry.ts` fragt dann OpenStreetMap (Nominatim) nach dem Geschäftstyp unter diesem Namen an diesem Ort, etwa `amenity=pharmacy` → Gesundheit. Läuft ohne Modell, siehe [Internet-Kategorisierung](#internet-kategorisierung).
+   - **Branche:** Findet OpenStreetMap nichts, sucht `industry.ts` die Branche auf Wikidata (genau ein Eintrag mit exakt gleichem Namen) oder auf der Startseite des Shops (`www.<name>.de/.at/.com`, nur HTTPS, keine fremden oder geparkten Domains). Stimmen Branche und Modell überein, wird zugeordnet; ohne Modell wird sie nur vorgeschlagen. Vorübergehende Fehler wie Drosselung werden nicht zwischengespeichert.
    - Alles andere bleibt zur manuellen Prüfung offen und erhält einen Vorschlag.
    - Der Browser-Assistent wendet Historie, Erstattung, Bank-Paare und Regel auch ohne laufendes Modell an.
    - **Schon beim Import:** Diese modellfreien Stufen laufen direkt nach jedem Upload (Browser und Hintergrund-Worker). Die Prüfliste kommt dadurch bereits verkleinert an.
@@ -151,9 +153,25 @@ Die KI wählt nur ein Werkzeug (`src/lib/assistant/tools.ts`) und nennt Namen au
 
   Das Ergebnis ist eine Schätzung, keine Steuerberatung.
 
+## Internet-Kategorisierung
+
+Der Browser-Assistent schlägt unbekannte Geschäfte offener Kartenzahlungen selbst im Internet nach, auch ohne laufendes Modell (`/api/ai/web-categories`, je 8 Geschäfte, jedes nur einmal).
+
+- **Was nachgeschlagen wird:** Nur Ausgaben mit erkennbarem Geschäft, also Raiffeisen-Kartenzahlungen (`Verwendungszweck: … Zahlungsreferenz: POS`), Amex-Texte und der Shop hinter PayPal/Klarna. Überweisungen (IBAN, Empfänger, Dauerauftrag …) nennen Personen und werden nie nachgeschlagen.
+- **Quellen der Reihe nach:**
+  - OpenStreetMap: Name plus Ort. Der Treffer muss den Namen tragen (abgeschnittene Wörter wie „RESTAURA“ zählen als Wortanfang) und an der Postleitzahl bzw. im Ort der Buchung liegen. Haben gleichnamige Treffer verschiedene Branchen, bleibt es offen.
+  - Wikidata.
+  - Die Webseite des Händlers.
+- **Wann automatisch zugeordnet wird:** Nur eindeutige Geschäftstypen ordnen direkt zu, etwa Apotheke, Supermarkt, Restaurant, Tankstelle (ab 15 €), Friseur, Baumarkt oder Werkstatt.
+- **Wann es nur ein Vorschlag ist:** Bei mehrdeutigen Typen wie Bäckerei, Hotel, Bar, Blumenladen oder Buchhandlung und bei Wikidata- bzw. Webseiten-Treffern wird die Kategorie nur im Prüfdialog vorgeschlagen.
+- **Eigene Entscheidungen gehen vor:** Bestätigte Buchungen desselben Händlers mit anderer Kategorie verhindern die Zuordnung.
+- **Gewohnheiten:** Hast du mindestens zwei verschiedene Geschäfte desselben Typs gleich eingeordnet (z. B. zwei Bäckereien als Mittagessen), gilt das ab dann für alle Geschäfte dieses Typs und ordnet automatisch zu.
+- **Gedächtnis:** Ergebnisse speichert der Zustand in `webCategories` (max. 3000), also bleiben sie über Neustarts erhalten. „Nichts gefunden“ wird nach 30 Tagen erneut versucht.
+- **Höflich zu den Diensten:** Nominatim bekommt höchstens 1 Anfrage pro Sekunde, Wikidata höchstens 2. Nach einer Drosselung (HTTP 429/503) pausiert der Dienst bis `Retry-After`, sonst 10 Minuten, und die Geschäfte kommen später erneut dran.
+
 ## MCP-Server
 
-Werkzeuge: `ai_status`, `list_categories`, `finance_summary`, `finance_insights` (Abos, Preisänderungen, doppelte Abbuchungen, Prognose), `list_open_reviews`, `search_transactions`, `categorize_open_reviews` (`apply=false` liefert nur Vorschläge), `assign_category`, `find_merchant_logo`.
+Werkzeuge: `ai_status`, `list_categories`, `finance_summary`, `finance_insights` (Abos, Preisänderungen, doppelte Abbuchungen, Prognose), `list_open_reviews`, `search_transactions`, `categorize_open_reviews` (`apply=false` liefert nur Vorschläge; `apply=true` schlägt vorher unbekannte Geschäfte im Internet nach), `learn_categories_from_web` (Internet-Kategorisierung wie oben), `assign_category`, `find_merchant_logo`.
 
 Beispielkonfiguration für einen MCP-Client:
 

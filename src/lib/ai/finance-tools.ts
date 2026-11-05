@@ -7,11 +7,12 @@ import { refreshPlanning } from "@/lib/planning";
 import type { AccountDatabase } from "@/lib/server/database";
 import { appStateSchema, transactionSchema, type AppState } from "@/lib/types";
 import { applyAiReviewDecisions, type AiReviewDecision } from "./apply-review-decisions";
-import { applyAndCount } from "./auto-assign";
+import { applyAndCount, autoAssignAndCount, webContextFor } from "./auto-assign";
 import { aiStatus } from "./client";
 import { categorizeBookings, type AiCategorization } from "./categorize";
 import { decideReviewWithEvidence, industryContext, industryLookupName } from "./evidence";
-import { lookupIndustry } from "./industry";
+import { lookupIndustry, lookupIndustryResult, type Industry } from "./industry";
+import { pendingWebLookups, recordWebCategories, webTargetForReview, type WebTarget } from "./web-categories";
 import { findMerchantLogo } from "./logo-finder";
 import { aiCategories, aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "./suggestions";
@@ -38,9 +39,39 @@ function bookingView(row: AppState["transactions"][number]) {
   };
 }
 
+// Looks up unknown shops of open card payments on the internet (OpenStreetMap shop type, Wikidata,
+// the shop's website), remembers the answer and assigns what is now certain.
+export async function learnCategoriesFromWeb(
+  access: FinanceAccess, options: { limit: number; signal?: AbortSignal; fetcher?: typeof fetch; throttleMs?: number },
+) {
+  const targets = pendingWebLookups(read(access), options.limit);
+  const found: { target: WebTarget; industry?: Industry }[] = [];
+  let failed = 0;
+  for (const target of targets) {
+    if (options.signal?.aborted) break;
+    const result = await lookupIndustryResult(target.name, {
+      place: target.place, signal: options.signal, fetcher: options.fetcher, throttleMs: options.throttleMs,
+    });
+    if (result.failed) failed++;
+    else found.push({ target, industry: result.industry });
+  }
+  let applied = 0;
+  if (found.length) write(access, (state) => {
+    const outcome = autoAssignAndCount(recordWebCategories(state, found));
+    applied = outcome.applied.length;
+    return outcome.state;
+  });
+  return {
+    looked: found.length, failed, applied,
+    learned: found.flatMap(({ target, industry }) => industry
+      ? [{ name: target.name, place: target.place, category: industry.category, source: industry.source, kind: industry.kind }] : []),
+  };
+}
+
 export async function categorizeOpenReviews(
   access: FinanceAccess, options: { apply: boolean; limit: number; signal?: AbortSignal },
 ) {
+  if (options.apply) await learnCategoriesFromWeb(access, { limit: options.limit, signal: options.signal }).catch(() => undefined);
   const attempted = new Set<string>();
   const results: (AiCategorization & { reviewId: string; text: string })[] = [];
   let applied = 0;
@@ -61,10 +92,12 @@ export async function categorizeOpenReviews(
     for (const candidate of batch) {
       const answer = answers.find((item) => item.ref === candidate.input.ref);
       const known = direct.get(candidate.reviewId)!;
-      let decision = known.accepted ? known : decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer);
-      const name = !decision.accepted ? industryLookupName(candidate.input, answer) : undefined;
+      const stored = webContextFor(state, candidate.reviewId);
+      let decision = known.accepted ? known : decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer, stored);
+      const target = !decision.accepted && !stored.industry ? webTargetForReview(state, candidate.reviewId) : undefined;
+      const name = !decision.accepted && !stored.industry ? industryLookupName(candidate.input, answer) ?? target?.name : undefined;
       if (name && !options.signal?.aborted) {
-        const industry = await lookupIndustry(name, { signal: options.signal }).catch(() => undefined);
+        const industry = await lookupIndustry(name, { signal: options.signal, place: target?.place }).catch(() => undefined);
         if (industry) decision = decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer, industryContext(industry));
       }
       results.push({
@@ -193,6 +226,15 @@ export const financeTools: FinanceTool[] = [
     readOnly: false,
     run: async (args, access) => ok(await categorizeOpenReviews(access, {
       apply: args.apply === true, limit: typeof args.limit === "number" ? args.limit : 40,
+    })),
+  },
+  {
+    name: "learn_categories_from_web",
+    description: "Schlägt unbekannte Händler offener Kartenzahlungen im Internet nach (OpenStreetMap-Geschäftstyp, Wikidata, Händler-Webseite), merkt sich das Ergebnis und ordnet eindeutige Fälle zu.",
+    input: { limit: z.number().int().min(1).max(60).default(20) },
+    readOnly: false,
+    run: async (args, access) => ok(await learnCategoriesFromWeb(access, {
+      limit: typeof args.limit === "number" ? args.limit : 20,
     })),
   },
   {

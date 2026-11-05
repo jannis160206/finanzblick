@@ -7,8 +7,11 @@ const MAX_PAGE_BYTES = 256 * 1024;
 const TIMEOUT_MS = 8_000;
 const CACHE_LIMIT = 500;
 
-export type Industry = { category: Category; label: string; source: "Wikidata" | "Webseite" };
-export type IndustryOptions = { fetcher?: typeof fetch; signal?: AbortSignal };
+export type IndustrySource = "OpenStreetMap" | "Wikidata" | "Webseite";
+// kind: the OpenStreetMap tag ("shop=bakery"); strong: a specific shop type found under this exact name at this place.
+export type Industry = { category: Category; label: string; source: IndustrySource; kind?: string; strong?: boolean };
+export type MerchantPlace = { city?: string; postcode?: string };
+export type IndustryOptions = { fetcher?: typeof fetch; signal?: AbortSignal; place?: MerchantPlace };
 
 // Each keyword names one purpose; a text matching two purposes stays undecided.
 const INDUSTRY_KEYWORDS: [RegExp, Category][] = [
@@ -59,24 +62,26 @@ function timeoutSignal(signal?: AbortSignal) {
   return signal ? AbortSignal.any([signal, AbortSignal.timeout(TIMEOUT_MS)]) : AbortSignal.timeout(TIMEOUT_MS);
 }
 
-async function wikidata(params: Record<string, string>, fetcher: typeof fetch, signal?: AbortSignal) {
+async function wikidata(params: Record<string, string>, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number) {
   const url = new URL("https://www.wikidata.org/w/api.php");
+  await politeSlot(url.host, signal, interval);
   url.search = new URLSearchParams({ ...params, format: "json" }).toString();
   const response = await fetcher(url, {
     headers: { Accept: "application/json", "User-Agent": USER_AGENT }, signal: timeoutSignal(signal), cache: "no-store",
   });
+  checkLimit(url.host, response);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json() as Promise<unknown>;
 }
 
-async function fromWikidata(name: string, fetcher: typeof fetch, signal?: AbortSignal): Promise<Industry | undefined> {
+async function fromWikidata(name: string, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number): Promise<Industry | undefined> {
   const ids = searchSchema.parse(await wikidata({
     action: "wbsearchentities", search: name, language: "de", uselang: "de", type: "item", limit: "6",
-  }, fetcher, signal)).search.map((item) => item.id);
+  }, fetcher, signal, interval)).search.map((item) => item.id);
   if (!ids.length) return undefined;
   const parsed = entitySchema.parse(await wikidata({
     action: "wbgetentities", ids: ids.join("|"), props: "labels|aliases|descriptions|claims", languages: "de|en|mul",
-  }, fetcher, signal));
+  }, fetcher, signal, interval));
   const wanted = normalizeLocalLogoName(name);
   const exact = ids.filter((id) => {
     const entity = parsed.entities[id];
@@ -97,7 +102,7 @@ async function fromWikidata(name: string, fetcher: typeof fetch, signal?: AbortS
   if (linked.length) {
     const named = entitySchema.parse(await wikidata({
       action: "wbgetentities", ids: [...new Set(linked)].join("|"), props: "labels", languages: "de|en",
-    }, fetcher, signal));
+    }, fetcher, signal, interval));
     labels = Object.values(named.entities).flatMap((item) => Object.values(item.labels ?? {}).map((label) => label.value));
   }
   const description = entity.descriptions?.de?.value ?? entity.descriptions?.en?.value ?? "";
@@ -187,24 +192,171 @@ async function fromWebsite(name: string, fetcher: typeof fetch, signal?: AbortSi
   return undefined;
 }
 
+// OpenStreetMap tag => purpose. Weak types only pre-fill the review dialog: a hotel near home is
+// a day out, a bakery may be lunch; the household's own choice for that type decides later.
+const OSM_TYPES: Record<string, [Category, boolean]> = {};
+const osm = (category: Category, strong: boolean, ...tags: string[]) => {
+  for (const tag of tags) OSM_TYPES[tag] = [category, strong];
+};
+osm("Lebensmittel", true, "shop=supermarket", "shop=convenience", "shop=greengrocer", "shop=butcher", "shop=deli", "shop=organic",
+  "shop=farm", "shop=frozen_food", "shop=health_food", "shop=cheese", "shop=seafood", "shop=dairy");
+osm("Drogerie", true, "shop=chemist", "shop=perfumery", "shop=cosmetics");
+osm("Gesundheit", true, "amenity=pharmacy", "amenity=doctors", "amenity=dentist", "amenity=clinic", "amenity=hospital",
+  "shop=optician", "shop=medical_supply", "shop=hearing_aids", "healthcare=*");
+osm("Körperpflege", true, "shop=hairdresser", "shop=beauty", "shop=massage", "amenity=spa");
+osm("Restaurants", true, "amenity=restaurant", "amenity=fast_food", "amenity=food_court");
+osm("Restaurants", false, "amenity=bar", "amenity=pub", "amenity=biergarten", "amenity=nightclub");
+osm("Cafés & Snacks", true, "amenity=cafe", "amenity=ice_cream", "shop=confectionery", "shop=pastry", "shop=chocolate", "shop=coffee");
+osm("Cafés & Snacks", false, "shop=bakery");
+osm("Tanken", true, "amenity=fuel");
+osm("Parken & Maut", true, "amenity=parking", "amenity=parking_entrance", "amenity=parking_space");
+osm("Reparaturen & Instandhaltung", true, "shop=hardware", "shop=doityourself", "shop=paint", "shop=trade", "shop=building_materials",
+  "shop=tiles", "shop=bathroom_furnishing");
+osm("Möbel & Einrichtung", true, "shop=furniture", "shop=interior_decoration", "shop=bed", "shop=kitchen", "shop=lighting",
+  "shop=curtain", "shop=carpet");
+osm("Wohnen & Haushalt", false, "shop=houseware", "shop=garden_centre", "shop=household_linen");
+osm("Shopping", true, "shop=clothes", "shop=shoes", "shop=fashion_accessories", "shop=boutique", "shop=electronics", "shop=computer",
+  "shop=mobile_phone", "shop=hifi", "shop=sports", "shop=outdoor", "shop=department_store", "shop=toys", "shop=jewelry", "shop=bag",
+  "shop=variety_store", "shop=mall", "shop=second_hand", "shop=watches");
+osm("Shopping", false, "shop=gift");
+osm("Bildung", false, "shop=books", "shop=stationery", "amenity=library", "amenity=school", "amenity=language_school");
+osm("Haustiere", true, "shop=pet", "amenity=veterinary", "shop=pet_grooming");
+osm("Fahrzeugwartung", true, "shop=car_repair", "shop=tyres", "shop=car_parts", "amenity=car_wash", "craft=car_repair");
+osm("Urlaub", false, "tourism=hotel", "tourism=motel", "tourism=guest_house", "tourism=hostel", "tourism=apartment",
+  "tourism=chalet", "tourism=camp_site", "tourism=alpine_hut", "shop=travel_agency");
+osm("Freizeit", false, "tourism=theme_park", "tourism=zoo", "tourism=aquarium", "tourism=museum", "tourism=attraction",
+  "tourism=gallery", "amenity=cinema", "amenity=theatre", "amenity=arts_centre", "leisure=water_park", "leisure=swimming_pool",
+  "leisure=amusement_arcade", "leisure=escape_game", "leisure=miniature_golf", "shop=ticket");
+osm("Sport & Fitness", true, "leisure=fitness_centre", "leisure=sports_centre", "leisure=climbing", "leisure=sports_hall");
+osm("Geschenke & Spenden", false, "shop=florist");
+osm("Porto & Versand", true, "amenity=post_office");
+// Places, not shops: their tags never decide anything.
+const POI_CLASSES = new Set(["shop", "amenity", "tourism", "leisure", "healthcare", "craft", "office"]);
+
+export function osmCategory(tagClass: string, tagType: string): { category: Category; strong: boolean } | undefined {
+  const found = OSM_TYPES[`${tagClass}=${tagType}`] ?? OSM_TYPES[`${tagClass}=*`];
+  return found ? { category: found[0], strong: found[1] } : undefined;
+}
+
+const nominatimSchema = z.array(z.object({
+  category: z.string().max(40), type: z.string().max(60), name: z.string().max(300).optional().nullable(),
+  display_name: z.string().max(1000),
+}).loose()).max(20);
+const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .split(/[^a-z0-9]+/).filter(Boolean);
+const compact = (value: string) => words(value).join("");
+
+// Bank texts cut names after ~22 characters ("WARMBADERHOF RESTAURA"), so each word may be a prefix.
+export function osmNameMatches(query: string, name: string) {
+  const wanted = words(query);
+  const found = words(name);
+  if (!wanted.length || !found.length) return false;
+  if (wanted.every((word) => found.some((other) => other.startsWith(word)))) return true;
+  const joined = compact(query);
+  return joined.length >= 4 && compact(name).includes(joined);
+}
+
+function osmPlaceMatches(place: MerchantPlace, address: string) {
+  if (place.postcode) return new RegExp(`(?<!\\d)${place.postcode}(?!\\d)`).test(address);
+  const city = place.city ? compact(place.city).slice(0, 6) : "";
+  return city.length >= 3 && compact(address).includes(city);
+}
+
+const OSM_INTERVAL_MS = 1_100;
+const WIKIDATA_INTERVAL_MS = 500;
+const BACKOFF_MS = 10 * 60_000;
+const nextAt = new Map<string, number>();
+const blockedUntil = new Map<string, number>();
+// Nominatim's usage policy allows one request per second; Wikidata asks for serial, unhurried requests.
+// After a 429/503 the host is left alone until Retry-After (else ten minutes) has passed.
+async function politeSlot(host: string, signal: AbortSignal | undefined, interval: number) {
+  const now = Date.now();
+  if ((blockedUntil.get(host) ?? 0) > now) throw new Error(`${host} rate limited`);
+  const at = Math.max(now, nextAt.get(host) ?? 0);
+  nextAt.set(host, at + interval);
+  if (at > now) await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, at - now);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  });
+}
+
+function checkLimit(host: string, response: Response) {
+  if (response.status !== 429 && response.status !== 503) return;
+  const seconds = Number(response.headers.get("retry-after"));
+  blockedUntil.set(host, Date.now() + (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 3_600_000) : BACKOFF_MS));
+}
+
+async function nominatim(query: string, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number) {
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  await politeSlot(url.host, signal, interval);
+  url.search = new URLSearchParams({ format: "jsonv2", limit: "8", q: query }).toString();
+  const response = await fetcher(url, {
+    headers: { Accept: "application/json", "User-Agent": USER_AGENT, "Accept-Language": "de,en;q=0.8" },
+    signal: timeoutSignal(signal), cache: "no-store",
+  });
+  checkLimit(url.host, response);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return nominatimSchema.parse(await response.json());
+}
+
+// The shop type OpenStreetMap records for this name at this place ("Martin Auer, Villach" => shop=bakery).
+async function fromOpenStreetMap(
+  name: string, place: MerchantPlace, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number,
+): Promise<Industry | undefined> {
+  if (compact(name).length < 3 || (!place.city && !place.postcode)) return undefined;
+  const first = words(name)[0] ?? "";
+  const queries = [[name, place.city].filter(Boolean).join(" "), name];
+  // A cut-off last word ("RESTAURA") finds nothing on its own; the distinctive first word may.
+  if (first.length >= 6 && words(name).length > 1) queries.push([name.split(/\s+/)[0], place.city].filter(Boolean).join(" "));
+  for (const query of [...new Set(queries)]) {
+    const results = await nominatim(query, fetcher, signal, interval);
+    const matching = results.filter((item) => POI_CLASSES.has(item.category) && item.name &&
+      osmNameMatches(name, item.name) && osmPlaceMatches(place, item.display_name));
+    if (!matching.length) continue;
+    // Two shops of that name with different trades (or an unknown trade) leave it open.
+    const mapped = matching.map((item) => ({ item, found: osmCategory(item.category, item.type) }));
+    if (mapped.some((entry) => !entry.found)) return undefined;
+    const categories = new Set(mapped.map((entry) => entry.found!.category));
+    if (categories.size !== 1) return undefined;
+    const best = mapped[0];
+    return {
+      category: best.found!.category, source: "OpenStreetMap", kind: `${best.item.category}=${best.item.type}`,
+      strong: mapped.every((entry) => entry.found!.strong),
+      label: `${best.item.name} (${best.item.category}=${best.item.type}) · ${best.item.display_name}`.slice(0, 160),
+    };
+  }
+  return undefined;
+}
+
 const cache = new Map<string, Industry | null>();
 
-export async function lookupIndustry(name: string, options: IndustryOptions = {}): Promise<Industry | undefined> {
-  const key = normalizeLocalLogoName(name);
-  if (key.length < 2) return undefined;
-  if (cache.has(key)) return cache.get(key) ?? undefined;
+export type IndustryLookup = { industry?: Industry; failed: boolean };
+
+// failed: a source could not be asked (rate limit, timeout), so "nothing found" is not final.
+export async function lookupIndustryResult(name: string, options: IndustryOptions & { throttleMs?: number } = {}): Promise<IndustryLookup> {
+  const place = options.place ?? {};
+  const key = [normalizeLocalLogoName(name), place.postcode ?? "", compact(place.city ?? "")].join("@");
+  if (normalizeLocalLogoName(name).length < 2) return { failed: false };
+  if (cache.has(key)) return { industry: cache.get(key) ?? undefined, failed: false };
   const fetcher = options.fetcher ?? fetch;
   let failed = false;
   const fail = () => { failed = true; return undefined; };
-  const found = await fromWikidata(name, fetcher, options.signal).catch(fail) ??
+  const found = await fromOpenStreetMap(name, place, fetcher, options.signal, options.throttleMs ?? OSM_INTERVAL_MS).catch(fail) ??
+    await fromWikidata(name, fetcher, options.signal, options.throttleMs ?? WIKIDATA_INTERVAL_MS).catch(fail) ??
     await fromWebsite(name, fetcher, options.signal).catch(fail);
   // Transient failures (rate limit, timeout) must not be remembered as "no industry".
-  if (options.signal?.aborted || (!found && failed)) return found;
+  if (options.signal?.aborted || (!found && failed)) return { industry: found, failed: !found };
   if (cache.size >= CACHE_LIMIT) cache.delete(cache.keys().next().value!);
   cache.set(key, found ?? null);
-  return found;
+  return { industry: found, failed: false };
+}
+
+export async function lookupIndustry(name: string, options: IndustryOptions & { throttleMs?: number } = {}): Promise<Industry | undefined> {
+  return (await lookupIndustryResult(name, options)).industry;
 }
 
 export function clearIndustryCache() {
   cache.clear();
+  nextAt.clear();
+  blockedUntil.clear();
 }

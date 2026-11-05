@@ -517,6 +517,21 @@ export const assistantKnowledgeSchema = z.object({
 }).strict();
 export type AssistantKnowledge = z.infer<typeof assistantKnowledgeSchema>;
 export const MAX_ASSISTANT_KNOWLEDGE = 100;
+// What the internet says a shop is (OpenStreetMap shop type, Wikidata, the shop's website); public facts only.
+// No category means nothing usable was found; such entries are asked again after a while.
+export const webCategorySchema = z.object({
+  key: z.string().trim().min(1).max(160),
+  name: z.string().trim().min(1).max(100),
+  place: z.string().trim().max(60).optional(),
+  category: categorySchema.optional(),
+  source: z.enum(["OpenStreetMap", "Wikidata", "Webseite"]).optional(),
+  kind: z.string().trim().max(80).optional(),
+  strong: z.boolean().optional(),
+  label: z.string().max(200).optional(),
+  at: z.number().nonnegative(),
+}).strict();
+export type WebCategory = z.infer<typeof webCategorySchema>;
+export const MAX_WEB_CATEGORIES = 3000;
 // Phrasings only the model understood; next time the rules answer them directly.
 export const assistantPhraseSchema = z.object({
   pattern: z.string().trim().min(1).max(200),
@@ -671,7 +686,8 @@ export const appStateSchema = z.object({
     ai: z.number().int().nonnegative(),
     later: z.number().int().nonnegative().optional(),
   })).max(200).optional(),
-  // Finance assistant chat, stored only in the local account database.
+  // Shops looked up on the internet, reused for every later booking at the same shop.
+  webCategories: z.array(webCategorySchema).max(MAX_WEB_CATEGORIES).optional(),
   assistantChat: z.array(assistantMessageSchema).max(MAX_ASSISTANT_MESSAGES).optional(),
   // Facts the user asked the assistant to remember; visible and deletable in the chat.
   assistantMemory: z.array(assistantMemorySchema).max(MAX_ASSISTANT_MEMORY).optional(),

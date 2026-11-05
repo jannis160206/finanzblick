@@ -4,13 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import type { AiReviewDecision } from "@/lib/ai/apply-review-decisions";
-import { applyAndCount, autoAssignOpenReviews } from "@/lib/ai/auto-assign";
+import { applyAndCount, autoAssignAndCount, autoAssignOpenReviews, webContextFor } from "@/lib/ai/auto-assign";
 import type { AiCategorization } from "@/lib/ai/categorize";
 import { decideReviewWithEvidence, industryContext, industryLookupName } from "@/lib/ai/evidence";
+import type { Industry } from "@/lib/ai/industry";
 import { aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "@/lib/ai/review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "@/lib/ai/suggestions";
+import { pendingWebLookups, recordWebCategories, webHabits, type WebTarget } from "@/lib/ai/web-categories";
 
 const STATUS_INTERVAL_MS = 60_000;
+const WEB_BATCH = 8;
 
 async function postJson<T>(url: string, body: unknown, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, {
@@ -35,6 +38,9 @@ export function AiReviewAssistant() {
   const logoNames = useRef(new Set<string>());
   const latest = useRef(state);
   const totals = useRef({ applied: 0, open: 0 });
+  const [webBusy, setWebBusy] = useState(false);
+  const webAttempted = useRef(new Set<string>());
+  const webTotals = useRef(0);
   useEffect(() => {
     latest.current = state;
   }, [state]);
@@ -62,12 +68,15 @@ export function AiReviewAssistant() {
   useEffect(() => {
     const controller = new AbortController();
     const claimed = attempted.current;
+    const webClaimed = webAttempted.current;
     unmounted.current = controller;
     return () => {
       controller.abort();
       // A later mount (React StrictMode remount) may resume batches this instance had claimed.
       claimed.clear();
+      webClaimed.clear();
       setBusy(false);
+      setWebBusy(false);
     };
   }, []);
 
@@ -83,6 +92,50 @@ export function AiReviewAssistant() {
     const done = preview.applied.length;
     if (done) toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
   }, [ready, storageError, openKey, update]);
+
+  // Unknown shops are looked up on the internet (OpenStreetMap shop type, Wikidata, website) and remembered;
+  // this needs no model, only network. Each shop is asked once per page visit.
+  useEffect(() => {
+    if (!ready || storageError || webBusy || !openKey) return;
+    const batch = pendingWebLookups(latest.current, WEB_BATCH, webAttempted.current);
+    if (!batch.length) return;
+    const signal = unmounted.current.signal;
+    for (const target of batch) webAttempted.current.add(target.key);
+    setWebBusy(true);
+    void (async () => {
+      try {
+        const { results } = await postJson<{ results: { key: string; industry?: Industry }[] }>("/api/ai/web-categories", {
+          targets: batch.map((target) => ({ key: target.key, name: target.name, ...target.place })),
+        }, signal);
+        const byKey = new Map(batch.map((target) => [target.key, target]));
+        const found = results.flatMap((result) => {
+          const target = byKey.get(result.key);
+          return target ? [{ target, industry: result.industry } as { target: WebTarget; industry?: Industry }] : [];
+        });
+        if (!found.length) return;
+        const base = latest.current;
+        const preview = autoAssignAndCount(recordWebCategories(base, found));
+        update((current) => current === base ? preview.state : autoAssignAndCount(recordWebCategories(current, found)).state);
+        webTotals.current += preview.applied.length;
+        if (!pendingWebLookups(preview.state, 1, webAttempted.current).length && webTotals.current) {
+          const done = webTotals.current;
+          toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Internet-Recherche zugeordnet`, {
+            description: "Geschäftstyp aus OpenStreetMap, Wikidata oder der Händler-Webseite.",
+          });
+          webTotals.current = 0;
+        }
+      } catch {
+        if (signal.aborted) return;
+        // Offline or busy: allow another try later.
+        setTimeout(() => {
+          for (const target of batch) webAttempted.current.delete(target.key);
+          setRetry((value) => value + 1);
+        }, STATUS_INTERVAL_MS);
+      } finally {
+        if (!signal.aborted) setWebBusy(false);
+      }
+    })();
+  }, [ready, storageError, webBusy, openKey, retry, update]);
 
   useEffect(() => {
     if (!available || !ready || storageError || busy || !openKey) return;
@@ -102,9 +155,12 @@ export function AiReviewAssistant() {
         const byRef = new Map(results.map((result) => [result.ref, result]));
         // Shops nobody knows yet: their industry from Wikidata or their website is independent evidence.
         const lookups = new Map<string, string>();
+        const habits = webHabits(latest.current);
+        const stored = new Map(batch.map((candidate) => [candidate.reviewId, webContextFor(latest.current, candidate.reviewId, habits)]));
         for (const candidate of batch) {
           const answer = byRef.get(candidate.input.ref);
-          if (decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, answer).accepted) continue;
+          const known = stored.get(candidate.reviewId)!;
+          if (known.industry || decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, answer).accepted) continue;
           const name = industryLookupName(candidate.input, answer);
           if (name) lookups.set(candidate.reviewId, name);
         }
@@ -120,7 +176,8 @@ export function AiReviewAssistant() {
         const logos: { name: string; context: string }[] = [];
         for (const candidate of batch) {
           const result = byRef.get(candidate.input.ref);
-          const context = industryContext(industries.get(lookups.get(candidate.reviewId) ?? ""));
+          const looked = industryContext(industries.get(lookups.get(candidate.reviewId) ?? ""));
+          const context = looked.industry ? looked : stored.get(candidate.reviewId)!;
           const decision = decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, result, context);
           if (!decision.accepted) {
             suggestions.push({ reviewId: candidate.reviewId, reason: decision.reason, suggestion: decision.suggestion });

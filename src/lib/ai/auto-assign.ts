@@ -1,21 +1,34 @@
 import type { AppState } from "@/lib/types";
 import { applyAiReviewDecisions, type AiReviewDecision } from "./apply-review-decisions";
-import { decideReviewWithEvidence } from "./evidence";
+import { decideReviewWithEvidence, type EvidenceContext } from "./evidence";
 import { aiReviewCandidates } from "./review-candidates";
 import { aiSuggestionFor, recordAiSuggestions, type AiSuggestionEntry } from "./suggestions";
+import { webEntry, webEvidence, webHabits, webTarget } from "./web-categories";
 
 export type AutoAssignResult = { state: AppState; applied: string[] };
 
-// Rules, own history, refunds and fixed bank pairs need no model, so they run on every import.
+// The shop of a review as the internet described it earlier, adjusted to the household's habits.
+export function webContextFor(state: AppState, reviewId: string, habits = webHabits(state)): EvidenceContext {
+  if (!state.webCategories?.length) return {};
+  const item = state.reviewQueue?.find((entry) => entry.id === reviewId);
+  if (item?.kind !== "booking" || (item.draft.amount ?? 0) >= 0) return {};
+  const industry = webEvidence(webEntry(state, webTarget(item.draft)), habits);
+  return industry ? { industry } : {};
+}
+
+// Rules, own history, refunds, fixed bank pairs and shops known from the internet need no model,
+// so they run on every import.
 export function autoAssignOpenReviews(state: AppState): AutoAssignResult {
   const decisions: AiReviewDecision[] = [];
   const suggestions: AiSuggestionEntry[] = [];
+  const habits = state.webCategories?.length ? webHabits(state) : new Map();
   for (const candidate of aiReviewCandidates(state, new Set(), 100_000)) {
-    const decision = decideReviewWithEvidence(state, candidate.reviewId, candidate.input, undefined);
+    const decision = decideReviewWithEvidence(state, candidate.reviewId, candidate.input, undefined,
+      webContextFor(state, candidate.reviewId, habits));
     if (decision.accepted)
       decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
     // The model cannot name an anonymous PayPal shop either, so this proposal need not wait for it.
-    else if (decision.suggestion?.source === "Abo" && !aiSuggestionFor(state, candidate.reviewId))
+    else if ((decision.suggestion?.source === "Abo" || decision.suggestion?.source === "Branche") && !aiSuggestionFor(state, candidate.reviewId))
       suggestions.push({ reviewId: candidate.reviewId, reason: decision.reason, suggestion: decision.suggestion });
   }
   if (!decisions.length && !suggestions.length) return { state, applied: [] };
@@ -52,6 +65,15 @@ export function countLaterAssignments(state: AppState, uploadIds: readonly strin
   if (!state.aiLearning.some((entry) => counts.has(entry.id))) return state;
   return { ...state, aiLearning: state.aiLearning.map((entry) => counts.has(entry.id)
     ? { ...entry, later: (entry.later ?? 0) + counts.get(entry.id)! } : entry) };
+}
+
+// autoAssignOpenReviews plus the learning-curve credit for the imports the reviews came from.
+export function autoAssignAndCount(state: AppState): AutoAssignResult {
+  const outcome = autoAssignOpenReviews(state);
+  if (!outcome.applied.length) return outcome;
+  const uploadOf = new Map((state.reviewQueue ?? []).flatMap((item) =>
+    item.kind === "booking" && item.importUploadId ? [[item.id, item.importUploadId] as const] : []));
+  return { ...outcome, state: countLaterAssignments(outcome.state, outcome.applied.flatMap((id) => uploadOf.get(id) ?? [])) };
 }
 
 // applyAiReviewDecisions plus the learning-curve credit for the imports the reviews came from.
