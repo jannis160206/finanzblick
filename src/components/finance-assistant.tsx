@@ -423,10 +423,11 @@ export function FinanceAssistant() {
         <Bubble role="assistant" text={intro} />
         {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
         {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
-          <Bubble role={message.role} text={message.text} source={message.source} faded={message.status === "dismissed"} />
-          {message.card && <div className="pl-11">{message.card.kind === "homeoffice"
-            ? <HomeOfficeCard card={message.card} state={state} disabled={!!storageError} onResult={(result) => addResult(result, "Regel")} />
-            : <ResultCard card={message.card} state={state} />}</div>}
+          <Bubble role={message.role} text={message.text} source={message.source} faded={message.status === "dismissed"}>
+            {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded />}
+          </Bubble>
+          {message.card?.kind === "homeoffice" && <div className="pl-11">
+            <HomeOfficeCard card={message.card} state={state} disabled={!!storageError} onResult={(result) => addResult(result, "Regel")} /></div>}
           {message.change && message.status !== "dismissed" && <div className="pl-11">
             <ChangeCard message={message} disabled={!!storageError} onApply={() => applyChange(message)}
               onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
@@ -508,15 +509,17 @@ function Thinking() {
   </div>;
 }
 
-function Bubble({ role, text, source, faded }: { role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; faded?: boolean }) {
+function Bubble({ role, text, source, faded, children }: { role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; faded?: boolean; children?: React.ReactNode }) {
   const mine = role === "user";
   return <div className={cn("assistant-reveal flex items-start gap-3", mine && "flex-row-reverse", faded && "opacity-60")}>
     <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-xl", mine ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary")}>
       {mine ? <MessageSquareText aria-hidden="true" className="size-4" /> : <Bot aria-hidden="true" className="size-4" />}
     </span>
-    <div className={cn("max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed", mine ? "bg-primary text-primary-foreground" : "bg-muted/50")}>
-      <span className="sr-only">{mine ? "Du: " : "Assistent: "}</span>{text}
+    <div className={cn("min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed", mine ? "max-w-[80%] bg-primary text-primary-foreground" : "bg-muted/50",
+      !mine && (children ? "max-w-[90%] flex-1 py-3.5" : "max-w-[80%]"))}>
+      <span className="sr-only">{mine ? "Du: " : "Assistent: "}</span><span className="whitespace-pre-line">{text}</span>
       {source === "KI" && <span className="ml-2 inline-flex items-center gap-1 text-2xs text-muted-foreground"><Sparkles aria-hidden="true" className="size-3" />KI</span>}
+      {children}
     </div>
   </div>;
 }

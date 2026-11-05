@@ -36,19 +36,40 @@ function Bookings({ ids, transactions }: { ids: string[]; transactions: Map<stri
 }
 
 // Calculated card: every number comes from code; the bookings behind a number can be expanded right here.
-export function ResultCard({ card, state }: { card: AssistantCard; state: AppState }) {
+// Shows links in a note as short labels ("Wikipedia: Kapitalertragsteuer") instead of raw URLs.
+function NoteText({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s·]+?)(?=[.,;]?(?:\s|$))/g);
+  return <>{parts.map((part, index) => {
+    if (!/^https?:\/\//.test(part)) return part;
+    let label = part;
+    try {
+      const url = new URL(part);
+      const page = decodeURIComponent(url.pathname.split("/").pop() ?? "").replace(/_/g, " ");
+      label = url.hostname.endsWith("wikipedia.org") ? `Wikipedia: ${page}` : url.hostname.replace(/^www\./, "");
+    } catch { /* keep the raw text */ }
+    return <a key={index} href={part} target="_blank" rel="noreferrer noopener"
+      className="inline-flex items-center gap-1 font-medium text-primary underline-offset-2 hover:underline"><Globe aria-hidden="true" className="size-3" />{label}</a>;
+  })}</>;
+}
+
+// With "embedded" the card sits inside the assistant's chat bubble, so text and result form one answer.
+export function ResultCard({ card, state, embedded }: { card: AssistantCard; state: AppState; embedded?: boolean }) {
   const transactions = useMemo(() => new Map(state.transactions.map((row) => [row.id, row])), [state.transactions]);
   const [open, setOpen] = useState<number | "all">();
   const toggle = (key: number | "all") => setOpen((current) => current === key ? undefined : key);
-  return <article className="rounded-2xl border border-border/70 bg-background/40 p-4" aria-label={card.title}>
-    <p className="text-2xs uppercase tracking-wide text-muted-foreground">{kindLabel[card.kind]}</p>
+  // A single line repeating the title becomes its subtitle.
+  const subtitle = card.lines.length === 1 && card.lines[0].label === card.title && !card.lines[0].value && !card.lines[0].transactionIds?.length ? card.lines[0].detail : undefined;
+  const lines = subtitle !== undefined ? [] : card.lines;
+  return <article className={embedded ? "mt-3 border-t border-border/60 pt-3" : "rounded-2xl border border-border/70 bg-background/40 p-4"} aria-label={card.title}>
+    {!(embedded && card.kind === "answer") && <p className="text-2xs uppercase tracking-wide text-muted-foreground">{kindLabel[card.kind]}</p>}
     <h3 className="mt-0.5 flex items-baseline justify-between gap-3 text-sm font-semibold">
       <span>{card.title}</span>
       {card.total !== undefined && card.kind !== "rule" && card.kind !== "memory" && card.kind !== "changes" &&
         <span className="tabular-nums text-primary">{currency(card.total)}</span>}
     </h3>
-    {card.lines.length > 0 && <ul className="mt-3 space-y-1.5">
-      {card.lines.map((line, index) => <li key={`${line.label}-${index}`} className="text-sm">
+    {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+    {lines.length > 0 && <ul className="mt-3 space-y-1.5">
+      {lines.map((line, index) => <li key={`${line.label}-${index}`} className="text-sm">
         <div className="flex items-start justify-between gap-3">
           <span className={cn("min-w-0", line.tone && toneClass[line.tone])}>
             {line.transactionIds?.length
@@ -68,7 +89,7 @@ export function ResultCard({ card, state }: { card: AssistantCard; state: AppSta
       </Button>
       {open === "all" && <Bookings ids={card.transactionIds} transactions={transactions} />}
     </div>}
-    {card.note && <p className="mt-3 text-xs text-muted-foreground">{card.note}</p>}
+    {card.note && <p className="mt-3 text-xs leading-relaxed text-muted-foreground"><NoteText text={card.note} /></p>}
   </article>;
 }
 
