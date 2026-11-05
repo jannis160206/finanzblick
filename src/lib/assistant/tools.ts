@@ -1,10 +1,11 @@
+import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
 import { detectAction, findExtra } from "./intent";
 import { normalizeMessage } from "./normalize";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
-  "savings_goal", "expense", "affordability", "query", "briefing", "edit", "rule",
-  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "homeoffice", "explain", "help",
+  "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "edit", "rule",
+  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "homeoffice", "explain", "help", "ask",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -15,7 +16,10 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   savings_goal: "neues Sparziel anlegen oder durchrechnen",
   expense: "neue künftige Ausgabe oder Ratenkauf planen",
   affordability: "prüfen, ob man sich etwas leisten kann",
-  query: "Frage zu vergangenen Buchungen, Ausgaben, Einnahmen oder Abos beantworten",
+  query: "Frage zu vergangenen Buchungen, Ausgaben, Einnahmen oder Abos beantworten, auch je Konto/Karte (z. B. „mit Amex“) und Zeitraum (z. B. „seit 11.10.“)",
+  accounts: "Kontostände, Pockets, Ersparnisse, Vermögen anzeigen („Wie viel ist auf dem Sparkonto?“)",
+  amex: "Amex-Kreditkartenabrechnung: wie viel offen ist und wie viel noch auf das Amex-Rückzahlungs-Pocket überwiesen werden muss",
+  budget: "Monatsplan: was diesen oder einen kommenden Monat übrig bleibt, wie viel man noch ausgeben kann",
   briefing: "Wochenüberblick: was ist fällig, was hat sich geändert",
   edit: "bestehendes Sparziel, geplante Ausgabe oder Notgroschen-/Urlaubs-/Sparkonto-Ziel ändern, verschieben, aussetzen, umbenennen, löschen oder als erreicht markieren",
   rule: "Händler oder Buchungen einer Kategorie zuordnen, z. B. „Lieferando ist immer Essen“",
@@ -30,6 +34,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   homeoffice: "ausrechnen, was man für Home-Office-Sachen (Laptop, Bildschirm, Bürostuhl, Schreibtisch) beim Steuerausgleich zurückbekommt",
   explain: "erklären, wie das Finanzdashboard funktioniert (Seiten, Sparziele, Pockets, Import, Monatsplan, Einstellungen) und was man per Chat einstellen kann",
   help: "erklären, was der Assistent kann",
+  ask: "jede andere Frage zu den eigenen Finanzen, die kein anderes Werkzeug abdeckt",
 };
 
 const fold = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
@@ -97,6 +102,9 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
     !/\b(?:im|in|seit)\s+(?:jänner|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(lower)) return "briefing";
   if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:[\w€.,]+ ){0,3}(?:ein)?sparen|einsparen|einzusparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach|wo (?:kann|könnte) ich (?:noch )?(?:was |etwas )?(?:ein)?sparen/.test(lower)) return "coach";
   if (strictRule.test(lower) || looseRule.test(lower) && !known && !/\d+\s*(?:€|euro)/.test(lower)) return "rule";
+  if (amexQuestion(lower)) return "amex";
+  if (balanceQuestion(lower) && !/leisten|leistbar|reicht (?:das|es) für/.test(lower)) return "accounts";
+  if (budgetQuestion(lower) && !/leisten|leistbar|\d+\s*(?:€|euro)/.test(lower)) return "budget";
   if (!detectAction(text) && spendingQuestion(lower) || pastSpending.test(lower)) return "query";
   if (explainPattern.test(lower)) return "explain";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);

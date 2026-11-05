@@ -5,6 +5,7 @@ import { savingsGoals } from "@/lib/goals";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, AssistantChange, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
+import { accountBalances, amexQuestion, amexSettlement, monthBudget } from "./accounts";
 import { explainDashboard } from "./explain";
 import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
@@ -287,6 +288,8 @@ function help(): AgentResult {
     { label: "Ausgaben verstehen", detail: "„Wie viel ging im Oktober fürs Essen weg?“" },
     { label: "Sparen und planen", detail: "„3.000 € für Japan bis Juli 2027“" },
     { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
+    { label: "Konten und Amex", detail: "„Was muss ich noch auf Amex Rückzahlung überweisen?“" },
+    { label: "Monatsbudget", detail: "„Was bleibt mir diesen Monat übrig?“" },
     { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 €“, „Puffer immer 500 €“" },
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
   ];
@@ -301,6 +304,9 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
   const text = normalizeMessage(input);
   switch (tool) {
     case "query": return answerQuestion(state, text, asOf, context.hints);
+    case "amex": return amexSettlement(state, dashboard, text, asOf);
+    case "accounts": return amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
+    case "budget": return monthBudget(dashboard, text);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));
     case "coach": {
       const target = amountsIn(text).find((value) => value > 0 && value < 100_000) ?? 100;

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
+import { assistantFacts } from "@/lib/assistant/facts";
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
 import { extractMemories } from "@/lib/assistant/memory";
@@ -41,6 +42,9 @@ const intro = "Hallo! Ich bin dein Finanz-Assistent. Frag mich einfach, wie du e
 // Natural next questions after an answer, shown as quick replies.
 const followUps: Partial<Record<AssistantTool, string[]>> = {
   query: ["Was war meine größte Ausgabe dieses Jahr?", "Wie viel geht für Abos weg?", "Ich will 200 € mehr im Monat sparen"],
+  accounts: ["Wie viel muss ich auf Amex Rückzahlung überweisen?", "Was bleibt mir diesen Monat?"],
+  amex: ["Was habe ich seit 11.10. mit Amex bezahlt?", "Zeig mir meine Kontostände"],
+  budget: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
   briefing: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
   coach: ["Wie viel geht für Abos weg?", "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?"],
   depot: ["Und mit 200 € im Monat?", "Wie viel kann ich monatlich sparen?"],
@@ -193,6 +197,22 @@ export function FinanceAssistant() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, storageError]);
 
+  // Anything no tool covers gets a short model answer built only from the computed facts.
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[]) {
+    try {
+      const facts = assistantFacts(state, dashboard, state.settings.asOf);
+      const response = await fetch("/api/ai/answer", {
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ question, history, facts }),
+      });
+      if (!response.ok) return undefined;
+      const answer: { text?: unknown } = await response.json();
+      return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   async function send(event?: FormEvent, preset?: string) {
     event?.preventDefault();
     const text = (preset ?? input).trim().slice(0, 1000);
@@ -237,8 +257,9 @@ export function FinanceAssistant() {
         reply = { draft, question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
       }
     }
-    const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) ? reply.tool : undefined;
+    const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
     const parsed = !tool && reply.draft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
+    const free = !tool && !parsed?.success ? await freeAnswer(text, history) : undefined;
     await settle();
     if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
@@ -254,6 +275,7 @@ export function FinanceAssistant() {
       }
       addResult(result.suggestions || result.change || result.undoId ? result : { ...result, suggestions: followUps[tool] }, reply.source);
     } else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
+    else if (free) addResult({ text: free, suggestions: ["Zeig mir meine Kontostände", "Was bleibt mir diesen Monat?", "Was kannst du alles?"] }, "KI");
     else addResult({ text: "Da bin ich mir nicht sicher, was du meinst. Magst du es anders formulieren? Du kannst mich zum Beispiel nach deinen Ausgaben fragen, " +
       "ein Sparziel planen oder prüfen lassen, ob du dir etwas leisten kannst.", suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel");
     // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.

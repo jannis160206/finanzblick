@@ -27,8 +27,48 @@ const numberWords: Record<string, number> = { zwei: 2, drei: 3, vier: 4, fünf: 
 
 export type Period = { from: string; to: string; label: string; month?: string; months: number };
 
+const dayPattern = "(\\d{1,2})\\.\\s?(\\d{1,2})(?:\\.(?:\\s?(\\d{4}|\\d{2})\\b)?)?(?![\\d,])";
+// "11.10." → the latest such day up to today; an explicit year is kept.
+function pastDay(day: string, month: string, year: string | undefined, today: string): string | undefined {
+  const d = Number(day), m = Number(month);
+  if (d < 1 || d > 31 || m < 1 || m > 12) return undefined;
+  const y = year ? Number(year.length === 2 ? `20${year}` : year) : Number(today.slice(0, 4));
+  let date = `${y}-${pad(m)}-${pad(d)}`;
+  if (!year && date > today) date = `${y - 1}-${pad(m)}-${pad(d)}`;
+  return date;
+}
+const shortDate = (date: string) => `${Number(date.slice(8))}.${Number(date.slice(5, 7))}.`;
+
+// Explicit day ranges: "seit 11.10.", "ab dem 11.10", "vom 1.10. bis 15.10.", "11.10-aktuell".
+export function parseDateRange(text: string, today: string): Period | undefined {
+  const lower = text.toLowerCase();
+  const span = new RegExp(`(?:\\b(?:vom|von|zwischen)\\s+(?:dem\\s+)?)?${dayPattern}\\s*(?:-|–|bis(?:\\s+(?:zum|einschließlich))?|und)\\s*(?:(?:dem\\s+)?${dayPattern}|(heute|jetzt|aktuell|now))`).exec(lower);
+  if (span) {
+    const from = pastDay(span[1], span[2], span[3], today);
+    const to = span[7] ? today : pastDay(span[4], span[5], span[6] ?? span[3], today);
+    if (from && to && from <= to) {
+      const months = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / (30.4 * DAY_MS)));
+      return { from, to, label: span[7] ? `seit ${shortDate(from)}` : `${shortDate(from)}–${shortDate(to)}`, months };
+    }
+  }
+  const since = new RegExp(`\\b(?:seit|ab)\\s+(?:dem\\s+|am\\s+)?${dayPattern}`).exec(lower);
+  if (since) {
+    const from = pastDay(since[1], since[2], since[3], today);
+    if (from && from <= today) return { from, to: today, label: `seit ${shortDate(from)}`,
+      months: Math.max(1, Math.round((Date.parse(today) - Date.parse(from)) / (30.4 * DAY_MS))) };
+  }
+  const single = new RegExp(`\\bam\\s+${dayPattern}`).exec(lower);
+  if (single) {
+    const date = pastDay(single[1], single[2], single[3], today);
+    if (date) return { from: date, to: date, label: `am ${shortDate(date)}`, months: 1 };
+  }
+  return undefined;
+}
+
 // Questions look back: a month without a year means its latest occurrence up to today.
 export function parsePeriod(text: string, today: string): Period {
+  const range = parseDateRange(text, today);
+  if (range) return range;
   const lower = text.toLowerCase();
   const year = Number(today.slice(0, 4));
   const current = today.slice(0, 7);
@@ -115,7 +155,20 @@ export function findCategories(text: string): { categories: Category[]; label: s
   return match ? { categories: match[1], label: match[2] } : undefined;
 }
 
-const nonMerchant = /^(?:essen|lebensmittel|abos?|monat|jahr|woche|heuer|urlaub|auto|miete|tanken|kaffee|shopping|kategorie|ausgaben|einnahmen|mich|mir|das|die|der|den|dem|ein|eine)$/i;
+const nonMerchant = /^(?:essen|lebensmittel|abos?|monat|jahr|woche|heuer|urlaub|auto|miete|tanken|kaffee|shopping|kategorie|ausgaben|einnahmen|mich|mir|das|die|der|den|dem|ein|eine|amex|american|express|kreditkarte|karte|revolut|raiffeisen|giro|girokonto|konto|trade|republic|seit|heute|aktuell)$/i;
+
+const banks: [RegExp, RegExp, string][] = [
+  [/\bamex\b|american express|kreditkarte/, /^(?:amex|american express)$/i, "Amex"],
+  [/\brevolut\b/, /^revolut$/i, "Revolut"],
+  [/raiffeisen|girokonto|\bgiro\b/, /^raiffeisen/i, "Raiffeisen"],
+  [/trade republic|\btr\b/, /^trade republic$/i, "Trade Republic"],
+];
+// "mit Amex bezahlt", "vom Revolut-Konto": the paying account, not a merchant.
+export function findBank(text: string): { pattern: RegExp; label: string } | undefined {
+  const lower = text.toLowerCase();
+  const match = banks.find(([words]) => words.test(lower));
+  return match ? { pattern: match[1], label: match[2] } : undefined;
+}
 // A merchant only counts when it really appears in bookings.
 export function findMerchant(state: AppState, text: string, hint?: string): string | undefined {
   const rows = state.transactions;
@@ -165,13 +218,16 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
     };
   }
   const period = parsePeriod(text, today);
+  const bank = findBank(text);
   const hintCategory = hints.category && categories.includes(hints.category as never) ? { categories: [hints.category as Category], label: hints.category } : undefined;
-  const filter = findCategories(text) ?? hintCategory;
-  const merchant = findMerchant(state, text, hints.merchant);
+  // A bank or card question is about the account, so a model category guess like "Abonnements" is ignored.
+  const filter = findCategories(text) ?? (bank ? undefined : hintCategory);
+  const hintMerchant = hints.merchant && !findBank(hints.merchant) ? hints.merchant : undefined;
+  const merchant = findMerchant(state, text, hintMerchant);
   const wanted = filter ? new Set(filter.categories.map(canonicalCategory)) : undefined;
   const entries = ledger(state).filter(({ row, category }) => row.date >= period.from && row.date <= period.to &&
-    (!wanted || wanted.has(category)) && (!merchant || matchesTransactionSearch(row, merchant)));
-  const scope = [merchant, filter?.label].filter(Boolean).join(" · ") || "Alle Ausgaben";
+    (!wanted || wanted.has(category)) && (!merchant || matchesTransactionSearch(row, merchant)) && (!bank || bank.pattern.test(row.bank.trim())));
+  const scope = [bank?.label, merchant, filter?.label].filter(Boolean).join(" · ") || "Alle Ausgaben";
   const title = `${metric === "income" ? "Einnahmen" : scope} · ${period.label}`;
   const month = period.month;
   if (metric === "income") {

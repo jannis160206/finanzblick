@@ -99,6 +99,8 @@ Die Übersicht zeigt den Block „KI-Einblicke“ (`src/lib/insights.ts`), der o
 Eigene Seite `/assistent` im Seitenmenü (`src/components/finance-assistant.tsx`).
 
 - **Nur Extraktion:** `/api/ai/assistant` (`src/lib/ai/assistant.ts`) lässt das Modell aus dem Freitext nur Absicht und Angaben herauslesen (Ziel, Betrag, Datum, Konto, Startkapital, Raten). Jede Angabe muss im Text vorkommen (`groundModelExtraction`), sonst wird sie verworfen. Ohne KI oder bei Fehlern übernimmt der Regel-Parser (`src/lib/assistant/intent.ts`). Fehlt eine Angabe, fragt der Assistent nach.
+- **Konten, Amex, Monatsplan:** Kontostände, die Amex-Abrechnung (offener Saldo minus Rückzahlungs-Pocket, gleiche Rechnung wie im Dashboard) und der Monatsplan kommen direkt aus `calculateDashboard` (`src/lib/assistant/accounts.ts`). Ausgabenfragen verstehen Zeiträume wie „seit 11.10.“ und Konten wie „mit Amex“.
+- **Freie Fragen:** Passt kein Werkzeug, beantwortet `/api/ai/answer` die Frage nur aus fertig gerechneten Fakten (`src/lib/assistant/facts.ts`). Jede Zahl in der Antwort muss in den Fakten stehen (`numbersBacked`), sonst bittet der Assistent um eine andere Formulierung.
 - **Feste Rechnung:** `src/lib/assistant/plan.ts` rechnet mit dem Monatsplan: Monatsrate bzw. erreichbares Datum für Sparziele, Konflikte mit bestehenden Zielen, Monate ohne volle Rate.
 - **„Kann ich mir das leisten?“:** Ampel aus dem frei verfügbaren Betrag über dem Sparsockel. 🟢 reicht, 🟡 nur mit ausgesetzter Sparrate, 🔴 Fehlbetrag mit Alternativen (Raten, späterer Monat, Rücklage vom Sparkonto).
 - **Nichts automatisch:** Gespeichert wird erst bei „Anlegen“. „Ändern“ öffnet ein Formular, „Was-wäre-wenn“-Fragen werden nur berechnet.
