@@ -485,6 +485,12 @@ export const assistantMessageSchema = z.object({
   source: z.enum(["KI", "Regel"]).optional(),
   // Quick replies shown under the latest assistant message.
   suggestions: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
+  // Self-learning: which tool answered which question, the user's 👍/👎, and open questions waiting for a correction or a name.
+  tool: z.string().max(40).optional(),
+  asked: z.string().max(1000).optional(),
+  feedback: z.enum(["up", "down"]).optional(),
+  correcting: z.string().max(1000).optional(),
+  clarify: z.string().max(1000).optional(),
 }).strict();
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 export const MAX_ASSISTANT_MESSAGES = 100;
@@ -520,6 +526,24 @@ export const assistantPhraseSchema = z.object({
 }).strict();
 export type AssistantPhrase = z.infer<typeof assistantPhraseSchema>;
 export const MAX_ASSISTANT_PHRASES = 200;
+// Own words for own things: "Mit Japan meine ich Motorrad".
+export const assistantAliasSchema = z.object({
+  from: z.string().trim().min(2).max(60),
+  to: z.string().trim().min(1).max(100),
+  at: z.number().nonnegative(),
+  hits: z.number().int().nonnegative().optional(),
+}).strict();
+export type AssistantAlias = z.infer<typeof assistantAliasSchema>;
+export const MAX_ASSISTANT_ALIASES = 100;
+// Requests the assistant could not handle yet; resolved once it learns them.
+export const assistantGapSchema = z.object({
+  text: z.string().trim().min(1).max(300),
+  at: z.number().nonnegative(),
+  count: z.number().int().min(1).max(10_000),
+  resolved: z.string().max(40).optional(),
+}).strict();
+export type AssistantGap = z.infer<typeof assistantGapSchema>;
+export const MAX_ASSISTANT_GAPS = 50;
 const undoTransactionSchema = z.object({
   id: z.string().min(1).max(500),
   category: categorySchema,
@@ -654,6 +678,8 @@ export const appStateSchema = z.object({
   // What the assistant learned by itself: looked-up knowledge and phrasings it now understands without the model.
   assistantKnowledge: z.array(assistantKnowledgeSchema).max(MAX_ASSISTANT_KNOWLEDGE).optional(),
   assistantPhrases: z.array(assistantPhraseSchema).max(MAX_ASSISTANT_PHRASES).optional(),
+  assistantAliases: z.array(assistantAliasSchema).max(MAX_ASSISTANT_ALIASES).optional(),
+  assistantGaps: z.array(assistantGapSchema).max(MAX_ASSISTANT_GAPS).optional(),
   // Every change the assistant applied, with the data needed to undo it.
   assistantChanges: z.array(assistantChangeLogSchema).max(MAX_ASSISTANT_CHANGES).optional(),
   importStatus: z

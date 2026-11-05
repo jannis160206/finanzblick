@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { classify } from "@/lib/calc";
 import { canonicalCategory } from "@/lib/categories";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import type { AppState, AssistantCard, AssistantChangeLog, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
+import type { AppState, AssistantAlias, AssistantCard, AssistantChangeLog, AssistantGap, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const toneClass = {
@@ -179,10 +179,11 @@ export function ChangesPanel({ changes, disabled, onUndo }: { changes: Assistant
   </section>;
 }
 
-export function MemoryPanel({ memory, knowledge = [], phrases = 0, disabled, onDelete, onForgetKnowledge, onResetPhrases }: {
-  memory: AssistantMemory[]; knowledge?: AssistantKnowledge[]; phrases?: number; disabled: boolean; onDelete: (id: string) => void;
-  onForgetKnowledge?: (id: string) => void; onResetPhrases?: () => void;
+export function MemoryPanel({ memory, knowledge = [], phrases = 0, aliases = [], gaps = [], disabled, onDelete, onForgetKnowledge, onResetPhrases, onForgetAlias, onRemoveGap }: {
+  memory: AssistantMemory[]; knowledge?: AssistantKnowledge[]; phrases?: number; aliases?: AssistantAlias[]; gaps?: AssistantGap[]; disabled: boolean;
+  onDelete: (id: string) => void; onForgetKnowledge?: (id: string) => void; onResetPhrases?: () => void; onForgetAlias?: (from: string) => void; onRemoveGap?: (text: string) => void;
 }) {
+  const openGapList = gaps.filter((entry) => !entry.resolved).sort((a, b) => b.at - a.at).slice(0, 10);
   return <section className="panel mb-4 p-4" aria-label="Gedächtnis des Assistenten">
     <h2 className="flex items-center gap-2 text-sm font-semibold"><Brain aria-hidden="true" className="size-4 text-primary" />Das hat sich der Assistent gemerkt</h2>
     {!memory.length ? <p className="mt-2 text-sm text-muted-foreground">Noch nichts. Sag zum Beispiel „Merk dir: Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“.</p>
@@ -212,5 +213,26 @@ export function MemoryPanel({ memory, knowledge = [], phrases = 0, disabled, onD
       {onResetPhrases && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={onResetPhrases}>
         <X aria-hidden="true" className="size-4" />Zurücksetzen</Button>}
     </div>}
+    {aliases.length > 0 && <>
+      <h3 className="mt-5 text-sm font-semibold">Deine Bezeichnungen</h3>
+      <ul className="mt-2 divide-y divide-border/50 text-sm">
+        {aliases.map((entry) => <li key={entry.from} className="flex items-center justify-between gap-3 py-2">
+          <span className="min-w-0">„{entry.from}“ → {entry.to}
+            <span className="block text-xs text-muted-foreground">seit {new Date(entry.at).toLocaleDateString("de-AT")}{entry.hits ? ` · ${entry.hits}× verwendet` : ""}</span></span>
+          {onForgetAlias && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={() => onForgetAlias(entry.from)}
+            aria-label={`Bezeichnung „${entry.from}“ vergessen`}><X aria-hidden="true" className="size-4" />Vergessen</Button>}
+        </li>)}
+      </ul></>}
+    {openGapList.length > 0 && <>
+      <h3 className="mt-5 text-sm font-semibold">Noch nicht verstanden</h3>
+      <p className="mt-1 text-xs text-muted-foreground">Diese Fragen versucht der Assistent beim nächsten Öffnen selbst nachzulernen. Schreib sie gern anders, dann lernt er es sofort.</p>
+      <ul className="mt-2 divide-y divide-border/50 text-sm">
+        {openGapList.map((entry) => <li key={entry.text} className="flex items-center justify-between gap-3 py-2">
+          <span className="min-w-0">„{entry.text}“
+            <span className="block text-xs text-muted-foreground">{entry.count}× gefragt · zuletzt {new Date(entry.at).toLocaleDateString("de-AT")}</span></span>
+          {onRemoveGap && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={() => onRemoveGap(entry.text)}
+            aria-label={`„${entry.text}“ entfernen`}><X aria-hidden="true" className="size-4" />Entfernen</Button>}
+        </li>)}
+      </ul></>}
   </section>;
 }

@@ -19,7 +19,7 @@ import { detectTool, matchName, splitCommands, type AssistantTool } from "./tool
 import { bookingEdit } from "./bookings";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
-export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[] };
+export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[] };
 type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot;
   knowledge?: { found: AssistantKnowledge[]; fresh?: string[]; offline?: boolean } };
 
@@ -157,7 +157,7 @@ function edit({ state, asOf, hints }: Context, text: string): AgentResult {
     const funded = goals.filter((entry) => entry.funding && entry.funding.monthly > 0);
     if (/\brate\b|sparrate/.test(lower) && funded.length === 1) return run(state, editGoal(funded[0], text, asOf), asOf);
     const names = [...goals.map((entry) => entry.name), ...planned.slice(0, 8).map((entry) => entry.name)];
-    return { text: names.length ? `Welches meinst du? Zur Auswahl: ${names.join(", ")}.` : "Ich finde noch keine Sparziele oder geplanten Ausgaben, die ich ändern könnte." };
+    return names.length ? { text: `Welches meinst du? Zur Auswahl: ${names.join(", ")}.`, choices: names } : { text: "Ich finde noch keine Sparziele oder geplanten Ausgaben, die ich ändern könnte." };
   }
   const goalFirst = goal && (!item || /sparziel|ziel|rate|spar/.test(lower) || goal.name.length >= item.name.length);
   return run(state, goalFirst ? editGoal(goal!, text, asOf) : editPlanned(item!, text, asOf), asOf);
@@ -188,7 +188,7 @@ function batch(context: Context, text: string): AgentResult {
   for (const part of parts) {
     const tool = detectTool(part, names);
     const result = tool && tool !== "batch" ? executeTool(tool, part, { ...context, hints: undefined }) : { text: "Das verstehe ich nicht." } as AgentResult;
-    if (!result.change) return { text: `Bei „${part}“ hänge ich: ${result.text}`.slice(0, 2000) };
+    if (!result.change) return { text: `Bei „${part}“ hänge ich: ${result.text}`.slice(0, 2000), ...(result.choices ? { choices: result.choices } : {}) };
     operations.push(...result.change.operations);
     titles.push(result.change.title);
   }
@@ -343,6 +343,7 @@ function help(): AgentResult {
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
     { label: "Live aus dem Internet", detail: "„Wie hoch ist die Inflation?“, „Welche Zinsen fürs Sparkonto?“, „3.000 € in Yen“" },
     { label: "Begriffe erklären und dazulernen", detail: "„Was ist ein ETF?“, „Was bedeutet KESt?“, „Was hast du gelernt?“" },
+    { label: "Mir etwas beibringen", detail: "„Mit Japan meine ich Motorrad“, „Nein, ich meinte meine Ausgaben im Oktober“, 👍/👎 unter jeder Antwort" },
     { label: "Kredit durchrechnen", detail: "„Kredit 10.000 € auf 5 Jahre zu 6 %“, „Laptop in 12 Raten“" },
     { label: "Erinnerungen", detail: "„Erinner mich am 1. Dezember, die Kfz-Versicherung zu kündigen“" },
     { label: "Jahresrückblick", detail: "„Wie war mein Jahr 2026?“" },

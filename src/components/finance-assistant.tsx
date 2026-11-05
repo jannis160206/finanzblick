@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Brain, Bot, CalendarClock, Check, CircleHelp, Columns2, History, LoaderCircle, MessageSquareText, Pencil, PiggyBank, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { Brain, Bot, CalendarClock, Check, CircleHelp, Columns2, History, LoaderCircle, MessageSquareText, Pencil, PiggyBank, Send, Sparkles, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
 import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
 import { useFinance } from "@/components/finance-provider";
@@ -23,6 +23,7 @@ import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
 import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
 import { resolveFollowUp } from "@/lib/assistant/followup";
+import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
@@ -132,16 +133,71 @@ export function FinanceAssistant() {
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
       { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source }]);
   };
-  const addResult = (result: AgentResult, source: AssistantMessage["source"]) => {
+  const addResult = (result: AgentResult, source: AssistantMessage["source"], meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify"> = {}) => {
+    const suggestions = result.choices?.length ? result.choices : result.suggestions;
     const message = {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
       ...(result.card ? { card: result.card } : {}), ...(result.change ? { change: result.change } : {}),
       ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.change || result.undoId ? { status: "preview" as const } : {}),
-      ...(result.suggestions?.length ? { suggestions: [...new Set(result.suggestions)].slice(0, 4) } : {}),
+      ...(suggestions?.length ? { suggestions: [...new Set(suggestions)].map((item) => item.slice(0, 120)).slice(0, 4) } : {}),
+      ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}),
+      ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
+      ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
     };
     const parsed = assistantMessageSchema.safeParse(message);
     save((items) => [...items, parsed.success ? parsed.data : { id: message.id, role: "assistant", text: message.text, at: message.at }]);
   };
+  const knownNames = () => [...savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50),
+    ...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth).map((item) => item.name.slice(0, 100)))].slice(0, 110);
+
+  // 👍 reinforces how the question was understood; 👎 forgets it and asks what was meant, so the next answer teaches the right way.
+  function giveFeedback(message: AssistantMessage, value: "up" | "down") {
+    const asked = message.asked;
+    if (!asked) return;
+    const tool = message.tool && isAssistantTool(message.tool) ? message.tool : undefined;
+    const learnable = !!tool && learnableTools.includes(tool) && detectTool(asked, knownNames()) !== tool;
+    update((current) => {
+      const chat = (current.assistantChat ?? []).map((item) => item.id === message.id ? { ...item, feedback: value } : item);
+      if (value === "up") return { ...current, assistantChat: chat,
+        assistantPhrases: learnable ? learnPhrase(current.assistantPhrases, asked, tool!) : current.assistantPhrases,
+        assistantGaps: tool ? resolveGap(current.assistantGaps, asked, tool) : current.assistantGaps };
+      const ask: AssistantMessage = { id: newId(), role: "assistant", at: Date.now(), source: "Regel", correcting: asked.slice(0, 1000),
+        text: `Danke für die ehrliche Rückmeldung. Was hast du mit „${asked.slice(0, 120)}“ gemeint? Schreib es kurz anders, dann lerne ich es für das nächste Mal.`,
+        suggestions: ["Was kannst du alles?"] };
+      return { ...current, assistantChat: [...chat, ask].slice(-MAX_ASSISTANT_MESSAGES),
+        assistantPhrases: unlearnPhrase(current.assistantPhrases, asked), assistantGaps: recordGap(current.assistantGaps, asked) };
+    });
+    if (value === "up") toast.success("Danke, das merke ich mir");
+  }
+
+  // Self-improvement: questions it could not answer before are tried again in the background, e.g. once the local model is back.
+  const retried = useRef(false);
+  useEffect(() => {
+    if (retried.current || !ready || storageError) return;
+    retried.current = true;
+    const open = openGaps(state.assistantGaps).slice(0, 3);
+    if (!open.length) return;
+    void (async () => {
+      const solved: { text: string; tool: AssistantTool }[] = [];
+      for (const gap of open) {
+        let tool: AssistantTool | undefined = detectTool(gap.text, knownNames());
+        if (!tool) try {
+          const response = await fetch("/api/ai/assistant", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+            body: JSON.stringify({ message: gap.text, asOf: state.settings.asOf, history: [], context: { goals: [], planned: [] } }), signal: AbortSignal.timeout(30000) });
+          const reply = response.ok ? await response.json() as { tool?: unknown; source?: string } : undefined;
+          if (reply?.source === "KI" && isAssistantTool(reply.tool) && learnableTools.includes(reply.tool)) tool = reply.tool;
+        } catch {
+          break;
+        }
+        if (tool && learnableTools.includes(tool)) solved.push({ text: gap.text, tool });
+      }
+      if (!solved.length) return;
+      update((current) => solved.reduce((next, item) => ({ ...next,
+        assistantPhrases: learnPhrase(next.assistantPhrases, item.text, item.tool), assistantGaps: resolveGap(next.assistantGaps, item.text, item.tool) }), current));
+      toast.success(`Selbst nachgelernt: ${solved.length === 1 ? `„${solved[0].text.slice(0, 60)}“ verstehe ich jetzt` : `${solved.length} offene Fragen verstehe ich jetzt`}`);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, storageError]);
 
   // Checks the change against the current snapshot first, so the provider never receives an invalid state.
   const commit = (run: (current: AppState) => AppState, chat?: (items: AssistantMessage[]) => AssistantMessage[]) => {
@@ -279,7 +335,46 @@ export function FinanceAssistant() {
     const startedAt = Date.now();
     // Short pause, so instant rule answers still read like a reply instead of a page jump.
     const settle = () => new Promise((resolve) => setTimeout(resolve, Math.max(0, 650 - (Date.now() - startedAt))));
-    const chat = pending ? undefined : smallTalk(text, { hour: new Date().getHours(), seed: messages.length });
+    const names = knownNames();
+    const lastAnswer = messages.findLast((item) => item.role === "assistant");
+    // Teaching own words: "Mit Japan meine ich Motorrad".
+    const teaching = pending ? undefined : aliasTeaching(text);
+    if (teaching) {
+      setInput("");
+      setBusy(true);
+      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
+      const target = pickName(teaching.to, names) ?? teaching.to;
+      update((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, teaching.from, target) }));
+      await settle();
+      addResult({ text: `Gemerkt: Wenn du „${teaching.from}“ schreibst, meinst du „${target}“. Das gilt ab sofort überall im Chat; unter „Gedächtnis“ kannst du es wieder löschen.`,
+        suggestions: [`Wie weit bin ich bei ${teaching.from}?`, "Was hast du gelernt?"] }, "Regel");
+      setBusy(false);
+      inputRef.current?.focus();
+      return;
+    }
+    // Corrections teach the earlier phrasing: "Nein, ich meinte …", or the answer to "Was hast du gemeint?".
+    const fix = !pending && lastAnswer?.asked ? correction(text) : undefined;
+    if (fix && !fix.text && lastAnswer) {
+      setInput("");
+      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
+      giveFeedback(lastAnswer, "down");
+      inputRef.current?.focus();
+      return;
+    }
+    const original = pending ? undefined : fix ? lastAnswer?.asked : lastAnswer?.correcting;
+    let work = fix?.text ?? text;
+    // Answer to "Welches meinst du?": run the earlier command with that name and remember the word that was meant.
+    let alias: { from: string; to: string } | undefined;
+    const chosen = !pending && lastAnswer?.clarify ? pickName(text, names) : undefined;
+    if (chosen && lastAnswer?.clarify) {
+      const target = unknownTarget(lastAnswer.clarify, names);
+      if (target) alias = { from: target, to: chosen };
+      work = target ? applyAliases([{ from: target, to: chosen, at: 0 }], lastAnswer.clarify).text : `${lastAnswer.clarify} ${chosen}`;
+    }
+    const aliased = applyAliases(state.assistantAliases, work);
+    work = aliased.text;
+    if (aliased.used.length) update((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
+    const chat = pending || original || chosen ? undefined : smallTalk(text, { hour: new Date().getHours(), seed: messages.length });
     if (chat) {
       setInput("");
       setBusy(true);
@@ -299,58 +394,76 @@ export function FinanceAssistant() {
     save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
     let reply: { tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
     // "und im September?" reuses the previous question instead of asking the model again.
-    const follow = pending ? undefined : resolveFollowUp(text, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
+    const follow = pending ? undefined : resolveFollowUp(work, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
-    const learned = pending || follow || detectTool(text, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, text);
+    const learned = pending || follow || detectTool(work, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, work);
     if (follow) reply = { tool: follow.tool, source: "Regel" };
     else if (learned && isAssistantTool(learned.tool)) {
       reply = { tool: learned.tool, source: "Regel" };
-      update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, text, learned.tool) }));
+      update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, learned.tool) }));
     } else try {
       const response = await fetch("/api/ai/assistant", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ message: text, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned } }),
+        body: JSON.stringify({ message: work, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned } }),
       });
       if (!response.ok) throw new Error();
       reply = await response.json();
     } catch {
       // Same rules as the server, without the model.
-      const tool = detectTool(text, [...goals, ...planned]);
+      const tool = detectTool(work, [...goals, ...planned]);
       if (tool && !isDraftTool(tool) && !(pending && tool === "help")) reply = { tool, source: "Regel" };
       else {
-        const draft = mergeDraft(pending, parseAssistantMessage(text, asOf), {}, text, asOf);
+        const draft = mergeDraft(pending, parseAssistantMessage(work, asOf), {}, work, asOf);
         reply = { draft, question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
       }
     }
     const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
     // Only the model understood this phrasing; remember it so the rules answer it directly next time.
     if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
-      !detectTool(text, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, text, tool) }));
+      !detectTool(work, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
+        assistantGaps: resolveGap(current.assistantGaps, work, tool) }));
+    // What was learned from this message is said at the start of the answer.
+    const notes: string[] = [];
+    if (original && tool && learnableTools.includes(tool) && original !== work && !detectTool(original, [...goals, ...planned])) {
+      update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, original, tool), assistantGaps: resolveGap(current.assistantGaps, original, tool) }));
+      notes.push(`Danke, gelernt: „${original.slice(0, 80)}“ verstehe ich ab jetzt so.`);
+    }
+    if (alias) {
+      const learnedAlias = alias;
+      update((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, learnedAlias.from, learnedAlias.to) }));
+      notes.push(`Gemerkt: Mit „${alias.from}“ meinst du „${alias.to}“.`);
+    }
+    const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
     const parsed = !tool && reply.draft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
-    const free = !tool && !parsed?.success ? await freeAnswer(text, history) : undefined;
+    const free = !tool && !parsed?.success ? await freeAnswer(work, history) : undefined;
     await settle();
     if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
-      const operation = parseMemory(text);
+      const operation = parseMemory(work);
       if (operation) remember([operation]);
       else addResult({ text: "Was soll ich mir merken? Zum Beispiel „Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“." }, reply.source);
     } else if (tool) {
       let result: AgentResult;
-      const market = tool === "market" || tool === "depot" ? await loadMarket(text) : undefined;
-      const knowledge = tool === "knowledge" && !knowledgeListQuestion(text.toLowerCase()) ? await loadKnowledge(text, [...goals, ...planned]) : undefined;
+      const market = tool === "market" || tool === "depot" ? await loadMarket(work) : undefined;
+      const knowledge = tool === "knowledge" && !knowledgeListQuestion(work.toLowerCase()) ? await loadKnowledge(work, [...goals, ...planned]) : undefined;
       try {
-        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge });
+        result = executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
-      addResult(result.suggestions || result.change || result.undoId ? result : { ...result, suggestions: followUps[tool] }, reply.source);
+      addResult(withNotes(result.suggestions || result.change || result.undoId || result.choices ? result : { ...result, suggestions: followUps[tool] }), reply.source,
+        { tool, asked: work, clarify: work });
     } else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
-    else if (free) addResult({ text: free, suggestions: ["Zeig mir meine Kontostände", "Was bleibt mir diesen Monat?", "Was kannst du alles?"] }, "KI");
-    else addResult({ text: "Da bin ich mir nicht sicher, was du meinst. Magst du es anders formulieren? Du kannst mich zum Beispiel nach deinen Ausgaben fragen, " +
-      "ein Sparziel planen oder prüfen lassen, ob du dir etwas leisten kannst.", suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel");
+    else if (free) addResult(withNotes({ text: free, suggestions: ["Zeig mir meine Kontostände", "Was bleibt mir diesen Monat?", "Was kannst du alles?"] }), "KI", { tool: "free", asked: work });
+    else {
+      update((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
+      addResult({ text: "Das verstehe ich noch nicht. Schreib es mir bitte kurz anders; die neue Formulierung merke ich mir, damit ich es beim nächsten Mal gleich verstehe. " +
+        "Du kannst mich zum Beispiel nach deinen Ausgaben fragen, ein Sparziel planen oder prüfen lassen, ob du dir etwas leisten kannst.",
+      suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work });
+    }
     // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.
     if (tool !== "remember") {
-      const memories = extractMemories(text, state, tool ?? (parsed?.success ? parsed.data.action : undefined));
+      const memories = extractMemories(work, state, tool ?? (parsed?.success ? parsed.data.action : undefined));
       if (memories.length) remember(memories);
     }
     setBusy(false);
@@ -417,7 +530,10 @@ export function FinanceAssistant() {
     {panel === "memory" && <MemoryPanel memory={memory} knowledge={state.assistantKnowledge ?? []} phrases={state.assistantPhrases?.length ?? 0}
       disabled={!!storageError} onDelete={forget}
       onForgetKnowledge={(id) => { update((current) => ({ ...current, assistantKnowledge: (current.assistantKnowledge ?? []).filter((entry) => entry.id !== id) })); toast.success("Vergessen"); }}
-      onResetPhrases={() => { update((current) => ({ ...current, assistantPhrases: [] })); toast.success("Gelernte Formulierungen zurückgesetzt"); }} />}
+      onResetPhrases={() => { update((current) => ({ ...current, assistantPhrases: [] })); toast.success("Gelernte Formulierungen zurückgesetzt"); }}
+      aliases={state.assistantAliases ?? []} gaps={state.assistantGaps ?? []}
+      onForgetAlias={(from) => { update((current) => ({ ...current, assistantAliases: (current.assistantAliases ?? []).filter((entry) => entry.from !== from) })); toast.success("Vergessen"); }}
+      onRemoveGap={(text) => update((current) => ({ ...current, assistantGaps: (current.assistantGaps ?? []).filter((entry) => entry.text !== text) }))} />}
     <section className="panel flex min-h-[60vh] flex-col p-4 sm:p-6" aria-label="Chat mit dem Finanz-Assistenten">
       <FinancialData className="flex flex-1 flex-col gap-4" aria-live="polite">
         <Bubble role="assistant" text={intro} />
@@ -456,6 +572,16 @@ export function FinanceAssistant() {
           </div>}
           {message.suggestions && !busy && message.id === messages.at(-1)?.id &&
             <QuickReplies items={message.suggestions} disabled={!!storageError} onPick={(text) => void send(undefined, text)} />}
+          {message.role === "assistant" && message.asked && !message.correcting && <div className="flex items-center gap-1 pl-11 text-2xs text-muted-foreground">
+            {message.feedback ? <span className="inline-flex items-center gap-1.5 px-1 py-1">
+              {message.feedback === "up" ? <ThumbsUp aria-hidden="true" className="size-3.5 text-primary" /> : <ThumbsDown aria-hidden="true" className="size-3.5" />}Danke für dein Feedback</span>
+              : <>
+                <button type="button" disabled={busy || !!storageError} onClick={() => giveFeedback(message, "up")} aria-label="Hilfreich" title="Hilfreich"
+                  className="rounded-md p-1.5 opacity-60 transition hover:bg-muted hover:opacity-100 focus-visible:opacity-100 disabled:opacity-30"><ThumbsUp aria-hidden="true" className="size-3.5" /></button>
+                <button type="button" disabled={busy || !!storageError} onClick={() => giveFeedback(message, "down")} aria-label="Nicht hilfreich" title="Nicht hilfreich – ich lerne daraus"
+                  className="rounded-md p-1.5 opacity-60 transition hover:bg-muted hover:opacity-100 focus-visible:opacity-100 disabled:opacity-30"><ThumbsDown aria-hidden="true" className="size-3.5" /></button>
+              </>}
+          </div>}
         </div>)}
         {busy && <Thinking />}
         <div ref={endRef} />

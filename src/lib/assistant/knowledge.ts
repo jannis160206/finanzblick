@@ -60,7 +60,7 @@ export function knowledgeTopics(input: string, names: string[] = [], loose = fal
 const filler = /^(?:was|wos|is|ist|sind|des|das|der|die|den|dem|ein|eine|einen|eigentlich|genau|denn|bedeutung|bedeutet|heißt|heisst|erklär\w*|erklaer\w*|mir|mal|bitte|kurz|nochmal|kannst|du|wie|funktioniert|funktionieren|versteht|man|unter|begriff|definition|meint|überhaupt|ueberhaupt|so|ne|eh|halt|weißt|weisst|kennst|sag|sagen|erzähl|erzaehl|über|ueber|von|zu|zum|zur|nach|schlag|such|im|internet|online|\?)$/;
 export const knowledgeQuestion = (input: string, names: string[] = []) => knowledgeTopics(input, names).length > 0;
 export const knowledgeListQuestion = (lower: string) =>
-  /was hast du (?:alles |schon |bisher |dazu ?)*gelernt|was hast du dir angeeignet|dein (?:wissen|gelerntes)|was weißt du (?:schon )?alles(?! über mich)|was weisst du (?:schon )?alles(?! ueber mich)|gelerntes wissen/.test(lower);
+  /was hast du (?:alles |schon |bisher |dazu ?)*gelernt|was hast du dir angeeignet|dein (?:wissen|gelerntes)|was weißt du (?:schon )?alles(?! über mich)|was weisst du (?:schon )?alles(?! ueber mich)|gelerntes wissen|was (?:kannst|verstehst) du (?:noch )?nicht|was hast du (?:noch )?nicht verstanden|wie (?:hast du dich|bist du) (?:weiter ?entwickelt|besser geworden)|was hast du (?:von mir )?gelernt/.test(lower);
 
 // Stored entries match by the asked term or the article title, so "ETF" and "Börsengehandelter Fonds" find the same entry.
 export function findKnowledge(entries: AssistantKnowledge[] = [], topic: string): AssistantKnowledge | undefined {
@@ -147,7 +147,10 @@ function followUpsFor(found: AssistantKnowledge[]): string[] {
 export function knowledgeList(state: AppState): Result {
   const entries = [...(state.assistantKnowledge ?? [])].sort((a, b) => b.at - a.at);
   const phrases = state.assistantPhrases ?? [];
-  if (!entries.length && !phrases.length) return {
+  const aliases = state.assistantAliases ?? [];
+  const gaps = (state.assistantGaps ?? []).filter((gap) => !gap.resolved).sort((a, b) => b.count - a.count);
+  const solved = (state.assistantGaps ?? []).filter((gap) => gap.resolved).length;
+  if (!entries.length && !phrases.length && !aliases.length && !gaps.length) return {
     text: "Bisher habe ich noch nichts selbst dazugelernt. Frag mich zum Beispiel „Was ist ein ETF?“; dann schlage ich es nach und merke es mir. " +
       "Formulierungen, die nur die KI verstanden hat, lerne ich auch nebenbei.",
     suggestions: ["Was ist ein ETF?", "Was bedeutet KESt?"],
@@ -156,9 +159,15 @@ export function knowledgeList(state: AppState): Result {
     detail: `gefragt als „${entry.topic}“ · ${learnedDate(entry.at)}${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`.slice(0, 300) }));
   if (phrases.length) lines.push({ label: `${phrases.length} gelernte Formulierung${phrases.length === 1 ? "" : "en"}`, tone: "good",
     detail: "verstehe ich jetzt sofort, ohne die KI zu fragen" });
+  for (const alias of aliases.slice(-8)) lines.push({ label: `„${alias.from}“ = „${alias.to}“`.slice(0, 200), tone: "good",
+    detail: `deine Bezeichnung${alias.hits ? ` · ${alias.hits}× genutzt` : ""}` });
+  if (solved) lines.push({ label: `${solved} anfangs unklare Frage${solved === 1 ? "" : "n"} gelöst`, tone: "good", detail: "durch deine Korrektur oder später nachgelernt" });
+  for (const gap of gaps.slice(0, 5)) lines.push({ label: `Noch offen: „${gap.text}“`.slice(0, 200), tone: "warn",
+    detail: `${gap.count}× gefragt · schreib „Nein, ich meinte …“, dann lerne ich es` });
   return {
     text: `Ich habe mir ${entries.length} Begriff${entries.length === 1 ? "" : "e"} aus dem Internet gemerkt` +
-      (phrases.length ? ` und ${phrases.length} deiner Formulierungen gelernt.` : ".") + " Alles liegt nur in deiner Datenbank; unter „Gedächtnis“ kannst du es einsehen und löschen.",
+      (phrases.length ? `, ${phrases.length} deiner Formulierungen gelernt` : "") + (aliases.length ? `, ${aliases.length} deiner eigenen Bezeichnungen übernommen` : "") +
+      "." + (gaps.length ? ` ${gaps.length} Frage${gaps.length === 1 ? " verstehe" : "n verstehe"} ich noch nicht; mit deiner Korrektur lerne ich sie.` : "") + " Alles liegt nur in deiner Datenbank; unter „Gedächtnis“ kannst du es einsehen und löschen.",
     card: { kind: "memory", title: "Was ich dazugelernt habe", lines: lines.slice(0, 40),
       note: "Wissen kommt aus der deutschsprachigen Wikipedia (CC BY-SA 4.0) und wird nach 90 Tagen beim nächsten Fragen aufgefrischt." },
     suggestions: ["Was ist ein ETF?", "Was bedeutet KESt?"],
