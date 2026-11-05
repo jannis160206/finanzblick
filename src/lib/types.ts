@@ -429,7 +429,8 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
   }).strict(),
   z.object({
     op: z.literal("memory_add"), text: z.string().trim().min(1).max(200),
-    key: z.enum(["buffer", "salaryDay", "note"]), value: z.number().min(0).max(10_000_000).optional(),
+    key: z.enum(["buffer", "salaryDay", "note", "reminder"]), value: z.number().min(0).max(10_000_000).optional(),
+    due: dateSchema.optional(),
   }).strict(),
   z.object({ op: z.literal("memory_delete"), memoryId: agentIdSchema }).strict(),
 ]);
@@ -443,7 +444,7 @@ const assistantLineSchema = z.object({
 }).strict();
 // Calculated result cards (answers, briefing, coach, depot, tax); every number comes from code.
 export const assistantCardSchema = z.object({
-  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes"]),
+  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes", "loan", "review"]),
   title: z.string().max(200),
   total: z.number().finite().optional(),
   lines: z.array(assistantLineSchema).max(40),
@@ -480,8 +481,9 @@ export const MAX_ASSISTANT_MESSAGES = 100;
 export const assistantMemorySchema = z.object({
   id: agentIdSchema,
   text: z.string().trim().min(1).max(200),
-  key: z.enum(["buffer", "salaryDay", "note"]),
+  key: z.enum(["buffer", "salaryDay", "note", "reminder"]),
   value: z.number().min(0).max(10_000_000).optional(),
+  due: dateSchema.optional(),
   at: z.number().nonnegative(),
 }).strict();
 export type AssistantMemory = z.infer<typeof assistantMemorySchema>;

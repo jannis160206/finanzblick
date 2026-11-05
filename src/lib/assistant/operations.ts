@@ -236,14 +236,14 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
     }
     case "memory_add": {
       const memory = state.assistantMemory ?? [];
-      const replaced = operation.key === "note" ? undefined : memory.find((entry) => entry.key === operation.key);
+      const replaced = operation.key === "note" || operation.key === "reminder" ? undefined : memory.find((entry) => entry.key === operation.key);
       undo.memory ??= [];
       if (replaced) undo.memory.push({ id: replaced.id, before: replaced });
       const entry = assistantMemorySchema.parse({ id: context.id(), text: operation.text, key: operation.key,
-        ...(operation.value !== undefined ? { value: operation.value } : {}), at: context.now });
+        ...(operation.value !== undefined ? { value: operation.value } : {}), ...(operation.due ? { due: operation.due } : {}), at: context.now });
       undo.memory.push({ id: entry.id, before: null });
       if (!replaced && memory.length >= MAX_ASSISTANT_MEMORY) throw new OperationError(`Ich kann mir höchstens ${MAX_ASSISTANT_MEMORY} Dinge merken. Lösch zuerst etwas.`);
-      diffs.push({ label: "Gedächtnis", before: replaced?.text ?? none, after: entry.text });
+      diffs.push({ label: entry.key === "reminder" ? "Erinnerung" : "Gedächtnis", before: replaced?.text ?? none, after: entry.text });
       return { ...state, assistantMemory: [...memory.filter((item) => item.id !== replaced?.id), entry] };
     }
     case "memory_delete": {

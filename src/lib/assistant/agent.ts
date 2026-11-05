@@ -8,6 +8,7 @@ import { financialCheck } from "./check";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
 import { accountBalances, amexQuestion, amexSettlement, monthBudget } from "./accounts";
 import { explainDashboard } from "./explain";
+import { loanAnswer, parseReminder, reminderList, reminderListQuestion, reminderRequest, yearReview } from "./extras";
 import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
 import { knowledgeAnswer, knowledgeList, knowledgeListQuestion } from "./knowledge";
@@ -240,8 +241,10 @@ function forget({ state, asOf }: Context, text: string): AgentResult {
   if (!memory.length) return { text: "Ich habe mir noch nichts gemerkt." };
   const lower = text.toLowerCase();
   const all = /\balles\b/.test(lower);
-  const byKey = /puffer/.test(lower) ? memory.filter((entry) => entry.key === "buffer") : /gehalt/.test(lower) ? memory.filter((entry) => entry.key === "salaryDay") : [];
-  const byText = byKey.length ? byKey : all ? memory : [matchName(text.replace(/vergiss|vergessen|bitte|dass|das|den|die/gi, " "), memory, (entry) => entry.text)].filter((entry) => entry !== undefined);
+  const byKey = /puffer/.test(lower) ? memory.filter((entry) => entry.key === "buffer") : /gehalt/.test(lower) ? memory.filter((entry) => entry.key === "salaryDay")
+    : /erinnerungen\b/.test(lower) && all ? memory.filter((entry) => entry.key === "reminder") : [];
+  const pool = /erinnerung/.test(lower) ? memory.filter((entry) => entry.key === "reminder") : memory;
+  const byText = byKey.length ? byKey : all ? memory : [matchName(text.replace(/\b(?:vergiss|vergessen|bitte|dass|das|den|die|erinnerung(?:en)?|lösch\w*|an|zu)\b/gi, " "), pool, (entry) => entry.text)].filter((entry) => entry !== undefined);
   if (!byText.length) return { text: `Was soll ich vergessen? Gemerkt habe ich: ${memory.map((entry) => `„${entry.text}“`).join(", ")}.` };
   return previewChange(state, byText.slice(0, 20).map((entry) => ({ op: "memory_delete" as const, memoryId: entry.id })), byText.length > 1 ? `${byText.length} Einträge vergessen` : "Eintrag vergessen", asOf);
 }
@@ -305,6 +308,9 @@ function help(): AgentResult {
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
     { label: "Live aus dem Internet", detail: "„Wie hoch ist die Inflation?“, „Welche Zinsen fürs Sparkonto?“, „3.000 € in Yen“" },
     { label: "Begriffe erklären und dazulernen", detail: "„Was ist ein ETF?“, „Was bedeutet KESt?“, „Was hast du gelernt?“" },
+    { label: "Kredit durchrechnen", detail: "„Kredit 10.000 € auf 5 Jahre zu 6 %“, „Laptop in 12 Raten“" },
+    { label: "Erinnerungen", detail: "„Erinner mich am 1. Dezember, die Kfz-Versicherung zu kündigen“" },
+    { label: "Jahresrückblick", detail: "„Wie war mein Jahr 2026?“" },
   ];
   return { text: "Gern! Ich kenne deine Buchungen, Sparziele und geplanten Ausgaben und kann damit rechnen, planen und Dinge für dich einstellen. Am besten fragst du einfach drauflos:",
     card: { kind: "answer", title: "Womit ich dir helfen kann", lines, note: "Alle Zahlen rechnet der Code nach. Geändert wird nur, wenn du bestätigst." },
@@ -344,6 +350,13 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "undo": return undo(context);
     case "explain": return explainDashboard(state, dashboard, text);
     case "help": return help();
+    case "loan": return loanAnswer(text, dashboard);
+    case "reminder": {
+      if (reminderListQuestion(text.toLowerCase()) && !reminderRequest(text.toLowerCase())) return reminderList(state, asOf);
+      const operation = parseReminder(text, asOf);
+      return typeof operation === "string" ? { text: operation } : previewChange(state, [operation], "Erinnerung anlegen", asOf);
+    }
+    case "review": return yearReview(state, text, asOf);
     default: return help();
   }
 }

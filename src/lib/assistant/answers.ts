@@ -6,6 +6,7 @@ import { detectDuplicateCharges, detectSubscriptions, forecastMonth, ledger } fr
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { matchesTransactionSearch, normalizeSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, Transaction } from "@/lib/types";
+import { reminderLines } from "./extras";
 
 type Line = AssistantCard["lines"][number];
 const DAY_MS = 86_400_000;
@@ -462,6 +463,8 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
     lines.push({ label: `Prognose ${monthLabel(forecast.month)}`, value: forecast.projectedSpending,
       detail: `über deinem Schnitt von ${currency(forecast.averageSpending)}`, tone: "warn" });
   const reviews = (state.reviewQueue ?? []).filter((item) => item.kind === "booking").length;
+  const dueReminders = reminderLines(state, today, end);
+  lines.unshift(...dueReminders);
   if (reviews) lines.push({ label: `${plural(reviews, "Buchung wartet", "Buchungen warten")} auf Prüfung`, tone: "info" });
   if (salaryDay) {
     const day = Number(today.slice(8, 10));
@@ -478,6 +481,7 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
     detail: "Einnahmen minus Fixkosten, Amex und Plan sind negativ", tone: "bad" });
   const parts = [
     due.length ? `diese Woche ${due.length === 1 ? "ist" : "sind"} ${currency(dueTotal)} fällig` : "diese Woche ist nichts Größeres fällig",
+    ...(dueReminders.length ? [`${plural(dueReminders.length, "Erinnerung ist", "Erinnerungen sind")} dran`] : []),
     ...(amexShortfall > 0.5 ? [`für die Amex fehlen noch ${currency(amexShortfall)}`] : []),
     ...(surplus !== undefined && surplus < 0 ? [`der Monat liegt ${currency(-surplus)} im Minus`] : []),
     ...increases.slice(0, 2).map((item) => `${item.merchant} wurde teurer`),

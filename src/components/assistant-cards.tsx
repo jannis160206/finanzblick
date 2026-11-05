@@ -18,7 +18,7 @@ const toneClass = {
 const kindLabel: Record<AssistantCard["kind"], string> = {
   answer: "Antwort", briefing: "Wochenüberblick", check: "Finanz-Check", coach: "Spar-Coach", depot: "Depot-Rechner", tax: "Arbeitnehmerveranlagung",
   homeoffice: "Home-Office-Rechner", homeoffice_result: "Home-Office · Arbeitnehmerveranlagung",
-  rule: "Regel-Vorschau", memory: "Gedächtnis", changes: "Änderungen",
+  rule: "Regel-Vorschau", memory: "Gedächtnis", changes: "Änderungen", loan: "Kreditrechner", review: "Jahresrückblick",
 };
 
 function Bookings({ ids, transactions }: { ids: string[]; transactions: Map<string, Transaction> }) {

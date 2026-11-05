@@ -1,6 +1,7 @@
 import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
 import { checkQuestion } from "./check";
+import { loanQuestion, reminderListQuestion, reminderRequest, reviewQuestion } from "./extras";
 import { detectAction, findExtra } from "./intent";
 import { knowledgeListQuestion, knowledgeQuestion } from "./knowledge";
 import { marketQuestion } from "./market";
@@ -9,7 +10,8 @@ import { normalizeMessage } from "./normalize";
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "rule",
-  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "explain", "help", "ask",
+  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
+  "explain", "help", "ask",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -39,6 +41,9 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   knowledge: "allgemeinen Finanzbegriff erklären und dafür im Internet nachschlagen (z. B. „Was ist ein ETF?“, „Was bedeutet KESt?“, „Unterschied zwischen Tagesgeld und Festgeld“) oder zeigen, was der Assistent dazugelernt hat",
   tax: "absetzbare Buchungen für die Arbeitnehmerveranlagung (Österreich) sammeln",
   homeoffice: "ausrechnen, was man für Home-Office-Sachen (Laptop, Bildschirm, Bürostuhl, Schreibtisch) beim Steuerausgleich zurückbekommt",
+  loan: "Kredit-, Leasing- oder Ratenrechner: Monatsrate, Zinsen gesamt und Vergleich mit Ansparen (z. B. „Kredit 10.000 € auf 5 Jahre zu 6 %“)",
+  reminder: "Erinnerung an einem Datum anlegen oder Erinnerungen anzeigen (z. B. „Erinner mich am 1. Dezember, die Kfz-Versicherung zu kündigen“)",
+  review: "Jahresrückblick: Einnahmen, Ausgaben, Sparquote, Top-Kategorien und Vergleich zum Vorjahr (z. B. „Wie war mein Jahr 2026?“)",
   explain: "erklären, wie das Finanzdashboard funktioniert (Seiten, Sparziele, Pockets, Import, Monatsplan, Einstellungen) und was man per Chat einstellen kann",
   help: "erklären, was der Assistent kann",
   ask: "jede andere Frage zu den eigenen Finanzen, die kein anderes Werkzeug abdeckt",
@@ -95,6 +100,8 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   const hasAmount = /\d/.test(lower);
   if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:geändert|gemacht)|protokoll/.test(lower)) return "changes";
+  if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
+  if (reviewQuestion(lower)) return "review";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
@@ -103,6 +110,7 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
     !/\bbis\b.*\b(?:sparen|zurücklegen)\b|leisten|leistbar|reicht|geht sich/.test(lower)) return "remember";
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
+  if (loanQuestion(lower)) return "loan";
   // Definition questions ("Was ist ein ETF?") are looked up, but never questions about own data or the dashboard.
   // Live values (inflation, key rate, exchange rate) stay with the market tool.
   const termQuestion = knowledgeQuestion(text, names);
