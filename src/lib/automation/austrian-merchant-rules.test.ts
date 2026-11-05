@@ -176,7 +176,6 @@ describe("expanded Austrian public purpose references", () => {
     "NYX MyElite",
     "Kärnten Stand",
     "KaffeeMacher",
-    "CTS Eventima",
     "Kinguindigi",
     "OCH Auto Dus",
     "GeneralLogi",
@@ -191,6 +190,13 @@ describe("expanded Austrian public purpose references", () => {
       ).toBe(true);
     },
   );
+
+  it("books an Eventim fragment by its ticket keyword without an identity", () => {
+    expect(index.match("CTS Eventima").merchant).toBeUndefined();
+    const result = enrichTransaction(booking("CTS Eventima"), index);
+    expect(result).toMatchObject({ category: "Entertainment", requires_manual_review: false });
+    expect(result.merchantId).toBeUndefined();
+  });
 
   it("does not change manual corrections or promote fuzzy and conflicting identities", () => {
     const locked = {

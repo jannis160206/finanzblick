@@ -769,6 +769,9 @@ interface AliasEntry {
   text: string;
   merchants: Set<Merchant>;
   ambiguous?: true;
+  // The single curated chain among same-named public map copies; it can prove
+  // a purpose, never the outlet identity.
+  curated?: Merchant;
 }
 
 function bigrams(text: string): Set<string> {
@@ -933,6 +936,15 @@ export class MerchantIndex {
     for (const entry of this.exact.values()) {
       if (entry.merchants.size > 1) {
         entry.ambiguous = true;
+        // A curated chain outranks public map copies of the same brand name
+        // (e.g. OSM "OBI" tagged as hardware repair) for the purpose only,
+        // unless a map entry names a different brand identity.
+        const curated = [...entry.merchants].filter((merchant) => merchant.source === "local");
+        const name = curated.length === 1 ? normalizeMerchantText(curated[0].canonicalName) : undefined;
+        if (name && [...entry.merchants].every((merchant) => merchant === curated[0] ||
+          (merchant.source === "osm" && normalizeMerchantText(merchant.canonicalName) === name &&
+            (!merchant.wikidataId || !curated[0].wikidataId || merchant.wikidataId === curated[0].wikidataId))))
+          entry.curated = curated[0];
       }
       if (entry.text.length < 6) continue;
       for (const gram of bigrams(entry.text)) {
@@ -993,6 +1005,30 @@ export class MerchantIndex {
       (!purposeCompatible && !matches.every((merchant) => merchant.defaultCategory === category))) return;
     return { category, needsPurpose: matches.some((merchant) => merchant.requiresCategoryEvidence),
       names: matches.map((merchant) => merchant.canonicalName) };
+  }
+
+  /** Purpose of the one curated chain behind an otherwise ambiguous leading name. */
+  curatedChainCategory(text: string): { category: Category; needsPurpose: boolean; name: string } | undefined {
+    if (text.length > MAX_INPUT) return;
+    const normalized = normalizeMerchantDescriptor(text);
+    if (!normalized) return;
+    const tokens = normalized.split(" ");
+    if (tokens.length > MAX_TOKENS) return;
+    let chain: Merchant | undefined;
+    let leading = false;
+    for (const phrase of windows(tokens)) {
+      const entry = this.exact.get(phrase);
+      if (!entry) continue;
+      const merchant = entry.curated ?? (entry.merchants.size === 1 ? [...entry.merchants][0] : undefined);
+      if (!merchant || (chain && chain !== merchant)) return;
+      chain = merchant;
+      if (entry.curated && (normalized === phrase || normalized.startsWith(`${phrase} `))) leading = true;
+    }
+    if (!chain || !leading || chain.defaultCategory === null) return;
+    for (const { merchant, pattern } of this.regex)
+      if (merchant !== chain && pattern.test(normalized)) return;
+    return { category: chain.defaultCategory, needsPurpose: !!chain.requiresCategoryEvidence,
+      name: chain.canonicalName };
   }
 
   match(text: string, preferredId?: string): MerchantMatch {

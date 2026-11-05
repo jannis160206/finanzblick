@@ -636,3 +636,51 @@ it("round-trips worker merchant IDs, locks and review flags through Excel withou
     merchantMatch: row.merchantMatch,
   });
 });
+
+it("derives a curated chain's purpose over same-named map entries without guessing the outlet", () => {
+  const curated = merchantSchema.parse({
+    id: "local-kette", canonicalName: "Kettenmarkt", defaultCategory: "Drogerie", aliases: [],
+    regexPatterns: [], region: "AT", source: "local", updatedAt: 1,
+  });
+  const branch = (id: string, defaultCategory: "Shopping" | null) => merchantSchema.parse({
+    ...curated, id, defaultCategory, source: "osm", license: "ODbL-1.0",
+    attribution: "© OpenStreetMap contributors",
+  });
+  const chain = new MerchantIndex([curated, branch("osm-1", "Shopping"), branch("osm-2", null)]);
+  expect(chain.match("Kettenmarkt").requiresManualReview).toBe(true);
+  const result = enrichTransaction(booking("Kettenmarkt Filiale 12"), chain);
+  expect(result).toMatchObject({
+    category: "Drogerie", requires_manual_review: false,
+    automaticCategoryEvidence: { method: "merchant", category: "Drogerie" },
+  });
+  expect(result.merchantId).toBeUndefined();
+  const rival = merchantSchema.parse({ ...curated, id: "local-rival", defaultCategory: "Shopping" });
+  const otherBrand = { ...branch("osm-3", null), wikidataId: "Q123" };
+  for (const catalogue of [[curated, rival], [{ ...curated, wikidataId: "Q1" }, otherBrand]])
+    expect(enrichTransaction(booking("Kettenmarkt"), new MerchantIndex(catalogue)))
+      .toMatchObject({ requires_manual_review: true });
+});
+
+it("uses specific purpose keywords as evidence and reviews conflicting account history", () => {
+  const empty = new MerchantIndex([]);
+  for (const [description, category] of [
+    ["Post Pp 9503", "Porto & Versand"], ["APOTHEKE.AT DUIVEN", "Gesundheit"],
+    ["WWW.OEBB.AT TICKET FOR WIEN", "Öffentliche Verkehrsmittel"],
+    ["PARKHAUS CITY ARKADEN KLAGENFURT", "Parken & Maut"],
+    ["HOTEL ON BOOKING.COM AMSTERDAM", "Urlaub"], ["SWISS Intl Air Lines LJUBLJANA", "Urlaub"],
+  ] as const)
+    expect(enrichTransaction(booking(description), empty)).toMatchObject({
+      category, requires_manual_review: false,
+      automaticCategoryEvidence: { method: "purpose", category },
+    });
+  expect(enrichTransaction(booking("Post Pp 9503"), empty, undefined, () => "Geschenke & Spenden"))
+    .toMatchObject({ requires_manual_review: true });
+  expect(enrichTransaction(booking("Post Pp 9503"), empty, undefined, () => "Porto & Versand"))
+    .toMatchObject({ category: "Porto & Versand", requires_manual_review: false });
+  expect(enrichTransaction(booking("Kartenzahlung 9500"), empty)).toMatchObject({ requires_manual_review: true });
+});
+
+it("does not book small gas-station amounts as fuel", () => {
+  const shell = { ...booking("Shell Furnitz 9586"), amount: -4.48 };
+  expect(enrichTransaction(shell, index).category).not.toBe("Tanken");
+});

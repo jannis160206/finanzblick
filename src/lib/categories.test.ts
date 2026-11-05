@@ -76,7 +76,9 @@ describe("structured categories", () => {
     ["Cineplexx", "Entertainment"], ["Steam Games", "Entertainment"], ["Nintendo", "Entertainment"],
     ["Fitinn", "Sport & Fitness"], ["Decathlon", "Sport & Fitness"], ["Udemy", "Bildung"],
     ["Fressnapf", "Haustiere"], ["Caritas Spende", "Geschenke & Spenden"], ["Apotheke", "Gesundheit"],
-    ["dm Drogerie", "Drogerie"], ["IKEA", "Wohnen & Haushalt"], ["OEBB Ticket", "Mobilität"],
+    ["dm Drogerie", "Drogerie"], ["IKEA", "Wohnen & Haushalt"], ["OEBB Ticket", "Öffentliche Verkehrsmittel"],
+    ["WWW.OEBB.AT TICKET FOR WIEN", "Öffentliche Verkehrsmittel"], ["Wiener Linien", "Öffentliche Verkehrsmittel"],
+    ["City Parkhaus", "Parken & Maut"], ["APCOA Parking", "Parken & Maut"], ["ASFINAG Vignette", "Parken & Maut"],
     ["Friseur", "Körperpflege"], ["Allianz Haftpflicht", "Versicherungen"], ["A1 Telekom", "Telefon & Internet"],
     ["AMEX Monatsgebühr", "Bankgebühren"],
     ["G2A.COM", "Guthabenkarten"], ["Guthabenkarte", "Guthabenkarten"], ["Apple-Guthaben", "Guthabenkarten"],
@@ -130,7 +132,7 @@ describe("structured categories", () => {
     expect(classify({ ...booking("G2A", "Shopping"), categoryOverride: true }).category).toBe("Shopping");
     for (const [description, category] of [
       ["Thalia", "Bildung"], ["Udemy", "Bildung"], ["Miete", "Wohnen & Haushalt"],
-      ["Stromrechnung", "Wohnen & Haushalt"], ["OEBB", "Mobilität"], ["Parkgebühr", "Mobilität"],
+      ["Stromrechnung", "Wohnen & Haushalt"], ["OEBB", "Öffentliche Verkehrsmittel"], ["Parkgebühr", "Parken & Maut"],
       ["Shell", "Mobilität"], ["Foodora", "Lieferdienste"],
     ]) expect(classify(booking(description)).category).toBe(category);
   });

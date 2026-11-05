@@ -50,12 +50,17 @@ export function unnamedFuelPurpose(
   );
 }
 
+// Below this, a gas-station card payment is usually coffee, snacks, a car wash or
+// parking — not fuel. Such bookings stay open instead of guessing "Tanken".
+export const MIN_FUEL_AMOUNT = 15;
+
 export function hasRecurringFuelEvidence(
   row: Pick<Transaction, "description"> &
     Partial<
-      Pick<Transaction, "rawDescription" | "sourceCategory" | "rawDetails">
+      Pick<Transaction, "rawDescription" | "sourceCategory" | "rawDetails" | "amount">
     >,
 ): boolean {
+  if (row.amount !== undefined && Math.abs(row.amount) < MIN_FUEL_AMOUNT) return false;
   const text = [
     row.description,
     row.rawDescription,

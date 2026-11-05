@@ -35,6 +35,7 @@ import {
 } from "@/lib/bank-operation";
 import { compatiblePurchaseCategories, isDutyFreePurchase, purchasePurpose, type PurchasePurpose } from "@/lib/booking-purpose";
 import { reconcileLedgerReviewQueue } from "@/lib/import/review";
+import { isTravelMerchant } from "@/lib/shared-holiday";
 export { isAutomationLocked } from "./locks";
 
 function withoutMerchantIdentity(row: Transaction): Transaction {
@@ -58,6 +59,33 @@ type CategoryInference = {
   category: Category;
   method: "history" | "source";
 };
+
+// Purposes a descriptor keyword proves on its own (measured against confirmed
+// bookings). Broad keywords — a gas station (snack, parking or fuel), a Trafik,
+// dining by time of day — still need a merchant, an MCC or the account history.
+const specificKeywordPurposes: ReadonlySet<Category> = new Set<Category>([
+  "Drogerie", "Guthabenkarten", "Wohnen & Haushalt", "Porto & Versand",
+  "Geschenke & Spenden", "Entertainment", "Gesundheit", "Öffentliche Verkehrsmittel",
+  "Parken & Maut", "Abonnements", "Sport & Fitness", "Bildung", "Haustiere",
+  "Körperpflege", "Versicherungen", "Lieferdienste", "Leasing",
+]);
+
+function keywordPurpose(
+  text: string,
+  known: Category | undefined,
+  purpose: PurchasePurpose | undefined,
+  source: Category | undefined,
+): Category | undefined {
+  if (known === "Prüfen" || purpose?.kind === "conflict") return;
+  const category = known && specificKeywordPurposes.has(known)
+    ? known
+    : (!known || known === "Urlaub") && isTravelMerchant(text) ? "Urlaub" : undefined;
+  if (!category) return;
+  if (purpose?.kind === "matched" && !compatiblePurchaseCategories(purpose.category, category)) return;
+  if (source && !["Prüfen", "Sonstiges", category].includes(source) &&
+    !compatiblePurchaseCategories(source, category)) return;
+  return category;
+}
 
 // Account history first, then the bank's or import's own purpose category.
 // Contradicting merchant or purpose signals keep the booking open.
@@ -349,14 +377,59 @@ export function enrichTransaction(
         },
         requires_manual_review: false,
       });
+    const history = refund ? undefined : resolveHistory?.(row);
     const inferred = refund
       ? undefined
       : inferCategory({
           known,
           purpose,
-          history: resolveHistory?.(row),
+          history,
           source: match.method === "none" ? sourcePurpose : undefined,
         });
+    const keywordCandidate = refund || inferred?.method === "history"
+      ? undefined
+      : keywordPurpose(sourceText, known, purpose, sourcePurpose);
+    if (keywordCandidate && history && history !== keywordCandidate)
+      return { ...row, requires_manual_review: true };
+    const keyword = keywordCandidate;
+    if (keyword)
+      return transactionSchema.parse({
+        ...withoutMerchantIdentity(row),
+        category: keyword,
+        categoryOverride: true,
+        automaticCategoryEvidence: {
+          method: "purpose",
+          category: keyword,
+          ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+        },
+        requires_manual_review: false,
+      });
+    const chain = refund || lunchPurpose || inferred?.method === "history" || match.method !== "exact"
+      ? undefined
+      : index.curatedChainCategory(matchingText);
+    const fits = (category: Category | undefined) => !category ||
+      ["Prüfen", "Sonstiges"].includes(category) ||
+      (chain !== undefined && compatiblePurchaseCategories(category, chain.category));
+    if (chain && known !== "Prüfen" && fits(known) && fits(sourcePurpose) &&
+      fits(purpose?.kind === "matched" ? purpose.category : undefined) &&
+      fits(classified.category) &&
+      (!chain.needsPurpose || purpose?.kind === "matched" || known === chain.category) &&
+      (chain.category !== "Tanken" || purpose?.kind === "matched" || hasRecurringFuelEvidence(row)) &&
+      !qualifiedCompany(sourceText, chain.name)) {
+      const category = purpose?.kind === "matched" ? purpose.category : chain.category;
+      return transactionSchema.parse({
+        ...withoutMerchantIdentity(row),
+        category,
+        categoryOverride: true,
+        automaticCategoryEvidence: {
+          method: purpose?.kind === "matched" ? purpose.method : "merchant",
+          category,
+          ...(purpose?.kind === "matched" && purpose.mcc ? { mcc: purpose.mcc } : {}),
+          ...(holidayDutyFree ? { budgetExcluded: true } : {}),
+        },
+        requires_manual_review: false,
+      });
+    }
     if (inferred)
       return transactionSchema.parse({
         ...withoutMerchantIdentity(row),
@@ -436,11 +509,14 @@ export function enrichTransaction(
     lunchPurpose ??
     amazonPurpose ??
     (purpose?.kind === "matched" ? purpose.category : recurringFuel ? "Tanken" : defaultCategory);
+  const keywordConfirmed =
+    known !== undefined && known === defaultCategory && specificKeywordPurposes.has(known);
   const evidencedPurpose =
     lunchPurpose !== undefined ||
     amazonPurpose !== undefined ||
     purpose?.kind === "matched" ||
     recurringFuel ||
+    keywordConfirmed ||
     (amazonIdentity && known === "Shopping");
   if (
     !refund &&
@@ -448,12 +524,19 @@ export function enrichTransaction(
       (defaultCategory === null || match.merchant.requiresCategoryEvidence)) ||
       ((defaultCategory === "Tanken" || eniIdentity) && !recurringFuel && purpose?.kind !== "matched"))
   ) {
-    const inferred = inferCategory({
+    const history = resolveHistory?.(row);
+    const historyOrSource = inferCategory({
       known,
       purpose,
-      history: resolveHistory?.(row),
+      history,
       source: sourcePurpose,
     });
+    const keyword = historyOrSource?.method === "history" || defaultCategory !== null
+      ? undefined
+      : keywordPurpose(sourceText, known, purpose, sourcePurpose);
+    const inferred: { category: Category; method: "history" | "source" | "purpose" } | undefined =
+      keyword ? (history && history !== keyword ? undefined : { category: keyword, method: "purpose" })
+        : historyOrSource;
     const fuelGuard =
       (defaultCategory === "Tanken" || eniIdentity) && inferred?.category === "Tanken";
     if (inferred && !fuelGuard)

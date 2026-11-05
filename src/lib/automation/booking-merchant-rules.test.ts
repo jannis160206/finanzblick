@@ -121,7 +121,6 @@ describe("booking-derived public merchant references", () => {
   });
 
   it.each([
-    "G2A.com",
     "Glovo",
     "Transak",
     "Coral Gas Cyprus",
@@ -137,6 +136,14 @@ describe("booking-derived public merchant references", () => {
       });
     },
   );
+
+  it("books G2A.com as a gift card once its own keyword proves the purpose", () => {
+    expect(enrichTransaction(booking("G2A.com"), index)).toMatchObject({
+      merchantId: expect.any(String),
+      category: "Guthabenkarten",
+      requires_manual_review: false,
+    });
+  });
 
   it.each([
     "Hotspot",

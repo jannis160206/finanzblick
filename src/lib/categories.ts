@@ -51,7 +51,9 @@ const suggestions: [RegExp, Category][] = [
   [/\bg2a\b|\bguthabenkarten?\b|\b(?:apple|itunes)[\s-]*guthaben\b|\bpaysafecard\b/i, "Guthabenkarten"],
   [/\b(?:dhl|dpd|gls|ups|fedex)\b|(?:^|\W)(?:österreichische|oesterreichische|deutsche|schweizer(?:ische)?)\s+post\b|\bpost\s*(?:ag|filiale)\b|\bpost\.(?:at|de|ch)\b|\bhermes\s*(?:paket|versand|germany)|\b(?:briefmarken?|paketmarken?|portogeb[uü]hr|paketversand)\b|^\s*post(?=\s|$)/i, "Porto & Versand"],
   [/\bikea\b|\bmömax\b|\bmoemax\b|\bxxxlutz\b|\bhornbach\b|\bobi\b|\bbauhaus\b|\bmiete\b|stromrechnung|heizkosten/i, "Wohnen & Haushalt"],
-  [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\buber\b(?!\s*eats\b)|\btaxi\b|parkgeb[uü]hr|\bparken\b/i, "Mobilität"],
+  [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\bpostbus\b|wiener\s*linien|graz\s*linien|\bdeutsche\s*bahn\b|\btrenitalia\b|\bregiojet\b|\bsbb\s*(?:cff|ticket|app)\b/i, "Öffentliche Verkehrsmittel"],
+  [/\bpark(?:haus|garage|platz|deck|automat|ticket|geb[uü]hr|sheriff)\w*|\bparken\b|\bapcoa\b|\bcontipark\b|\beasypark\b|handy\s*parken|\bparkster\b|\basfinag\b|\bvignette\b|\bmaut(?:stelle)?\b/i, "Parken & Maut"],
+  [/\buber\b(?!\s*eats\b)|\btaxi\b/i, "Mobilität"],
 ];
 export function suggestCategory(text: string): Category | undefined {
   const matches = new Set(suggestions.filter(([pattern]) => pattern.test(text)).map(([, category]) => category));

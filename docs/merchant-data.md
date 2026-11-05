@@ -6,6 +6,22 @@ does not include statements, balances, transactions, account identifiers, or
 learned user categories. HTTP requests never trigger remote imports. The production
 worker periodically updates bounded public catalogue tiles while idle.
 
+## Import accuracy pass (2026-10-29)
+
+Measured against the owner's confirmed bookings (cold start, no rules or history):
+automatic coverage of all spending rose from about 1 % to 66 % at 97 % precision;
+with history and rules, first-seen descriptors reach 96 % precision.
+
+- A single curated chain (`source: "local"`) behind same-named OSM copies proves
+  the chain's purpose, not the outlet identity, unless an OSM copy carries a
+  different Wikidata ID (`MerchantIndex.curatedChainCategory`).
+- Specific descriptor keywords count as purpose evidence (Drogerie, Gesundheit,
+  Porto & Versand, Guthabenkarten, Entertainment, Öffentliche Verkehrsmittel,
+  Parken & Maut, airlines/booking portals → Urlaub, …). Broad keywords (gas
+  stations, Trafik, dining) still need a merchant, an MCC or history. Account
+  history that disagrees with a keyword keeps the booking in review.
+- Gas-station amounts below 15 € are never fuel evidence (snacks, parking).
+
 ## Source/purpose correction pass (2026-10-13)
 
 New uploads and historical bookings use the same categorization pipeline. Explicit
