@@ -4,7 +4,7 @@ import { bookingRequest } from "./bookings";
 import { checkQuestion } from "./check";
 import { loanQuestion, reminderListQuestion, reminderRequest, reviewQuestion } from "./extras";
 import { detectAction, findExtra } from "./intent";
-import { knowledgeListQuestion, knowledgeQuestion } from "./knowledge";
+import { knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
 import { marketQuestion } from "./market";
 import { normalizeMessage } from "./normalize";
 
@@ -129,10 +129,10 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
   const known = mentionsName(text, names);
   const hasAmount = /\d/.test(lower);
   if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
-  if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:geändert|gemacht)|protokoll/.test(lower)) return "changes";
+  if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:\S+ ){0,2}(?:geändert|gemacht|umgestellt)|protokoll/.test(lower)) return "changes";
   if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
   if (reviewQuestion(lower)) return "review";
-  if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
+  if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir (?:\S+ ){0,3}gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
   if (/\bvergiss\b|vergessen/.test(lower) && !/vergiss nicht/.test(lower)) return "forget";
@@ -148,12 +148,15 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
   if (termQuestion && !/inflation|teuerung|preissteigerung|kaufkraft|wechselkurs|\bkurs\b|leitzins|einlagesatz|zinsniveau|^(?:was|wie) (?:sind|ist) (?:die )?(?:aktuellen )?zinsen/.test(lower)) return "knowledge";
   if (marketQuestion(lower)) return "market";
   if (termQuestion) return "knowledge";
+  // Casual term questions: "etf was is des eigentlich", "kest bedeutung".
+  if (!hasAmount && lower.split(" ").length <= 6 && /\b(?:was|wos) (?:is|ist|isn) (?:des|das)\b|\bbedeutung\b|\bdefinition\b/.test(lower) &&
+    knowledgeTopics(text, names, true).length) return "knowledge";
   if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer/.test(lower)) return "tax";
   if (/\betfs?\b|\bdepot\b|investier|aktien|zinseszins|\bsparplan\b|\bmsci\b|\brendite\b|\bfonds\b|vanguard|ishares/.test(lower) ||
     /\b(?:anlegen|veranlagen|anleg)\b/.test(lower) && /\d+\s*jahre?n?\b/.test(lower) && !/sparziel|\bziel\b|\bbis\b/.test(lower)) return "depot";
   if (/wochenüberblick|wochenueberblick|überblick|ueberblick|was steht (?:an|diese woche)|was ist (?:diese woche )?fällig|briefing|was gibt'?s neues|zusammenfassung der woche|status/.test(lower) &&
     !/\b(?:im|in|seit)\s+(?:jänner|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(lower)) return "briefing";
-  if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:[\w€.,]+ ){0,3}(?:ein)?sparen|einsparen|einzusparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach|wo (?:kann|könnte) ich (?:noch )?(?:was |etwas )?(?:ein)?sparen|\b(?:kürzen|kuerzen|zurückschrauben|einschränken)\b|wo spare ich (?:am besten|am ehesten)|wo (?:kann|könnte|soll|sollte) ich (?:am ehesten |am besten )?(?:ansetzen|reduzieren)/.test(lower) &&
+  if (/mehr (?:geld )?(?:im monat )?(?:sparen|zur seite|übrig)|wo kann ich (?:[\w€.,]+ ){0,4}(?:ein)?sparen|einsparen|einzusparen|sparpotenzial|spartipps?|weniger ausgeben|kosten senken|spar-?coach|wo (?:kann|könnte) ich (?:noch )?(?:was |etwas )?(?:ein)?sparen|\b(?:kürzen|kuerzen|zurückschrauben|einschränken)\b|wo spare ich (?:am besten|am ehesten)|wo (?:kann|könnte|soll|sollte) ich (?:am ehesten |am besten )?(?:ansetzen|reduzieren)/.test(lower) &&
     !/\b(?:rate|sparziel|ziel)\b.*\bkürzen\b/.test(lower)) return "coach";
   if (strictRule.test(lower) || looseRule.test(lower) && !known && !/\d+\s*(?:€|euro)/.test(lower)) return "rule";
   if (comparePattern.test(lower) && (periodWords.test(lower) || /ausgab|ausgegeben|monat/.test(lower)) && !known &&

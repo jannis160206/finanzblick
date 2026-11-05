@@ -229,4 +229,17 @@ npm run ai:agent -- "Wie viel habe ich im Oktober für Lebensmittel ausgegeben?"
 npm run ai:agent            # interaktiv, Ende mit leerer Zeile oder exit
 ```
 
-Der Agent ändert Daten nur, wenn man es ausdrücklich verlangt.
+Der Agent ändert Daten nur, wenn man es ausdrücklich verlangt. Vor jedem schreibenden Werkzeug fragt er interaktiv nach (`j/n`); im Einmal-Modus braucht es dafür `--yes`, sonst wird die Änderung abgelehnt.
+
+## Schutz vor versteckten Anweisungen
+
+Buchungstexte, Händlernamen und Web-Inhalte (Wikipedia, Wikidata, OSM) gelten als reine Daten. `src/lib/ai/untrusted.ts` entfernt daraus unsichtbare Zeichen, Chat-Template-Tokens und Befehle wie „Ignoriere alle Anweisungen“. Enthält ein Text solche Befehle, werden auch Links, IBANs, E-Mails und Telefonnummern darin entfernt. Alle Prompts enthalten eine Sicherheitsregel. Freie Antworten und Zusammenfassungen werden verworfen, wenn sie Links oder Kontonummern enthalten, die nicht in den Fakten stehen.
+
+## Qualitätsprüfung
+
+```powershell
+npm run eval:assistant              # goldene Fragen + Injection-Tests gegen das lokale Modell
+npm run eval:assistant -- --min=90  # Mindest-Trefferquote in Prozent
+```
+
+Die Fälle stehen in `src/lib/assistant/eval-cases.ts`. `eval-cases.test.ts` prüft in `npm test` zusätzlich, dass die Regeln allein nie ein falsches Werkzeug wählen.

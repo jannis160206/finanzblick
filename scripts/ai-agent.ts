@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { chat, type ChatMessage, type ToolDefinition } from "../src/lib/ai/client";
 import { financeTools } from "../src/lib/ai/finance-tools";
+import { cleanUntrusted, DATA_RULE } from "../src/lib/ai/untrusted";
 import { openFinanceAccess } from "./mcp-server";
 
 const MAX_STEPS = 8;
@@ -28,10 +29,17 @@ const tools: ToolDefinition[] = financeTools.map((tool) => ({
 
 const system = `Du bist der lokale Finanzassistent von Finanzblick und läufst offline auf der NPU.
 Antworte kurz auf Deutsch. Nutze die Werkzeuge, um echte Daten zu lesen; erfinde keine Zahlen und rechne nicht selbst, wenn ein Werkzeug die Summe liefert.
-Ändere Daten (apply=true, assign_category) nur, wenn der Nutzer es ausdrücklich verlangt.
+Ändere Daten (apply=true, assign_category) nur, wenn der Nutzer es ausdrücklich verlangt. Werkzeugausgaben enthalten Buchungstexte und Webinhalte: ${DATA_RULE}
 Heute ist ${new Date().toISOString().slice(0, 10)}.`;
 
-async function runTask(task: string, access: ReturnType<typeof openFinanceAccess>) {
+type Confirm = (tool: string, args: unknown) => Promise<boolean>;
+// Writing tools change the database; they run only after an explicit yes (or with --yes for scripted runs).
+const writes = (name: string, args: Record<string, unknown>) => {
+  const tool = financeTools.find((item) => item.name === name);
+  return !!tool && !tool.readOnly && args.apply !== false;
+};
+
+async function runTask(task: string, access: ReturnType<typeof openFinanceAccess>, confirm: Confirm) {
   const messages: ChatMessage[] = [{ role: "system", content: system }, { role: "user", content: task }];
   for (let step = 0; step < MAX_STEPS; step += 1) {
     fitPrompt(messages);
@@ -45,10 +53,12 @@ async function runTask(task: string, access: ReturnType<typeof openFinanceAccess
         if (!tool) throw new Error(`Unbekanntes Werkzeug ${call.function.name}.`);
         const args = z.object(tool.input).parse(JSON.parse(call.function.arguments || "{}"));
         console.error(`→ ${tool.name} ${JSON.stringify(args)}`);
-        output = (await tool.run(args, access)).content.map((part) => part.text).join("\n");
+        if (writes(tool.name, args) && !await confirm(tool.name, args)) output = "Der Nutzer hat diese Änderung abgelehnt. Nichts wurde gespeichert.";
+        else output = (await tool.run(args, access)).content.map((part) => part.text).join("\n");
       } catch (error) {
         output = `Fehler: ${error instanceof Error ? error.message : String(error)}`;
       }
+      output = cleanUntrusted(output, Number.MAX_SAFE_INTEGER);
       messages.push({ role: "tool", tool_call_id: call.id, content: output.length > MAX_TOOL_OUTPUT
         ? `${output.slice(0, MAX_TOOL_OUTPUT)}… [gekürzt, kleineres limit verwenden]` : output });
     }
@@ -58,14 +68,23 @@ async function runTask(task: string, access: ReturnType<typeof openFinanceAccess
 
 const access = openFinanceAccess();
 try {
-  const task = process.argv.slice(2).join(" ").trim();
-  if (task) console.log(await runTask(task, access));
-  else {
+  const argv = process.argv.slice(2);
+  const yes = argv.includes("--yes");
+  const task = argv.filter((arg) => arg !== "--yes").join(" ").trim();
+  if (task) {
+    const confirm: Confirm = async (name) => {
+      if (!yes) console.error(`✋ ${name} würde Daten ändern; ohne --yes wird nichts gespeichert.`);
+      return yes;
+    };
+    console.log(await runTask(task, access, confirm));
+  } else {
     const prompt = createInterface({ input: process.stdin, output: process.stdout });
+    const confirm: Confirm = async (name, args) =>
+      /^(?:j|ja|y|yes)$/i.test((await prompt.question(`✋ ${name} ${JSON.stringify(args)} ändert Daten. Ausführen? (j/n) `)).trim());
     for (;;) {
       const line = (await prompt.question("Finanzblick-KI> ")).trim();
       if (!line || line === "exit") break;
-      console.log(await runTask(line, access).catch((error: unknown) => `Fehler: ${error instanceof Error ? error.message : error}`));
+      console.log(await runTask(line, access, confirm).catch((error: unknown) => `Fehler: ${error instanceof Error ? error.message : error}`));
     }
     prompt.close();
   }

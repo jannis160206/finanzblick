@@ -5,6 +5,7 @@ import { normalizeMessage } from "@/lib/assistant/normalize";
 import { assistantTools, detectTool, isAssistantTool, isDraftTool, matchName, toolDescriptions, type AssistantTool } from "@/lib/assistant/tools";
 import { categories } from "@/lib/categories";
 import { chat, type ChatOptions } from "./client";
+import { cleanUntrusted, DATA_RULE } from "./untrusted";
 
 export const assistantRequestSchema = z.object({
   message: z.string().trim().min(1).max(1000),
@@ -70,7 +71,7 @@ const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du w
   "\"wie viel muss ich noch auf amex rückzahlung überweisen\" = amex; \"was hab ich seit 11.10. mit amex bezahlt\" = query; " +
   "\"wie viel ist am sparkonto\" = accounts; \"meine kontostände\" = accounts; \"was bleibt mir diesen monat\" = budget; " +
   "\"wie viel kann ich noch ausgeben\" = budget; \"bin ich sparsam\" = check; \"wie stehe ich finanziell da\" = check; " +
-  "\"wie haben sich meine ausgaben entwickelt\" = query; andere Fragen zu den eigenen Finanzen = ask.";
+  "\"wie haben sich meine ausgaben entwickelt\" = query; andere Fragen zu den eigenen Finanzen = ask. " + DATA_RULE;
 
 const fold = (value: string) => value.toLowerCase().normalize("NFKC");
 
@@ -107,7 +108,7 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
         input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
         `Kategorien: ${categories.join(", ")}`,
         input.pending ? `Offener Entwurf: ${JSON.stringify(input.pending)}` : "",
-        input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.text}`).join("\n")}` : "",
+        input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
         `In der Nachricht gefundene Beträge: ${parsed.numbers.join(", ") || "keine"}`,
         `Nachricht: ${input.message}`,
       ].filter(Boolean).join("\n") },

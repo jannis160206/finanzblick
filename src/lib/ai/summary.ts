@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { chat, stripThinking, type ChatOptions } from "./client";
+import { cleanFacts, contactsBacked, DATA_RULE } from "./untrusted";
 
 const amount = z.number().finite();
 const category = z.object({ category: z.string().max(60), amount, change: amount.optional() }).strict();
@@ -54,7 +55,7 @@ export async function writeMonthlySummary(facts: SummaryFacts, options: ChatOpti
   const fallback = fallbackSummary(facts);
   // Hand over finished differences so the model never has to calculate.
   const modelFacts = {
-    ...facts,
+    ...cleanFacts(facts, 60),
     ...(facts.previousSpending !== undefined
       ? { spendingChangeVsPreviousMonth: Math.round((facts.spending - facts.previousSpending) * 100) / 100 } : {}),
   };
@@ -64,10 +65,10 @@ export async function writeMonthlySummary(facts: SummaryFacts, options: ChatOpti
       content: "Du schreibst eine kurze, freundliche Monatszusammenfassung für ein privates Finanzdashboard auf Deutsch (Du-Form). " +
         "Maximal 4 Sätze, kein Markdown. Nenne nur Beträge, die genau so in den Fakten stehen, und rechne nichts selbst aus. " +
         "previousSpending sind die Ausgaben des Vormonats (nicht des Vorjahres). balance ist Einnahmen minus Ausgaben, nicht der Kontostand. " +
-        "Erfinde nichts und gib keine Anlageberatung.",
+        "Erfinde nichts und gib keine Anlageberatung. " + DATA_RULE,
     },
     { role: "user", content: `Fakten (JSON):\n${JSON.stringify(modelFacts)}` },
   ], { ...options, maxTokens: 300, temperature: 0.2 });
   const text = stripThinking(answer.content).replace(/\s+/g, " ").trim().slice(0, 900);
-  return text.length >= 40 && numbersBacked(text, modelFacts) ? { text, source: "KI" as const } : { text: fallback, source: "Regel" as const };
+  return text.length >= 40 && numbersBacked(text, modelFacts) && contactsBacked(text, modelFacts) ? { text, source: "KI" as const } : { text: fallback, source: "Regel" as const };
 }

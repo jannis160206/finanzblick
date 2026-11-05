@@ -4,6 +4,7 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { chat, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
 import { aiCategories, type AiBookingInput, type AiExample } from "./review-candidates";
+import { cleanUntrusted, DATA_RULE } from "./untrusted";
 
 export type AiCategorization = {
   ref: string;
@@ -50,10 +51,11 @@ Regeln:
 - Zahlungsdienste (PayPal, Klarna, SumUp, Stripe) sind KEINE Händler: steht der eigentliche Shop nicht im Text, setze "category":"Prüfen".
 - "confidence" (0-100) ist deine Sicherheit für Kategorie UND Händler. Rate nie: wenn der Text mehrdeutig ist, setze "category":"Prüfen" und confidence unter 50.
 - Antworte NUR mit einem JSON-Array, ein Objekt pro Buchung, ohne Erklärtext:
-[{"ref":"b1","category":"…","merchant":"…","confidence":95}]`;
+[{"ref":"b1","category":"…","merchant":"…","confidence":95}]
+${DATA_RULE}`;
   const user = bookings.map((booking) => JSON.stringify({
-    ref: booking.ref, text: booking.text, betrag: booking.amount, datum: booking.date, bank: booking.bank,
-    ...(booking.hint ? { hinweis: booking.hint } : {}),
+    ref: booking.ref, text: cleanUntrusted(booking.text, 300), betrag: booking.amount, datum: booking.date, bank: booking.bank,
+    ...(booking.hint ? { hinweis: cleanUntrusted(booking.hint, 200) } : {}),
   })).join("\n");
   return [
     { role: "system" as const, content: system },

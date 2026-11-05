@@ -3,6 +3,7 @@ import { mkdir, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import sharp from "sharp";
 import { z } from "zod";
+import { cleanUntrusted, DATA_RULE } from "./untrusted";
 import { liveLogoDirectory } from "@/lib/automation/merchant-live-logo-directory";
 import { normalizeLocalLogoName } from "@/lib/automation/merchant-local-logos";
 import { MAX_LOGO_INPUT, normalizeLogoRaster } from "@/lib/automation/merchant-logo-raster";
@@ -159,10 +160,10 @@ async function chooseCandidate(
   if (exact.length === 1 && !confirm) return exact[0];
   if (!candidates.length || !ai) return undefined;
   // The model must positively confirm the brand; otherwise no logo is stored.
-  const options = candidates.map((candidate) => `${candidate.id}: ${candidate.label} – ${candidate.description}`).join("\n");
+  const options = candidates.map((candidate) => `${candidate.id}: ${cleanUntrusted(candidate.label, 120)} – ${cleanUntrusted(candidate.description, 200)}`).join("\n");
   const answer = await chat([
-    { role: "system", content: "Du ordnest einen Händlernamen aus einer österreichischen Bankbuchung dem richtigen Wikidata-Unternehmen zu. Antworte nur mit JSON: [{\"id\":\"Q…\",\"confidence\":0-100}] oder [{\"id\":null,\"confidence\":0}] wenn keiner sicher passt." },
-    { role: "user", content: `Händler: ${name}${context ? `\nBuchungstext: ${context}` : ""}\nKandidaten:\n${options}` },
+    { role: "system", content: "Du ordnest einen Händlernamen aus einer österreichischen Bankbuchung dem richtigen Wikidata-Unternehmen zu. Antworte nur mit JSON: [{\"id\":\"Q…\",\"confidence\":0-100}] oder [{\"id\":null,\"confidence\":0}] wenn keiner sicher passt. " + DATA_RULE },
+    { role: "user", content: `Händler: ${cleanUntrusted(name, 120)}${context ? `\nBuchungstext: ${cleanUntrusted(context, 300)}` : ""}\nKandidaten:\n${options}` },
   ], { ...ai, maxTokens: 40 }).catch(() => undefined);
   if (!answer) return undefined;
   const parsed = z.array(z.object({ id: z.string().nullable(), confidence: z.coerce.number() }))
