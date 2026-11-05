@@ -3,7 +3,7 @@ import { detectAction } from "./intent";
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "briefing", "edit", "rule",
-  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "help",
+  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "homeoffice", "help",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -26,6 +26,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   coach: "Spartipps, um monatlich mehr zu sparen",
   depot: "ETF-/Depot-Sparplan mit Zinseszins durchrechnen",
   tax: "absetzbare Buchungen für die Arbeitnehmerveranlagung (Österreich) sammeln",
+  homeoffice: "ausrechnen, was man für Home-Office-Sachen (Laptop, Bildschirm, Bürostuhl, Schreibtisch) beim Steuerausgleich zurückbekommt",
   help: "erklären, was der Assistent kann",
 };
 
@@ -59,6 +60,8 @@ export function detectTool(text: string, names: string[] = []): AssistantTool | 
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (/\bvergiss\b|vergessen/.test(lower) && !/vergiss nicht/.test(lower)) return "forget";
   if (/merk dir|merke dir|vergiss nicht|denk dran|denk daran|notier|\bpuffer\b.*\bimmer\b|\bimmer\b.*\bpuffer\b|gehalt kommt|gehalt ist (?:immer )?am|gehalt geht/.test(lower)) return "remember";
+  if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
+    /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
   if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline/.test(lower)) return "tax";
   if (/\betfs?\b|\bdepot\b|investier|aktien|zinseszins|\bsparplan\b|\bmsci\b|\brendite\b|\bfonds\b|vanguard|ishares/.test(lower)) return "depot";
   if (/wochenüberblick|wochenueberblick|überblick|ueberblick|was steht (?:an|diese woche)|was ist (?:diese woche )?fällig|briefing|was gibt'?s neues|zusammenfassung der woche|status/.test(lower) &&

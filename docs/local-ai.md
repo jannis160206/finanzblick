@@ -118,6 +118,15 @@ Die KI wählt nur ein Werkzeug (`src/lib/assistant/tools.ts`) und nennt Namen au
 - **Gedächtnis:** `appState.assistantMemory` (max. 50), einsehbar und löschbar. Der Puffer wird bei „Kann ich mir das leisten?“ abgezogen, der Gehaltstag erscheint im Wochenüberblick.
 - **Depot-Rechner:** Endwert bei 3 %, 5 % und 7 % p. a. mit monatlicher Verzinsung. Eine reine Rechnung, keine Anlageberatung.
 - **Arbeitnehmerveranlagung (Österreich):** Spenden, Kirchenbeitrag, Gewerkschaft, Fortbildung, Arbeitsmittel und Krankheitskosten eines Jahres als Liste. Ersetzt keine Steuerberatung.
+- **Home-Office-Rechner (Österreich):** „Was bekomme ich für meine Home-Office-Sachen zurück?“ öffnet eine Karte im Chat. Du wählst die Käufe aus (Vorschläge plus Suche über alle Ausgaben des Jahres), gibst je Buchung an, was es war, und trägst Homeoffice-Tage, die Telearbeitspauschale vom Arbeitgeber und das Jahreseinkommen ein. Das Einkommen wird aus den Lohnzetteln geschätzt. Gerechnet wird in `src/lib/assistant/homeoffice.ts`:
+  - Geräte mit 40 % Privatanteil (änderbar).
+  - Ab 1.000 € Abschreibung über 3 Jahre, bei Kauf im zweiten Halbjahr mit Halbjahres-AfA.
+  - Ergonomisches Mobiliar (Schreibtisch, Bürostuhl, Beleuchtung) bis 300 € pro Jahr ab 26 Homeoffice-Tagen; der Rest geht in die Folgejahre.
+  - Telearbeitspauschale als Differenz: 3 € pro Tag, höchstens 100 Tage, minus die Zahlung vom Arbeitgeber.
+  - Die Werbungskostenpauschale von 132 € wird abgezogen.
+  - Die Erstattung ergibt sich aus dem Tarif 2025, 2026 oder 2027 bzw. aus dem Grenzsteuersatz.
+
+  Das Ergebnis ist eine Schätzung, keine Steuerberatung.
 
 ## MCP-Server
 

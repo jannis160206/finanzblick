@@ -429,12 +429,13 @@ const assistantLineSchema = z.object({
 }).strict();
 // Calculated result cards (answers, briefing, coach, depot, tax); every number comes from code.
 export const assistantCardSchema = z.object({
-  kind: z.enum(["answer", "briefing", "coach", "depot", "tax", "rule", "memory", "changes"]),
+  kind: z.enum(["answer", "briefing", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes"]),
   title: z.string().max(200),
   total: z.number().finite().optional(),
   lines: z.array(assistantLineSchema).max(40),
   transactionIds: z.array(z.string().max(500)).max(50).optional(),
   month: monthKeySchema.optional(),
+  year: z.number().int().min(2000).max(2100).optional(),
   note: z.string().max(400).optional(),
 }).strict();
 export type AssistantCard = z.infer<typeof assistantCardSchema>;

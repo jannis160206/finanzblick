@@ -17,6 +17,7 @@ const toneClass = {
 } as const;
 const kindLabel: Record<AssistantCard["kind"], string> = {
   answer: "Antwort", briefing: "Wochenüberblick", coach: "Spar-Coach", depot: "Depot-Rechner", tax: "Arbeitnehmerveranlagung",
+  homeoffice: "Home-Office-Rechner", homeoffice_result: "Home-Office · Arbeitnehmerveranlagung",
   rule: "Regel-Vorschau", memory: "Gedächtnis", changes: "Änderungen",
 };
 

@@ -5,6 +5,7 @@ import { savingsGoals } from "@/lib/goals";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, AssistantChange, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
+import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
 import { applyOperations, OperationError } from "./operations";
 import { matchName, toolDescriptions, type AssistantTool } from "./tools";
@@ -253,12 +254,15 @@ function depot({ asOf }: Context, text: string): AgentResult {
   return depotProjection(monthly, yearCount, parsed.startCapital ?? 0);
 }
 
-function tax({ state, asOf }: Context, text: string): AgentResult {
+function taxYear(text: string, asOf: string) {
   const lower = text.toLowerCase();
   const explicit = /\b(20\d{2})\b/.exec(lower);
   const current = Number(asOf.slice(0, 4));
-  const year = explicit ? Number(explicit[1]) : /letztes jahr|vorjahr|voriges jahr/.test(lower) ? current - 1 : current;
-  return taxDeductibles(state, year);
+  return explicit ? Number(explicit[1]) : /letztes jahr|vorjahr|voriges jahr/.test(lower) ? current - 1 : current;
+}
+
+function tax({ state, asOf }: Context, text: string): AgentResult {
+  return taxDeductibles(state, taxYear(text, asOf));
 }
 
 function help(): AgentResult {
@@ -279,6 +283,7 @@ export function executeTool(tool: AssistantTool, text: string, context: Context)
     }
     case "depot": return depot(context, text);
     case "tax": return tax(context, text);
+    case "homeoffice": return homeOfficeStart(state, taxYear(text, asOf));
     case "edit": return edit(context, text);
     case "rule": return rule(context, text);
     case "remember": {

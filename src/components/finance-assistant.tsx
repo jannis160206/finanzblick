@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
+import { HomeOfficeCard } from "@/components/homeoffice-card";
 import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,7 @@ const examples = [
   "Merk dir: Puffer immer 500 €",
   "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?",
   "Was kann ich bei der Arbeitnehmerveranlagung absetzen?",
+  "Was bekomme ich für meine Home-Office-Sachen beim Steuerausgleich zurück?",
 ];
 const intro = "Frag mich zu deinen Ausgaben, plane Sparziele und Ausgaben, ändere Bestehendes oder lass dir beim Sparen helfen. " +
   "Alle Beträge rechnet der Code nach. Geändert wird erst, wenn du bestätigst, und jede Änderung lässt sich rückgängig machen.";
@@ -266,7 +268,9 @@ export function FinanceAssistant() {
         </div>}
         {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
           <Bubble role={message.role} text={message.text} source={message.source} faded={message.status === "dismissed"} />
-          {message.card && <div className="pl-11"><ResultCard card={message.card} state={state} /></div>}
+          {message.card && <div className="pl-11">{message.card.kind === "homeoffice"
+            ? <HomeOfficeCard card={message.card} state={state} disabled={!!storageError} onResult={(result) => addResult(result, "Regel")} />
+            : <ResultCard card={message.card} state={state} />}</div>}
           {message.change && message.status !== "dismissed" && <div className="pl-11">
             <ChangeCard message={message} disabled={!!storageError} onApply={() => applyChange(message)}
               onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
