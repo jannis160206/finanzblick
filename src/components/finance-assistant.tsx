@@ -21,6 +21,7 @@ import { applyOperations, OperationError, recordChange, recordCreation, undoChan
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
+import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
 import { resolveFollowUp } from "@/lib/assistant/followup";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
@@ -28,9 +29,13 @@ import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import {
   appStateSchema, assistantDraftSchema, assistantMessageSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
-  type AppState, type AssistantDraft, type AssistantMessage, type AssistantOperation,
+  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantOperation,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// Tools whose answer depends only on the message text; phrasings for these are learned when the model understood them.
+const learnableTools: AssistantTool[] = ["query", "accounts", "amex", "budget", "briefing", "check", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "explain", "memory", "changes"];
+type KnowledgeHit = { topic: string; title: string; text: string; url: string; source: string };
 
 const examples = [
   "Wie viel hab ich im Oktober fürs Essen ausgegeben?",
@@ -52,6 +57,7 @@ const followUps: Partial<Record<AssistantTool, string[]>> = {
   coach: ["Wie viel geht für Abos weg?", "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?"],
   depot: ["Und mit 200 € im Monat?", "Wie hoch ist die Inflation gerade?"],
   market: ["Welche Zinsen bekomme ich fürs Sparkonto?", "Wie viel sind 3.000 € in Yen?"],
+  knowledge: ["Was ist ein ETF?", "Was bedeutet KESt?"],
   tax: ["Was bekomme ich für Home-Office-Sachen zurück?"],
   memory: ["Merk dir: Puffer immer 500 €"],
   changes: ["Mach das rückgängig"],
@@ -206,6 +212,9 @@ export function FinanceAssistant() {
   async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[]) {
     try {
       const facts = assistantFacts(state, dashboard, state.settings.asOf);
+      // Knowledge learned earlier is used here too, so free answers can explain terms.
+      const known = relevantKnowledge(state.assistantKnowledge, question);
+      if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
       const response = await fetch("/api/ai/answer", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question, history, facts }),
@@ -232,6 +241,33 @@ export function FinanceAssistant() {
     } catch {
       return cached?.value;
     }
+  }
+
+  // Terms are answered from learned knowledge; unknown or outdated ones are looked up once via the MCP server and remembered.
+  async function loadKnowledge(text: string, names: string[]) {
+    const topics = knowledgeTopics(text, names, true);
+    const found: AssistantKnowledge[] = [], fresh: AssistantKnowledge[] = [], used: string[] = [];
+    let offline = false;
+    for (const topic of topics) {
+      const stored = findKnowledge(state.assistantKnowledge, topic);
+      if (stored && !isStale(stored)) { found.push(stored); used.push(stored.id); continue; }
+      try {
+        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        if (!response.ok) throw new Error();
+        const { hit } = await response.json() as { hit?: KnowledgeHit | null };
+        if (hit?.title && hit.text && hit.url) {
+          const entry: AssistantKnowledge = { id: newId(), topic: topic.slice(0, 100), title: hit.title.slice(0, 200), text: hit.text.slice(0, 1500),
+            url: hit.url.slice(0, 500), source: hit.source.slice(0, 100), at: Date.now() };
+          found.push(entry);
+          fresh.push(entry);
+        } else if (stored) found.push(stored);
+      } catch {
+        offline = true;
+        if (stored) { found.push(stored); used.push(stored.id); }
+      }
+    }
+    if (fresh.length || used.length) update((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, fresh, used) }));
+    return { found, fresh: fresh.map((entry) => entry.id), offline };
   }
 
   async function send(event?: FormEvent, preset?: string) {
@@ -264,8 +300,13 @@ export function FinanceAssistant() {
     let reply: { tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
     // "und im September?" reuses the previous question instead of asking the model again.
     const follow = pending ? undefined : resolveFollowUp(text, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
+    // Phrasings learned earlier are understood right away, without asking the model again.
+    const learned = pending || follow || detectTool(text, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, text);
     if (follow) reply = { tool: follow.tool, source: "Regel" };
-    else try {
+    else if (learned && isAssistantTool(learned.tool)) {
+      reply = { tool: learned.tool, source: "Regel" };
+      update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, text, learned.tool) }));
+    } else try {
       const response = await fetch("/api/ai/assistant", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ message: text, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned } }),
@@ -282,6 +323,9 @@ export function FinanceAssistant() {
       }
     }
     const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
+    // Only the model understood this phrasing; remember it so the rules answer it directly next time.
+    if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
+      !detectTool(text, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, text, tool) }));
     const parsed = !tool && reply.draft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
     const free = !tool && !parsed?.success ? await freeAnswer(text, history) : undefined;
     await settle();
@@ -293,8 +337,9 @@ export function FinanceAssistant() {
     } else if (tool) {
       let result: AgentResult;
       const market = tool === "market" || tool === "depot" ? await loadMarket(text) : undefined;
+      const knowledge = tool === "knowledge" && !knowledgeListQuestion(text.toLowerCase()) ? await loadKnowledge(text, [...goals, ...planned]) : undefined;
       try {
-        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market });
+        result = executeTool(tool, text, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
@@ -361,7 +406,7 @@ export function FinanceAssistant() {
     <PageHeading eyebrow="KI-Assistent · lokal auf der NPU" title="Finanz-Assistent"
       description="Fragen zu deinen Ausgaben, Sparziele und Ausgaben planen, Bestehendes ändern, Regeln, Spar-Coach, Depot-Rechner und Arbeitnehmerveranlagung.">
       <Button type="button" variant={panel === "memory" ? "secondary" : "outline"} size="sm" className="min-h-11" aria-pressed={panel === "memory"}
-        onClick={() => setPanel(panel === "memory" ? undefined : "memory")}><Brain aria-hidden="true" className="size-4" />Gedächtnis{memory.length ? ` (${memory.length})` : ""}</Button>
+        onClick={() => setPanel(panel === "memory" ? undefined : "memory")}><Brain aria-hidden="true" className="size-4" />Gedächtnis{memory.length + (state.assistantKnowledge?.length ?? 0) ? ` (${memory.length + (state.assistantKnowledge?.length ?? 0)})` : ""}</Button>
       <Button type="button" variant={panel === "changes" ? "secondary" : "outline"} size="sm" className="min-h-11" aria-pressed={panel === "changes"}
         onClick={() => setPanel(panel === "changes" ? undefined : "changes")}><History aria-hidden="true" className="size-4" />Änderungen{changes.length ? ` (${changes.length})` : ""}</Button>
       {messages.length > 0 && <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => {
@@ -369,7 +414,10 @@ export function FinanceAssistant() {
       }}><Trash2 aria-hidden="true" className="size-4" />Verlauf löschen</Button>}
     </PageHeading>
     {panel === "changes" && <ChangesPanel changes={changes} disabled={!!storageError} onUndo={undo} />}
-    {panel === "memory" && <MemoryPanel memory={memory} disabled={!!storageError} onDelete={forget} />}
+    {panel === "memory" && <MemoryPanel memory={memory} knowledge={state.assistantKnowledge ?? []} phrases={state.assistantPhrases?.length ?? 0}
+      disabled={!!storageError} onDelete={forget}
+      onForgetKnowledge={(id) => { update((current) => ({ ...current, assistantKnowledge: (current.assistantKnowledge ?? []).filter((entry) => entry.id !== id) })); toast.success("Vergessen"); }}
+      onResetPhrases={() => { update((current) => ({ ...current, assistantPhrases: [] })); toast.success("Gelernte Formulierungen zurückgesetzt"); }} />}
     <section className="panel flex min-h-[60vh] flex-col p-4 sm:p-6" aria-label="Chat mit dem Finanz-Assistenten">
       <FinancialData className="flex flex-1 flex-col gap-4" aria-live="polite">
         <Bubble role="assistant" text={intro} />

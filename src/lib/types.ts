@@ -486,6 +486,28 @@ export const assistantMemorySchema = z.object({
 }).strict();
 export type AssistantMemory = z.infer<typeof assistantMemorySchema>;
 export const MAX_ASSISTANT_MEMORY = 50;
+// General knowledge the assistant looked up on the internet (public encyclopedia text, never personal data).
+export const assistantKnowledgeSchema = z.object({
+  id: agentIdSchema,
+  topic: z.string().trim().min(1).max(100),
+  title: z.string().trim().min(1).max(200),
+  text: z.string().trim().min(1).max(1500),
+  url: z.string().url().max(500),
+  source: z.string().trim().min(1).max(100),
+  at: z.number().nonnegative(),
+  uses: z.number().int().nonnegative().optional(),
+}).strict();
+export type AssistantKnowledge = z.infer<typeof assistantKnowledgeSchema>;
+export const MAX_ASSISTANT_KNOWLEDGE = 100;
+// Phrasings only the model understood; next time the rules answer them directly.
+export const assistantPhraseSchema = z.object({
+  pattern: z.string().trim().min(1).max(200),
+  tool: z.string().trim().min(1).max(40),
+  at: z.number().nonnegative(),
+  hits: z.number().int().nonnegative().optional(),
+}).strict();
+export type AssistantPhrase = z.infer<typeof assistantPhraseSchema>;
+export const MAX_ASSISTANT_PHRASES = 200;
 const undoTransactionSchema = z.object({
   id: z.string().min(1).max(500),
   category: categorySchema,
@@ -615,6 +637,9 @@ export const appStateSchema = z.object({
   assistantChat: z.array(assistantMessageSchema).max(MAX_ASSISTANT_MESSAGES).optional(),
   // Facts the user asked the assistant to remember; visible and deletable in the chat.
   assistantMemory: z.array(assistantMemorySchema).max(MAX_ASSISTANT_MEMORY).optional(),
+  // What the assistant learned by itself: looked-up knowledge and phrasings it now understands without the model.
+  assistantKnowledge: z.array(assistantKnowledgeSchema).max(MAX_ASSISTANT_KNOWLEDGE).optional(),
+  assistantPhrases: z.array(assistantPhraseSchema).max(MAX_ASSISTANT_PHRASES).optional(),
   // Every change the assistant applied, with the data needed to undo it.
   assistantChanges: z.array(assistantChangeLogSchema).max(MAX_ASSISTANT_CHANGES).optional(),
   importStatus: z

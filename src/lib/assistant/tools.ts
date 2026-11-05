@@ -2,13 +2,14 @@ import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
 import { checkQuestion } from "./check";
 import { detectAction, findExtra } from "./intent";
+import { knowledgeListQuestion, knowledgeQuestion } from "./knowledge";
 import { marketQuestion } from "./market";
 import { normalizeMessage } from "./normalize";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "rule",
-  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "tax", "homeoffice", "explain", "help", "ask",
+  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "explain", "help", "ask",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -35,6 +36,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   coach: "Spartipps, um monatlich mehr zu sparen",
   depot: "ETF-/Depot-Sparplan mit Zinseszins durchrechnen",
   market: "aktuelle Marktdaten aus dem Internet: Inflation, Sparzinsen/Tagesgeld/EZB-Leitzins, Wechselkurse (z. B. Euro in Yen), Kaufkraft in X Jahren",
+  knowledge: "allgemeinen Finanzbegriff erklären und dafür im Internet nachschlagen (z. B. „Was ist ein ETF?“, „Was bedeutet KESt?“, „Unterschied zwischen Tagesgeld und Festgeld“) oder zeigen, was der Assistent dazugelernt hat",
   tax: "absetzbare Buchungen für die Arbeitnehmerveranlagung (Österreich) sammeln",
   homeoffice: "ausrechnen, was man für Home-Office-Sachen (Laptop, Bildschirm, Bürostuhl, Schreibtisch) beim Steuerausgleich zurückbekommt",
   explain: "erklären, wie das Finanzdashboard funktioniert (Seiten, Sparziele, Pockets, Import, Monatsplan, Einstellungen) und was man per Chat einstellen kann",
@@ -95,13 +97,19 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:geändert|gemacht)|protokoll/.test(lower)) return "changes";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
+  if (knowledgeListQuestion(lower)) return "knowledge";
   if (/\bvergiss\b|vergessen/.test(lower) && !/vergiss nicht/.test(lower)) return "forget";
   if (/merk dir|merke dir|vergiss nicht|denk dran|denk daran|notier|\bpuffer\b.*\bimmer\b|\bimmer\b.*\bpuffer\b|\bpuffer\b.*\d|\d.*\bpuffer\b|\breserve\b.*\d|\d.*\breserve\b|nie unter \d|(?:gehalt|lohn)\b.*\bam\s+\d{1,2}\b|\bam\s+\d{1,2}\.?\s+(?:kommt|gibt'?s)\s+(?:mein|das)\s+(?:gehalt|lohn)|gehalt geht/.test(lower) &&
     !/\bbis\b.*\b(?:sparen|zurücklegen)\b|leisten|leistbar|reicht|geht sich/.test(lower)) return "remember";
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
-  if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer/.test(lower)) return "tax";
+  // Definition questions ("Was ist ein ETF?") are looked up, but never questions about own data or the dashboard.
+  // Live values (inflation, key rate, exchange rate) stay with the market tool.
+  const termQuestion = knowledgeQuestion(text, names);
+  if (termQuestion && !/inflation|teuerung|preissteigerung|kaufkraft|wechselkurs|\bkurs\b|leitzins|einlagesatz|zinsniveau|^(?:was|wie) (?:sind|ist) (?:die )?(?:aktuellen )?zinsen/.test(lower)) return "knowledge";
   if (marketQuestion(lower)) return "market";
+  if (termQuestion) return "knowledge";
+  if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer/.test(lower)) return "tax";
   if (/\betfs?\b|\bdepot\b|investier|aktien|zinseszins|\bsparplan\b|\bmsci\b|\brendite\b|\bfonds\b|vanguard|ishares/.test(lower) ||
     /\b(?:anlegen|veranlagen|anleg)\b/.test(lower) && /\d+\s*jahre?n?\b/.test(lower) && !/sparziel|\bziel\b|\bbis\b/.test(lower)) return "depot";
   if (/wochenüberblick|wochenueberblick|überblick|ueberblick|was steht (?:an|diese woche)|was ist (?:diese woche )?fällig|briefing|was gibt'?s neues|zusammenfassung der woche|status/.test(lower) &&

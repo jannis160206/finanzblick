@@ -14,9 +14,9 @@ const store = globalThis as typeof globalThis & { finanzblickMarketCache?: Map<s
 const cache = () => (store.finanzblickMarketCache ??= new Map());
 
 // Fresh values are reused for six hours; when a source is down, the last known value is kept.
-async function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+export async function cached<T>(key: string, load: () => Promise<T>, ttl = TTL): Promise<T> {
   const hit = cache().get(key);
-  if (hit && Date.now() - hit.at < TTL) return hit.value as T;
+  if (hit && Date.now() - hit.at < ttl) return hit.value as T;
   try {
     const value = await load();
     cache().set(key, { at: Date.now(), value });

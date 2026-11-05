@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Brain, Check, ChevronDown, History, ListChecks, Undo2, X } from "lucide-react";
+import { Brain, Check, ChevronDown, Globe, History, ListChecks, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { classify } from "@/lib/calc";
 import { canonicalCategory } from "@/lib/categories";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import type { AppState, AssistantCard, AssistantChangeLog, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
+import type { AppState, AssistantCard, AssistantChangeLog, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const toneClass = {
@@ -158,7 +158,10 @@ export function ChangesPanel({ changes, disabled, onUndo }: { changes: Assistant
   </section>;
 }
 
-export function MemoryPanel({ memory, disabled, onDelete }: { memory: AssistantMemory[]; disabled: boolean; onDelete: (id: string) => void }) {
+export function MemoryPanel({ memory, knowledge = [], phrases = 0, disabled, onDelete, onForgetKnowledge, onResetPhrases }: {
+  memory: AssistantMemory[]; knowledge?: AssistantKnowledge[]; phrases?: number; disabled: boolean; onDelete: (id: string) => void;
+  onForgetKnowledge?: (id: string) => void; onResetPhrases?: () => void;
+}) {
   return <section className="panel mb-4 p-4" aria-label="Gedächtnis des Assistenten">
     <h2 className="flex items-center gap-2 text-sm font-semibold"><Brain aria-hidden="true" className="size-4 text-primary" />Das hat sich der Assistent gemerkt</h2>
     {!memory.length ? <p className="mt-2 text-sm text-muted-foreground">Noch nichts. Sag zum Beispiel „Merk dir: Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“.</p>
@@ -171,5 +174,22 @@ export function MemoryPanel({ memory, disabled, onDelete }: { memory: AssistantM
             <X aria-hidden="true" className="size-4" />Vergessen</Button>
         </li>)}
       </ul>}
+    <h3 className="mt-5 flex items-center gap-2 text-sm font-semibold"><Globe aria-hidden="true" className="size-4 text-primary" />Selbst dazugelernt</h3>
+    {!knowledge.length ? <p className="mt-2 text-sm text-muted-foreground">Noch nichts. Frag zum Beispiel „Was ist ein ETF?“; ich schlage es nach und merke es mir.</p>
+      : <ul className="mt-3 divide-y divide-border/50 text-sm">
+        {[...knowledge].sort((a, b) => b.at - a.at).map((entry) => <li key={entry.id} className="flex items-center justify-between gap-3 py-2">
+          <span className="min-w-0"><a href={entry.url} target="_blank" rel="noreferrer noopener" className="underline-offset-2 hover:underline">{entry.title}</a>
+            <span className="block text-xs text-muted-foreground">gefragt als „{entry.topic}“ · {new Date(entry.at).toLocaleDateString("de-AT")}
+              {entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""} · {entry.source}</span></span>
+          {onForgetKnowledge && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={() => onForgetKnowledge(entry.id)}
+            aria-label={`Wissen „${entry.title}“ vergessen`}><X aria-hidden="true" className="size-4" />Vergessen</Button>}
+        </li>)}
+      </ul>}
+    {phrases > 0 && <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/50 pt-3 text-sm">
+      <span>{phrases} gelernte Formulierung{phrases === 1 ? "" : "en"}
+        <span className="block text-xs text-muted-foreground">versteht der Assistent jetzt sofort, ohne die KI zu fragen</span></span>
+      {onResetPhrases && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={onResetPhrases}>
+        <X aria-hidden="true" className="size-4" />Zurücksetzen</Button>}
+    </div>}
   </section>;
 }

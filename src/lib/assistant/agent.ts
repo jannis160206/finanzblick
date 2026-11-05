@@ -3,13 +3,14 @@ import { canonicalCategory, type Category } from "@/lib/categories";
 import { currency, dateLabel } from "@/lib/format";
 import { savingsGoals } from "@/lib/goals";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
-import type { AppState, AssistantCard, AssistantChange, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
+import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { financialCheck } from "./check";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
 import { accountBalances, amexQuestion, amexSettlement, monthBudget } from "./accounts";
 import { explainDashboard } from "./explain";
 import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
+import { knowledgeAnswer, knowledgeList, knowledgeListQuestion } from "./knowledge";
 import { marketAnswer, realValue, type MarketSnapshot } from "./market";
 import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
@@ -17,7 +18,8 @@ import { matchName, type AssistantTool } from "./tools";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[] };
-type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot };
+type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot;
+  knowledge?: { found: AssistantKnowledge[]; fresh?: string[]; offline?: boolean } };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const plannedTotal = (item: PlannedOneOff) => item.total ?? Math.round(item.amount * item.installments * 100) / 100;
@@ -302,6 +304,7 @@ function help(): AgentResult {
     { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 €“, „Puffer immer 500 €“" },
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
     { label: "Live aus dem Internet", detail: "„Wie hoch ist die Inflation?“, „Welche Zinsen fürs Sparkonto?“, „3.000 € in Yen“" },
+    { label: "Begriffe erklären und dazulernen", detail: "„Was ist ein ETF?“, „Was bedeutet KESt?“, „Was hast du gelernt?“" },
   ];
   return { text: "Gern! Ich kenne deine Buchungen, Sparziele und geplanten Ausgaben und kann damit rechnen, planen und Dinge für dich einstellen. Am besten fragst du einfach drauflos:",
     card: { kind: "answer", title: "Womit ich dir helfen kann", lines, note: "Alle Zahlen rechnet der Code nach. Geändert wird nur, wenn du bestätigst." },
@@ -325,6 +328,8 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     }
     case "depot": return depot(context, text);
     case "market": return marketAnswer(text, context.market, dashboard);
+    case "knowledge": return knowledgeListQuestion(text.toLowerCase()) || !context.knowledge ? knowledgeList(state)
+      : knowledgeAnswer(text, context.knowledge.found, context.knowledge);
     case "tax": return tax(context, text);
     case "homeoffice": return homeOfficeStart(state, taxYear(text, asOf));
     case "edit": return edit(context, text);

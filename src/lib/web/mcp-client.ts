@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { KnowledgeHit } from "./knowledge";
 import { createWebMcpServer, type MarketSnapshot } from "./mcp-server";
 
 // The assistant talks to the web MCP server like any MCP client; the server runs in-process, so no extra process is needed.
@@ -35,3 +36,6 @@ export async function listWebTools(): Promise<string[]> {
 
 export const fetchMarketSnapshot = (currencies: string[], fetcher?: typeof fetch) =>
   callWebTool("get_market_snapshot", { currencies }, fetcher) as Promise<MarketSnapshot>;
+
+export const fetchKnowledge = (query: string, fetcher?: typeof fetch) =>
+  callWebTool("search_knowledge", { query }, fetcher) as Promise<KnowledgeHit | null>;

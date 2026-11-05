@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { lookupKnowledge } from "./knowledge";
 import { exchangeRates, inflation, interestRates, type ExchangeRate, type InterestRates, type Observation } from "./market-data";
 
 export type MarketSnapshot = { inflation?: Observation; rates?: InterestRates; fx: ExchangeRate[]; errors: string[] };
@@ -21,7 +22,7 @@ export async function marketSnapshot(codes: string[] = [], fetcher?: typeof fetc
   };
 }
 
-// MCP server with read-only public market data (Eurostat, ECB). It never sees personal finance data.
+// MCP server with read-only public data (Eurostat, ECB, Wikipedia). It never sees personal finance data.
 export function createWebMcpServer(fetcher?: typeof fetch) {
   const server = new McpServer({ name: "finanzblick-web", version: "1.0.0" });
   const annotations = { readOnlyHint: true, openWorldHint: true };
@@ -40,5 +41,10 @@ export function createWebMcpServer(fetcher?: typeof fetch) {
     description: "Alles für die Sparplanung auf einmal: Inflation, Sparzinsen und optional Wechselkurse.",
     inputSchema: { currencies: currencies.optional() }, annotations,
   }, async ({ currencies: codes }) => json(await marketSnapshot(codes ?? [], fetcher)));
+  server.registerTool("search_knowledge", {
+    description: "Allgemeines Finanzwissen nachschlagen (deutschsprachige Wikipedia), z. B. ETF, KESt, Bausparvertrag, Tagesgeld, Arbeitnehmerveranlagung. " +
+      "Liefert Titel, kurze Erklärung, Link und Lizenz oder null, wenn nichts Passendes gefunden wurde.",
+    inputSchema: { query: z.string().trim().min(2).max(80) }, annotations,
+  }, async ({ query }) => { try { return json((await lookupKnowledge(query, fetcher)) ?? null); } catch (error) { return fail(error); } });
   return server;
 }
