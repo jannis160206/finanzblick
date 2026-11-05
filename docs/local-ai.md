@@ -179,7 +179,10 @@ Der Browser-Assistent sucht nach dem Laden im Hintergrund Logos für alle Zahlun
 - **Quellen der Reihe nach:**
   1. Wikidata-Logo (P154) von Wikimedia Commons.
   2. Icon der offiziellen Webseite aus Wikidata (P856).
-  3. Bei Geschäften aus Kartenzahlungen: `www.<name>.at`, `.de` oder `.com`, aber nur, wenn Titel oder Seitenname der Seite die Marke tragen und die Domain nicht geparkt ist.
+  3. Bei Kartenzahlungen mit Ort: das Geschäft dieses Namens an diesem Ort in OpenStreetMap. Dessen Marke (`brand:wikidata`) liefert das Wikidata-Logo, sonst dessen eingetragene Webseite (`website`). Nur wenn alle Treffer dieselbe Marke bzw. Webseite haben.
+  4. Bei Geschäften aus Kartenzahlungen: `www.<name>.at`, `.de` oder `.com`, aber nur, wenn Titel oder Seitenname der Seite die Marke tragen und die Domain nicht geparkt ist.
+- **Vorsicht bei Suchnamen:** Füllwörter („TO“, „ON“, „GmbH“), Regionen und Branchenwörter („Europa“, „Bäckerei“) und Kategorienamen gelten nicht als Marke. Personen und PayPal-Empfänger werden nur mit vollem Namen gesucht. Ein verkürztes einzelnes Wort („Swiss“ aus „Swiss Intl Air Lines“) braucht die Bestätigung der lokalen KI und rät keine Webseite.
+- **Drosselung:** Wikidata wird höchstens alle 1,5 s, OpenStreetMap höchstens einmal pro Sekunde gefragt. Meldet ein Dienst 429, wartet der Browser 60 s und macht dann weiter.
 - **Icon-Auswahl auf einer Webseite:** `apple-touch-icon`, SVG-Icon, große Icons ab 96 px, `<img>` mit „logo“, `og:image` mit „logo“. Raster unter 64 px werden verworfen. SVGs mit Skripten, eingebetteten Bildern oder externen Verweisen werden abgelehnt.
 - **Sicherheit:** Nur HTTPS, keine IP-Adressen oder `localhost`, begrenzte Dateigröße. Alles wird als PNG neu gerendert.
 - **Gedächtnis:** Nicht gefundene Händler stehen in `Logo/.logo-misses.json` und werden erst nach 30 Tagen erneut gesucht. Drosselungen merkt er sich nicht, der nächste Lauf macht dort weiter.

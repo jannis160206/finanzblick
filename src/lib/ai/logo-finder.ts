@@ -8,7 +8,7 @@ import { normalizeLocalLogoName } from "@/lib/automation/merchant-local-logos";
 import { MAX_LOGO_INPUT, normalizeLogoRaster } from "@/lib/automation/merchant-logo-raster";
 import { chat, type ChatOptions } from "./client";
 import { extractJsonArray } from "./categorize";
-import { checkLimit, decodeEntities, domainSlug, fetchPage, IP_HOST, PARKED, politeSlot } from "./industry";
+import { checkLimit, decodeEntities, domainSlug, fetchPage, IP_HOST, type MerchantPlace, openStreetMapShop, PARKED, politeSlot } from "./industry";
 
 const USER_AGENT = "Finanzblick/1.0 (private dashboard; local merchant logos)";
 // The live importer and the per-account quota (1024 stored logos) both stay above this.
@@ -37,6 +37,8 @@ export type LogoFinderOptions = {
   saveAs?: string;
   /** A shortened name ("Europa" from "Europa Park Rust") needs the model's confirmation, not just an exact label. */
   requireConfirmation?: boolean;
+  /** Where the card was used; lets OpenStreetMap name the local shop's website. */
+  place?: MerchantPlace;
   throttleMs?: number;
 };
 
@@ -119,6 +121,12 @@ async function wikidataCandidates(
     action: "wbsearchentities", search: name, language: "de", uselang: "de", type: "item", limit: "6", format: "json",
   }).toString();
   const ids = searchSchema.parse(await getJson(search, fetcher, signal, interval)).search.map((item) => item.id);
+  return wikidataEntities(ids, fetcher, signal, interval);
+}
+
+async function wikidataEntities(
+  ids: string[], fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number,
+): Promise<Candidate[]> {
   if (!ids.length) return [];
   const entities = new URL("https://www.wikidata.org/w/api.php");
   entities.search = new URLSearchParams({
@@ -364,13 +372,20 @@ export async function findMerchantLogo(
     return undefined;
   };
   // 1. The logo Wikidata records for the company, 2. its official website's icon,
-  // 3. the website its name suggests.
+  // 3. the brand or website OpenStreetMap records for the shop where the card was used,
+  // 4. the website its name suggests.
   const candidates = (await wikidataCandidates(name, fetcher, options.signal, interval).catch(fail)) ?? [];
-  const chosen = await chooseCandidate(name, context, candidates, options.ai ?? {}, options.requireConfirmation);
+  let chosen = await chooseCandidate(name, context, candidates, options.ai ?? {}, options.requireConfirmation);
+  const shop = !chosen && options.place
+    ? await openStreetMapShop(name, options.place, { fetcher, signal: options.signal, throttleMs: options.throttleMs }).catch(fail)
+    : undefined;
+  if (shop?.wikidata)
+    chosen = (await wikidataEntities([shop.wikidata], fetcher, options.signal, interval).catch(fail))?.[0];
   let logo: { png: Buffer; source: string } | undefined;
   if (chosen?.logo) logo = await downloadCommonsLogo(chosen.logo, fetcher, options.signal, interval).catch(fail);
   if (!logo && chosen?.website) logo = await logoFromWebsite(chosen.website, fetcher, options.signal).catch(fail);
-  if (!logo && !chosen && options.guessWebsite !== false)
+  if (!logo && shop?.website) logo = await logoFromWebsite(shop.website.href, fetcher, options.signal).catch(fail);
+  if (!logo && !chosen && !shop && options.guessWebsite !== false)
     logo = await logoFromGuessedSite(name, fetcher, options.signal);
   if (!logo)
     return {

@@ -156,6 +156,49 @@ describe("findMerchantLogo", () => {
     expect(fetch.calls.some((call) => call.includes("127.0.0.1"))).toBe(false);
   });
 
+  it("finds a local shop's website through OpenStreetMap at the place the card was used", async () => {
+    const logo = await png(180);
+    const place = (name: string, address: string, website?: string) => ({
+      category: "shop", type: "bakery", name, display_name: address, ...(website ? { extratags: { website } } : {}),
+    });
+    const fetch = fetcher(
+      (url) => url.hostname === "www.wikidata.org" ? json({ search: [] }) : undefined,
+      (url) => url.hostname === "nominatim.openstreetmap.org" && url.searchParams.get("extratags") === "1"
+        ? json([
+          place("Atriovil", "Hauptplatz 1, 9500 Villach, Österreich", "atriovil.at"),
+          place("Atriovil", "Ring 2, 1010 Wien, Österreich", "https://andere.at"),
+        ]) : undefined,
+      (url) => url.href === "https://atriovil.at/" ? html('<link rel="apple-touch-icon" href="/a.png">') : undefined,
+      (url) => url.href === "https://atriovil.at/a.png" ? image(logo) : undefined,
+    );
+    const outcome = await findMerchantLogo("Atriovil", undefined, options(fetch, { place: { city: "Villach", postcode: "9500" }, guessWebsite: false }));
+    expect(outcome).toMatchObject({ status: "saved", file: "Atriovil.png", source: "https://atriovil.at/a.png" });
+
+    clearIndustryCache();
+    const other = await findMerchantLogo("Atriovil", undefined, options(fetch, {
+      directory: join(directory, "other"), place: { city: "Graz", postcode: "8010" }, guessWebsite: false,
+    }));
+    expect(other).toMatchObject({ status: "not-found" });
+  });
+
+  it("takes the brand logo OpenStreetMap links for the branch, even when the name search is ambiguous", async () => {
+    const logo = await png(256);
+    const entities = wikidata({ Q9: { label: "Burger King", logo: "BK.svg" } });
+    const fetch = fetcher(
+      (url) => url.hostname === "www.wikidata.org" && url.searchParams.get("action") === "wbsearchentities"
+        ? json({ search: [] }) : entities(url),
+      (url) => url.hostname === "nominatim.openstreetmap.org" ? json([{
+        category: "amenity", type: "fast_food", name: "Burger King",
+        display_name: "Burger King, B83, 9212 Techelsberg, Österreich", extratags: { "brand:wikidata": "Q9" },
+      }]) : undefined,
+      (url) => url.hostname === "commons.wikimedia.org"
+        ? json({ query: { pages: { 1: { imageinfo: [{ url: "https://upload.wikimedia.org/bk.png" }] } } } }) : undefined,
+      (url) => url.hostname === "upload.wikimedia.org" ? image(logo) : undefined,
+    );
+    const outcome = await findMerchantLogo("Burger King", undefined, options(fetch, { place: { postcode: "9212", city: "Techelsberg" } }));
+    expect(outcome).toMatchObject({ status: "saved", file: "Burger King.png", entity: "Q9" });
+  });
+
   it("keeps the alias as file name and reuses an existing logo", async () => {
     await writeFile(join(directory, "OBI.png"), await png(128));
     const fetch = fetcher();

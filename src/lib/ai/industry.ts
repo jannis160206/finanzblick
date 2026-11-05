@@ -241,6 +241,7 @@ export function osmCategory(tagClass: string, tagType: string): { category: Cate
 const nominatimSchema = z.array(z.object({
   category: z.string().max(40), type: z.string().max(60), name: z.string().max(300).optional().nullable(),
   display_name: z.string().max(1000),
+  extratags: z.record(z.string(), z.string()).nullable().optional(),
 }).loose()).max(20);
 const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .split(/[^a-z0-9]+/).filter(Boolean);
@@ -286,10 +287,12 @@ export function checkLimit(host: string, response: Response) {
   blockedUntil.set(host, Date.now() + (Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, 3_600_000) : BACKOFF_MS));
 }
 
-async function nominatim(query: string, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number) {
+async function nominatim(
+  query: string, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number, extratags = false,
+) {
   const url = new URL("https://nominatim.openstreetmap.org/search");
   await politeSlot(url.host, signal, interval);
-  url.search = new URLSearchParams({ format: "jsonv2", limit: "8", q: query }).toString();
+  url.search = new URLSearchParams({ format: "jsonv2", limit: "8", q: query, ...(extratags ? { extratags: "1" } : {}) }).toString();
   const response = await fetcher(url, {
     headers: { Accept: "application/json", "User-Agent": USER_AGENT, "Accept-Language": "de,en;q=0.8" },
     signal: timeoutSignal(signal), cache: "no-store",
@@ -326,6 +329,38 @@ async function fromOpenStreetMap(
     };
   }
   return undefined;
+}
+
+// The brand (Wikidata id) or website OpenStreetMap records for the shop of this name at this place.
+// Only one distinct brand or site counts; two different shops of that name leave it open.
+export async function openStreetMapShop(
+  name: string, place: MerchantPlace, options: { fetcher?: typeof fetch; signal?: AbortSignal; throttleMs?: number } = {},
+): Promise<{ wikidata?: string; website?: URL } | undefined> {
+  if (compact(name).length < 3 || (!place.city && !place.postcode)) return undefined;
+  const query = [name, place.city ?? place.postcode].filter(Boolean).join(" ");
+  const results = await nominatim(query, options.fetcher ?? fetch, options.signal, options.throttleMs ?? OSM_INTERVAL_MS, true);
+  const brands = new Set<string>();
+  const sites = new Set<string>();
+  for (const item of results) {
+    if (!POI_CLASSES.has(item.category) || !item.name || !osmNameMatches(name, item.name) || !osmPlaceMatches(place, item.display_name))
+      continue;
+    const brand = item.extratags?.["brand:wikidata"];
+    if (brand && /^Q\d{1,12}$/.test(brand)) brands.add(brand);
+    const raw = item.extratags?.website ?? item.extratags?.["contact:website"];
+    if (!raw) continue;
+    try {
+      const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+      if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+      url.protocol = "https:";
+      if (IP_HOST.test(url.hostname) || !url.hostname.includes(".")) continue;
+      sites.add(url.origin);
+    } catch {
+      // A malformed tag is just skipped.
+    }
+  }
+  const wikidata = brands.size === 1 ? [...brands][0] : undefined;
+  const website = sites.size === 1 ? new URL([...sites][0]) : undefined;
+  return wikidata || website ? { ...(wikidata ? { wikidata } : {}), ...(website ? { website } : {}) } : undefined;
 }
 
 const cache = new Map<string, Industry | null>();

@@ -17,7 +17,7 @@ import { merchantLogoBookingId, merchantLogoName } from "@/lib/automation/mercha
 import { normalizeMerchantDescriptor } from "@/lib/automation/merchants";
 import type { AutomationStore } from "@/lib/automation/store";
 import type { ChatOptions } from "./client";
-import { industryCategory } from "./industry";
+import { industryCategory, type MerchantPlace } from "./industry";
 import { findMerchantLogo, logoFileName } from "./logo-finder";
 import { webTarget } from "./web-categories";
 
@@ -38,6 +38,8 @@ export type LogoTarget = {
   guessWebsite: boolean;
   /** Merchant names (aliases) keep their own file name, whatever name found the logo. */
   saveAs?: string;
+  /** Card payment place, so OpenStreetMap can name a local shop's website. */
+  place?: MerchantPlace;
 };
 
 const display = (word: string) =>
@@ -101,13 +103,16 @@ function targetFor(row: Transaction): Omit<LogoTarget, "bookings"> | undefined {
       : [];
     return {
       key: normalizeLocalLogoName(alias), queries: [...new Set([alias, ...shorter])], saveAs: alias,
-      context: row.description.slice(0, 200), guessWebsite: !!card,
+      context: row.description.slice(0, 200), guessWebsite: !!card, ...(card?.place ? { place: card.place } : {}),
     };
   }
   if (!card) return undefined;
   const queries = logoQueries(card.name);
   if (!queries.length) return undefined;
-  return { key: normalizeLocalLogoName(queries.at(-1)!), queries, context: row.description.slice(0, 200), guessWebsite: true };
+  return {
+    key: normalizeLocalLogoName(queries.at(-1)!), queries, context: row.description.slice(0, 200), guessWebsite: true,
+    ...(card.place ? { place: card.place } : {}),
+  };
 }
 
 type Misses = Record<string, number>;
@@ -209,6 +214,7 @@ export async function sweepMissingLogos(
       const outcome = await findMerchantLogo(query, target.context, {
         directory, signal: options.signal, fetcher: options.fetcher, ai: options.ai ?? {},
         guessWebsite: target.guessWebsite && !shortened, requireConfirmation: shortened,
+        ...(target.place && !shortened ? { place: target.place } : {}),
         throttleMs: options.throttleMs, saveAs: target.saveAs,
       });
       if (outcome.status === "saved") saved.push({ name: target.saveAs ?? query, file: outcome.file, source: outcome.source });

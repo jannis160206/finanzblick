@@ -61,6 +61,7 @@ function fetcher(wikidataStatus = 200) {
     calls.push(url.href);
     if (url.hostname === "www.wikidata.org")
       return wikidataStatus === 200 ? Response.json({ search: [] }) : new Response("", { status: wikidataStatus });
+    if (url.hostname === "nominatim.openstreetmap.org") return Response.json([]);
     if (url.href === "https://www.kukowitsch.at/")
       return new Response('<title>Kukowitsch Villach</title><link rel="apple-touch-icon" href="/t.png">', {
         headers: { "content-type": "text/html" },
