@@ -69,6 +69,7 @@ export type ImportMetadata = {
   fixedReceipts?: FixedReceipt[];
   accountSnapshots?: AppState["accountSnapshots"];
   amexBalanceSnapshots?: AppState["amexBalanceSnapshots"];
+  trBalances?: AppState["trBalances"];
   reviewQueue?: ReviewItem[];
   issues?: string[];
   reparsedFiles?: string[];
@@ -372,8 +373,13 @@ function mergeMetadata(state: AppState, metadata: ImportMetadata): AppState {
   );
   for (const item of metadata.accountSnapshots ?? [])
     accounts.set(`${item.name}|${item.date}`, item);
+  // A manually entered balance on the same day stays authoritative.
+  const trBalances = new Map((state.trBalances ?? []).map((item) => [item.date, item]));
+  for (const item of metadata.trBalances ?? [])
+    if (!trBalances.has(item.date)) trBalances.set(item.date, item);
   return {
     ...state,
+    ...(trBalances.size ? { trBalances: [...trBalances.values()].sort((a, b) => a.date.localeCompare(b.date)) } : {}),
     ...(amexBalances.size ? { amexBalanceSnapshots: [...amexBalances.values()] } : {}),
     ...(accounts.size ? { accountSnapshots: [...accounts.values()] } : {}),
     ...(snapshots.size
@@ -677,6 +683,7 @@ export function prepareStatementImport(
       pocketSnapshots: results.flatMap(
         (result) => result.pocketSnapshots ?? [],
       ),
+      trBalances: results.flatMap((result) => result.trBalances ?? []),
       fixedReceipts: split.receipts,
       imports: sources,
     } satisfies ImportMetadata,

@@ -142,7 +142,7 @@ describe("real statement layouts", () => {
   it.skipIf(!originalFiles.every((name) => existsSync(new URL(name, examples))))(
     "parses all three supplied original files including binary PDF",
     async () => {
-      const expected = { Raiffeisen: 40, Revolut: 173, Amex: 57 };
+      const expected: Record<string, number> = { Raiffeisen: 40, Revolut: 173, Amex: 57 };
       const sources: string[] = [];
       for (const name of originalFiles) {
         const data = readFileSync(new URL(name, examples));

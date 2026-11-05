@@ -6,6 +6,7 @@ import {
   pocketSnapshotSchema,
   statementRepairDraftSchema,
   transactionSchema,
+  trBalanceSchema,
 } from "@/lib/types";
 import { MAX_IMPORT_BYTES, MAX_STATEMENT_ROWS } from "@/lib/import/limits";
 import { automationErrorCodeSchema } from "./errors";
@@ -24,7 +25,7 @@ export const parserRequestSchema = z.object({
 export type ParserRequest = z.infer<typeof parserRequestSchema>;
 
 export const parserResultSchema = z.object({
-  source: z.enum(["Raiffeisen", "Revolut", "Amex"]).nullable(),
+  source: z.enum(["Raiffeisen", "Revolut", "Amex", "Trade Republic"]).nullable(),
   file: z.string().max(200),
   rows: z.array(transactionSchema).max(MAX_STATEMENT_ROWS),
   skipped: z.number().int().nonnegative(),
@@ -42,6 +43,7 @@ export const parserResultSchema = z.object({
   pocketSnapshots: z.array(pocketSnapshotSchema).max(10_000).optional(),
   accountSnapshots: z.array(accountSnapshotSchema).max(100_000).optional(),
   amexBalanceSnapshots: z.array(amexBalanceSnapshotSchema).max(10_000).optional(),
+  trBalances: z.array(trBalanceSchema).max(10_000).optional(),
   amexScreenshot: z.object({
     layout: z.enum(["grouped", "list"]),
     capturedAt: dateSchema,

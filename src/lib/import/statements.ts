@@ -15,9 +15,10 @@ import { assertImportSize, MAX_STATEMENT_ROWS } from "@/lib/import/limits";
 import { amexBookingKey, isAmexScreenshot, numberStatementRows, statementBaseKey, statementFingerprint } from "./identity";
 import { hasTerminalText, recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 import type { ImportResult } from "./result-schema";
+import { isTradeRepublicHeader, parseTradeRepublicRows } from "./trade-republic";
 export { statementFingerprint } from "./identity";
 
-export type StatementSource = "Raiffeisen" | "Revolut" | "Amex";
+export type StatementSource = "Raiffeisen" | "Revolut" | "Amex" | "Trade Republic";
 export type StatementDraft = z.infer<typeof statementRepairDraftSchema>;
 export type StatementIssue = {
   file: string;
@@ -37,6 +38,7 @@ export type StatementResult = {
   pocketSnapshots?: PocketSnapshot[];
   accountSnapshots?: AppState["accountSnapshots"];
   amexBalanceSnapshots?: AppState["amexBalanceSnapshots"];
+  trBalances?: AppState["trBalances"];
   amexScreenshot?: {
     layout: "grouped" | "list";
     capturedAt: string;
@@ -334,6 +336,7 @@ const raiffeisenHeader: Header = {
 export function detectStatementSource(
   rows: string[][],
 ): StatementSource | null {
+  if (rows.some(isTradeRepublicHeader)) return "Trade Republic";
   const text = rows.map((row) => row.join(" ")).join("\n");
   if (/kontoauszug zu transaktionen/i.test(text)) return "Revolut";
   if (rows.some(isRaiffeisenRecord)) return "Raiffeisen";
@@ -371,8 +374,19 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
   const source = detectStatementSource(tables.flat().map((row) => row.cells));
   if (!source)
     throw new Error(
-      "Dateityp nicht erkannt. Erwartet werden Raiffeisen-Giro-, Revolut- oder American-Express-Kontoauszüge mit Datum, Beschreibung und Betrag.",
+      "Dateityp nicht erkannt. Erwartet werden Raiffeisen-Giro-, Revolut-, American-Express- oder Trade-Republic-Kontoauszüge mit Datum, Beschreibung und Betrag.",
     );
+  if (source === "Trade Republic") {
+    const table = tables.find((rows) => rows.some((row) => isTradeRepublicHeader(row.cells))) ?? [];
+    const parsed = parseTradeRepublicRows(table, file);
+    if (!parsed.rows.length && !parsed.skipped)
+      throw new Error("Trade-Republic-Export erkannt, aber keine Buchungen gefunden.");
+    return admitStatementRepairDrafts({
+      source, file, skipped: parsed.skipped, issues: parsed.issues,
+      rows: numberStatementRows(classifyStatementRows(parsed.rows)),
+      ...(parsed.trBalances ? { trBalances: parsed.trBalances } : {}),
+    });
+  }
   const result: StatementResult = {
     source,
     file,
