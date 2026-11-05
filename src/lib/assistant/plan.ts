@@ -1,7 +1,7 @@
 import { addMonths, calculateMonthTotals, round, sum, type Dashboard } from "@/lib/calc";
 import { allocateGoals, bankPocketBalance, corePocket, goalExtraIncome, pocketKey, SAVINGS_FLOOR, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
-import { plannedOneOffSchema, savingsGoalSchema, type AppState, type AssistantDraft, type PlannedOneOff, type SavingsGoal } from "@/lib/types";
+import { plannedOneOffSchema, savingsGoalSchema, type AppState, type AssistantDraft, type AssistantOperation, type PlannedOneOff, type Pocket, type SavingsGoal } from "@/lib/types";
 import { lastDay } from "./intent";
 
 export type MonthBasis = {
@@ -58,6 +58,8 @@ export type GoalPlan = {
   // Monthly amount the user named, if it is not enough for the chosen date.
   offered?: number;
   reachableWithOffered?: string;
+  // Extra start payments, e.g. 2 × 60 € from the Sparkonto.
+  extra?: { amount: number; months: number; total: number; from?: string };
   planned: number;
   fundedInPlan: number;
   checkedUntil: string;
@@ -92,32 +94,47 @@ export function planSavingsGoal(state: AppState, dashboard: Dashboard, draft: As
   let monthly: number;
   let offered: number | undefined;
   let reachableWithOffered: string | undefined;
+  const extra = draft.extra;
+  const extraIn = (count: number) => extra ? round(extra.amount * Math.min(extra.months, count)) : 0;
+  // Months needed when the rate runs every month and the extras only in the first months.
+  const monthsFor = (rate: number) => {
+    for (let count = 1; count <= 600; count++) if (round(rate * count + extraIn(count)) + 0.005 >= gap) return count;
+    return 601;
+  };
   if (date) {
     if (date < state.settings.asOf) return { ...base, error: "Das Zieldatum liegt in der Vergangenheit." };
     months = monthDiff(current, date.slice(0, 7)) + 1;
-    monthly = Math.ceil(gap / months);
+    monthly = Math.max(0, Math.ceil((gap - extraIn(months)) / months));
     if (draft.monthly && draft.monthly < monthly) {
       offered = draft.monthly;
-      reachableWithOffered = monthEnd(addMonths(current, Math.ceil(gap / draft.monthly) - 1));
+      reachableWithOffered = monthEnd(addMonths(current, monthsFor(draft.monthly) - 1));
     }
   } else {
     monthly = Math.ceil(draft.monthly ?? 0);
     if (monthly <= 0) return { ...base, error: "Mir fehlt das Zieldatum oder die Monatsrate." };
-    months = Math.ceil(gap / monthly);
+    months = monthsFor(monthly);
     if (months > 600) return { ...base, error: "Mit dieser Rate würde das Ziel über 50 Jahre dauern." };
     date = monthEnd(addMonths(current, months - 1));
   }
-  const goal = buildSavingsGoal(state, { ...draft, date, monthly }, monthly, "preview");
+  if (extra && addMonths(current, Math.min(extra.months, months) - 1) > "2027-12")
+    return { ...base, error: "Extra-Beträge kann ich nur bis Dezember 2027 einplanen." };
+  const goal = buildSavingsGoal(state, { ...draft, date, monthly }, monthly, "preview", current);
   const simulation = simulateGoal(state, dashboard, goal);
   const warnings: string[] = [];
   const planned = round(gap);
   const covered = round(simulation.funded);
   if (simulation.checkedUntil < date.slice(0, 7)) warnings.push(`Der Monatsplan reicht nur bis ${simulation.checkedUntil.slice(5)}/${simulation.checkedUntil.slice(0, 4)}. Spätere Monate sind nicht geprüft.`);
-  if (start > 0 && draft.fromAccount && corePocket(draft.fromAccount)) {
-    const balance = bankPocketBalance(state, corePocket(draft.fromAccount)!, dashboard.actual);
-    if (balance !== null && balance < start) warnings.push(`Auf dem ${draft.fromAccount} liegen nur ${balance.toFixed(2)} €.`);
+  const needs = new Map<string, number>();
+  if (start > 0 && draft.fromAccount && corePocket(draft.fromAccount)) needs.set(corePocket(draft.fromAccount)!, start);
+  const extraMonths = extra ? Math.min(extra.months, months) : 0;
+  if (extra?.from && extra.from !== "Giro") needs.set(extra.from, round((needs.get(extra.from) ?? 0) + extraIn(months)));
+  for (const [pocket, need] of needs) {
+    const balance = bankPocketBalance(state, pocket as Pocket, dashboard.actual);
+    if (balance !== null && balance < need) warnings.push(`Auf dem ${pocket} liegen nur ${balance.toFixed(2)} €, gebraucht werden ${need.toFixed(2)} €.`);
   }
+  if (extra?.from === "Giro") warnings.push("Die Extra-Beträge vom Giro kommen aus deinem Guthaben, nicht aus dem laufenden Überschuss.");
   return { ...base, ok: true, date, months, monthly, offered, reachableWithOffered, planned,
+    ...(extra ? { extra: { amount: extra.amount, months: extraMonths, total: extraIn(months), ...(extra.from ? { from: extra.from } : {}) } } : {}),
     fundedInPlan: covered, checkedUntil: simulation.checkedUntil, firstMonth: current, shortMonths: simulation.shortMonths,
     conflicts: simulation.conflicts, warnings };
 }
@@ -154,14 +171,25 @@ function simulateGoal(state: AppState, dashboard: Dashboard, goal: SavingsGoal) 
   return { funded: round(funded), conflicts, checkedUntil, shortMonths };
 }
 
-export function buildSavingsGoal(state: AppState, draft: AssistantDraft, monthly: number, id: string = crypto.randomUUID()): SavingsGoal {
+export function buildSavingsGoal(state: AppState, draft: AssistantDraft, monthly: number, id: string = crypto.randomUUID(), extrasFrom?: string): SavingsGoal {
   const name = (draft.name ?? "Sparziel").trim().slice(0, 80);
+  // Extras are only embedded for previews; a real goal gets them through the goal_extras operation (with pocket withdrawal).
+  const extras = draft.extra && extrasFrom ? Object.fromEntries(Array.from({ length: draft.extra.months }, (_, index) => addMonths(extrasFrom, index))
+    .filter((month) => month <= (draft.date ?? "").slice(0, 7) && month <= "2027-12").map((month) => [month, draft.extra!.amount])) : {};
   return savingsGoalSchema.parse({
     id, name, pocket: name, target: draft.amount, date: draft.date,
     // A documented start keeps the balance known, so the plan can keep funding all goals.
     openingBalance: { date: state.settings.asOf, amount: draft.startCapital ?? 0 },
-    funding: { monthly, extras: {} },
+    funding: { monthly, extras },
   });
+}
+
+// The operation that books a new goal's start extras, limited to the months before its date.
+export function goalExtraOperation(goal: SavingsGoal, draft: AssistantDraft, firstMonth: string): AssistantOperation | undefined {
+  if (!draft.extra) return undefined;
+  const months = Math.min(draft.extra.months, monthDiff(firstMonth, goal.date.slice(0, 7)) + 1);
+  if (months < 1) return undefined;
+  return { op: "goal_extras", goalId: goal.id, start: firstMonth, months, amount: draft.extra.amount, ...(draft.extra.from ? { from: draft.extra.from } : {}) };
 }
 
 export function buildPlannedOneOff(draft: AssistantDraft, id: string = crypto.randomUUID()): PlannedOneOff {

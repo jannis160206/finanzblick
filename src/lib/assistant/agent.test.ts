@@ -108,6 +108,43 @@ describe("assistant changes", () => {
     expect(() => applyOperations(state, [{ op: "goal_update", goalId: "japan", target: 3000 }], { asOf })).toThrow(OperationError);
   });
 
+  it("adds extra amounts from a pocket to a goal and undoes them with the month", () => {
+    const state = fixture();
+    const preview = executeTool("edit", "Nimm für Japan die nächsten 2 Monate je 60 € extra vom Sparkonto", { ...context(state), hints: { goal: "Japan" } });
+    if (!preview.change) throw new Error(preview.text);
+    expect(preview.change.operations).toEqual([{ op: "goal_extras", goalId: "japan", start: "2026-11", months: 2, amount: 60, from: "Sparkonto" }]);
+    const applied = applyOperations(state, preview.change.operations, { asOf });
+    valid(applied.state);
+    expect(savingsGoals(applied.state)[0].funding?.extras).toEqual({ "2026-11": 60, "2026-12": 60 });
+    expect(applied.state.months["2026-11"]?.pocketOut.Sparkonto).toBe(60);
+    const logged = recordChange(applied.state, applied, { id: "extra", at: 1, title: preview.change.title });
+    const reverted = undoChange(logged, "extra", 2);
+    valid(reverted);
+    expect(savingsGoals(reverted)[0].funding?.extras).toEqual({});
+    expect(reverted.months["2026-11"]).toEqual(state.months["2026-11"]);
+    const removal = executeTool("edit", "Keine Extras mehr für Japan", { ...context(applied.state), hints: { goal: "Japan" } });
+    expect(removal.change?.operations).toEqual([{ op: "goal_extras", goalId: "japan", start: "2026-11", months: 2, amount: 0 }]);
+    const auto = fixture();
+    auto.savingsGoals = [savingsGoalSchema.parse({ ...auto.savingsGoals![0], funding: undefined })];
+    expect(() => applyOperations(auto, [{ op: "goal_extras", goalId: "japan", start: "2026-11", months: 2, amount: 60 }], { asOf })).toThrow(OperationError);
+    expect(() => applyOperations(state, [{ op: "goal_extras", goalId: "japan", start: "2026-09", months: 2, amount: 60 }], { asOf })).toThrow(OperationError);
+  });
+
+  it("explains the dashboard with live values", () => {
+    const state = fixture();
+    expect(detectTool("Was kann ich im Dashboard alles einstellen?")).toBe("explain");
+    expect(detectTool("Wie funktionieren die Sparziele?")).toBe("explain");
+    expect(detectTool("Wie funktionierst du?")).toBe("help");
+    expect(detectTool("Was ist meine größte Ausgabe dieses Jahr?")).toBe("query");
+    expect(detectTool("Die ersten 2 Monate je 60 € vom Sparkonto für Japan", ["Japan"])).toBe("edit");
+    expect(detectTool("Ich will bis Juli 2027 3.000 € für Japan sparen, die ersten 2 Monate je 60 € vom Sparkonto", ["Japan"])).toBe("savings_goal");
+    const overview = executeTool("explain", "Was kann ich im Dashboard alles einstellen?", context(state));
+    expect(overview.card?.lines.length).toBeGreaterThan(5);
+    const goals = executeTool("explain", "Wie funktionieren die Sparziele?", context(state));
+    expect(goals.card?.title).toBe("Sparziele");
+    expect(goals.card?.lines.some((line) => line.label.startsWith("Japan") && line.detail?.includes("250"))).toBe(true);
+  });
+
   it("pauses a goal rate for a month", () => {
     const state = fixture();
     const applied = applyOperations(state, [{ op: "goal_pause", goalId: "japan", month: "2026-11" }], { asOf });

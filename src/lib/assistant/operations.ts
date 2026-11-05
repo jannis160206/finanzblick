@@ -1,9 +1,10 @@
 import { classify } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
+import { corePocket, pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { assignTransactions } from "@/lib/transaction-tools";
+import { addMonth } from "./intent";
 import {
-  assistantMemorySchema, MAX_ASSISTANT_CHANGES, MAX_ASSISTANT_MEMORY, plannedOneOffSchema, savingsGoalSchema,
+  assistantMemorySchema, emptyMonth, MAX_ASSISTANT_CHANGES, MAX_ASSISTANT_MEMORY, plannedOneOffSchema, savingsGoalSchema,
   type AppState, type AssistantChangeLog, type AssistantOperation, type AssistantUndo, type PlannedOneOff, type SavingsGoal,
 } from "@/lib/types";
 
@@ -110,6 +111,43 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       const parsedGoal = savingsGoalSchema.safeParse({ ...goal, funding });
       if (!parsedGoal.success) throw new OperationError(`Für ${monthLabel(operation.month)} kann ich die Rate nicht aussetzen.`);
       return replaceGoal(state, parsedGoal.data, goal.id);
+    }
+    case "goal_extras": {
+      const goal = findGoal(state, operation.goalId);
+      if (!goal.funding) throw new OperationError(`„${goal.name}“ wird automatisch befüllt. Leg zuerst eine feste Monatsrate fest, dann kann ich Extra-Beträge eintragen.`);
+      if (operation.from && operation.from !== "Giro" && corePocket(goal.pocket) === operation.from)
+        throw new OperationError(`„${goal.name}“ liegt selbst auf dem ${operation.from}. Eine Umbuchung dorthin ändert nichts.`);
+      const months = Array.from({ length: operation.months }, (_, index) => addMonth(operation.start, index));
+      if (months[0] < context.asOf.slice(0, 7)) throw new OperationError("Extra-Beträge gehen nur ab dem aktuellen Monat.");
+      if (months.at(-1)! > goal.date.slice(0, 7)) throw new OperationError(`Das geht über das Zieldatum von „${goal.name}“ (${dateLabel(goal.date)}) hinaus.`);
+      if (months.at(-1)! > "2027-12") throw new OperationError("Der Monatsplan reicht nur bis Dezember 2027.");
+      snapshotGoal(undo, state, goal.id);
+      const extras = { ...goal.funding.extras };
+      const nextMonths = { ...state.months };
+      const pocket = operation.from && operation.from !== "Giro" ? operation.from : undefined;
+      const before = months.map((month) => extras[month] ?? 0);
+      for (const month of months) {
+        const old = extras[month] ?? 0;
+        if (operation.amount > 0) extras[month] = operation.amount; else delete extras[month];
+        if (pocket) {
+          undo.months ??= [];
+          if (!undo.months.some((entry) => entry.month === month)) undo.months.push({ month, before: state.months[month] ?? null });
+          const input = nextMonths[month] ?? emptyMonth();
+          const out = Math.max(0, Math.round((input.pocketOut[pocket] + operation.amount - old) * 100) / 100);
+          nextMonths[month] = { ...input, pocketOut: { ...input.pocketOut, [pocket]: out } };
+        }
+      }
+      const range = months.length === 1 ? monthLabel(months[0]) : `${monthLabel(months[0])} – ${monthLabel(months.at(-1)!)}`;
+      const beforeText = before.every((value) => value === 0) ? none
+        : before.every((value) => value === before[0]) ? `${months.length} × ${currency(before[0])}` : before.map((value) => currency(value)).join(", ");
+      const afterText = operation.amount > 0 ? `${months.length} × ${currency(operation.amount)}${operation.from ? ` vom ${operation.from}` : ""}` : "keine";
+      if (beforeText === afterText) throw new OperationError(`Bei „${goal.name}“ ist das schon so eingetragen.`);
+      diffs.push({ label: `${goal.name}: Extra ${range}`, before: beforeText, after: afterText });
+      if (pocket && operation.amount > 0) diffs.push({ label: `${pocket}: Entnahme ${range}`, before: none,
+        after: `${currency(Math.round(operation.amount * months.length * 100) / 100)} gesamt` });
+      const parsed = savingsGoalSchema.safeParse({ ...goal, funding: { ...goal.funding, extras } });
+      if (!parsed.success) throw new OperationError("Die Extra-Beträge sind ungültig.");
+      return { ...replaceGoal(state, parsed.data, goal.id), months: nextMonths };
     }
     case "goal_complete": {
       const goal = findGoal(state, operation.goalId);
@@ -283,6 +321,13 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
     const settings = { ...next.settings };
     for (const { key, before } of undo.settings) Object.assign(settings, { [key]: before });
     next.settings = settings;
+  }
+  if (undo.months?.length) {
+    const months = { ...next.months };
+    for (const { month, before } of undo.months) {
+      if (before) months[month] = before; else delete months[month];
+    }
+    next.months = months;
   }
   if (undo.memory?.length) {
     let memory = [...(next.assistantMemory ?? [])];

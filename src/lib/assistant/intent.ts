@@ -12,6 +12,7 @@ export type ParsedMessage = {
   fromAccount?: string;
   shared?: boolean;
   whatIf?: boolean;
+  extra?: AssistantDraft["extra"];
   date?: DateHint;
   // Every amount written in the message; model values must come from this list.
   numbers: number[];
@@ -28,6 +29,44 @@ const accounts: [RegExp, string][] = [
   [/\bgiro(?:konto)?\b|\braiffeisen\b|\bhauptkonto\b/i, "Giro"], [/\burlaubs?(?:konto|pocket|topf)\b/i, "Urlaub"],
   [/\bmotorrad(?:konto|pocket)\b/i, "Motorrad"], [/\brevolut\b/i, "Revolut"],
 ];
+const numberWords: Record<string, number> = { einen: 1, ein: 1, einem: 1, zwei: 2, drei: 3, vier: 4, "fünf": 5, fuenf: 5, sechs: 6, sieben: 7, acht: 8, neun: 9, zehn: 10, elf: 11, "zwölf": 12 };
+const countPattern = "(\\d{1,2}|einen|ein|einem|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf)";
+const moneyPattern = "(\\d{1,3}(?:[.\\s]\\d{3})+|\\d+)(?:,(\\d{1,2}))?\\s*(?:€|euro|eur)";
+const extraSources: [RegExp, NonNullable<AssistantDraft["extra"]>["from"]][] = [
+  [/sparkonto/i, "Sparkonto"], [/notgroschen|trade republic|tagesgeld/i, "Notgroschen"], [/urlaub/i, "Urlaub"],
+  [/motorrad/i, "Motorrad"], [/giro|raiffeisen|hauptkonto|gehalt/i, "Giro"],
+];
+export type ExtraHint = { amount: number; months: number; from?: NonNullable<AssistantDraft["extra"]>["from"]; start: number; end: number };
+
+// "die ersten 2 Monate je 60 € vom Sparkonto", "60 € extra für 3 Monate aus dem Notgroschen", "2 × 60 € vom Sparkonto zum Start".
+export function findExtra(text: string): ExtraHint | undefined {
+  const lower = text.toLowerCase();
+  const lead = "(?:(?:die|den|in den|für die|fuer die)\\s+)?(?:(?:ersten|nächsten|naechsten|kommenden)\\s+)?";
+  const patterns: [RegExp, "countFirst" | "amountFirst"][] = [
+    [new RegExp(`${lead}${countPattern}\\s+monate?n?\\s+(?:lang\\s+)?(?:(?:je(?:weils)?|à|a|zusätzlich|zusaetzlich|extra|nochmal)\\s+)*${moneyPattern}`, "i"), "countFirst"],
+    [new RegExp(`${moneyPattern}\\s+(?:(?:extra|zusätzlich|zusaetzlich|mehr)\\s+)?(?:(?:für|fuer|in)\\s+)?${lead}${countPattern}\\s+monate?n?`, "i"), "amountFirst"],
+    [new RegExp(`\\b${countPattern}\\s*[x×]\\s*${moneyPattern}`, "i"), "countFirst"],
+  ];
+  for (const [pattern, order] of patterns) {
+    const match = pattern.exec(lower);
+    if (!match) continue;
+    const [count, whole, decimals] = order === "countFirst" ? [match[1], match[2], match[3]] : [match[3], match[1], match[2]];
+    const months = numberWords[count] ?? Number(count);
+    const amount = parseAmount(`${whole}${decimals ? `,${decimals}` : ""}`);
+    if (!amount || !Number.isInteger(months) || months < 1 || months > 24) continue;
+    // Plain "6 Monate 60 € im Monat" is a monthly rate, not an extra, unless a start phase or source is named.
+    const tail = lower.slice(match.index + match[0].length, match.index + match[0].length + 50);
+    const source = /^\s*(?:extra\s+|zusätzlich\s+)?(?:\w+\s+)?(?:vom|von|aus dem|aus der|aus|vom konto)\s+(?:dem\s+|der\s+|meinem\s+|meiner\s+)?([a-zäöüß ]{3,30})/.exec(tail);
+    const from = source ? extraSources.find(([test]) => test.test(source[1]))?.[1] : undefined;
+    const phrase = match[0];
+    if (order === "countFirst" && /\bin\s+$/.test(lower.slice(Math.max(0, match.index - 4), match.index)) && !/ersten|nächsten|naechsten|kommenden/.test(phrase)) continue;
+    const startPhase = /ersten|nächsten|naechsten|kommenden|zum start|am anfang|anfangs|zu beginn|extra|zusätzlich|zusaetzlich|[x×]/.test(`${phrase} ${tail.slice(0, 25)} ${lower.slice(Math.max(0, match.index - 25), match.index)}`);
+    if (!from && !startPhase) continue;
+    const end = match.index + match[0].length + (source ? source.index + source[0].length : 0);
+    return { amount, months, ...(from ? { from } : {}), start: match.index, end };
+  }
+  return undefined;
+}
 const stopWords = new Set(["ich", "du", "wir", "im", "in", "am", "an", "bis", "ab", "kann", "könnte", "wie", "was", "wann", "wo",
   "mein", "meine", "meinen", "ein", "eine", "einen", "der", "die", "das", "den", "dem", "euro", "eur", "monat", "monate", "monaten",
   "rate", "raten", "sparziel", "sparkonto", "giro", "girokonto", "konto", "startkapital", "geld", "ende", "anfang", "mitte", "jahr",
@@ -168,9 +207,15 @@ export function parseAssistantMessage(text: string, asOf: string): ParsedMessage
   if (action) result.action = action;
   if (/was wäre,? wenn|was waere wenn|\bwas,? wenn\b|angenommen|hypothetisch|nur durchrechnen|nur rechnen|rein theoretisch/.test(lower)) result.whatIf = true;
   if (/mit raphael|geteilt|halbe[ -]halbe|teilen uns|zur hälfte/.test(lower)) result.shared = true;
-  for (const [pattern, name] of accounts) if (pattern.test(input)) { result.fromAccount = name; break; }
   const tokens = [...date.tokens];
-  const installments = /\b(?:in\s+)?(\d{1,3})\s*(?:monats)?raten\b/i.exec(input) ?? /\b(\d{1,3})\s*[x×]\s*(?=\d)/i.exec(input);
+  const extra = action === "expense" || action === "affordability" ? undefined : findExtra(input);
+  if (extra) {
+    result.extra = { amount: extra.amount, months: extra.months, ...(extra.from ? { from: extra.from } : {}) };
+    tokens.push({ start: extra.start, end: extra.end });
+  }
+  const withoutExtra = extra ? blank(input, [{ start: extra.start, end: extra.end }]) : input;
+  for (const [pattern, name] of accounts) if (pattern.test(withoutExtra)) { result.fromAccount = name; break; }
+  const installments = /\b(?:in\s+)?(\d{1,3})\s*(?:monats)?raten\b/i.exec(withoutExtra) ?? /\b(\d{1,3})\s*[x×]\s*(?=\d)/i.exec(withoutExtra);
   if (installments) {
     const count = Number(installments[1]);
     if (count >= 1 && count <= 120) result.installments = count;
@@ -290,11 +335,12 @@ export function mergeDraft(pending: AssistantDraft | undefined, parsed: ParsedMe
     const plain = text.trim().replace(/[.!?]+$/, "");
     if (!values.name && plain && plain.length <= 60 && !/\d/.test(plain)) values.name = plain.charAt(0).toUpperCase() + plain.slice(1);
   } else if (!startOver && pending.name && !action) delete values.name;
-  for (const key of ["name", "amount", "monthly", "startCapital", "installments", "fromAccount", "shared", "whatIf"] as const) {
+  for (const key of ["name", "amount", "monthly", "startCapital", "installments", "fromAccount", "shared", "whatIf", "extra"] as const) {
     if (values[key] !== undefined) Object.assign(draft, { [key]: values[key] });
   }
   if (values.date) draft.date = resolveDate(values.date, resolvedAction, asOf);
   if (draft.installments === 1) delete draft.installments;
+  if (resolvedAction !== "savings_goal") delete draft.extra;
   const result = assistantDraftSchema.safeParse(draft);
   return result.success ? result.data : undefined;
 }

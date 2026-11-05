@@ -381,10 +381,18 @@ export const assistantDraftSchema = z.object({
   installments: z.number().int().min(1).max(120).optional(),
   shared: z.boolean().optional(),
   whatIf: z.boolean().optional(),
+  // "Die ersten 2 Monate je 60 € vom Sparkonto": extra start payments on top of the monthly rate.
+  extra: z.object({
+    amount: moneySchema.positive().max(1_000_000),
+    months: z.number().int().min(1).max(24),
+    from: z.enum([...pocketNames, "Giro"]).optional(),
+  }).strict().optional(),
 }).strict();
 export type AssistantDraft = z.infer<typeof assistantDraftSchema>;
 const monthKeySchema = z.string().regex(/^20\d\d-(0[1-9]|1[0-2])$/);
 const agentIdSchema = z.string().min(1).max(100);
+export const extraSourceSchema = z.enum([...pocketNames, "Giro"]);
+export type ExtraSource = z.infer<typeof extraSourceSchema>;
 // Allowlisted agent operations: the assistant can only propose these, the user applies them with a click.
 export const assistantOperationSchema = z.discriminatedUnion("op", [
   z.object({
@@ -395,6 +403,12 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     monthly: moneySchema.nonnegative().max(1_000_000).optional(),
   }).strict(),
   z.object({ op: z.literal("goal_pause"), goalId: agentIdSchema, month: monthKeySchema, resume: z.boolean().optional() }).strict(),
+  // Extra payments for N months; a pocket source is booked as withdrawal from that pocket. Amount 0 removes them.
+  z.object({
+    op: z.literal("goal_extras"), goalId: agentIdSchema, start: monthKeySchema,
+    months: z.number().int().min(1).max(24), amount: moneySchema.nonnegative().max(1_000_000),
+    from: extraSourceSchema.optional(),
+  }).strict(),
   z.object({ op: z.literal("goal_complete"), goalId: agentIdSchema }).strict(),
   z.object({ op: z.literal("goal_delete"), goalId: agentIdSchema }).strict(),
   z.object({
@@ -491,6 +505,7 @@ export const assistantUndoSchema = z.object({
     before: z.union([moneySchema, dateSchema]),
   }).strict()).max(5).optional(),
   memory: z.array(z.object({ id: agentIdSchema, before: assistantMemorySchema.nullable() }).strict()).max(50).optional(),
+  months: z.array(z.object({ month: z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/), before: monthInputSchema.nullable() }).strict()).max(24).optional(),
   transactions: z.array(undoTransactionSchema).max(2000).optional(),
   merchantRules: z.array(z.object({ key: z.string().min(1).max(1200), before: merchantRuleSchema.nullable() }).strict()).max(2000).optional(),
   fixedReceipts: z.array(z.object({ key: z.string().max(2000), before: fixedReceiptSchema }).strict()).max(2000).optional(),

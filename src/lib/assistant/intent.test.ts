@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groundModelExtraction, mergeDraft, missingQuestion, parseAmount, parseAssistantMessage } from "./intent";
+import { findExtra, groundModelExtraction, mergeDraft, missingQuestion, parseAmount, parseAssistantMessage } from "./intent";
 
 const asOf = "2026-10-07";
 const draftFor = (text: string, pending?: Parameters<typeof mergeDraft>[0]) =>
@@ -16,6 +16,18 @@ describe("assistant intent parser", () => {
     const draft = draftFor("Ich will bis Juli 2027 3.000 € für Japan sparen, 500 € liegen schon am Sparkonto.");
     expect(draft).toEqual({ action: "savings_goal", name: "Japan", amount: 3000, date: "2027-07-31", startCapital: 500, fromAccount: "Sparkonto" });
     expect(missingQuestion(draft!)).toBeUndefined();
+  });
+
+  it("reads extra start amounts for a savings goal", () => {
+    expect(findExtra("die ersten 2 Monate je 60 € vom Sparkonto")).toMatchObject({ amount: 60, months: 2, from: "Sparkonto" });
+    expect(findExtra("die nächsten drei Monate 50 € extra aus dem Notgroschen")).toMatchObject({ amount: 50, months: 3, from: "Notgroschen" });
+    expect(findExtra("2 × 100 € zusätzlich")).toMatchObject({ amount: 100, months: 2 });
+    expect(findExtra("in 6 Monaten 600 €")).toBeUndefined();
+    expect(findExtra("6 Monate lang 60 € im Monat")).toBeUndefined();
+    const draft = draftFor("Ich will bis Juli 2027 3.000 € für Japan sparen, die ersten 2 Monate je 60 € vom Sparkonto");
+    expect(draft).toMatchObject({ action: "savings_goal", name: "Japan", amount: 3000, date: "2027-07-31", extra: { amount: 60, months: 2, from: "Sparkonto" } });
+    expect(draft?.startCapital).toBeUndefined();
+    expect(draft?.fromAccount).toBeUndefined();
   });
 
   it("understands a monthly amount instead of a date", () => {

@@ -15,14 +15,14 @@ import { executeTool, memoryValue, type AgentHints, type AgentResult } from "@/l
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
-import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
+import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import {
-  appStateSchema, assistantDraftSchema, assistantMessageSchema, MAX_ASSISTANT_MESSAGES,
+  appStateSchema, assistantDraftSchema, assistantMessageSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
   type AppState, type AssistantDraft, type AssistantMessage, type AssistantOperation,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -38,7 +38,12 @@ const examples = [
   "100 € im Monat in einen ETF, was habe ich nach 10 Jahren?",
   "Was kann ich bei der Arbeitnehmerveranlagung absetzen?",
   "Was bekomme ich für meine Home-Office-Sachen beim Steuerausgleich zurück?",
+  "Ich will bis Dezember 2027 2.000 € für ein Auto sparen, die ersten 2 Monate je 60 € vom Sparkonto.",
+  "Nimm für Japan die nächsten 3 Monate je 50 € extra aus dem Notgroschen.",
+  "Was kann ich im Dashboard alles einstellen?",
+  "Wie funktionieren die Sparziele?",
 ];
+const extraSources: string[] = [...extraSourceSchema.options];
 const intro = "Frag mich zu deinen Ausgaben, plane Sparziele und Ausgaben, ändere Bestehendes oder lass dir beim Sparen helfen. " +
   "Alle Beträge rechnet der Code nach. Geändert wird erst, wenn du bestätigst, und jede Änderung lässt sich rückgängig machen.";
 const sameDay = (at: number, now: number) => new Date(at).toDateString() === new Date(now).toDateString();
@@ -223,14 +228,32 @@ export function FinanceAssistant() {
     const plan = planSavingsGoal(state, dashboard, draft);
     if (!plan.ok) { toast.error(plan.error); return; }
     const goal = buildSavingsGoal(state, { ...draft, date: plan.date }, plan.monthly);
+    const extraOperation = goalExtraOperation(goal, draft, plan.firstMonth);
     const logId = newId();
-    const summary = `${goal.name}: ${currency(goal.target)} bis ${dateLabel(goal.date)}, ${currency(plan.monthly)} / Monat`;
+    const summary = `${goal.name}: ${currency(goal.target)} bis ${dateLabel(goal.date)}, ${currency(plan.monthly)} / Monat` +
+      (plan.extra ? `, dazu ${plan.extra.months} × ${currency(plan.extra.amount)}${plan.extra.from ? ` vom ${plan.extra.from}` : ""}` : "");
+    let failed = "";
     if (commit((current) => {
       const next = { ...preserveGoalOpeningBalances(current), savingsGoals: [...savingsGoals(current), goal] };
-      return recordCreation(current, next, { kind: "goal", itemId: goal.id, summary }, { id: logId, at: Date.now(), title: `Sparziel „${goal.name}“ angelegt` });
+      const created = recordCreation(current, next, { kind: "goal", itemId: goal.id, summary }, { id: logId, at: Date.now(), title: `Sparziel „${goal.name}“ angelegt` });
+      if (!extraOperation) return created;
+      try {
+        // Goal and start extras form one change, so a single undo removes both.
+        const applied = applyOperations(created, [extraOperation]);
+        const log = created.assistantChanges!.at(-1)!;
+        return { ...applied.state, assistantChanges: [...created.assistantChanges!.slice(0, -1),
+          { ...log, summary: [...log.summary, ...applied.diffs.map((diff) => `${diff.label}: ${diff.before} → ${diff.after}`.slice(0, 300))].slice(0, 80),
+            undo: { ...log.undo, ...(applied.undo.months ? { months: applied.undo.months } : {}) } }] };
+      } catch (error) {
+        failed = error instanceof Error ? error.message : "Die Extra-Beträge konnten nicht eingetragen werden.";
+        return created;
+      }
     }, (items) => [...items.map((item) => item.id === message.id ? { ...item, draft, status: "created" as const, undoId: logId } : item),
-      { id: newId(), role: "assistant", text: `Das Sparziel „${goal.name}“ ist angelegt: ${currency(goal.target)} bis ${dateLabel(goal.date)}, ${currency(plan.monthly)} pro Monat.`, at: Date.now() }]))
+      { id: newId(), role: "assistant", text: `Das Sparziel „${goal.name}“ ist angelegt: ${currency(goal.target)} bis ${dateLabel(goal.date)}, ${currency(plan.monthly)} pro Monat` +
+        (plan.extra ? `, dazu ${plan.extra.months === 1 ? "einmal" : `die ersten ${plan.extra.months} Monate je`} ${currency(plan.extra.amount)} extra${plan.extra.from ? ` vom ${plan.extra.from}` : ""}.` : "."), at: Date.now() }])) {
       toast.success("Sparziel angelegt");
+      if (failed) toast.error(failed);
+    }
   }
   function createExpense(message: AssistantMessage, draft: AssistantDraft) {
     if (!draft.amount || !draft.date) return;
@@ -415,6 +438,8 @@ function DraftBody({ draft, onChange, open, state, dashboard, buffer }: {
           <Row label="Bis" value={dateLabel(plan.date)} />
           {plan.start > 0 && <Row label={`Startkapital${draft.fromAccount ? ` (${draft.fromAccount})` : ""}`} value={currency(plan.start)} />}
           <Row label={`Monatsrate · ${plan.months} ${plan.months === 1 ? "Monat" : "Monate"}`} value={`${currency(plan.monthly)} / Monat`} strong />
+          {plan.extra && <Row label={`Extra ${plan.extra.months === 1 ? "im 1. Monat" : `die ersten ${plan.extra.months} Monate`}${plan.extra.from ? ` (vom ${plan.extra.from})` : ""}`}
+            value={`${plan.extra.months} × ${currency(plan.extra.amount)} = ${currency(plan.extra.total)}`} />}
         </dl>
         {open && plan.ok && <div className="mt-3 space-y-2 rounded-xl bg-muted/30 p-3">
           <Slider label="Bis wann" value={months} min={1} max={60} display={monthLabel(plan.date.slice(0, 7))}
@@ -495,6 +520,8 @@ function DraftEditor({ draft, onSave, onCancel }: { draft: AssistantDraft; onSav
         : { installments: read("installments") ? Number(read("installments")) : undefined, shared: form.get("shared") === "on" || undefined,
           fromAccount: read("fromAccount") || undefined }),
       ...(draft.whatIf ? { whatIf: true } : {}),
+      ...(goal && money("extraAmount") && Number(read("extraMonths")) ? { extra: { amount: money("extraAmount"), months: Number(read("extraMonths")),
+        ...(extraSources.includes(read("extraFrom")) ? { from: read("extraFrom") } : {}) } } : {}),
     };
     const parsed = assistantDraftSchema.safeParse(Object.fromEntries(Object.entries(candidate).filter(([, value]) => value !== undefined)));
     if (!parsed.success) { setError("Bitte die Angaben prüfen: Beträge größer als 0, Raten zwischen 1 und 120."); return; }
@@ -508,6 +535,9 @@ function DraftEditor({ draft, onSave, onCancel }: { draft: AssistantDraft; onSav
         <Field name="monthly" label="Oder: monatlich (€)" value={draft.monthly} inputMode="decimal" />
         <Field name="startCapital" label="Startkapital (€)" value={draft.startCapital} inputMode="decimal" />
         <Field name="fromAccount" label="Startkapital von Konto" value={draft.fromAccount} />
+        <Field name="extraAmount" label="Extra pro Monat zum Start (€)" value={draft.extra?.amount} inputMode="decimal" />
+        <Field name="extraMonths" label="Extra für wie viele Monate" value={draft.extra?.months} inputMode="numeric" />
+        <Field name="extraFrom" label={`Extra von Konto (${extraSources.join(", ")})`} value={draft.extra?.from} />
       </> : <>
         <Field name="installments" label="Raten" value={draft.installments ?? 1} inputMode="numeric" />
         <Field name="fromAccount" label="Konto (Giro oder Sparkonto)" value={draft.fromAccount} />

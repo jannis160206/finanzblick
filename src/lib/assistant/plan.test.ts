@@ -3,7 +3,7 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { calculateDashboard, monthsForYear } from "@/lib/calc";
 import { plannedOneOffSchema, savingsGoalSchema } from "@/lib/types";
 import { monthlyVariableBudget } from "@/lib/variable-budgets";
-import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, planSavingsGoal } from "./plan";
+import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, planSavingsGoal } from "./plan";
 
 function fixture(surplus = 1081.4) {
   const state = createEmptyAccountState();
@@ -45,6 +45,17 @@ describe("assistant savings goal plan", () => {
     const plan = planSavingsGoal(state, dashboard, { action: "savings_goal", name: "Japan", amount: 3000, date: "2027-01-31" });
     expect(plan.ok).toBe(true);
     expect(plan.conflicts.map((item) => item.name)).toEqual(["Auto"]);
+  });
+
+  it("lowers the monthly rate by extra start amounts", () => {
+    const state = fixture();
+    const plan = planSavingsGoal(state, calculateDashboard(state),
+      { action: "savings_goal", name: "Japan", amount: 3000, date: "2027-07-31", startCapital: 500, fromAccount: "Sparkonto", extra: { amount: 60, months: 2, from: "Sparkonto" } });
+    expect(plan).toMatchObject({ ok: true, months: 10, monthly: 238, extra: { amount: 60, months: 2, total: 120, from: "Sparkonto" } });
+    const goal = buildSavingsGoal(state, { action: "savings_goal", name: "Japan", amount: 3000, date: "2027-07-31", extra: { amount: 60, months: 2 } }, 238, "japan");
+    expect(goal.funding?.extras).toEqual({});
+    const operation = goalExtraOperation(goal, { action: "savings_goal", name: "Japan", amount: 3000, extra: { amount: 60, months: 2, from: "Sparkonto" } }, "2026-11");
+    expect(operation).toEqual({ op: "goal_extras", goalId: "japan", start: "2026-11", months: 2, amount: 60, from: "Sparkonto" });
   });
 
   it("builds valid goals and planned expenses", () => {

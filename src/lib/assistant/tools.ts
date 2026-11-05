@@ -1,9 +1,9 @@
-import { detectAction } from "./intent";
+import { detectAction, findExtra } from "./intent";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "briefing", "edit", "rule",
-  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "homeoffice", "help",
+  "remember", "forget", "memory", "changes", "undo", "coach", "depot", "tax", "homeoffice", "explain", "help",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -27,6 +27,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   depot: "ETF-/Depot-Sparplan mit Zinseszins durchrechnen",
   tax: "absetzbare Buchungen für die Arbeitnehmerveranlagung (Österreich) sammeln",
   homeoffice: "ausrechnen, was man für Home-Office-Sachen (Laptop, Bildschirm, Bürostuhl, Schreibtisch) beim Steuerausgleich zurückbekommt",
+  explain: "erklären, wie das Finanzdashboard funktioniert (Seiten, Sparziele, Pockets, Import, Monatsplan, Einstellungen) und was man per Chat einstellen kann",
   help: "erklären, was der Assistent kann",
 };
 
@@ -51,6 +52,13 @@ export const mentionsName = (text: string, names: string[]) => names.length > 0 
 
 const editVerbs = /\b(?:erhöh|erhoeh|senk|reduzier|änder|aender|setz\w*|schieb|verschieb|verleg|benenn|umbenenn|nenn\w*\s+\S+\s+(?:in|um)\b|lösch|loesch|entfern|streich|aussetz|pausier|überspring|ueberspring|ausfallen|erreicht|geschafft|abgeschlossen|abschließ|erledigt|fortsetz|wieder aufnehm|auf\s+\d)/;
 
+const explainPattern = new RegExp([
+  "wie funktionier(?:t|en)\\b", "wie geht (?:das|die|der)\\b", "erklär", "erklaer", "wo finde ich", "wo sehe ich", "wofür ist", "wofuer ist", "wozu (?:ist|sind|dient|gibt)",
+  "was (?:ist|sind|bedeutet|bedeuten|macht|machen) (?:ein |eine |der |die |das |den )?(?:pockets?|sparziele?|notgroschen|überschuss|ueberschuss|monatsplan|budgetdetails|prüfliste|pruefliste|händlerregeln?|extra-?beträge|stichtag)\\b",
+  "was kann ich (?:hier |im dashboard |damit )?(?:alles )?(?:einstellen|ändern|aendern|konfigurieren|machen|anpassen)", "welche (?:möglichkeiten|moeglichkeiten|einstellungen|funktionen|bereiche)",
+  "was gibt es (?:alles|für|fuer)",
+].join("|"));
+
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
 export function detectTool(text: string, names: string[] = []): AssistantTool | undefined {
   const lower = text.toLowerCase().trim();
@@ -71,6 +79,9 @@ export function detectTool(text: string, names: string[] = []): AssistantTool | 
   if (/^(?:wie ?viel|wieviel|was|wo|wann|wofür|wofuer|wohin|welche[rsn]?|wie oft|hab(?:e)? ich|zeig|liste)\b/.test(lower) && !detectAction(lower) &&
     /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt/.test(lower)) return "query";
   if (/^(?:wie ?viel|wieviel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient)\b/.test(lower)) return "query";
+  if (explainPattern.test(lower)) return "explain";
+  const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
+  if (mentionsName(text, names) && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
   if (editVerbs.test(lower) && !/\bneue[snr]?\b|anlegen|erstell/.test(lower)) {
     // "Setz mir ein Sparziel …" is a new item unless it names something that already exists.
     const action = detectAction(text);

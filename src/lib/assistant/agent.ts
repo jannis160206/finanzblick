@@ -5,6 +5,7 @@ import { savingsGoals } from "@/lib/goals";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, AssistantChange, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
+import { explainDashboard } from "./explain";
 import { homeOfficeStart } from "./homeoffice";
 import { addMonth, parseAmount, parseAssistantMessage, resolveDate } from "./intent";
 import { applyOperations, OperationError } from "./operations";
@@ -79,6 +80,17 @@ function editGoal(goal: SavingsGoal, text: string, asOf: string): { operations: 
     if (span && !resume) for (let index = 1; index < Math.min(12, Number(span[1])); index++) months.push(addMonth(months[0], index));
     return { operations: months.map((month) => ({ op: "goal_pause" as const, goalId: goal.id, month, ...(resume ? { resume } : {}) })),
       title: `${resume ? "Rate wieder aufnehmen" : "Rate aussetzen"}: ${goal.name}` };
+  }
+  const extrasNow = Object.entries(goal.funding?.extras ?? {}).filter(([month, value]) => value > 0 && month >= asOf.slice(0, 7)).map(([month]) => month).sort();
+  if (/(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)|extra-?beträge\s+(?:lösch|loesch|entfern|weg)/.test(lower)) {
+    if (!extrasNow.length) return `„${goal.name}“ hat keine geplanten Extra-Beträge.`;
+    const span = (Number(extrasNow.at(-1)!.slice(0, 4)) - Number(extrasNow[0].slice(0, 4))) * 12 + Number(extrasNow.at(-1)!.slice(5)) - Number(extrasNow[0].slice(5)) + 1;
+    return { operations: [{ op: "goal_extras", goalId: goal.id, start: extrasNow[0], months: Math.min(24, span), amount: 0 }], title: `Extra-Beträge für „${goal.name}“ entfernen` };
+  }
+  if (parsed.extra) {
+    const start = parsed.date && /\bab\b/.test(lower) ? parsed.date.month : addMonth(asOf.slice(0, 7), 1);
+    return { operations: [{ op: "goal_extras", goalId: goal.id, start, months: parsed.extra.months, amount: parsed.extra.amount,
+      ...(parsed.extra.from ? { from: parsed.extra.from } : {}) }], title: `Extra-Beträge für „${goal.name}“` };
   }
   const rename = /(?:umbenennen|benenn\w*|nenn\w*)\b.*?\b(?:in|zu)\s+[„"']?([^"“”'.,!?]{2,60})/i.exec(text);
   if (rename) return { operations: [{ op: "goal_update", goalId: goal.id, name: rename[1].trim() }], title: `„${goal.name}“ umbenennen` };
@@ -294,6 +306,7 @@ export function executeTool(tool: AssistantTool, text: string, context: Context)
     case "memory": return memoryCard(state);
     case "changes": return changesCard(state);
     case "undo": return undo(context);
+    case "explain": return explainDashboard(state, dashboard, text);
     case "help": return help();
     default: return help();
   }

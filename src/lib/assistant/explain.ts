@@ -1,0 +1,139 @@
+import type { Dashboard } from "@/lib/calc";
+import { currency, dateLabel } from "@/lib/format";
+import { SAVINGS_FLOOR, savingsGoals } from "@/lib/goals";
+import type { AppState, AssistantCard } from "@/lib/types";
+
+type Line = AssistantCard["lines"][number];
+type Topic = {
+  id: string;
+  title: string;
+  test: RegExp;
+  page?: string;
+  about: string[];
+  live?: (state: AppState, dashboard: Dashboard) => Line[];
+  // What the user can say in the chat to change this area.
+  say: string[];
+};
+
+const goalLines = (state: AppState): Line[] => savingsGoals(state).filter((goal) => !goal.completedAt).slice(0, 12).map((goal) => {
+  const extras = Object.entries(goal.funding?.extras ?? {}).filter(([, value]) => value > 0);
+  return { label: `${goal.name}: ${currency(goal.target)} bis ${dateLabel(goal.date)}`, tone: "info",
+    detail: `${goal.funding ? `${currency(goal.funding.monthly)} / Monat` : "automatisch aus dem Überschuss"}` +
+      `${extras.length ? ` · ${extras.length} Extra-${extras.length === 1 ? "Betrag" : "Beträge"}` : ""}` +
+      `${goal.funding?.paused?.length ? ` · ${goal.funding.paused.length} ausgesetzt` : ""}` };
+});
+
+const topics: Topic[] = [
+  {
+    id: "goals", title: "Sparziele", page: "Pockets", test: /sparziel|\bziele?\b|sparrate|extra|zusätzlich|aussetz|startkapital|anspar/,
+    about: [
+      `Jeden Monat geht zuerst ein Grundbetrag von ${currency(SAVINGS_FLOOR)} aufs Sparkonto. Danach bekommen die Sparziele ihren Anteil, das mit dem frühesten Datum zuerst.`,
+      "Ein Ziel mit fester Monatsrate bekommt höchstens diese Rate. Ein Ziel ohne feste Rate wird automatisch aus dem Überschuss befüllt.",
+      "Extra-Beträge kommen zusätzlich zur Rate dazu, z. B. die ersten 2 Monate je 60 € vom Sparkonto. Kommt das Geld von einem Pocket, wird es dort als Entnahme eingeplant.",
+      "Einzelne Monate lassen sich aussetzen. Ist ein Ziel erreicht, markierst du es als erreicht.",
+    ],
+    live: (state) => goalLines(state),
+    say: ["Ich will bis Juli 2027 3.000 € für Japan sparen, die ersten 2 Monate je 60 € vom Sparkonto", "Nimm für Japan die nächsten 3 Monate je 50 € extra aus dem Notgroschen",
+      "Setz die Japan-Rate im Mai aus", "Erhöhe Japan auf 4.000 €", "Japan-Rate auf 250 €", "Schieb Japan auf Oktober"],
+  },
+  {
+    id: "pockets", title: "Pockets und Konten", page: "Pockets", test: /pocket|notgroschen|urlaubs?|sparkonto|motorrad|töpfe|toepfe|konten\b|konto\b|vermögen|vermoegen/,
+    about: [
+      "Pockets sind die Töpfe für dein Geld: Notgroschen (Trade Republic mit Zinsen), Urlaub, Sparkonto und Motorrad. Sparziele mit eigenem Namen bekommen einen eigenen Pocket bei Revolut.",
+      "Für Notgroschen, Urlaub und Sparkonto gibt es je einen Zielbetrag. Der Überschuss, der nach Sparkonto und Sparzielen übrig bleibt, geht in den Urlaub.",
+    ],
+    live: (state, dashboard) => [
+      { label: "Notgroschen-Ziel", value: state.settings.emergencyTarget },
+      { label: "Urlaubs-Ziel", value: state.settings.vacationTarget },
+      { label: "Sparkonto-Ziel", value: state.settings.savingsTarget },
+      { label: "Vermögen gesamt", value: dashboard.totalAssets },
+    ],
+    say: ["Setz das Notgroschen-Ziel auf 10.000 €", "Urlaubsziel auf 2.500 €", "Sparkonto-Ziel auf 5.000 €"],
+  },
+  {
+    id: "planned", title: "Geplante Ausgaben", page: "Übersicht und Monate", test: /geplant|ratenkauf|\braten\b|kommende ausgabe|vorhaben|anschaffung/,
+    about: [
+      "Geplante Ausgaben sind einmalige Zahlungen oder Ratenkäufe in der Zukunft. Sie werden im Monatsplan vom Überschuss abgezogen.",
+      "Kommt die echte Buchung, wird sie automatisch zugeordnet. Geteilte Ausgaben mit Raphael zählen nur zur Hälfte.",
+    ],
+    live: (state) => (state.plannedOneOffs ?? []).slice(-8).map((item) => ({ label: item.name, value: -(item.total ?? item.amount * item.installments),
+      detail: `${dateLabel(item.date)}${item.installments > 1 ? ` · ${item.installments} Raten` : ""}` })),
+    say: ["Im März kommt das Pickerl, ca. 400 €", "Laptop 1.200 € in 6 Raten ab Mai", "Schieb das Pickerl auf April", "Kann ich mir im Mai einen Fernseher um 900 € leisten?"],
+  },
+  {
+    id: "transactions", title: "Umsätze, Import und Kategorien", page: "Umsätze",
+    test: /umsätze|umsaetze|import|csv|hochlad|kategori|regel|prüfliste|pruefliste|ki.?prüf|ki.?zuordn|händler|haendler|paypal|amex|revolut|trade republic/,
+    about: [
+      "Unter Umsätze lädst du Auszüge hoch: Raiffeisen, Amex, Revolut, PayPal und Trade Republic. Doppelte Buchungen werden erkannt.",
+      "Jede Buchung bekommt eine Kategorie: zuerst feste Händlerregeln, dann deine bisherigen Zuordnungen, dann die lokale KI. Unsichere Fälle landen in der Prüfliste.",
+      "Bestätigst du eine Zuordnung, merkt sich das Dashboard den Händler für künftige Importe.",
+    ],
+    live: (state) => [{ label: "Buchungen gesamt", detail: String(state.transactions.length) },
+      { label: "Händlerregeln", detail: String((state.merchantRules ?? []).length) }],
+    say: ["Lieferando ist immer Lieferdienste", "Ordne Spar Lebensmittel zu", "Wie viel hab ich im Oktober fürs Essen ausgegeben?"],
+  },
+  {
+    id: "months", title: "Monatsplan und Überschuss", page: "Monate", test: /monate\b|monatsplan|überschuss|ueberschuss|fixkosten|einnahmen|was bleibt|monatsübersicht/,
+    about: [
+      "Der Monatsplan rechnet: Einnahmen minus Fixkosten, minus Budget für variable Ausgaben, minus geplante Ausgaben. Was übrig bleibt, ist der Überschuss.",
+      "Den Überschuss verteilt der Plan auf Sparkonto, Sparziele und Urlaub. Unter Monate siehst du pro Monat, wie viel in welchen Pocket geht.",
+    ],
+    live: (_state, dashboard) => {
+      const row = dashboard.timeline.find((item) => item.month === dashboard.currentMonth);
+      return row ? [{ label: "Einnahmen diesen Monat", value: row.income }, { label: "Fixkosten", value: -row.fixed }, { label: "Überschuss", value: row.surplus }] : [];
+    },
+    say: ["Gib mir den Wochenüberblick", "Wie viel kann ich diesen Monat noch ausgeben?", "Ich will 200 € mehr im Monat sparen"],
+  },
+  {
+    id: "budget", title: "Budgetdetails", page: "Budgetdetails", test: /budget/,
+    about: ["Budgetdetails zeigt das Budget für variable Ausgaben (z. B. Lebensmittel, Freizeit) nach Gruppen und wie viel davon schon verbraucht ist."],
+    say: ["Wie viel hab ich diesen Monat für Lebensmittel ausgegeben?", "Wo kann ich sparen?"],
+  },
+  {
+    id: "salary", title: "Gehalt und Steuern", page: "Gehalt & Steuern", test: /gehalt|lohn|steuer|sechstel|veranlagung|home.?office|absetz/,
+    about: [
+      "Gehalt & Steuern rechnet Brutto in Netto um, inklusive Sonderzahlungen und Jahressechstel.",
+      "Im Chat sammle ich absetzbare Buchungen für die Arbeitnehmerveranlagung und rechne Home-Office-Ausgaben nach.",
+    ],
+    say: ["Was kann ich bei der Arbeitnehmerveranlagung absetzen?", "Was bekomme ich für meine Home-Office-Sachen zurück?", "Merk dir: Gehalt kommt am 25."],
+  },
+  {
+    id: "settings", title: "Einstellungen", page: "Einstellungen", test: /einstell|stichtag|zinss?atz|zinsen|startstand|startstände/,
+    about: ["In den Einstellungen legst du Stichtag, Startstände der Pockets, Zielbeträge und Zinssätze fest. Die Zielbeträge kann ich auch per Chat ändern."],
+    live: (state) => [{ label: "Stichtag", detail: dateLabel(state.settings.asOf) }],
+    say: ["Setz das Notgroschen-Ziel auf 10.000 €"],
+  },
+  {
+    id: "assistant", title: "Finanz-Assistent", page: "Finanz-Assistent", test: /assistent|chat|rückgängig|rueckgaengig|gedächtnis|gedaechtnis|\bki\b/,
+    about: [
+      "Die KI läuft lokal auf der NPU und wählt nur aus, was zu tun ist. Alle Beträge rechnet der Code.",
+      "Änderungen zeige ich vorher als Karte mit Vorher und Nachher. Gespeichert wird erst nach deinem Klick, und jede Änderung lässt sich rückgängig machen.",
+    ],
+    say: ["Was hast du geändert?", "Mach das rückgängig", "Was hast du dir gemerkt?"],
+  },
+];
+
+// Answers questions about the dashboard itself; texts are fixed, live values come from the current data.
+export function explainDashboard(state: AppState, dashboard: Dashboard, text: string): { text: string; card: AssistantCard } {
+  const lower = text.toLowerCase();
+  const matched = topics.filter((topic) => topic.test.test(lower));
+  const general = /was kann ich (?:hier |im dashboard |damit )?(?:alles )?(?:einstellen|ändern|aendern|konfigurieren|machen|anpassen)|welche (?:möglichkeiten|moeglichkeiten|einstellungen|funktionen|bereiche)|was gibt es (?:alles|für|fuer)|dashboard/.test(lower);
+  const specific = matched.filter((topic) => topic.id !== "settings" && topic.id !== "assistant");
+  const overview = !matched.length || general && !specific.length;
+  if (overview) {
+    return { text: "Das Dashboard hat diese Bereiche. Zu jedem kann ich dir mehr erklären, und vieles kann ich direkt hier im Chat für dich einstellen:",
+      card: { kind: "answer", title: "Was du im Finanzdashboard machen kannst", lines: topics.map((topic) => ({
+        label: `${topic.title}${topic.page ? ` · Seite ${topic.page}` : ""}`, detail: `z. B. „${topic.say[0]}“`.slice(0, 300) })),
+      note: "Frag nach einem Bereich, z. B. „Wie funktionieren die Sparziele?“. Änderungen speichere ich erst, wenn du bestätigst." } };
+  }
+  const topic = matched[0];
+  const live = topic.live?.(state, dashboard) ?? [];
+  const lines: Line[] = [
+    ...topic.about.map((about) => ({ label: about.slice(0, 200) })),
+    ...live.slice(0, 20),
+    ...topic.say.map((say) => ({ label: `„${say}“`.slice(0, 200), detail: "kannst du mir so schreiben", tone: "good" as const })),
+  ].slice(0, 40);
+  return { text: `${topic.title}${topic.page ? ` (Seite „${topic.page}“)` : ""}: So funktioniert es, so steht es gerade, und das kann ich für dich einstellen.`,
+    card: { kind: "answer", title: topic.title, lines,
+      ...(matched.length > 1 ? { note: `Passt auch zu: ${matched.slice(1).map((item) => item.title).join(", ")}.` } : {}) } };
+}
