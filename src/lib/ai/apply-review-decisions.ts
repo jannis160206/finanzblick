@@ -1,7 +1,6 @@
 import { classify } from "@/lib/calc";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
-import { approveReviewedBooking } from "@/lib/import/approve-review";
 import { isAmexScreenshot } from "@/lib/import/identity";
 import { merchantAliasSourceKey } from "@/lib/import/merchant-rules";
 import { commitStatementImport, queueLedgerReview, type ImportMetadata } from "@/lib/import/review";
@@ -40,8 +39,9 @@ export function applyAiReviewDecisions(state: AppState, decisions: AiReviewDecis
     try {
       const draft = item.draft;
       const alias = decision.merchantAlias?.trim();
+      // The AI names only this booking; a confirmed name would become a global rename rule.
       const naming = alias && !draft.merchantAlias && !draft.merchantId && merchantAliasSourceKey(draft) !== undefined
-        ? merchantAliasAssignment(draft, alias) : {};
+        ? { ...merchantAliasAssignment(draft, alias), merchantNameConfirmed: undefined } : {};
       const classification = classify({
         ...draft, category, amount: draft.amount ?? 0, categoryOverride: true, manualCategory: true,
         includeInPlan: true, fixedCost: false,
@@ -50,14 +50,14 @@ export function applyAiReviewDecisions(state: AppState, decisions: AiReviewDecis
         !classification.isTransfer && !isIncomeCategory(classification.category);
       const row = transactionSchema.parse({
         ...draft, ...naming, category, categoryOverride: true, manualCategory: true, reviewed: true,
-        includeInPlan: true, fixedCost: canMarkFixed && draft.fixedCost === true,
+        includeInPlan: true, fixedCost: canMarkFixed && draft.fixedCost === true, aiAssigned: true,
       });
       let metadata: ImportMetadata = {};
       if (item.importUploadId) metadata = { reviewQueue: [{ ...item, draft: row }] };
       if (row.amexSource || isAmexScreenshot(row)) metadata = { ...metadata, amexReconciliation: { rows: [row] } };
-      const approval = Object.keys(metadata).length ? undefined : approveReviewedBooking(next, row);
-      const result = approval ?? commitStatementImport(next, [row], [], metadata);
-      const candidate = approval ? result.state : queueLedgerReview(result.state);
+      // Not approveReviewedBooking: that shortcut spreads the choice to merchant twins and stores a rule.
+      const result = commitStatementImport(next, [row], [], metadata);
+      const candidate = queueLedgerReview(result.state);
       if (candidate.reviewQueue?.some((entry) => entry.id === item.id)) {
         skipped.push(decision.reviewId);
         continue;

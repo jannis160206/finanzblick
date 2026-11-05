@@ -5,7 +5,9 @@ import { appStateSchema, type AppState, type ReviewItem, type Transaction } from
 import { applyAiReviewDecisions } from "./apply-review-decisions";
 import {
   cleanMerchantName, extractJsonArray, interpretCategorization, merchantMatchesText, plausibilityIssue, resolveCategoryName,
+  type AiCategorization,
 } from "./categorize";
+import { brandKey, decideReviewWithEvidence, similarAmount } from "./evidence";
 import { isLoopbackUrl } from "./config";
 import { logoFileName } from "./logo-finder";
 import { aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
@@ -29,6 +31,13 @@ const inputs = [
 ];
 
 describe("interpretCategorization", () => {
+  it("keeps valid entries when one entry is malformed", () => {
+    const text = `[{"ref":"b1","category":"Lebensmittel","merchant":"BILLA","confidence":95},{"ref":"b2","category":"Gehalt"}]`;
+    const [billa, salary] = interpretCategorization(text, inputs, 90);
+    expect(billa).toMatchObject({ category: "Lebensmittel", accepted: true });
+    expect(salary).toMatchObject({ accepted: false, reason: "keine Antwort" });
+  });
+
   it("accepts confident answers and keeps uncertain ones open", () => {
     const text = `<think>x</think>Antwort: [{"ref":"b1","category":"Lebensmittel: Supermarkt","merchant":"BILLA","confidence":95},
       {"ref":"b2","category":"Gehalt","merchant":null,"confidence":96},
@@ -89,6 +98,69 @@ describe("plausibility checks", () => {
   });
 });
 
+describe("evidence gate", () => {
+  const input = (text: string, amount: number) => ({ ref: "b1", text, amount, date: "2026-10-01", bank: "Amex" });
+  const answer = (category: string, merchant?: string) => ({ ref: "b1", category, merchant, confidence: 95, accepted: true }) as AiCategorization;
+  const history = (id: string, alias: string, amount: number, category: Transaction["category"]) =>
+    booking(id, { description: `${alias} 2361`, merchantAlias: alias, amount, category, categoryOverride: true, manualCategory: true, reviewed: true });
+  const withOpen = (ledger: Transaction[], open: Transaction[]): AppState => ({
+    ...fixture(ledger),
+    reviewQueue: open.map((draft) => ({ kind: "booking" as const, id: draft.id, draft, message: "Händlerzuordnung unsicher – bitte prüfen." })),
+  });
+
+  it("normalizes brands across banks and ignores payment providers", () => {
+    expect(brandKey({ description: "OMV 2595 2040OM2595 Villach" })).toBe("omv");
+    expect(brandKey({ description: "x", merchantAlias: "OMV" })).toBe("omv");
+    expect(brandKey({ description: "PAYPAL *G2A COM LTD 4029357733" })).toBe("g2a");
+    expect(brandKey({ description: "x", merchantAlias: "G2A.com" })).toBe("g2a");
+    expect(brandKey({ description: "1051861566294/PAYPAL" })).toBeUndefined();
+    expect(brandKey({ description: "PAYPAL *PAYPAL EEA 07517591951" })).toBeUndefined();
+    expect(brandKey({ description: "HOTEL SCHLOSS SEEFELS" })).toBe("hotel schloss");
+    expect(similarAmount(-4.23, -1.74)).toBe(true);
+    expect(similarAmount(-9.22, -67)).toBe(false);
+    expect(similarAmount(-5, 5)).toBe(false);
+  });
+
+  it("follows the household's own history before the model", () => {
+    const state = withOpen([
+      history("s1", "INTERSPAR", -12.86, "Cafés & Snacks"), history("s2", "INTERSPAR", -10.36, "Cafés & Snacks"),
+    ], [booking("open", { description: "Interspar Fil. 8820 Int VILLACH", amount: -13.55 })]);
+    const decision = decideReviewWithEvidence(state, "open", input("Interspar Fil. 8820 Int VILLACH", -13.55), answer("Lebensmittel", "Interspar"));
+    expect(decision).toMatchObject({ accepted: true, category: "Cafés & Snacks", source: "Historie", merchantAlias: "INTERSPAR" });
+  });
+
+  it("rejects model answers that contradict history or lack a rule", () => {
+    const state = withOpen([history("s1", "SHELL", -4.23, "Cafés & Snacks")], [
+      booking("snack", { description: "SHELL FURNITZ 8387", amount: -12.5 }),
+      booking("flowers", { description: "BLUMEN B B FILNR902 VILLACH", amount: -34 }),
+      booking("fuel", { description: "OMV 2595 2040OM2595 Villach", amount: -67 }),
+      booking("dm", { description: "DM-FIL. A055 DM-FIL. A0 Villach", amount: -11.15 }),
+    ]);
+    const decide = (id: string, text: string, amount: number, category: string, merchant?: string) =>
+      decideReviewWithEvidence(state, id, input(text, amount), answer(category, merchant));
+    expect(decide("snack", "SHELL FURNITZ 8387", -12.5, "Tanken", "SHELL")).toMatchObject({ accepted: false, reason: "widerspricht eigener Historie" });
+    expect(decide("flowers", "BLUMEN B B FILNR902 VILLACH", -34, "Cafés & Snacks", "BLUMEN B B")).toMatchObject({ accepted: false });
+    expect(decide("fuel", "OMV 2595 2040OM2595 Villach", -67, "Tanken", "OMV")).toMatchObject({ accepted: true, category: "Tanken", source: "Regel" });
+    expect(decide("dm", "DM-FIL. A055 DM-FIL. A0 Villach", -11.15, "Drogerie", "dm")).toMatchObject({ accepted: true, category: "Drogerie" });
+    expect(decide("dm", "DM-FIL. A055 DM-FIL. A0 Villach", -11.15, "Shopping", "dm")).toMatchObject({ accepted: false });
+    expect(decideReviewWithEvidence(state, "dm", input("DM", -11.15), undefined)).toMatchObject({ accepted: false });
+  });
+
+  it("does not learn from open reviews or earlier AI decisions", () => {
+    const state = withOpen([
+      { ...history("ai1", "KANZIANUS AP", -10, "Freizeit"), aiAssigned: true },
+      { ...history("ai2", "KANZIANUS AP", -11, "Freizeit"), aiAssigned: true },
+    ], [booking("open", { description: "KANZIANUS AP 2372", amount: -10.95 })]);
+    expect(decideReviewWithEvidence(state, "open", input("KANZIANUS AP 2372", -10.95), answer("Freizeit", "KANZIANUS AP")))
+      .toMatchObject({ accepted: false });
+  });
+
+  it("does not call small station receipts fuel", () => {
+    expect(plausibilityIssue({ ref: "b1", text: "OMV 2595 VILLACH 9500", amount: -8.17, date: "2026-10-01", bank: "Raiffeisen" }, "Tanken", "OMV"))
+      .toBe("Betrag zu klein zum Tanken");
+  });
+});
+
 describe("AI review application", () => {
   it("assigns eligible reviews like a manual choice and marks them", () => {
     const state = fixture([booking("first"), booking("second", { description: "Anderer Laden", amount: -5 })]);
@@ -100,6 +172,18 @@ describe("AI review application", () => {
     expect(row).toMatchObject({ category: "Shopping", aiAssigned: true, manualCategory: true });
     expect(result.state.reviewQueue?.some((item) => item.id === "first")).toBe(false);
     expect(result.state.reviewQueue?.some((item) => item.id === "second")).toBe(true);
+  });
+
+  it("never turns an AI decision into a merchant rule for other bookings", () => {
+    const state = fixture([
+      booking("first", { description: "Testladen Nordlicht 4711" }),
+      booking("twin", { description: "Testladen Nordlicht 4711", date: "2026-09-10", amount: -11 }),
+    ]);
+    const result = applyAiReviewDecisions(state, [{ reviewId: "first", category: "Shopping", merchantAlias: "Nordlicht" }]);
+    expect(result.applied).toEqual(["first"]);
+    expect(result.state.merchantRules ?? []).toEqual(state.merchantRules ?? []);
+    expect(result.state.merchantNameRules ?? []).toEqual(state.merchantNameRules ?? []);
+    expect(result.state.transactions.find((item) => item.id === "twin")?.category).toBe("Prüfen");
   });
 
   it("skips reviews that need user data", () => {

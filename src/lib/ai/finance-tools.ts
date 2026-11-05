@@ -9,6 +9,7 @@ import { appStateSchema, transactionSchema, type AppState } from "@/lib/types";
 import { applyAiReviewDecisions, type AiReviewDecision } from "./apply-review-decisions";
 import { aiStatus } from "./client";
 import { categorizeBookings, type AiCategorization } from "./categorize";
+import { decideReviewWithEvidence } from "./evidence";
 import { findMerchantLogo } from "./logo-finder";
 import { aiCategories, aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
 
@@ -48,10 +49,16 @@ export async function categorizeOpenReviews(
     const decisions: AiReviewDecision[] = [];
     for (const candidate of batch) {
       const answer = answers.find((item) => item.ref === candidate.input.ref);
-      if (!answer) continue;
-      results.push({ ...answer, reviewId: candidate.reviewId, text: candidate.input.text });
-      if (answer.accepted && answer.category !== "Prüfen")
-        decisions.push({ reviewId: candidate.reviewId, category: answer.category, merchantAlias: answer.merchant });
+      const decision = decideReviewWithEvidence(state, candidate.reviewId, candidate.input, answer);
+      results.push({
+        ...(answer ?? { ref: candidate.input.ref, category: "Prüfen", confidence: 0 }),
+        ...(decision.accepted
+          ? { accepted: true, category: decision.category, merchant: decision.merchantAlias, reason: `bestätigt durch ${decision.source}` }
+          : { accepted: false, reason: decision.reason }),
+        reviewId: candidate.reviewId, text: candidate.input.text,
+      });
+      if (decision.accepted)
+        decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
     }
     if (options.apply && decisions.length) {
       write(access, (current) => {

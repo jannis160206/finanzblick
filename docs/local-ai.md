@@ -55,9 +55,15 @@ Optionale Variablen in `.env.local`:
    - Die Kategorie gehört zu den Regel-Kategorien und keine Regel passt. Das betrifft Bankgebühren, Rücklastschriftgebühren, Guthabenkarten, Leasing, Miete, Versicherungen, Einkommen, Transfers und Sonstiges.
    - Der genannte Händler kommt im Buchungstext nicht vor, etwa „VILLACH“ als Ort statt H&M.
    - Der Händlername beginnt mit dem Ort am Ende des Kartentexts, etwa „VILLACH“ bei „VILLACH ATRIO SHOPPING VILLACH“.
-5. Übernommene Antworten laufen über denselben Weg wie ein Klick im Prüfdialog. Die Buchung erhält zusätzlich `aiAssigned: true`.
-6. Für neu erkannte Händler wird das Logo gesucht und privat in `Logo/` abgelegt. Der Live-Logo-Sync übernimmt es.
-7. Ein Hinweis meldet, wie viele Buchungen zugeordnet wurden und wie viele zur manuellen Prüfung bleiben.
+   - Tanken unter 10 € wird abgelehnt, weil kleine Tankstellenbeträge meist Snacks sind.
+5. Danach folgt das Beleg-Gate in `src/lib/ai/evidence.ts`. Eine Antwort wird nur übernommen, wenn sie belegt ist:
+   - Die eigene Historie des Händlers ist eindeutig: mindestens zwei Buchungen, alle in derselben Kategorie, mindestens eine davon bestätigt. Dann gilt die Kategorie aus der Historie, auch wenn das Modell etwas anderes sagt.
+   - Oder die Modellantwort wird durch die feste Händlerregel bestätigt (direkt oder als Verfeinerung) und widerspricht der Historie nicht.
+   - Alles andere bleibt zur manuellen Prüfung offen.
+6. Übernommene Antworten werden committet, ohne dass eine Händler- oder Namensregel entsteht. Sie werden nie auf gleichnamige andere Buchungen übertragen. Die Buchung erhält `aiAssigned: true`. Eine manuelle Kategorieänderung entfernt die Markierung.
+7. Das Modell antwortet als JSON-Liste. Fehlerhafte Einträge werden einzeln verworfen, und fehlende Antworten werden einzeln nachgefragt.
+8. Für neu erkannte Händler wird das Logo gesucht und privat in `Logo/` abgelegt. Der Live-Logo-Sync übernimmt es.
+9. Ein Hinweis meldet, wie viele Buchungen zugeordnet wurden und wie viele zur manuellen Prüfung bleiben.
 
 Nie automatisch bearbeitet werden Prüfungen mit Importproblemen, OCR-Hinweisen, fehlendem Betrag oder Datum, Amex-Screenshots und fehlendem POS-Händler. Diese brauchen Daten vom Nutzer.
 

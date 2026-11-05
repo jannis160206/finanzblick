@@ -214,7 +214,7 @@ export function activeMerchantRules(state: AppState) {
         choices.categories.add(row.category);
         choices.assignments.add(JSON.stringify([row.category, row.merchantAlias]));
         automatic.set(key, choices);
-      } else if (row.is_locked || hasCategoryChoice(row) || row.categoryOverride) confirmed.add(key);
+      } else if (!row.aiAssigned && (row.is_locked || hasCategoryChoice(row) || row.categoryOverride)) confirmed.add(key);
     }
   }
   return (state.merchantRules ?? []).filter(rule => {
@@ -242,7 +242,8 @@ function addChoice(choices: Map<string, MerchantChoice | null>, key: string, cho
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
   const choices = new Map<string, MerchantChoice | null>();
   for (const row of rows) {
-    if (isAutomaticMerchantAssignment(row)) continue;
+    // AI decisions are proposals, not the user's confirmation; never generalize them.
+    if (isAutomaticMerchantAssignment(row) || row.aiAssigned) continue;
     if (row.merchantNameConfirmed && row.merchantAlias &&
       (row.category === "Prüfen" || !hasCategoryChoice(row))) {
       const sourceKey = merchantAliasSourceKey(row);

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { applyAiReviewDecisions, type AiReviewDecision } from "@/lib/ai/apply-review-decisions";
 import type { AiCategorization } from "@/lib/ai/categorize";
+import { decideReviewWithEvidence } from "@/lib/ai/evidence";
 import { aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "@/lib/ai/review-candidates";
 
 const STATUS_INTERVAL_MS = 60_000;
@@ -88,9 +89,10 @@ export function AiReviewAssistant() {
         const logos: { name: string; context: string }[] = [];
         for (const candidate of batch) {
           const result = byRef.get(candidate.input.ref);
-          if (!result?.accepted || result.category === "Prüfen") continue;
-          decisions.push({ reviewId: candidate.reviewId, category: result.category, merchantAlias: result.merchant });
-          if (result.merchant) logos.push({ name: result.merchant, context: candidate.input.text });
+          const decision = decideReviewWithEvidence(latest.current, candidate.reviewId, candidate.input, result);
+          if (!decision.accepted) continue;
+          decisions.push({ reviewId: candidate.reviewId, category: decision.category, merchantAlias: decision.merchantAlias });
+          if (decision.merchantAlias) logos.push({ name: decision.merchantAlias, context: candidate.input.text });
         }
         let applied = 0;
         if (decisions.length) {

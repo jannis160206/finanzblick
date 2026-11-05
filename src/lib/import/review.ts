@@ -883,7 +883,8 @@ export function commitStatementImport(
   }
   const choices = new Map(
     rows
-      .filter((row) => (row.categoryOverride || hasManualCategory(row)) && row.category !== "Prüfen" && isSpecificMerchantKey(merchantRuleKey(row)))
+      .filter((row) => (row.categoryOverride || hasManualCategory(row)) && row.category !== "Prüfen" && !row.aiAssigned &&
+        isSpecificMerchantKey(merchantRuleKey(row)))
       .map((row) => [merchantRuleKey(row), row.category]),
   );
   const directChoices = new Map(rows.filter((row) => row.categoryOverride || hasManualCategory(row) || row.fixedCost !== undefined).map((row) => [row.id, row]));
@@ -910,6 +911,7 @@ export function commitStatementImport(
         ...(direct?.manualCategory !== undefined ? { manualCategory: direct.manualCategory } : {}),
         ...(direct?.reviewed !== undefined ? { reviewed: direct.reviewed } : {}),
         ...(direct?.merchantAlias !== undefined ? { merchantAlias: direct.merchantAlias } : {}),
+        ...(direct?.aiAssigned ? { aiAssigned: true } : {}),
         includeInPlan: true,
         ...(directChoice(item.draft as Transaction)?.fixedCost !== undefined
           ? { fixedCost: directChoice(item.draft as Transaction)!.fixedCost }
@@ -937,6 +939,7 @@ export function commitStatementImport(
       const updated = { ...row, category, categoryOverride: true, includeInPlan: true,
         ...(direct?.manualCategory !== undefined ? { manualCategory: direct.manualCategory } : {}),
         ...(direct?.reviewed !== undefined ? { reviewed: direct.reviewed } : {}),
+        ...(direct?.aiAssigned ? { aiAssigned: true } : {}),
         ...(choice?.merchantAlias !== undefined ? { merchantAlias: choice.merchantAlias } : {}),
         ...(choice?.fixedCost !== undefined ? { fixedCost: choice.fixedCost } : {}) };
       const result = classify(updated);

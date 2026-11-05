@@ -61,12 +61,21 @@ Regeln:
   ];
 }
 
-const answerSchema = z.array(z.object({
+const answerItemSchema = z.object({
   ref: z.string(),
   category: z.string(),
   merchant: z.string().trim().max(80).nullish(),
   confidence: z.coerce.number().min(0).max(100),
-}).loose());
+}).loose();
+
+// One malformed entry must not discard the whole batch.
+function parseAnswers(text: string) {
+  const raw = extractJsonArray(text);
+  return Array.isArray(raw) ? raw.flatMap((item) => {
+    const parsed = answerItemSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  }) : [];
+}
 
 export function extractJsonArray(text: string): unknown {
   const start = text.indexOf("[");
@@ -110,7 +119,7 @@ const RULE_ONLY: readonly Category[] = [
   "Gehalt", "Rufbereitschaft", "Einkommen", "Rückerstattungen", "Transfer", "Transfer intern", "Sonstiges",
 ];
 // A rule naming the broad purpose still allows the model to pick the matching sub-category.
-const RULE_REFINEMENTS: Partial<Record<Category, readonly Category[]>> = {
+export const RULE_REFINEMENTS: Partial<Record<Category, readonly Category[]>> = {
   "Mobilität": ["Tanken", "Öffentliche Verkehrsmittel"],
 };
 const comparable = (value: string) => value.toLocaleLowerCase("de-AT").replace(/[^\p{L}\p{N}]/gu, "");
@@ -130,6 +139,8 @@ export function merchantMatchesText(merchant: string, text: string) {
 
 export function plausibilityIssue(booking: AiBookingInput, category: Category, merchant: string | undefined) {
   if (CASH_WITHDRAWAL.test(booking.text)) return "Bargeldbehebung";
+  // Small station receipts are snacks or car wash, not fuel.
+  if (category === "Tanken" && Math.abs(booking.amount) < 10) return "Betrag zu klein zum Tanken";
   if (!merchant && PAYMENT_PROVIDER_IN_TEXT.test(booking.text) && !category.startsWith("Transfer"))
     return "Zahlungsdienst verdeckt den Händler";
   const rule = knownMerchantCategory(booking.text, booking.amount);
@@ -155,8 +166,7 @@ function containsLocation(merchant: string, text: string) {
 export function interpretCategorization(
   text: string, bookings: AiBookingInput[], minConfidence = readAiConfig().minConfidence,
 ): AiCategorization[] {
-  const parsed = answerSchema.safeParse(extractJsonArray(text));
-  const answers = new Map(parsed.success ? parsed.data.map((answer) => [answer.ref, answer]) : []);
+  const answers = new Map(parseAnswers(text).map((answer) => [answer.ref, answer]));
   return bookings.map((booking): AiCategorization => {
     const answer = answers.get(booking.ref);
     if (!answer) return { ref: booking.ref, category: "Prüfen", confidence: 0, accepted: false, reason: "keine Antwort" };
@@ -188,5 +198,13 @@ export async function categorizeBookings(
   const answer = await chat(buildCategorizationMessages(bookings, examples), {
     ...options, config, maxTokens: 60 + bookings.length * 45,
   });
-  return interpretCategorization(answer.content, bookings, config.minConfidence);
+  const results = interpretCategorization(answer.content, bookings, config.minConfidence);
+  const missing = bookings.filter((_, index) => results[index].reason === "keine Antwort");
+  if (bookings.length === 1 || !missing.length) return results;
+  // Retry lost answers one by one; a single booking rarely breaks the JSON.
+  for (const booking of missing) {
+    const [retry] = await categorizeBookings([booking], examples, { ...options, config });
+    results[bookings.indexOf(booking)] = retry;
+  }
+  return results;
 }

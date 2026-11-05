@@ -176,6 +176,7 @@ export function assignTransactions(
       manualCategory: true,
       reviewed: choice.category !== "Prüfen",
       includeInPlan: true,
+      ...(row.aiAssigned ? { aiAssigned: undefined } : {}),
       ...(choice.merchantAlias !== undefined
         ? merchantAliasAssignment(row, choice.merchantAlias)
         : {}),
