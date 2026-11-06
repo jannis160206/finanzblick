@@ -275,6 +275,32 @@ describe("conservative stale screenshot review reconciliation", () => {
     expect(ids(queueLedgerReview(state))).not.toContain("glyphs");
   });
 
+  it("books open-category Amex export rows and lets them replace auto-aliased or date-less OCR reviews", () => {
+    const unsure = "Händlerzuordnung unsicher – bitte prüfen.";
+    const shot = (id: string, description: string, overrides: Partial<Transaction> = {}) => review(booking(id, {
+      pocket: "Amex", date: "2026-10-29", description, amount: -31.02, category: "Prüfen",
+      rawDetails: ["Amex-Screenshot", description, "29 Okt 2026", "€ 31,02"], amexCapturedAt: "2026-11-05",
+      amexPeriodStart: "2026-10-11", ...overrides }), unsure);
+    const exported = (id: string, description: string, overrides: Partial<Transaction> = {}): Transaction => ({
+      id, bank: "Amex", pocket: "AMEX Jannis", date: "2026-10-29", description, amount: -31.02,
+      category: "Prüfen", includeInPlan: true, requires_manual_review: true, ...overrides });
+    const state = fixture([
+      shot("aliased", "PAYPAL *ELDORADO GG 65894546", { merchantAlias: "ELDORADO.GG", is_locked: true }),
+      shot("cropped", "3CPAYMENT*ROSENTAL 7", { date: "", amount: -11.8,
+        rawDetails: ["Amex-Screenshot", "3CPAYMENT*ROSENTAL 7", "€ 11,80"] }),
+      review(exported("stale", "Zorblax Testbistro Klagenfurt", { date: "2026-11-04", amount: -8, pocket: "AMEX Raphael" }), unsure),
+    ]);
+    const csv = { source: "Amex" as const, file: "activity.csv", skipped: 0, issues: [], rows: [
+      exported("x1", "PAYPAL *ELDORADO GG 65894546"),
+      exported("x2", "Zorblax Testbistro Klagenfurt", { date: "2026-11-04", amount: -8, pocket: "AMEX Raphael" }),
+      exported("x3", "3CPAYMENT*ROSENTAL 7 00 MUENCHEN", { date: "2026-10-30", amount: -11.8 }),
+    ] };
+    const { prepared, state: result } = redrop(state, [csv]);
+    expect(prepared.automatic.map((row) => [row.id, row.category])).toEqual([["x1", "Prüfen"], ["x2", "Prüfen"], ["x3", "Prüfen"]]);
+    expect(result.transactions.map((row) => row.id).sort()).toEqual(["x1", "x2", "x3"]);
+    expect(ids(result)?.sort()).toEqual(["x1", "x2", "x3"]);
+  });
+
   it("repairs stuck legacy drafts in place once their raw OCR date line becomes parseable", () => {
     const plusLine = "3 Nov 2026 + RAPHAEL PIBER";
     const stuck = (id: string, description: string, amount: number, text: string) => review(oldDraft(id, {

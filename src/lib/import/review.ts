@@ -147,6 +147,8 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
     return "Händler noch nicht sicher zugeordnet.";
 }
 
+const isAmexExport = (row: Pick<Transaction, "bank" | "pocket" | "rawDetails">) => !isAmexScreenshot(row) && amexCardholder(row) !== null;
+
 export function openReviewCount(items: ReviewItem[]): number {
   return items.reduce((total, item) => total + (item.kind === "fixed" ? item.change.bookings.length : 1), 0);
 }
@@ -565,6 +567,15 @@ export function prepareStatementImport(
   }
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, [...actualBookings(state), ...candidates]) };
+  // A re-dropped Amex export supersedes its own untouched, still-unbooked drafts from earlier drops.
+  const amexExportIds = new Set(results.filter((result) => result.source === "Amex")
+    .flatMap((result) => result.rows.filter(isAmexExport).map((row) => row.id)));
+  const incomingExports = new Set(candidates.filter((row) => amexExportIds.has(row.id) && transactionSchema.safeParse(row).success)
+    .map(statementFingerprint));
+  if (state.reviewQueue && incomingExports.size) state = { ...state, reviewQueue: state.reviewQueue.filter((item) =>
+    item.kind !== "booking" || item.sourceRepair || !!item.importIssues?.length || item.draft.reviewed ||
+    item.draft.manualCategory || item.draft.categoryOverride || !isAmexExport(item.draft) ||
+    !transactionSchema.safeParse(item.draft).success || !incomingExports.has(statementFingerprint(item.draft as Transaction))) };
   state = repairPayrollBookings(repairMerchantBookings(state, candidates));
   const split = splitFixedBookings(
     {
@@ -593,7 +604,11 @@ export function prepareStatementImport(
   const rules = indexReviewRules(state);
   for (const row of split.rows) {
     const message = bookingReviewReason(state, row, rules);
-    if (message)
+    // Amex CSV/PDF rows are bank facts: book them right away with an open category; the ledger
+    // row stays in review until a category is chosen instead of hiding the booking.
+    if (message && isAmexExport(row) && !row.is_locked && amexExportIds.has(row.id))
+      automatic.push({ ...row, category: "Prüfen", categoryOverride: true, includeInPlan: false });
+    else if (message)
       review.push({
         kind: "booking",
         id: row.id,

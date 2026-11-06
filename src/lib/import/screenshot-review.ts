@@ -126,13 +126,25 @@ function exportEvidenceMatcher(candidates: Transaction[]): (row: Draft) => boole
     rows.set(JSON.stringify([identity, row.occurrence ?? 1]), row);
     exports.set(key, rows);
   }
-  return (row) => {
-    if (!isAmexScreenshot(row) || !row.date || row.amount === null) return false;
-    const matches = exports.get(holderDayAmount(row as Transaction) ?? "");
-    if (matches?.size !== 1) return false;
-    const evidence = [...matches.values()][0];
+  const sharesMerchant = (row: Draft, evidence: Transaction) => {
     const ocr = merchantTokens([row.rawDescription ?? row.description, ...(row.rawDetails ?? [])].join(" "));
     return [...merchantTokens(`${evidence.rawDescription ?? ""} ${evidence.description}`)].some((token) => ocr.has(token));
+  };
+  return (row) => {
+    if (!isAmexScreenshot(row) || row.amount === null) return false;
+    if (!row.date) {
+      // A cropped screenshot row without date: only inside its capture window and only if
+      // exactly one export booking of that holder/amount shares a merchant word.
+      const holder = amexCardholder(row);
+      if (!holder || !row.amexCapturedAt) return false;
+      const amount = row.amount.toFixed(2);
+      const matches = [...exports.values()].flatMap((rows) => [...rows.values()]).filter((evidence) =>
+        amexCardholder(evidence) === holder && evidence.amount.toFixed(2) === amount &&
+        evidence.date <= row.amexCapturedAt! && (!row.amexPeriodStart || evidence.date >= row.amexPeriodStart));
+      return matches.length === 1 && sharesMerchant(row, matches[0]);
+    }
+    const matches = exports.get(holderDayAmount(row as Transaction) ?? "");
+    return matches?.size === 1 && sharesMerchant(row, [...matches.values()][0]);
   };
 }
 
@@ -145,7 +157,9 @@ export function reconcileScreenshotReviews(items: ReviewItem[], candidates: Tran
     return facts ? [JSON.stringify([amexBookingKey(facts), row.occurrence ?? 1, row.bankReference ?? null])] : [];
   }));
   return items.filter((item) => {
-    if (item.kind === "booking" && !item.sourceRepair && untouched(item.draft) && exportEvidence(item.draft)) return false;
+    // Automatic merchant aliases (rules, PayPal enrichment) are not user edits; the export row gets them as well.
+    if (item.kind === "booking" && !item.sourceRepair && untouched({ ...item.draft, merchantAlias: undefined }) &&
+      exportEvidence(item.draft)) return false;
     if (item.kind !== "booking" || !untouched(item.draft) ||
       transactionSchema.safeParse(item.draft).success) return true;
     const row = item.draft;
