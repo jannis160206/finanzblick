@@ -4,6 +4,7 @@ import { appStateSchema, transactionSchema, type AppState, type ReviewItem, type
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "./review";
 import { merchantRuleKey } from "./merchant-rules";
+import { reconcileScreenshotReviews } from "./screenshot-review";
 import type { StatementDraft, StatementResult } from "./statements";
 
 const message = "Amex-Screenshot: Händler, Datum oder Eurobetrag nicht eindeutig lesbar – bitte mit dem Bild abgleichen.";
@@ -245,6 +246,33 @@ describe("conservative stale screenshot review reconciliation", () => {
     const result = redrop(fixture([review(old)]), [screenshot([next])]);
     expect(ids(result.state)).toEqual([]);
     expect(result.state.transactions).toMatchObject([{ id: "new", pocket }]);
+  });
+
+  it("lets an Amex CSV/PDF export resolve OCR-garbled screenshot reviews of the same booking only", () => {
+    const ocr = (id: string, description: string, overrides: Partial<Transaction> = {}) => review(booking(id, {
+      pocket: "Amex", date: "2026-10-12", description, amount: -10.9, category: "Prüfen",
+      rawDetails: ["Amex-Screenshot", description, "12 Okt 2026", "€ 10,90"], ...overrides }),
+    "Händlerzuordnung unsicher – bitte prüfen.");
+    const csv = (id: string, description: string, overrides: Partial<Transaction> = {}): Transaction => ({
+      id, bank: "Amex", pocket: "AMEX Jannis", date: "2026-10-12", description, amount: -10.9,
+      category: "Drogerie", includeInPlan: true, ...overrides });
+    const state = fixture([
+      ocr("glyphs", "DM-FIL. A055 DM-FIL. AO Villach"),
+      ocr("other-merchant", "Nordlicht Testatelier", { date: "2026-10-13" }),
+      ocr("ambiguous", "Testmarkt Klagenfurt", { date: "2026-10-14" }),
+      ocr("edited", "DM-FIL. A055 DM-FIL. AO Villach", { date: "2026-10-15", reviewed: true }),
+      ocr("other-holder", "Still Sushi KI Klagenfurt", { date: "2026-10-16", pocket: "AMEX Raphael" }),
+    ], [
+      csv("c1", "DM-FIL. A055 DM-FIL. A0 Villach"),
+      csv("c2", "SPAR Testfiliale", { date: "2026-10-13" }),
+      csv("c3", "Testmarkt Klagenfurt", { date: "2026-10-14" }),
+      csv("c4", "Testmarkt Klagenfurt", { date: "2026-10-14", occurrence: 2 }),
+      csv("c5", "DM-FIL. A055 DM-FIL. A0 Villach", { date: "2026-10-15" }),
+      csv("c6", "Still Sushi Kl Klagenfurt", { date: "2026-10-16" }),
+    ]);
+    const queue = reconcileScreenshotReviews(state.reviewQueue!, state.transactions).map((item) => item.id);
+    expect(queue).toEqual(["other-merchant", "ambiguous", "edited", "other-holder"]);
+    expect(ids(queueLedgerReview(state))).not.toContain("glyphs");
   });
 
   it("repairs stuck legacy drafts in place once their raw OCR date line becomes parseable", () => {

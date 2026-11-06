@@ -1,6 +1,6 @@
 import { transactionSchema, type ReviewItem, type Transaction } from "@/lib/types";
 import { screenshotAmount, screenshotDate, screenshotPocket } from "./amex-screenshot";
-import { amexBookingKey, isAmexScreenshot } from "./identity";
+import { amexBookingKey, amexCardholder, isAmexScreenshot } from "./identity";
 
 type Draft = Extract<ReviewItem, { kind: "booking" }>["draft"];
 const clean = (text: string) => text.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
@@ -102,7 +102,42 @@ export function repairScreenshotReviewDrafts(items: ReviewItem[], ledger: Transa
   return { items: result, repaired };
 }
 
+const genericTokens = new Set(["paypal", "amaz0n", "amzn", "www.", "c0m"]);
+// OCR-tolerant merchant words: O/0 and I/l/1 are folded, short and payment-provider words ignored.
+const merchantTokens = (text: string) => new Set(text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+  .split(/[^a-z0-9]+/).map((token) => token.replace(/o/g, "0").replace(/[il]/g, "1"))
+  .filter((token) => token.length >= 4 && !genericTokens.has(token)));
+const holderDayAmount = (row: Pick<Transaction, "bank" | "pocket" | "date" | "amount">) => {
+  const holder = amexCardholder(row);
+  return holder ? JSON.stringify([holder, row.date.slice(0, 10), row.amount.toFixed(2)]) : null;
+};
+
+// Amex CSV/PDF exports are bank facts. An untouched OCR draft with the same holder, day and
+// signed amount and at least one shared merchant word is the same booking – if the export
+// shows exactly one such booking for that day.
+function exportEvidenceMatcher(candidates: Transaction[]): (row: Draft) => boolean {
+  const exports = new Map<string, Map<string, Transaction>>();
+  for (const row of candidates) {
+    if (isAmexScreenshot(row) || !transactionSchema.safeParse(row).success) continue;
+    const key = holderDayAmount(row);
+    const identity = amexBookingKey(row);
+    if (!key || !identity) continue;
+    const rows = exports.get(key) ?? new Map<string, Transaction>();
+    rows.set(JSON.stringify([identity, row.occurrence ?? 1]), row);
+    exports.set(key, rows);
+  }
+  return (row) => {
+    if (!isAmexScreenshot(row) || !row.date || row.amount === null) return false;
+    const matches = exports.get(holderDayAmount(row as Transaction) ?? "");
+    if (matches?.size !== 1) return false;
+    const evidence = [...matches.values()][0];
+    const ocr = merchantTokens([row.rawDescription ?? row.description, ...(row.rawDetails ?? [])].join(" "));
+    return [...merchantTokens(`${evidence.rawDescription ?? ""} ${evidence.description}`)].some((token) => ocr.has(token));
+  };
+}
+
 export function reconcileScreenshotReviews(items: ReviewItem[], candidates: Transaction[]): ReviewItem[] {
+  const exportEvidence = exportEvidenceMatcher(candidates);
   const confirmedDate = confirmedScreenshotDateMatcher(candidates);
   const keys = new Set(candidates.flatMap((row) => {
     if (!isAmexScreenshot(row) || !transactionSchema.safeParse(row).success) return [];
@@ -110,6 +145,7 @@ export function reconcileScreenshotReviews(items: ReviewItem[], candidates: Tran
     return facts ? [JSON.stringify([amexBookingKey(facts), row.occurrence ?? 1, row.bankReference ?? null])] : [];
   }));
   return items.filter((item) => {
+    if (item.kind === "booking" && !item.sourceRepair && untouched(item.draft) && exportEvidence(item.draft)) return false;
     if (item.kind !== "booking" || !untouched(item.draft) ||
       transactionSchema.safeParse(item.draft).success) return true;
     const row = item.draft;

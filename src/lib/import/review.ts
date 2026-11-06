@@ -20,7 +20,7 @@ import {
   type ReviewItem,
 } from "@/lib/types";
 export type { FixedChange, ReviewItem } from "@/lib/types";
-import { isAmexScreenshot, legacyFingerprint, numberStatementRows } from "./identity";
+import { amexCardholder, isAmexScreenshot, legacyFingerprint, numberStatementRows } from "./identity";
 import {
   matchingFixedRow as matchingGridRow,
   isIncomeCategory as isIncome,
@@ -674,8 +674,9 @@ export function prepareStatementImport(
     issues,
     metadata: {
       merchantRepairs: candidates.filter((row) => !!row.rawDescription),
-      // Reconciliation still needs evidence when every new row was a duplicate.
-      screenshotRepairs: candidates.filter(isAmexScreenshot),
+      // Reconciliation still needs evidence when every new row was a duplicate; Amex CSV/PDF
+      // rows also resolve matching OCR screenshot reviews.
+      screenshotRepairs: candidates.filter((row) => isAmexScreenshot(row) || amexCardholder(row) !== null),
       amexReconciliation,
       resolvedAmexScreenshotIssues: groupedIssues.keys,
       ...(capture && !capture.balanceIncludesPending ? { amexPendingRows: { date: capture.capturedAt, rows: currentRows } } : {}),

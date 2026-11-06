@@ -161,6 +161,24 @@ describe("Revolut consolidated CSV", () => {
 });
 
 describe("Amex", () => {
+  it("reads the online activity.csv export (dd/mm/yyyy, Konto #, both cards) and skips the card repayment", () => {
+    const result = parseStatementCsv([
+      "Datum,Beschreibung,Karteninhaber,Konto #,Betrag",
+      '04/11/2026,Testmarkt Fil. 1 VILLACH,RAPHAEL PIBER,-61010,"12,26"',
+      '03/11/2026,AMAZON.DE*TEST12345     AMAZON.DE,JANNIS BRUEHL,-61002,"75,64"',
+      '03/11/2026,Entertainment Gutschrift,JANNIS BRUEHL,-61002,"-15,00"',
+      '17/10/2026,ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK,JANNIS BRUEHL,-61002,"-1446,65"',
+      '10/10/2026,"WIENER LINIEN, WIENMOBI WIEN",JANNIS BRUEHL,-61002,"19,40"',
+    ].join("\n"), "activity.csv");
+    expect(result.source).toBe("Amex");
+    expect(result.rows.map((row) => [row.date, row.pocket, row.description, row.amount])).toEqual([
+      ["2026-11-04", "AMEX Raphael", "Testmarkt Fil. 1 VILLACH", -12.26],
+      ["2026-11-03", "AMEX Jannis", "AMAZON.DE*TEST12345 AMAZON.DE", -75.64],
+      ["2026-11-03", "AMEX Jannis", "Entertainment Gutschrift", 15],
+      ["2026-10-10", "AMEX Jannis", "WIENER LINIEN, WIENMOBI WIEN", -19.4],
+    ]);
+    expect(result.skipped).toBe(1);
+  });
   it("maps positive card charges to spend, refunds to income, and distinguishes holders", () => {
     const result = parseStatementCsv(fixture("amex"));
     expect(result.source).toBe("Amex");
