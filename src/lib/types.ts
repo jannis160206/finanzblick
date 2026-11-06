@@ -141,9 +141,15 @@ const transactionFieldsSchema = z.object({
   occurrence: z.number().int().positive().optional(),
   sharedWithRaphael: z.boolean().optional(),
   sharedPaidManually: z.boolean().optional(),
+  // Receipt split (Kassenbon): category parts that must sum to `amount`; see lib/splits.ts.
+  splits: z.array(z.object({
+    category: categorySchema,
+    amount: moneySchema.refine((value) => value !== 0, "Betrag darf nicht 0 sein"),
+    note: z.string().trim().max(120).optional(),
+  }).strict()).min(2).max(20).optional(),
   ...sharedSettlementFields,
 });
-export const transactionSchema = transactionFieldsSchema.overwrite(normalizeAccount);
+export const transactionSchema =  transactionFieldsSchema.overwrite(normalizeAccount);
 export type Transaction = z.infer<typeof transactionSchema>;
 export const statementRepairDraftSchema = transactionFieldsSchema.extend({
   amount: moneySchema.nullable(),
@@ -452,9 +458,33 @@ const assistantLineSchema = z.object({
   tone: z.enum(["good", "warn", "bad", "info"]).optional(),
   transactionIds: z.array(z.string().max(500)).max(50).optional(),
 }).strict();
+// Small chart inside a chat answer; bounded so persisted chats stay small.
+export const assistantChartSchema = z.object({
+  type: z.enum(["bar", "line"]),
+  series: z.array(z.object({
+    name: z.string().max(60),
+    points: z.array(z.object({ label: z.string().max(20), value: z.number().finite() }).strict()).min(1).max(24),
+  }).strict()).min(1).max(3),
+  threshold: z.object({ label: z.string().max(60), value: z.number().finite() }).strict().optional(),
+}).strict();
+export type AssistantChart = z.infer<typeof assistantChartSchema>;
+// Inputs for the live what-if card; the browser recomputes the result from these numbers only.
+export const assistantWhatIfSchema = z.object({
+  goal: z.object({
+    id: agentIdSchema, name: z.string().max(80),
+    target: z.number().finite().positive().max(10_000_000), saved: z.number().finite().min(0).max(10_000_000),
+    date: dateSchema, monthly: z.number().finite().min(0).max(1_000_000).optional(),
+  }).strict().optional(),
+  start: monthKeySchema,
+  rates: z.array(z.number().finite().min(0).max(1_000_000)).max(36),
+  tail: z.number().finite().min(0).max(1_000_000),
+  extra: z.number().finite().min(0).max(100_000),
+  subscriptions: z.array(z.object({ name: z.string().max(80), monthly: z.number().finite().min(0).max(100_000), cancel: z.boolean() }).strict()).max(8),
+}).strict();
+export type AssistantWhatIf = z.infer<typeof assistantWhatIfSchema>;
 // Calculated result cards (answers, briefing, coach, depot, tax); every number comes from code.
 export const assistantCardSchema = z.object({
-  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes", "loan", "review"]),
+  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes", "loan", "review", "forecast", "whatif", "cancel", "why"]),
   title: z.string().max(200),
   total: z.number().finite().optional(),
   lines: z.array(assistantLineSchema).max(40),
@@ -462,6 +492,11 @@ export const assistantCardSchema = z.object({
   month: monthKeySchema.optional(),
   year: z.number().int().min(2000).max(2100).optional(),
   note: z.string().max(400).optional(),
+  chart: assistantChartSchema.optional(),
+  whatif: assistantWhatIfSchema.optional(),
+  // Kündigungshilfe: ready letter text with placeholders and public comparison/cancellation links.
+  letter: z.string().max(3000).optional(),
+  links: z.array(z.object({ label: z.string().max(80), url: z.string().url().max(300).regex(/^https:\/\//) }).strict()).max(4).optional(),
 }).strict();
 export type AssistantCard = z.infer<typeof assistantCardSchema>;
 export const assistantChangeSchema = z.object({

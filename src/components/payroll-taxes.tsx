@@ -8,6 +8,7 @@ import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { PayrollCoverage, PayrollResults } from "@/components/payroll-results";
 import { PayrollDetails } from "@/components/payroll-details";
+import { TaxFolderPanel } from "@/components/tax-folder-panel";
 import { payrollPresentation } from "@/components/payroll-presentation";
 import { payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 
@@ -132,6 +133,7 @@ function PayrollWorkspace() {
             <PayrollDetails view={view} />
           </>
         )}
+        <TaxFolderPanel year={year} />
       </div>
     </>
   );

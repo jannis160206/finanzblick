@@ -33,6 +33,8 @@ export type ChatOptions = {
   signal?: AbortSignal;
   config?: AiConfig;
   fetcher?: typeof fetch;
+  // Overrides config.model, e.g. for the small router model.
+  model?: string;
 };
 
 // Qwen3 can emit a reasoning block even when thinking is disabled.
@@ -40,7 +42,7 @@ export function stripThinking(text: string) {
   return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 }
 
-export async function chat(messages: ChatMessage[], options: ChatOptions = {}) {
+async function post(messages: ChatMessage[], options: ChatOptions, stream: boolean) {
   const config = options.config ?? readAiConfig();
   if (!config.enabled) throw new AiUnavailableError("Die lokale KI ist deaktiviert.");
   const timeout = AbortSignal.timeout(config.timeoutMs);
@@ -51,11 +53,11 @@ export async function chat(messages: ChatMessage[], options: ChatOptions = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: config.model,
+        model: options.model ?? config.model,
         messages,
         max_tokens: options.maxTokens ?? 1024,
         temperature: options.temperature ?? 0,
-        stream: false,
+        stream,
         chat_template_kwargs: { enable_thinking: false },
         ...(options.tools?.length ? { tools: options.tools, tool_choice: "auto" } : {}),
       }),
@@ -70,6 +72,11 @@ export async function chat(messages: ChatMessage[], options: ChatOptions = {}) {
   }
   if (!response.ok)
     throw new AiUnavailableError(`Die lokale KI hat mit HTTP ${response.status} geantwortet.`);
+  return response;
+}
+
+export async function chat(messages: ChatMessage[], options: ChatOptions = {}) {
+  const response = await post(messages, options, false);
   const parsed = completionSchema.parse(await response.json());
   const message = parsed.choices[0].message;
   return {
@@ -78,7 +85,46 @@ export async function chat(messages: ChatMessage[], options: ChatOptions = {}) {
   };
 }
 
-export type AiStatus = { available: boolean; model: string; device: "NPU"; error?: string };
+// Splits OpenAI-style server-sent events into text deltas; `rest` keeps an incomplete last line for the next chunk.
+export function parseSse(buffer: string): { deltas: string[]; rest: string; done: boolean } {
+  const lines = buffer.split(/\r?\n/);
+  const rest = lines.pop() ?? "";
+  const deltas: string[] = [];
+  let done = false;
+  for (const line of lines) {
+    if (!line.startsWith("data:")) continue;
+    const payload = line.slice(5).trim();
+    if (payload === "[DONE]") { done = true; break; }
+    try {
+      const content = (JSON.parse(payload) as { choices?: { delta?: { content?: unknown } }[] }).choices?.[0]?.delta?.content;
+      if (typeof content === "string" && content) deltas.push(content);
+    } catch {
+      // Keep-alive or malformed lines carry no text.
+    }
+  }
+  return { deltas, rest, done };
+}
+
+// Streams the raw model text piece by piece (no thinking removal; callers decide what to show).
+export async function* chatStream(messages: ChatMessage[], options: ChatOptions = {}): AsyncGenerator<string> {
+  const response = await post(messages, options, true);
+  if (!response.body) throw new AiUnavailableError("Die lokale KI hat keine Antwort gestreamt.");
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      const parsed = parseSse(buffer + (value ?? "") + (done ? "\n" : ""));
+      buffer = parsed.rest;
+      yield* parsed.deltas;
+      if (parsed.done || done) return;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
+export type AiStatus = { available: boolean; model: string; device: "NPU"; error?: string; router?: { model: string; available: boolean } };
 
 export async function aiStatus(config = readAiConfig(), fetcher: typeof fetch = fetch): Promise<AiStatus> {
   const base = { model: config.model, device: "NPU" as const };
@@ -89,7 +135,9 @@ export async function aiStatus(config = readAiConfig(), fetcher: typeof fetch = 
     if (!response.ok) return { ...base, available: false, error: `HTTP ${response.status}` };
     const body = await response.json() as Record<string, { model_version_status?: { state?: string }[] }>;
     const state = body[config.model]?.model_version_status?.[0]?.state;
-    return state === "AVAILABLE" ? { ...base, available: true } : { ...base, available: false, error: state ?? "Modell nicht geladen" };
+    const router = config.routerModel
+      ? { router: { model: config.routerModel, available: body[config.routerModel]?.model_version_status?.[0]?.state === "AVAILABLE" } } : {};
+    return state === "AVAILABLE" ? { ...base, ...router, available: true } : { ...base, ...router, available: false, error: state ?? "Modell nicht geladen" };
   } catch {
     return { ...base, available: false, error: "nicht erreichbar" };
   }

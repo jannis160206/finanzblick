@@ -9,6 +9,8 @@ import { ParserFailure } from "./errors";
 import { MAX_PARSER_RESULT_BYTES, parserReplySchema, parserRequestSchema } from "./parser-ipc";
 
 export const PARSER_BUDGET_MS = 120_000;
+/** Unknown PDF layouts may need several local-AI calls on the NPU. */
+export const PDF_PARSER_BUDGET_MS = 600_000;
 const requireLocal = createRequire(import.meta.url);
 const parserEntrypoint = fileURLToPath(new URL("./child-parser.ts", import.meta.url));
 
@@ -58,6 +60,9 @@ export async function parseStatementInChild(
             PATH: process.env.PATH,
             SYSTEMROOT: process.env.SYSTEMROOT,
             TSX_DISABLE_CACHE: "1",
+            // Local AI endpoint for unknown PDF layouts (loopback by default; no credentials).
+            ...Object.fromEntries(["FINANZBLICK_AI", "FINANZBLICK_AI_URL", "FINANZBLICK_AI_MODEL", "FINANZBLICK_AI_TIMEOUT_MS"]
+              .flatMap((key) => (process.env[key] ? [[key, process.env[key]]] : []))),
           },
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           serialization: "json",

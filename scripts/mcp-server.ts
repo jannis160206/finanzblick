@@ -5,6 +5,8 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AccountDatabase } from "../src/lib/server/database";
 import { financeTools, type FinanceAccess } from "../src/lib/ai/finance-tools";
+import { createPseudonymizer, maskToolResult, merchantNames, personNamesFrom, PSEUDONYM_NOTE } from "../src/lib/ai/pseudonymize";
+import { createEmptyAccountState } from "../src/lib/account-state";
 
 export function openFinanceAccess(): FinanceAccess & { close: () => void } {
   // External MCP clients may start this script from any directory.
@@ -25,19 +27,48 @@ export function openFinanceAccess(): FinanceAccess & { close: () => void } {
 
 const OPEN_WORLD = new Set(["find_merchant_logo", "find_all_merchant_logos", "learn_categories_from_web"]);
 
+// Learns the people in the current data once, then again when the finance data changed (new imports).
+export function startPseudonymizer(access: FinanceAccess) {
+  const extra = (process.env.MCP_PRIVATE_NAMES ?? "").split(/[,;]/).map((name) => name.trim()).filter(Boolean);
+  const load = () => {
+    const snapshot = access.database.getFinance(access.userId);
+    return { revision: snapshot.revision, state: snapshot.state ?? createEmptyAccountState() };
+  };
+  const first = load();
+  const keep = merchantNames(first.state);
+  const pseudonymizer = createPseudonymizer(personNamesFrom(first.state, extra), keep);
+  let revision = first.revision;
+  return {
+    pseudonymizer,
+    refresh() {
+      const current = access.database.getFinance(access.userId).revision;
+      if (current === revision) return;
+      const next = load();
+      revision = next.revision;
+      for (const name of merchantNames(next.state)) keep.add(name);
+      pseudonymizer.learn(personNamesFrom(next.state, extra));
+    },
+  };
+}
+
 async function main() {
   const access = openFinanceAccess();
-  const server = new McpServer({ name: "finanzblick", version: "1.0.0" });
+  // Data for Claude/ChatGPT leaves this machine: mask people, IBANs and contact data unless explicitly disabled.
+  const privacy = process.env.MCP_PSEUDONYMIZE === "0" ? undefined : startPseudonymizer(access);
+  const server = new McpServer({ name: "finanzblick", version: "1.0.0" }, privacy ? { instructions: PSEUDONYM_NOTE } : undefined);
   for (const tool of financeTools) {
     server.registerTool(tool.name, {
-      description: tool.description,
+      description: privacy ? `${tool.description} Namen, IBANs und Kontaktdaten sind pseudonymisiert (Person-1, IBAN-1 …).` : tool.description,
       inputSchema: tool.input,
       annotations: { readOnlyHint: tool.readOnly, openWorldHint: OPEN_WORLD.has(tool.name) },
     }, async (args: Record<string, unknown>) => {
       try {
-        return await tool.run(args, access);
+        if (!privacy) return await tool.run(args, access);
+        privacy.refresh();
+        return maskToolResult(await tool.run(privacy.pseudonymizer.reveal(args), access), privacy.pseudonymizer);
       } catch (error) {
-        return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], isError: true };
+        const text = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: "text" as const, text: privacy ? privacy.pseudonymizer.maskText(text) : text }], isError: true };
       }
     });
   }

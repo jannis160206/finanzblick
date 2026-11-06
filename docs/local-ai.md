@@ -13,6 +13,7 @@ Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledi
 | `/api/ai/web-categories` | Schlägt den Geschäftstyp unbekannter Händler bei OpenStreetMap, Wikidata oder auf der Händler-Webseite nach (braucht kein Modell) |
 | `npm run mcp` | MCP-Server (stdio) mit Finanzwerkzeugen für Claude Desktop, VS Code, Copilot oder den lokalen Agenten |
 | `npm run ai:agent` | Freier Chat mit dem lokalen Modell, das die MCP-Werkzeuge selbst aufruft |
+| `npm run watch:run` | Hintergrund-Agent: prüft einmal und meldet Wichtiges per Windows-Benachrichtigung (siehe unten) |
 
 Qwen3-8B ist das stärkste Modell, das OpenVINO für die NPU vorbereitet bereitstellt. Es beherrscht Deutsch, Werkzeugaufrufe und JSON-Ausgaben, deshalb taugt es auch für spätere Aufgaben.
 
@@ -37,7 +38,10 @@ Optionale Variablen in `.env.local`:
 | `FINANZBLICK_AI_MODEL` | `OpenVINO/Qwen3-8B-int4-cw-ov` | Modellname in OVMS |
 | `FINANZBLICK_AI_MIN_CONFIDENCE` | `90` | Mindestsicherheit (50–100) für automatische Übernahme |
 | `FINANZBLICK_AI_TIMEOUT_MS` | `180000` | Zeitlimit pro Modellanfrage |
-| `FINANZBLICK_MCP_USER` | `admin` | Konto, auf das MCP-Server und Agent zugreifen |
+| `FINANZBLICK_MCP_USER` | `admin` | Konto, auf das MCP-Server, Agent und Hintergrund-Agent zugreifen |
+| `MCP_PSEUDONYMIZE` | `1` | `0` schaltet die Pseudonymisierung im MCP-Server ab |
+| `MCP_PRIVATE_NAMES` | – | Zusätzliche Personennamen zum Maskieren, getrennt durch Komma oder Strichpunkt |
+| `FINANZBLICK_WATCH_STATE` | `%LOCALAPPDATA%\FinanzblickAI\watch-state.json` | Merkliste des Hintergrund-Agenten |
 
 ## Was automatisch passiert
 
@@ -154,6 +158,139 @@ Die KI wählt nur ein Werkzeug (`src/lib/assistant/tools.ts`) und nennt Namen au
 
   Das Ergebnis ist eine Schätzung, keine Steuerberatung.
 
+### Kündigungshilfe
+
+Werkzeug `cancel` (`src/lib/assistant/cancel.ts`): „Kündige Netflix“, „Hilf mir den Handyvertrag zu kündigen“, „Welche Verträge kann ich kündigen?“.
+
+- Verträge stammen aus den erkannten Abos (`detectSubscriptions`, Miete ausgenommen). Die Liste ist nach Jahreskosten sortiert.
+- Die Karte zu einem Vertrag zeigt:
+  - Kosten pro Monat und pro Jahr
+  - die letzte Abbuchung
+  - die Preisentwicklung
+  - eine allgemeine Kündigungsinfo je Vertragsart, bewusst mit „meist“ formuliert. Beispiele: Handy/Internet meist 1 Monat nach Mindestvertragsdauer, Versicherung zum Ende der Versicherungsperiode (§ 8 VersVG), Streaming monatlich, Fitnessstudio laut Vertrag.
+- Links: die Kündigungsseite bekannter Anbieter (Netflix, Spotify, Disney+, Amazon Prime, Apple, Magenta, A1, Drei, HoT, spusu) oder ein Vergleichsportal (durchblicker.at, tarife.at, E-Control-Tarifkalkulator). Es gibt kein Live-Preis-Scraping, und es werden keine Daten gesendet.
+- Das Kündigungsschreiben ist formell und hat Platzhalter für Name, Adresse, Kundennummer und Datum. Es lässt sich kopieren oder per `mailto:` öffnen.
+- Der Vorschlag „Erinner mich am …, X zu kündigen“ legt über das Werkzeug `reminder` eine Erinnerung an. Das passiert wie immer nur nach deiner Bestätigung.
+- Das ist keine Rechtsberatung: Maßgeblich sind der Vertrag und die AGB.
+
+### Warum diese Kategorie?
+
+`explainCategory(state, booking)` (`src/lib/category-why.ts`) erklärt die Zuordnung einer Buchung aus den Feldern, die der Import ohnehin speichert. Ein neues Feld war dafür nicht nötig. Die Reihenfolge entspricht dem Vorrang im Import:
+
+1. **Lokale KI** (`aiAssigned`, mit Begründung aus `aiSuggestions`)
+2. **Manuell gesetzt** (`manualCategory` bzw. eine frühere Einzelwahl)
+3. **Von dir gelernt** (eine passende `merchantRules`-Regel)
+4. Automatische Belege aus dem Import (`automaticCategoryEvidence`):
+   - Händlerregel „X → Y“
+   - eindeutiger Buchungstext
+   - MCC
+   - frühere Buchungen
+   - Bank-Kategorie
+5. **Aus dem Web** (`webCategories`, z. B. OpenStreetMap: supermarket)
+6. Vorschläge in `aiSuggestions`
+7. Eingebaute Standardregel (`classify`), gegebenenfalls mit der Bank-Kategorie
+
+In der Umsatzliste zeigt das Info-Popover jeder Kategorie den Abschnitt „Warum diese Kategorie?“ mit Kategorie, Quelle, Datum und dem Knopf „Falsch? Kategorie ändern“, der den Bearbeiten-Dialog öffnet. Im Chat beantwortet das Werkzeug `why` (`src/lib/assistant/why.ts`) die Frage „Warum ist Billa Lebensmittel?“ für die letzte Buchung des Händlers und zählt, wie viele Buchungen gleich zugeordnet sind.
+
+### Steuer-Mappe
+
+`taxFolder(state, year)` (`src/lib/tax-folder.ts`) sammelt mögliche absetzbare Ausgaben eines Jahres für die Arbeitnehmerveranlagung, gruppiert nach den Kennzahlen des Formulars L1. Pro Gruppe zeigt sie Summe, Anzahl der Belege und Beleg-Hinweise, etwa „Rechnung im Online-Konto herunterladen“ oder „über 1.000 € abschreiben“. Das Werkzeug `tax` („Steuer-Mappe 2026“, „Was kann ich absetzen?“) zeigt sie als Karte. Auf der Seite „Gehalt & Steuern“ steht sie als Abschnitt „Steuer-Mappe“. Beide bieten den Export als CSV (Excel, `;`, Schutz gegen Formel-Injection) und eine Druckansicht (HTML ohne Skripte).
+
+| Gruppe | Kennzahl | Stand |
+| --- | --- | --- |
+| Gewerkschaft & Berufsverband | KZ 717 | geläufig |
+| Arbeitsmittel | KZ 719 | geläufig |
+| Fachliteratur | KZ 720 | geläufig |
+| Reisekosten | KZ 721 | geläufig |
+| Aus- und Fortbildung | KZ 722 | geläufig |
+| Sonstige Werbungskosten | KZ 724 | geläufig |
+| Home-Office-Mobiliar | KZ 158 | „bitte prüfen“ |
+| Steuerberatung | KZ 460 | „bitte prüfen“ |
+| Krankheitskosten (außergew. Belastung) | KZ 730 | „bitte prüfen“ |
+| Spenden, Kirchenbeitrag | – | automatisch übermittelt |
+
+Die BMF-Seiten nennen die Kennzahlen selbst nicht, und das Formular-PDF war beim Bau nicht abrufbar. Unsichere Kennzahlen stehen deshalb in der App mit „(bitte prüfen)“. Grundlagen:
+
+- [Werbungskosten](https://www.bmf.gv.at/themen/steuern/arbeitnehmerveranlagung/was-kann-ich-geltend-machen/werbungskosten.html)
+- [ABC der Werbungskosten](https://www.bmf.gv.at/themen/steuern/arbeitnehmerveranlagung/was-kann-ich-geltend-machen/werbungskosten/abc-der-werbungskosten.html)
+- [Home-Office-Pauschale](https://www.bmf.gv.at/themen/steuern/arbeitnehmerveranlagung/was-kann-ich-geltend-machen/werbungskosten/home-office-pauschale.html)
+- [Sonderausgaben](https://www.bmf.gv.at/themen/steuern/arbeitnehmerveranlagung/was-kann-ich-geltend-machen/sonderausgaben.html)
+- [Außergewöhnliche Belastungen](https://www.bmf.gv.at/themen/steuern/arbeitnehmerveranlagung/was-kann-ich-geltend-machen/aussergewoehnliche-belastungen.html)
+
+Pendlerpauschale, Familienbonus und Homeoffice-Pauschale stehen nicht in den Umsätzen und fehlen deshalb in der Mappe. Ohne Gewähr, keine Steuerberatung.
+
+### Kontoprognose
+
+Das Werkzeug `forecast` („Wird mein Konto knapp?“, „Reicht mein Geld bis Jänner?“, „Kontoprognose“) rechnet die nächsten 12 Monate Tag für Tag je Konto durch (`src/lib/assistant/forecast.ts`, reine Funktion `projectAccounts`):
+
+- **Girokonto:** Start ist der gemerkte Stand („Merk dir: Girokonto 1.500 €“) plus Revolut-Stand und das Amex-Rückzahlungs-Pocket.
+- **Buchungen in der Prognose:**
+  - Gehalt am Gehaltstag (gemerkt oder erkannt);
+  - Fixkosten an ihrem üblichen Abbuchungstag;
+  - Abos, die nicht schon in den Fixkosten stecken;
+  - die monatliche Amex-Abbuchung (offener Betrag, danach der übliche Amex-Anteil am Monatsplan);
+  - geplante Ausgaben;
+  - Sparraten und Alltagsausgaben (Plan-Rest, gleichmäßig verteilt).
+- **Sparkonto:** wird mit seinen Sparraten und Entnahmen fortgeschrieben.
+- **Schwelle:** Knapp heißt „unter dem gemerkten Puffer“ (ohne Puffer: unter 0 €).
+- **Antwort:**
+  - Sie nennt den ersten Tiefpunkt mit Ursache, z. B. „Am 15. November wird dein Girokonto knapp (−787,41 €), weil die Amex abgebucht wird.“
+  - Die Karte zeigt kritische Tage und ein Liniendiagramm mit dem Monatstiefststand je Konto.
+- **Wochenüberblick:** Liegt ein Tiefpunkt in den nächsten 30 Tagen, erwähnt ihn auch der Wochenüberblick.
+
+### Was wäre wenn
+
+Das Werkzeug `whatif` („Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“, „Was wäre, wenn ich 100 € mehr spare?“) ändert nichts an den Daten.
+
+- **Erkennung:**
+  - Abos aus den erkannten Abbuchungen und Fixkosten;
+  - Betrag pro Monat;
+  - Sparziel per Name, sonst das nächste offene Ziel.
+- **Karte:** Sie hat einen Schieberegler „Mehr sparen pro Monat“ und Häkchen je Abo. `computeWhatIf` (`src/lib/assistant/whatif.ts`) rechnet im Browser bei jeder Bewegung neu: frei pro Monat und Jahr, neuer Zielmonat statt bisher, Monate früher.
+- **Basis:** Grundlage sind die geplanten Sparraten aus dem Monatsplan bis zum Zieldatum, danach die feste Rate.
+- **„Als Sparrate übernehmen“:** Den Knopf gibt es bei Zielen mit fester Rate. Er erzeugt eine normale Änderungs-Vorschau (`goal_update`), die du bestätigen musst.
+
+### Diagramme im Chat
+
+Karten können ein optionales `chart` tragen: Balken oder Linie, höchstens 3 Reihen zu je 24 Punkten, optional eine Schwellenlinie. Das Format steht in `assistantChartSchema`, gebaut wird es mit `buildChart` in `src/lib/assistant/chart.ts`. Gezeichnet wird es als SVG mit den Theme-Farben (`src/components/assistant-chart.tsx`), mit `aria-label` und der aufklappbaren Tabelle „Werte als Tabelle“.
+
+Diagramme haben:
+
+- Monatsvergleich (je Kategorie);
+- Ausgaben-Verlauf (mit Durchschnitt);
+- Jahresrückblick (Ausgaben je Monat);
+- Depot-Rechner (eingezahlt, 3 %, 7 %);
+- Kontoprognose.
+
+Alle Werte rechnet der Code, nie das Modell.
+
+### Geschwindigkeit
+
+- **Schnellweg ohne Modell:** Erkennt der Regel-Router einen klaren Befehl und braucht das Werkzeug keine Modell-Hinweise, antwortet `/api/ai/assistant` sofort ohne NPU-Aufruf (Quelle „Regel“). Das Modell wird nur noch gefragt bei offenem Entwurf, bei Entwürfen (Sparziel, Ausgabe, „Kann ich mir das leisten?“), bei Werkzeugen mit Hinweisen (`hintTools` in `src/lib/ai/assistant.ts`: Datenfragen, Ändern, Buchungen, Regeln) und wenn keine Regel greift.
+- **Kleines Router-Modell (optional):** `FINANZBLICK_AI_ROUTER_MODEL` (oder `AI_ROUTER_MODEL`), z. B. `OpenVINO/Qwen3-1.7B-int4-ov`, wählt nur das Werkzeug; freie Antworten schreibt weiter das 8B-Modell. Antwortet es nicht oder ohne gültiges JSON, übernimmt das Hauptmodell. Laden mit `npm run ai:server -- -RouterModel OpenVINO/Qwen3-1.7B-int4-ov` (zieht das Modell und trägt es zusätzlich in `models\config.json` ein). `/api/ai/status` meldet dann `router.available`.
+- **Streaming:** `/api/ai/answer?stream=1` liefert die freie Antwort als NDJSON (`{"delta": "…"}` … `{"done": true, "ok": true, "text": "…"}`); der Chat zeigt sie Wort für Wort. Gezeigt werden nur ganze Wörter, solange alle Zahlen und Kontakte belegt sind, und nichts, solange die Antwort wie JSON aussieht. Am Ende wird der ganze Text wie bisher geprüft (`numbersBacked`, `contactsBacked`); fällt er durch, verschwindet die Blase und es kommt die übliche Rückfrage. Ohne `stream=1` bleibt die JSON-Antwort unverändert.
+
+## PDF-Kontoauszüge
+
+Ein PDF-Auszug einer beliebigen Bank kann wie CSV oder Screenshot einfach in den Import gezogen werden. Amex-PDFs laufen weiter über den eigenen Parser; alle anderen gehen an `src/lib/import/generic-pdf.ts`.
+
+- **Ohne KI zuerst:** Der Text der Seiten wird zeilenweise gelesen: Datum (auch ohne Jahr, mit Valuta, „1 Sep 2026“), Buchungstext und Betrag am Zeilenende. Unterstützt werden `-1.234,56`, `1.234,56-`, `S`/`H`, `EUR`/`€`, eine Saldospalte und umbrochene Texte. Die Bank wird aus dem Text erkannt (Erste/George, Raiffeisen, BAWAG, Bank Austria, N26, Revolut, DKB, Volksbank; sonst „PDF-Import“).
+- **Saldenprüfung:** Steht ein Anfangs- und Endsaldo im Auszug (z. B. „Alter/Neuer Kontostand“, „Saldovortrag“, „Opening/Closing balance“), muss Anfangssaldo + Buchungen den Endsaldo ergeben. Fehlt das Vorzeichen, wird es aus der Saldospalte abgeleitet. Ist es danach noch unklar, landet die Buchung in der Prüfung.
+- **KI nur bei Bedarf:** Bleiben Zeilen unlesbar oder geht der Saldo nicht auf, liest die lokale KI den Auszug in Abschnitten von etwa 3200 Zeichen (`src/lib/ai/pdf-ai.ts`, Temperatur 0, `DATA_RULE`, Text durch `cleanUntrusted`).
+  - Die KI extrahiert nur. Jede Zeile wird per Code geprüft: Datum im Zeitraum (±3 Tage) und im Text abgedruckt, Betrag genau so im Text, Buchungstext mit Wörtern aus dem Auszug. Das Vorzeichen kommt aus `-`/`S`/`Soll` bzw. `+`/`H`/`Haben` im Text.
+  - KI-Buchungen werden nie direkt gespeichert. Sie erscheinen als „Mit KI-Hilfe aus PDF gelesen“ in „Buchungen korrigieren“.
+- **Zeitlimit:** Für PDFs hat der Hintergrund-Parser 10 statt 2 Minuten. Ein neuer KI-Abschnitt startet nur, wenn noch 45 Sekunden übrig sind; sonst meldet der Import, wie viele Abschnitte gelesen wurden. Im Browser-Pfad ohne Konto läuft nur der Teil ohne KI.
+- **Status:** Der Uploadstatus zeigt „PDF erkannt: 23 Buchungen, 2 bitte prüfen“. Gescannte PDFs ohne Text werden gemeldet (dann CSV oder Screenshots verwenden).
+
+## Kassenbon aufteilen
+
+Eine Ausgabe (z. B. BILLA −54,30 €) kann nach dem Kassenbon auf mehrere Kategorien verteilt werden: Buchung → Menü → „Kassenbon aufteilen“.
+
+- **Einlesen:** Foto (OCR mit tesseract.js im Browser, Deutsch + Englisch, lokale Sprachdaten) oder Text-PDF. `src/lib/receipts/receipt.ts` erkennt Artikel, „2 x 1,99“, Gewichtszeilen, Rabatt/Aktion (wird vom Artikel davor abgezogen), Pfand/Leergut und „SUMME“.
+- **Kategorien:** Eine Stichwortliste ordnet Artikel zu, z. B. Lebensmittel, Drogerie, Haushalt, Haustiere, Gesundheit. Alkohol zählt zu Lebensmitteln mit Vermerk „Alkohol“, Tabak zu Shopping. Unbekannte Artikel bekommen die Kategorie der Buchung und sind als „unsicher“ markiert. Auf Wunsch schlägt die lokale KI Kategorien dafür vor (`/api/ai/receipt-items`, nur Artikelnamen, nur erlaubte Kategorien). Jede Kategorie lässt sich vor dem Speichern ändern.
+- **Betrag stimmt immer:** Die Kategoriesummen werden cent-genau auf den Buchungsbetrag skaliert (größter Rest). Weicht die Bonsumme vom Buchungsbetrag ab (Pfandrückgabe, Trinkgeld, OCR-Fehler), zeigt der Dialog den Unterschied.
+- **Gespeichert** wird `splits: [{category, amount, note?}]` an der Buchung (2–20 Teile, gleiches Vorzeichen, Summe = Betrag). Ausgaben je Kategorie im Dashboard, Monatsrückblick und `finance_summary` rechnen mit den Teilen (`categoryParts` in `src/lib/splits.ts`). „Aufteilung entfernen“ macht es rückgängig.
+
 ## Internet-Kategorisierung
 
 Der Browser-Assistent schlägt unbekannte Geschäfte offener Kartenzahlungen selbst im Internet nach, auch ohne laufendes Modell (`/api/ai/web-categories`, je 8 Geschäfte, jedes nur einmal).
@@ -208,6 +345,21 @@ Beispielkonfiguration für einen MCP-Client:
 
 Der MCP-Server schreibt direkt in die SQLite-Datenbank. Ein geöffneter Browser lädt den neuen Stand beim nächsten Fokus nach.
 
+### Pseudonymisierung
+
+Bevor Daten über `npm run mcp` an Claude, ChatGPT oder Copilot gehen, ersetzt `src/lib/ai/pseudonymize.ts` private Angaben durch Platzhalter:
+
+| Angabe | Platzhalter |
+| --- | --- |
+| Personen (Empfänger und Auftraggeber von Überweisungen wie „To …“, „Überweisung an …“, „Auftraggeber: …“, zweite Karteninhaber, `MCP_PRIVATE_NAMES`) | `Person-1`, `Person-2`, … |
+| IBANs | `IBAN-1`, … |
+| E-Mail-Adressen und Telefonnummern | `email-1`, `Telefon-1`, … |
+| Karten- und lange Kontonummern | `Karte-1`, `Nummer-1`, … |
+
+Händler- und Firmennamen, Kategorien, Beträge und Datumsangaben bleiben lesbar, damit Auswertungen sinnvoll bleiben. Vor- und Nachname derselben Person bekommen denselben Platzhalter. Innerhalb einer Sitzung sind die Platzhalter stabil: Nennt das externe Modell in einem Werkzeugaufruf `Person-1` oder `IBAN-2`, setzt der Server vor dem Ausführen wieder den echten Wert ein. Werkzeugbeschreibungen und Server-Hinweise sagen dem Modell, dass Namen pseudonymisiert sind. Neue Namen lernt der Server nach, sobald sich die Daten ändern.
+
+Ausschalten mit `MCP_PSEUDONYMIZE=0` (z. B. in `.env.local`). Der Finanz-Assistent im Browser und `npm run ai:agent` arbeiten mit dem lokalen Modell und sehen die echten Daten. Der Web-MCP-Server bekommt ohnehin keine persönlichen Daten.
+
 ### Web-MCP-Server `finanzblick-web`
 
 `npm run mcp:web` startet einen zweiten MCP-Server (stdio) mit öffentlichen Marktdaten für die Sparplanung. Er hat keinen Zugriff auf die Datenbank, nur Lesewerkzeuge:
@@ -221,6 +373,31 @@ Der MCP-Server schreibt direkt in die SQLite-Datenbank. Ein geöffneter Browser 
 | `search_knowledge` | deutschsprachige Wikipedia (CC BY-SA 4.0): Erklärung eines Finanzbegriffs mit Titel, Text und Link, `null` ohne passenden Treffer |
 
 Der Finanz-Assistent nutzt denselben Server im Prozess (`src/lib/web/mcp-client.ts`, In-Memory-Transport) über `GET /api/market?currencies=JPY`. Ins Internet gehen nur feste öffentliche Abfragen und Währungscodes, nie Beträge oder Buchungen. Werte werden 6 Stunden zwischengespeichert; fällt eine Quelle aus, bleibt der letzte Wert. `search_knowledge` stellt eine einzige Suchanfrage (Begriffsklärungen, Personen und Fremdthemen werden übersprungen) und merkt sich das Ergebnis eine Woche lang. Eintrag für einen MCP-Client wie oben, mit `"mcp:web"` statt `"mcp"`.
+
+## Hintergrund-Agent
+
+`scripts/watch.ts` liest die lokalen Finanzdaten (wie der MCP-Server, Konto aus `FINANZBLICK_MCP_USER`) und sucht mit `src/lib/assistant/watch.ts` nach Wichtigem:
+
+- Erinnerungen, die in den nächsten 3 Tagen fällig oder überfällig sind
+- doppelte Abbuchungen der letzten 14 Tage
+- Monat geht sich nicht aus oder fällt unter deinen Puffer
+- Amex-Rückzahlung ist nicht gedeckt
+- neue, ungewöhnlich hohe Ausgaben seit dem letzten Lauf (ab 400 € oder dreimal so viel wie sonst in der Kategorie, keine bekannten wiederkehrenden Beträge)
+- Preiserhöhungen von Abos und Jahresabos, die sich in den nächsten 14 Tagen verlängern
+
+Nur wenn es etwas Neues gibt, erscheint eine Windows-Benachrichtigung „Finanzblick“ mit höchstens drei Zeilen. Ein Klick öffnet den Finanz-Assistenten (`http://127.0.0.1:3000/assistent`, anpassbar mit `FINANZBLICK_URL`). Bereits gemeldete Hinweise merkt sich der Agent 180 Tage lang in `%LOCALAPPDATA%\FinanzblickAI\watch-state.json` (außerhalb des Repos, nur Hashwerte und Buchungs-IDs). Der erste Lauf merkt sich die vorhandenen Buchungen; ungewöhnliche Buchungen meldet er erst ab dem zweiten Lauf.
+
+```powershell
+npm run watch:run -- --dry-run   # nur anzeigen, keine Benachrichtigung, nichts merken
+npm run watch:run -- --counts    # nur Anzahl je Art, ohne Namen und Beträge
+npm run watch:run -- --test      # eine Testbenachrichtigung
+npm run watch:run                # echter Lauf
+npm run watch:run -- --ai        # erste Zeile formuliert die lokale KI (Zahlen werden gegen die Hinweise geprüft)
+npm run watch:install            # Windows-Aufgabe „Finanzblick Hintergrund-Agent“: täglich 07:30 und bei der Anmeldung
+npm run watch:uninstall          # Aufgabe wieder entfernen
+```
+
+Die geplante Aufgabe läuft ohne Adminrechte unter deinem Benutzer und nur, wenn du angemeldet bist. Ist der PC um 07:30 aus, holt Windows den Lauf nach. Jeder Lauf schreibt eine Zeile nach `%LOCALAPPDATA%\FinanzblickAI\watch.log`. Eine andere Uhrzeit: `powershell -File scripts/watch-task.ps1 -Install -At 21:00`.
 
 ## Lokaler Agent
 

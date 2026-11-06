@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { MerchantMark } from "@/components/merchant-mark";
 import {
   Popover,
+  PopoverClose,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
@@ -21,6 +22,7 @@ import { currency, dateLabel } from "@/lib/format";
 import { bookingDescription } from "@/lib/import/merchant-description";
 import type { classify } from "@/lib/calc";
 import type { Category } from "@/lib/types";
+import type { CategoryExplanation } from "@/lib/category-why";
 import type {
   AccountedTransaction,
   HolidayReceivable,
@@ -139,12 +141,17 @@ export function TransactionCategoryCell({
   fixed,
   reason,
   explanation,
+  why,
+  onChangeCategory,
 }: {
   booking: AccountedTransaction;
   category: Category;
   fixed: boolean;
   reason?: string;
   explanation: string;
+  // Lazily computed "Warum diese Kategorie?" explanation; only evaluated while the popover is open.
+  why?: () => CategoryExplanation;
+  onChangeCategory?: () => void;
 }) {
   const reviewed = booking.reviewed && booking.categoryOverride;
   const evidence = !hasManualCategory(booking) && !reason &&
@@ -206,9 +213,35 @@ export function TransactionCategoryCell({
               : evidence.method === "purpose" ? "eindeutiger Buchungszweck" : "öffentliche Händlerdaten"}
             {evidence.mcc ? ` · MCC ${evidence.mcc}` : ""}.
           </p>}
+          {why && <CategoryWhy why={why} onChangeCategory={onChangeCategory} />}
         </PopoverContent>
       </Popover>
     </div>
+  );
+}
+
+function CategoryWhy({ why, onChangeCategory }: { why: () => CategoryExplanation; onChangeCategory?: () => void }) {
+  const explanation = why();
+  return (
+    <section aria-label="Warum diese Kategorie?" className="space-y-1.5 border-t border-border/60 pt-2">
+      <p className="text-sm font-semibold">Warum diese Kategorie?</p>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <dt className="text-muted-foreground">Kategorie</dt>
+        <dd>{explanation.category}</dd>
+        <dt className="text-muted-foreground">Quelle</dt>
+        <dd className="font-medium">{explanation.source}</dd>
+        <dt className="text-muted-foreground">Datum</dt>
+        <dd>{dateLabel(explanation.date)}</dd>
+      </dl>
+      <p className="leading-relaxed text-muted-foreground">{explanation.detail}</p>
+      {onChangeCategory && (
+        <PopoverClose asChild>
+          <Button type="button" size="sm" variant="link" className="h-auto min-h-7 px-0 text-xs" onClick={onChangeCategory}>
+            Falsch? Kategorie ändern
+          </Button>
+        </PopoverClose>
+      )}
+    </section>
   );
 }
 

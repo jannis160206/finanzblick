@@ -1,18 +1,22 @@
 import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
 import { bookingRequest } from "./bookings";
+import { cancelQuestion } from "./cancel";
 import { checkQuestion } from "./check";
+import { forecastQuestion } from "./forecast";
 import { loanQuestion, reminderListQuestion, reminderRequest, reviewQuestion } from "./extras";
 import { detectAction, findExtra } from "./intent";
 import { knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
 import { marketQuestion } from "./market";
 import { normalizeMessage } from "./normalize";
+import { whatIfQuestion } from "./whatif";
+import { whyQuestion } from "./why";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
-  "explain", "help", "ask",
+  "explain", "help", "ask", "cancel", "why", "forecast", "whatif",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -50,6 +54,10 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   explain: "erklären, wie das Finanzdashboard funktioniert (Seiten, Sparziele, Pockets, Import, Monatsplan, Einstellungen) und was man per Chat einstellen kann",
   help: "erklären, was der Assistent kann",
   ask: "jede andere Frage zu den eigenen Finanzen, die kein anderes Werkzeug abdeckt",
+  cancel: "Kündigungshilfe: Vertrag oder Abo aus den Abbuchungen erkennen, Kosten und übliche Kündigungsfrist zeigen, Preisvergleich verlinken und Kündigungsschreiben vorbereiten (z. B. „Kündige Netflix“, „Welche Verträge kann ich kündigen?“)",
+  why: "erklären, warum eine Buchung in ihrer Kategorie steht (Regel, gelernt, Web, KI, manuell), z. B. „Warum ist Billa Lebensmittel?“",
+  forecast: "Kontoprognose für die nächsten 12 Monate pro Konto: wann wird das Girokonto knapp (Gehalt, Fixkosten, Abos, Amex-Abbuchung, geplante Ausgaben, Sparraten), z. B. „Wird mein Konto knapp?“, „Reicht mein Geld bis Jänner?“",
+  whatif: "Was-wäre-wenn-Rechner: Abo kündigen und/oder monatlich mehr sparen und sehen, wann ein Sparziel früher erreicht ist (z. B. „Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“)",
 };
 
 const fold = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
@@ -151,7 +159,11 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
   // Casual term questions: "etf was is des eigentlich", "kest bedeutung".
   if (!hasAmount && lower.split(" ").length <= 6 && /\b(?:was|wos) (?:is|ist|isn) (?:des|das)\b|\bbedeutung\b|\bdefinition\b/.test(lower) &&
     knowledgeTopics(text, names, true).length) return "knowledge";
-  if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer/.test(lower)) return "tax";
+  if (whatIfQuestion(lower)) return "whatif";
+  if (forecastQuestion(lower)) return "forecast";
+  if (whyQuestion(lower)) return "why";
+  if (cancelQuestion(lower)) return "cancel";
+  if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer|steuer-?mappe/.test(lower)) return "tax";
   if (/\betfs?\b|\bdepot\b|investier|aktien|zinseszins|\bsparplan\b|\bmsci\b|\brendite\b|\bfonds\b|vanguard|ishares/.test(lower) ||
     /\b(?:anlegen|veranlagen|anleg)\b/.test(lower) && /\d+\s*jahre?n?\b/.test(lower) && !/sparziel|\bziel\b|\bbis\b/.test(lower)) return "depot";
   if (/wochenüberblick|wochenueberblick|überblick|ueberblick|was steht (?:an|diese woche)|was ist (?:diese woche )?fällig|briefing|was gibt'?s neues|zusammenfassung der woche|status/.test(lower) &&

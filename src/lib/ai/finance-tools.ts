@@ -19,6 +19,7 @@ import { AutomationStore } from "@/lib/automation/store";
 import { aiCategories, aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "./suggestions";
 import { financeInsights } from "@/lib/insights";
+import { categoryParts } from "@/lib/splits";
 
 export type FinanceAccess = { database: AccountDatabase; userId: string };
 
@@ -165,7 +166,8 @@ export const financeTools: FinanceTool[] = [
         const result = classify(row);
         if (result.isTransfer) continue;
         if (row.amount > 0) income += row.amount;
-        else totals.set(result.category, (totals.get(result.category) ?? 0) + row.amount);
+        else for (const part of categoryParts(row, result.category))
+          totals.set(part.category, (totals.get(part.category) ?? 0) + part.amount);
       }
       return ok({
         month, transactions: state.transactions.length,

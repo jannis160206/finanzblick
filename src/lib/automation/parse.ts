@@ -8,7 +8,12 @@ import { recognizeAmexScreenshot } from "../import/amex-ocr";
 import { parseAmexScreenshotLines } from "../import/amex-screenshot";
 import { assertImportSize } from "../import/limits";
 import { parseStatementFile, type StatementResult } from "../import/statements";
+import { parseGenericPdfText } from "../import/generic-pdf";
+import { createPdfAiExtractor } from "../ai/pdf-ai";
 import { classifyParserError, ParserFailure } from "./errors";
+
+/** `deadline` (epoch ms) bounds AI help for unknown PDF layouts; `ai: false` keeps parsing deterministic. */
+export type PdfParseOptions = { deadline?: number; ai?: boolean };
 
 export type { StatementResult } from "../import/statements";
 
@@ -133,7 +138,9 @@ async function parseImage(
 async function parsePdf(
   bytes: Uint8Array,
   file: string,
+  options: PdfParseOptions = {},
 ): Promise<StatementResult> {
+  let text: string[] = [];
   if (!new TextDecoder().decode(bytes.subarray(0, 1024)).includes("%PDF-"))
     throw new ParserFailure("PARSE_DAMAGED",
       "PDF-Datei konnte nicht gelesen werden: ungültige PDF-Signatur.",
@@ -206,24 +213,9 @@ async function parsePdf(
         page.cleanup();
       }
     }
-    if (
-      !/american\s*express|amex\.at/i.test(pages.join("\n")) &&
-      pages.some((page) => page.trim())
-    )
-      return {
-        source: null,
-        file,
-        rows: [],
-        skipped: 1,
-        issues: [
-          {
-            file,
-            message:
-              "PDF-Anbieter nicht eindeutig als Amex erkannt. Bitte Kontoauszug prüfen.",
-          },
-        ],
-      };
-    return parseAmexText(pages, file);
+    if (/american\s*express|amex\.at/i.test(pages.join("\n")) || !pages.some((page) => page.trim()))
+      return parseAmexText(pages, file);
+    text = pages;
   } catch (error) {
     throw new ParserFailure(classifyParserError(error).code,
       `PDF-Datei konnte nicht gelesen werden: ${error instanceof Error ? error.message : String(error)}`,
@@ -232,6 +224,11 @@ async function parsePdf(
   } finally {
     await task.destroy();
   }
+  // Unknown bank layout: deterministic line parser first, local AI only for what it can't read.
+  return parseGenericPdfText(text, file, {
+    ...(options.ai === false ? {} : { extract: createPdfAiExtractor() }),
+    ...(options.deadline !== undefined ? { deadline: options.deadline } : {}),
+  });
 }
 
 /**
@@ -243,12 +240,12 @@ async function parsePdf(
 export async function parseServerStatement(
   bytes: Uint8Array,
   name: string,
-  options: { workspace?: string } = {},
+  options: { workspace?: string } & PdfParseOptions = {},
 ): Promise<StatementResult> {
   try {
     assertImportSize(bytes.byteLength);
     if (!bytes.byteLength) throw new ParserFailure("PARSE_DAMAGED", "Die Kontoauszugsdatei ist leer.");
-    if (/\.pdf$/i.test(name)) return await parsePdf(bytes, name);
+    if (/\.pdf$/i.test(name)) return await parsePdf(bytes, name, options);
     if (/\.(png|jpe?g|webp)$/i.test(name))
       return await parseImage(bytes, name, options.workspace ?? process.cwd());
     if (/\.(csv|xlsx)$/i.test(name))

@@ -27,6 +27,7 @@ import { reconcileLeasingSources } from "@/lib/leasing";
 import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories, isTravelCategory } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetId, variableBudgetValue, type VariableBudgetId } from "@/lib/variable-budgets";
 import { hasManualCategory } from "@/lib/manual-category";
+import { categoryParts } from "@/lib/splits";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 import { amexFunding } from "@/lib/amex-balance";
@@ -1023,9 +1024,13 @@ export function calculateDashboard(state: AppState) {
     if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf) continue;
     const result = classify(transaction);
     if (outsideSpending(result)) continue;
-    categorySpending.set(result.category, (categorySpending.get(result.category) ?? 0) - personalAmount(transaction));
-    const budgetId = budgetGroupFor(transaction, result);
-    if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - personalAmount(transaction));
+    // A receipt split spreads one booking over several categories and budget lines.
+    for (const part of categoryParts(transaction, result.category)) {
+      const amount = personalAmount(transaction) * part.share;
+      categorySpending.set(part.category, (categorySpending.get(part.category) ?? 0) - amount);
+      const budgetId = budgetGroupFor(transaction, { ...result, category: part.category });
+      if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - amount);
+    }
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);
   const fundingInstructions = [

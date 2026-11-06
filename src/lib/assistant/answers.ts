@@ -7,6 +7,9 @@ import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { matchesTransactionSearch, normalizeSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, Transaction } from "@/lib/types";
 import { reminderLines } from "./extras";
+import { kzLabel, TAX_FOLDER_NOTE, taxFolder } from "@/lib/tax-folder";
+import { buildChart, shortMonth } from "./chart";
+import { accountForecast } from "./forecast";
 
 type Line = AssistantCard["lines"][number];
 const DAY_MS = 86_400_000;
@@ -381,6 +384,10 @@ export function compareMonths(state: AppState, text: string, today: string, scop
     ? ` Am meisten ${diff > 0 ? "dazu kam" : "weniger war"} bei ${top.label} (${top.delta > 0 ? "+" : "−"}${currency(Math.abs(top.delta))}).` : "";
   return { text: sentence + reason, card: { kind: "answer", title: `Vergleich${label ? ` · ${label}` : ""} · ${a.label} vs ${b.label}`, total: diff,
     transactionIds: idsOf(left.map(({ row }) => row)),
+    chart: changes.length >= 2
+      ? buildChart("bar", [{ name: a.label, points: changes.map((item) => ({ label: item.label, value: item.x })) },
+        { name: b.label, points: changes.map((item) => ({ label: item.label, value: item.y })) }])
+      : buildChart("bar", [{ name: "Ausgaben", points: [{ label: a.label, value: totalA }, { label: b.label, value: totalB }] }]),
     lines: [
       { label: a.label, value: totalA, detail: `${plural(left.length, "Buchung", "Buchungen")}${running}`, transactionIds: idsOf(left.map(({ row }) => row)) },
       { label: b.label, value: totalB, detail: plural(right.length, "Buchung", "Buchungen"), transactionIds: idsOf(right.map(({ row }) => row)) },
@@ -420,6 +427,8 @@ export function spendingTrend(state: AppState, today: string, count: number, sco
   const text = `Deine Ausgaben${forWhat} lagen von ${range} im Schnitt bei ${currency(average)} pro Monat und ${direction === "bleibt ziemlich gleich" ? "blieben ziemlich gleich" : direction === "steigt" ? "sind zuletzt gestiegen" : "sind zuletzt gesunken"}.` +
     ` Am meisten war es im ${monthLabel(highest.month)} (${currency(highest.total)}), am wenigsten im ${monthLabel(lowest.month)} (${currency(lowest.total)}).`;
   return { text, card: { kind: "answer", title, total: average, transactionIds: idsOf(all),
+    chart: buildChart("bar", [{ name: "Ausgaben", points: totals.map((item) => ({ label: shortMonth(item.month), value: item.total })) }],
+      { label: "Schnitt", value: average }),
     lines: totals.map((item): Line => {
       const delta = round(item.total - average);
       return { label: monthLabel(item.month), value: item.total, transactionIds: idsOf(item.rows),
@@ -474,6 +483,10 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
     lines.push({ label: days === 0 ? "Heute kommt dein Gehalt" : `Gehalt in ${plural(days, "Tag", "Tagen")}`, detail: dateLabel(next), tone: "good" });
   }
   const amexShortfall = round(dashboard.amex?.shortfall ?? 0);
+  const soon = shiftDate(today, 30);
+  const low = dashboard.timeline?.length ? accountForecast(state, dashboard, today).giro.lows.find((item) => item.date <= soon) : undefined;
+  if (low) lines.push({ label: `Girokonto knapp am ${dateLabel(low.date)}`, value: low.balance, tone: "bad",
+    detail: low.cause ? `wegen ${low.cause.kind === "amex" ? "der Amex-Abbuchung" : low.cause.label}` : "laut Kontoprognose" });
   if (amexShortfall > 0.5) lines.push({ label: "Noch auf Amex-Rückzahlung überweisen", value: amexShortfall,
     detail: `offen ${currency(dashboard.amex.outstanding)} · reserviert ${currency(dashboard.amex.reserved)}`, tone: "warn" });
   const surplus = dashboard.current?.surplus;
@@ -483,6 +496,7 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
     due.length ? `diese Woche ${due.length === 1 ? "ist" : "sind"} ${currency(dueTotal)} fällig` : "diese Woche ist nichts Größeres fällig",
     ...(dueReminders.length ? [`${plural(dueReminders.length, "Erinnerung ist", "Erinnerungen sind")} dran`] : []),
     ...(amexShortfall > 0.5 ? [`für die Amex fehlen noch ${currency(amexShortfall)}`] : []),
+    ...(low ? [`am ${dateLabel(low.date)} wird dein Girokonto knapp`] : []),
     ...(surplus !== undefined && surplus < 0 ? [`der Monat liegt ${currency(-surplus)} im Minus`] : []),
     ...increases.slice(0, 2).map((item) => `${item.merchant} wurde teurer`),
     ...behind.slice(0, 2),
@@ -554,52 +568,33 @@ export function depotProjection(monthly: number, years: number, start = 0): { te
     const value = futureValue(monthly, years, start, scenario.rate);
     return { label: `${scenario.label} (${Math.round(scenario.rate * 100)} % p. a.)`, value, detail: `Ertrag ${currency(round(value - paid))}` };
   });
+  const steps = Array.from({ length: Math.max(1, Math.ceil(years)) + 1 }, (_, year) => Math.min(year, years));
+  const curve = (rate: number) => steps.map((year) => ({ label: `${Math.round(year * 10) / 10} J.`, value: rate < 0 ? round(start + monthly * year * 12) : futureValue(monthly, year, start, rate) }));
   return {
     text: `Mit ${currency(monthly)} im Monat${start ? ` und ${currency(start)} Start` : ""} hast du nach ${plural(years, "Jahr", "Jahren")} ${currency(paid)} eingezahlt. ` +
       `Je nach Rendite wären es etwa ${currency(lines[0].value)} bis ${currency(lines[2].value)}.`,
     card: { kind: "depot", title: `Depot-Rechner · ${currency(monthly)} / Monat · ${plural(years, "Jahr", "Jahre")}`, total: paid,
       lines: [{ label: "Eingezahlt", value: paid }, ...lines],
+      chart: buildChart("line", [{ name: "Eingezahlt", points: curve(-1) }, { name: "Vorsichtig 3 %", points: curve(depotScenarios[0].rate) },
+        { name: "Gut 7 %", points: curve(depotScenarios[2].rate) }]),
       note: "Reine Rechnung mit angenommenen Renditen, keine Anlageberatung. Kosten, Steuern (KESt 27,5 %) und Kursschwankungen sind nicht berücksichtigt." },
   };
 }
 
-const taxGroups: { label: string; detail: string; test: (text: string, category: Category) => boolean }[] = [
-  { label: "Spenden", detail: "Sonderausgabe, wird von begünstigten Organisationen meist automatisch gemeldet",
-    test: (text, category) => /spende|caritas|rotes kreuz|ärzte ohne grenzen|aerzte ohne grenzen|unicef|greenpeace|wwf|diakonie|licht ins dunkel|volkshilfe|hilfswerk|sos.?kinderdorf|amnesty|tierschutz|vier pfoten/.test(text) ||
-      (category === "Geschenke & Spenden" && /spende/.test(text)) },
-  { label: "Kirchenbeitrag", detail: "Sonderausgabe bis 600 € pro Jahr, wird automatisch gemeldet",
-    test: (text) => /kirchenbeitrag|diözese|dioezese|erzdiözese|kirchenbeitragsstelle|evangelische kirche/.test(text) },
-  { label: "Gewerkschaft & Berufsverband", detail: "Werbungskosten",
-    test: (text) => /gewerkschaft|\bögb\b|\boegb\b|\bgpa\b|\bgöd\b|\bvida\b|younion|berufsverband|kammerumlage/.test(text) },
-  { label: "Fortbildung & Fachliteratur", detail: "Werbungskosten, wenn beruflich veranlasst",
-    test: (text, category) => (category === "Weiterbildung" || category === "Bildung") &&
-      /kurs|seminar|schulung|fortbildung|weiterbildung|udemy|coursera|\bwifi\b|\bbfi\b|zertifi|prüfung|pruefung|fachbuch|fachliteratur|linkedin learning|pluralsight/.test(text) },
-  { label: "Arbeitsmittel", detail: "Werbungskosten, nur der beruflich genutzte Anteil; ab 1.000 € über die Nutzungsdauer verteilt",
-    test: (text) => /laptop|notebook|macbook|monitor|bildschirm|computer|\bpc\b|drucker|bürosessel|buerosessel|schreibtisch|headset|tastatur|dockingstation|arbeitskleidung|werkzeug/.test(text) },
-  { label: "Krankheitskosten", detail: "Außergewöhnliche Belastung, wirkt erst über dem Selbstbehalt",
-    test: (text, category) => category === "Gesundheit" && /arzt|ärztin|zahn|apotheke|optiker|brille|kontaktlinse|physio|therap|krankenhaus|klinik|kieferorth|hörgerät|labor/.test(text) },
-];
-
-// Collects bookings that may be deductible in the Austrian employee tax assessment.
+// Collects bookings that may be deductible in the Austrian employee tax assessment, grouped by L1 Kennzahl.
 export function taxDeductibles(state: AppState, year: number): { text: string; card: AssistantCard } {
-  const groups = taxGroups.map((group) => ({ ...group, rows: [] as Transaction[] }));
-  for (const { row, category } of ledger(state)) {
-    if (row.amount >= 0 || !row.date.startsWith(String(year))) continue;
-    const text = [row.description, row.merchantAlias, row.rawDescription, ...(row.rawDetails ?? [])].filter(Boolean).join(" ").toLowerCase();
-    const group = groups.find((item) => item.test(text, category));
-    group?.rows.push(row);
-  }
-  const lines: Line[] = groups.filter((group) => group.rows.length).map((group) => ({
-    label: `${group.label} (${group.rows.length})`, value: round(group.rows.reduce((sum, row) => sum - row.amount, 0)),
-    detail: group.detail, transactionIds: idsOf(group.rows),
+  const folder = taxFolder(state, year);
+  const lines: Line[] = folder.groups.map((group) => ({
+    label: `${kzLabel(group)} · ${group.label} (${group.count})`, value: group.total,
+    detail: `${group.detail}${group.missing ? ` · ${plural(group.missing, "Beleg", "Belege")} aufheben/prüfen` : ""}`.slice(0, 300),
+    transactionIds: [...group.rows].sort((a, b) => b.amount - a.amount).slice(0, 50).map((row) => row.id),
   }));
-  const total = round(lines.reduce((sum, line) => sum + (line.value ?? 0), 0));
-  const all = groups.flatMap((group) => group.rows);
   return {
     text: lines.length
-      ? `Für die Arbeitnehmerveranlagung ${year} habe ich ${plural(all.length, "Buchung", "Buchungen")} über ${currency(total)} gefunden, die absetzbar sein könnten.`
+      ? `Für die Arbeitnehmerveranlagung ${year} habe ich ${plural(folder.count, "Buchung", "Buchungen")} über ${currency(folder.total)} gefunden, die absetzbar sein könnten. Die Steuer-Mappe kannst du als CSV oder Druckansicht herunterladen.`
       : `Für ${year} habe ich keine Buchungen gefunden, die typischerweise absetzbar sind.`,
-    card: { kind: "tax", title: `Arbeitnehmerveranlagung ${year}`, total, lines, transactionIds: idsOf(all),
-      note: "Ohne Gewähr, keine Steuerberatung. Belege aufheben; Pendlerpauschale, Familienbonus und Homeoffice-Pauschale stehen nicht in deinen Umsätzen." },
+    card: { kind: "tax", title: `Steuer-Mappe · Arbeitnehmerveranlagung ${year}`, year, total: folder.total, lines,
+      transactionIds: folder.groups.flatMap((group) => group.rows).sort((a, b) => b.amount - a.amount).slice(0, 50).map((row) => row.id),
+      note: `${TAX_FOLDER_NOTE} Pendlerpauschale, Familienbonus und Homeoffice-Pauschale stehen nicht in deinen Umsätzen.` },
   };
 }

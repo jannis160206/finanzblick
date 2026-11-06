@@ -18,7 +18,7 @@ import type { ImportResult } from "./result-schema";
 import { isTradeRepublicHeader, parseTradeRepublicRows } from "./trade-republic";
 export { statementFingerprint } from "./identity";
 
-export type StatementSource = "Raiffeisen" | "Revolut" | "Amex" | "Trade Republic";
+export type StatementSource = "Raiffeisen" | "Revolut" | "Amex" | "Trade Republic" | "PDF";
 export type StatementDraft = z.infer<typeof statementRepairDraftSchema>;
 export type StatementIssue = {
   file: string;

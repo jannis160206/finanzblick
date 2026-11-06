@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useMemo, useRef, useState, type SetStateAction } from "react";
+import { explainCategory } from "@/lib/category-why";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   flexRender,
@@ -357,6 +358,8 @@ const TransactionLedger = memo(function TransactionLedger({
             category={result.category}
             fixed={result.isFixedCost}
             reason={reviewReasons.get(row.original.id)}
+            why={() => explainCategory(state, row.original, result.category)}
+            onChangeCategory={storageError ? undefined : () => setEditor(row.original)}
             explanation={
               result.reason ||
               (result.includeInPlan

@@ -11,7 +11,7 @@ import { isAccountError } from "@/lib/server/errors";
 import { appStateSchema } from "@/lib/types";
 import { assignAfterImport } from "@/lib/ai/auto-assign";
 import { MerchantIndex } from "./merchants";
-import { PARSER_BUDGET_MS, parseStatementInChild, type ParserRuntimeOptions } from "./parser-runtime";
+import { PARSER_BUDGET_MS, PDF_PARSER_BUDGET_MS, parseStatementInChild, type ParserRuntimeOptions } from "./parser-runtime";
 import { automationFailure, ParserFailure } from "./errors";
 import type { ImportResult } from "@/lib/import/result-schema";
 import {
@@ -34,7 +34,8 @@ export class AutomationWorker {
   ) {}
 
   async process(job: ClaimedJob, signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + (this.parserOptions.budgetMs ?? PARSER_BUDGET_MS);
+    const deadline = Date.now() + (this.parserOptions.budgetMs ??
+      (job.kind !== "backfill" && /\.pdf$/i.test(job.name) ? PDF_PARSER_BUDGET_MS : PARSER_BUDGET_MS));
     const checkCancellation = () => {
       if (signal?.aborted) throw new ParserFailure("WORKER_ABORTED");
       if (Date.now() >= deadline) throw new ParserFailure("PARSE_TIMEOUT");

@@ -19,6 +19,7 @@ async function parse(request: ParserRequest) {
     throw new ParserFailure("PARSE_DAMAGED");
   const result = admitStatementRepairDrafts(await parseServerStatement(bytes, request.name, {
     workspace: request.workspace,
+    deadline: request.deadline,
   }));
   if (Buffer.byteLength(JSON.stringify(result)) > MAX_PARSER_RESULT_BYTES)
     throw new ParserFailure("PARSE_RESOURCE_LIMIT");

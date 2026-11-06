@@ -2,6 +2,8 @@ export type AiConfig = {
   enabled: boolean;
   baseUrl: string;
   model: string;
+  // Optional small model that only picks the tool; the main model still writes free answers.
+  routerModel?: string;
   minConfidence: number;
   timeoutMs: number;
 };
@@ -28,10 +30,12 @@ export function isLoopbackUrl(value: string) {
 
 export function readAiConfig(env: Record<string, string | undefined> = process.env): AiConfig {
   const baseUrl = (env.FINANZBLICK_AI_URL || DEFAULT_AI_URL).replace(/\/+$/, "");
+  const routerModel = (env.FINANZBLICK_AI_ROUTER_MODEL ?? env.AI_ROUTER_MODEL)?.trim();
   return {
     enabled: env.FINANZBLICK_AI !== "false" && isLoopbackUrl(baseUrl),
     baseUrl,
     model: env.FINANZBLICK_AI_MODEL?.trim() || DEFAULT_AI_MODEL,
+    ...(routerModel ? { routerModel } : {}),
     minConfidence: boundedNumber(env.FINANZBLICK_AI_MIN_CONFIDENCE, DEFAULT_MIN_CONFIDENCE, 50, 100),
     timeoutMs: boundedNumber(env.FINANZBLICK_AI_TIMEOUT_MS, 180_000, 5_000, 900_000),
   };

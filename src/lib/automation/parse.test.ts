@@ -213,21 +213,44 @@ describe("server statement parsing", () => {
     }
   });
 
-  it("reports non-Amex and scanned PDFs for review rather than guessing", async () => {
+  it("reports unreadable non-Amex and scanned PDFs for review rather than guessing", async () => {
     expect(
       await parseServerStatement(
         textPdf(["Unknown Bank\n12.09 12.09 BIPA 4,50"]),
         "unknown.pdf",
+        { ai: false },
       ),
     ).toMatchObject({
       source: null,
       rows: [],
-      issues: [{ message: expect.stringContaining("PDF-Anbieter") }],
+      issues: [{ message: expect.stringContaining("PDF-Zeile nicht eindeutig lesbar") }],
     });
     expect(await parseServerStatement(textPdf([""]), "scan.pdf")).toMatchObject(
       { rows: [], issues: [{ message: expect.stringContaining("Scan") }] },
     );
     expect(createWorkerMock).not.toHaveBeenCalled();
+  });
+
+  it("reads a text PDF of another bank with the generic line parser", async () => {
+    const fetch = vi.fn(() => {
+      throw new Error("Network disabled");
+    });
+    vi.stubGlobal("fetch", fetch);
+    const result = await parseServerStatement(textPdf([[
+      "Erste Bank - Kontoauszug 9/2026",
+      "Zeitraum 01.09.2026 bis 30.09.2026",
+      "Alter Kontostand 1.000,00",
+      "02.09.2026 BILLA DANKT 1234 -54,30",
+      "15.09.2026 Gehalt Muster GmbH 2.100,00",
+      "Neuer Kontostand 3.045,70",
+    ].join("\n")]), "erste.pdf");
+    expect(result.source).toBe("PDF");
+    expect(result.issues).toEqual([]);
+    expect(result.rows.map(({ date, amount, bank }) => ({ date, amount, bank }))).toEqual([
+      { date: "2026-09-02", amount: -54.3, bank: "Erste Bank" },
+      { date: "2026-09-15", amount: 2100, bank: "Erste Bank" },
+    ]);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("destroys loading tasks for page limits and loading failures", async () => {

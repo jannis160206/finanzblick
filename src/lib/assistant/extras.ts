@@ -4,6 +4,7 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { ledger } from "@/lib/insights";
 import type { AppState, AssistantCard, AssistantMemory, AssistantOperation, Transaction } from "@/lib/types";
 import { parseAmount } from "./intent";
+import { buildChart, shortMonth } from "./chart";
 
 type Result = { text: string; card?: AssistantCard; suggestions?: string[] };
 type Line = AssistantCard["lines"][number];
@@ -254,6 +255,7 @@ export function yearReview(state: AppState, text: string, today: string): Result
       `${rate !== undefined ? `, Sparquote ${percent(rate)}` : ""}. Am meisten ging für ${topCategories[0]?.[0] ?? "Sonstiges"} weg` +
       `${before.spending > 0 ? `, und du hast ${spending > before.spending ? "mehr" : "weniger"} ausgegeben als im gleichen Zeitraum ${year - 1}` : ""}.`,
     card: { kind: "review", title: `Jahresrückblick ${year}${running ? ` · bis ${dateLabel(today)}` : ""}`, total: saved, lines, year,
+      chart: buildChart("bar", [{ name: "Ausgaben", points: [...byMonth].sort((a, b) => a[0].localeCompare(b[0])).map(([month, value]) => ({ label: shortMonth(month), value })) }]),
       note: "Umbuchungen zwischen deinen Konten und noch offene Prüfungen zählen nicht mit." },
     suggestions: [`Wie war ${year - 1}?`, "Ich will 200 € mehr im Monat sparen", "Bin ich sparsam?"],
   };

@@ -3,6 +3,8 @@ param(
   [string]$Root = (Join-Path $env:LOCALAPPDATA "FinanzblickAI"),
   [int]$Port = 8000,
   [string]$Model = "OpenVINO/Qwen3-8B-int4-cw-ov",
+  # Optional small model for routing, e.g. "OpenVINO/Qwen3-1.7B-int4-ov"; set FINANZBLICK_AI_ROUTER_MODEL to the same name.
+  [string]$RouterModel = "",
   [string]$Device = "NPU"
 )
 $ErrorActionPreference = "Stop"
@@ -13,12 +15,14 @@ if (-not (Test-Path (Join-Path $ovms "ovms.exe"))) {
 Set-Location $Root
 . (Join-Path $ovms "setupvars.ps1")
 $config = Join-Path $Root "models\config.json"
-if (-not (Test-Path $config)) {
-  & (Join-Path $ovms "ovms.exe") --pull --source_model $Model --model_repository_path models `
+function Add-Model([string]$Name) {
+  & (Join-Path $ovms "ovms.exe") --pull --source_model $Name --model_repository_path models `
     --target_device $Device --task text_generation --tool_parser hermes3 --cache_dir .ov_cache `
     --enable_prefix_caching true --max_prompt_len 4000
-  & (Join-Path $ovms "ovms.exe") --add_to_config --config_path $config --model_name $Model `
-    --model_path ($Model -replace "/", "\")
+  & (Join-Path $ovms "ovms.exe") --add_to_config --config_path $config --model_name $Name `
+    --model_path ($Name -replace "/", "\")
 }
+if (-not (Test-Path $config)) { Add-Model $Model }
+if ($RouterModel -and -not ((Get-Content $config -Raw) -match [regex]::Escape("`"$RouterModel`""))) { Add-Model $RouterModel }
 # Loopback only: booking texts must never leave this machine.
 & (Join-Path $ovms "ovms.exe") --rest_port $Port --rest_bind_address 127.0.0.1 --config_path $config

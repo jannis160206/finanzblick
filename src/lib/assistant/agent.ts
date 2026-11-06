@@ -17,6 +17,10 @@ import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
 import { detectTool, matchName, splitCommands, type AssistantTool } from "./tools";
 import { bookingEdit } from "./bookings";
+import { cancelAnswer } from "./cancel";
+import { whyAnswer } from "./why";
+import { forecastAnswer } from "./forecast";
+import { whatIfAnswer } from "./whatif-answer";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[] };
@@ -347,6 +351,11 @@ function help(): AgentResult {
     { label: "Kredit durchrechnen", detail: "„Kredit 10.000 € auf 5 Jahre zu 6 %“, „Laptop in 12 Raten“" },
     { label: "Erinnerungen", detail: "„Erinner mich am 1. Dezember, die Kfz-Versicherung zu kündigen“" },
     { label: "Jahresrückblick", detail: "„Wie war mein Jahr 2026?“" },
+    { label: "Kündigungshilfe", detail: "„Kündige Netflix“, „Welche Verträge kann ich kündigen?“" },
+    { label: "Warum diese Kategorie?", detail: "„Warum ist Billa Lebensmittel?“" },
+    { label: "Kontoprognose", detail: "„Wird mein Konto knapp?“, „Reicht mein Geld bis Jänner?“" },
+    { label: "Was wäre wenn", detail: "„Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“ – mit Schiebereglern" },
+    { label: "Steuer-Mappe", detail: "„Steuer-Mappe 2026“ – absetzbare Buchungen nach Kennzahl, als CSV" },
   ];
   return { text: "Gern! Ich kenne deine Buchungen, Sparziele und geplanten Ausgaben und kann damit rechnen, planen und Dinge für dich einstellen. Am besten fragst du einfach drauflos:",
     card: { kind: "answer", title: "Womit ich dir helfen kann", lines, note: "Alle Zahlen rechnet der Code nach. Geändert wird nur, wenn du bestätigst." },
@@ -395,6 +404,10 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
       return typeof operation === "string" ? { text: operation } : previewChange(state, [operation], "Erinnerung anlegen", asOf);
     }
     case "review": return yearReview(state, text, asOf);
+    case "cancel": return cancelAnswer(state, text, asOf);
+    case "why": return whyAnswer(state, text);
+    case "forecast": return forecastAnswer(state, dashboard, asOf);
+    case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
     default: return help();
   }
 }

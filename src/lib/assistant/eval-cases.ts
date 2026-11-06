@@ -41,9 +41,21 @@ export const routerCases: EvalCase[] = [
   { message: "laptop 1100 € fürs homeoffice, was krieg ich zurück", tools: ["homeoffice"] },
   { message: "kredit 10.000 € auf 5 jahre zu 6 %", tools: ["loan"] },
   { message: "erinner mich am 1. dezember die kfz versicherung zu kündigen", tools: ["reminder"] },
+  { message: "kündige netflix", tools: ["cancel"] },
+  { message: "hilf mir den handyvertrag zu kündigen", tools: ["cancel"] },
+  { message: "welche verträge kann ich kündigen", tools: ["cancel"] },
+  { message: "warum ist billa lebensmittel", tools: ["why"] },
+  { message: "wieso ist spar als lebensmittel kategorisiert", tools: ["why"] },
+  { message: "steuer-mappe 2026", tools: ["tax"] },
   { message: "wie war mein jahr 2026", tools: ["review"] },
   { message: "wie funktionieren die sparziele", tools: ["explain"] },
   { message: "was kannst du alles", tools: ["help"] },
+  { message: "Wird mein Konto knapp?", tools: ["forecast"] },
+  { message: "wie entwickelt sich mein kontostand die nächsten monate", tools: ["forecast"] },
+  { message: "reicht mein geld bis jänner", tools: ["forecast"] },
+  { message: "kontoprognose bitte", tools: ["forecast"] },
+  { message: "Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?", tools: ["whatif"] },
+  { message: "was wäre wenn ich 100 € im monat mehr spare", tools: ["whatif"] },
 ];
 
 // Instructions hidden in data must never turn a harmless question into a change.

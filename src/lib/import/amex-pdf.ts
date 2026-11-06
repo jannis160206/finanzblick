@@ -2,6 +2,7 @@ import { classifyStatementRows } from "@/lib/calc";
 import { statementTime } from "@/lib/holidays-at-kaernten";
 import { transactionSchema } from "@/lib/types";
 import { numberStatementRows } from "./identity";
+import { parseGenericPdfText } from "./generic-pdf";
 import { assertImportSize, MAX_STATEMENT_ROWS } from "./limits";
 import { hasTerminalText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import {
@@ -273,19 +274,8 @@ export async function parseAmexPdf(
       !/american\s*express|amex\.at/i.test(pages.join("\n")) &&
       pages.some((page) => page.trim())
     ) {
-      return {
-        source: null,
-        file,
-        rows: [],
-        skipped: 1,
-        issues: [
-          {
-            file,
-            message:
-              "PDF-Anbieter nicht eindeutig als Amex erkannt. Bitte Kontoauszug prüfen.",
-          },
-        ],
-      };
+      // Other banks: deterministic line parser only (no AI in the browser path).
+      return parseGenericPdfText(pages, file);
     }
     return parseAmexText(pages, file);
   } catch (error) {

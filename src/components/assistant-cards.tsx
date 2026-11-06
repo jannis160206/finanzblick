@@ -1,11 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Brain, Check, ChevronDown, Globe, History, ListChecks, Undo2, X } from "lucide-react";
+import { Brain, Check, ChevronDown, Copy, Download, ExternalLink, Globe, History, ListChecks, Mail, Printer, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AssistantChartView } from "@/components/assistant-chart";
+import { WhatIfCard } from "@/components/whatif-card";
+import type { AgentResult } from "@/lib/assistant/agent";
 import { classify } from "@/lib/calc";
 import { canonicalCategory } from "@/lib/categories";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
+import { downloadTaxFolder, taxFolder } from "@/lib/tax-folder";
 import type { AppState, AssistantAlias, AssistantCard, AssistantChangeLog, AssistantGap, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +23,7 @@ const kindLabel: Record<AssistantCard["kind"], string> = {
   answer: "Antwort", briefing: "Wochenüberblick", check: "Finanz-Check", coach: "Spar-Coach", depot: "Depot-Rechner", tax: "Arbeitnehmerveranlagung",
   homeoffice: "Home-Office-Rechner", homeoffice_result: "Home-Office · Arbeitnehmerveranlagung",
   rule: "Regel-Vorschau", memory: "Gedächtnis", changes: "Änderungen", loan: "Kreditrechner", review: "Jahresrückblick",
+  cancel: "Kündigungshilfe", why: "Warum diese Kategorie?", forecast: "Kontoprognose", whatif: "Was wäre wenn",
 };
 
 function Bookings({ ids, transactions }: { ids: string[]; transactions: Map<string, Transaction> }) {
@@ -53,21 +58,23 @@ function NoteText({ text }: { text: string }) {
 }
 
 // With "embedded" the card sits inside the assistant's chat bubble, so text and result form one answer.
-export function ResultCard({ card, state, embedded }: { card: AssistantCard; state: AppState; embedded?: boolean }) {
+export function ResultCard({ card, state, embedded, onResult }: { card: AssistantCard; state: AppState; embedded?: boolean; onResult?: (result: AgentResult) => void }) {
   const transactions = useMemo(() => new Map(state.transactions.map((row) => [row.id, row])), [state.transactions]);
   const [open, setOpen] = useState<number | "all">();
   const toggle = (key: number | "all") => setOpen((current) => current === key ? undefined : key);
   // A single line repeating the title becomes its subtitle.
   const subtitle = card.lines.length === 1 && card.lines[0].label === card.title && !card.lines[0].value && !card.lines[0].transactionIds?.length ? card.lines[0].detail : undefined;
-  const lines = subtitle !== undefined ? [] : card.lines;
+  const lines = subtitle !== undefined || card.whatif ? [] : card.lines;
   return <article className={embedded ? "mt-3 border-t border-border/60 pt-3" : "rounded-2xl border border-border/70 bg-background/40 p-4"} aria-label={card.title}>
     {!(embedded && card.kind === "answer") && <p className="text-2xs uppercase tracking-wide text-muted-foreground">{kindLabel[card.kind]}</p>}
     <h3 className="mt-0.5 flex items-baseline justify-between gap-3 text-sm font-semibold">
       <span>{card.title}</span>
-      {card.total !== undefined && card.kind !== "rule" && card.kind !== "memory" && card.kind !== "changes" &&
+      {card.total !== undefined && card.kind !== "rule" && card.kind !== "memory" && card.kind !== "changes" && !card.whatif &&
         <span className="tabular-nums text-primary">{currency(card.total)}</span>}
     </h3>
     {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
+    {card.chart && <AssistantChartView chart={card.chart} title={card.title} />}
+    {card.whatif && <WhatIfCard data={card.whatif} state={state} onResult={onResult} />}
     {lines.length > 0 && <ul className="mt-3 space-y-1.5">
       {lines.map((line, index) => <li key={`${line.label}-${index}`} className="text-sm">
         <div className="flex items-start justify-between gap-3">
@@ -89,8 +96,45 @@ export function ResultCard({ card, state, embedded }: { card: AssistantCard; sta
       </Button>
       {open === "all" && <Bookings ids={card.transactionIds} transactions={transactions} />}
     </div>}
+    {card.letter && <CancelLetter letter={card.letter} subject={card.title} />}
+    {card.links && card.links.length > 0 && <ul className="mt-3 flex flex-wrap gap-2" aria-label="Weiterführende Links">
+      {card.links.map((link) => <li key={link.url}><a href={link.url} target="_blank" rel="noreferrer noopener"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border/70 px-3 text-xs font-medium text-primary hover:bg-muted"><ExternalLink aria-hidden="true" className="size-3.5" />{link.label}</a></li>)}
+    </ul>}
+    {card.kind === "tax" && card.year && <TaxFolderDownload state={state} year={card.year} />}
     {card.note && <p className="mt-3 text-xs leading-relaxed text-muted-foreground"><NoteText text={card.note} /></p>}
   </article>;
+}
+
+// Steuer-Mappe export, built locally from the current bookings; nothing is uploaded.
+export function TaxFolderDownload({ state, year, className }: { state: AppState; year: number; className?: string }) {
+  const save = (format: "csv" | "html") => downloadTaxFolder(taxFolder(state, year), format);
+  return <div className={cn("mt-3 flex flex-wrap gap-2", className)}>
+    <Button type="button" size="sm" variant="outline" className="min-h-9" onClick={() => save("csv")}><Download aria-hidden="true" className="size-4" />Mappe herunterladen (CSV)</Button>
+    <Button type="button" size="sm" variant="ghost" className="min-h-9" onClick={() => save("html")}><Printer aria-hidden="true" className="size-4" />Druckansicht</Button>
+  </div>;
+}
+
+// Ready cancellation letter: copy it or open it in the mail app; placeholders stay for the user to fill in.
+function CancelLetter({ letter, subject }: { letter: string; subject: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(letter);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch { setCopied(false); }
+  };
+  const mail = `mailto:?subject=${encodeURIComponent(subject.replace(/^Kündigungshilfe · /, "Kündigung "))}&body=${encodeURIComponent(letter)}`;
+  return <div className="mt-3">
+    <p className="text-xs font-medium">Kündigungsschreiben</p>
+    <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl border border-border/60 bg-background/60 p-3 font-sans text-xs leading-relaxed" tabIndex={0} aria-label="Kündigungsschreiben">{letter}</pre>
+    <div className="mt-2 flex flex-wrap gap-2">
+      <Button type="button" size="sm" variant="outline" className="min-h-9" onClick={copy}>{copied ? <Check aria-hidden="true" className="size-4" /> : <Copy aria-hidden="true" className="size-4" />}{copied ? "Kopiert" : "Text kopieren"}</Button>
+      <Button asChild size="sm" variant="ghost" className="min-h-9"><a href={mail}><Mail aria-hidden="true" className="size-4" />Als E-Mail öffnen</a></Button>
+      <span role="status" className="sr-only">{copied ? "Kündigungsschreiben kopiert" : ""}</span>
+    </div>
+  </div>;
 }
 
 // Before/after preview of an agent change; nothing is saved before "Bestätigen".

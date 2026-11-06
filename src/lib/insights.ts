@@ -1,6 +1,7 @@
 import { classify } from "@/lib/calc";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { brandKey } from "@/lib/ai/evidence";
+import { categoryParts } from "@/lib/splits";
 import type { AppState, Transaction } from "@/lib/types";
 
 const DAY_MS = 86_400_000;
@@ -182,7 +183,8 @@ export function summarizeMonth(state: AppState, month: string): MonthSummary {
     if (!entry.row.date.startsWith(month)) continue;
     if (entry.row.amount > 0) income += entry.row.amount;
     else {
-      totals.set(entry.category, (totals.get(entry.category) ?? 0) - entry.row.amount);
+      for (const part of categoryParts(entry.row, entry.category))
+        totals.set(part.category, (totals.get(part.category) ?? 0) - part.amount);
       spendingRows.push(entry);
     }
   }

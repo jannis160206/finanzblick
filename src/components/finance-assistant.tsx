@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
 import { assistantFacts } from "@/lib/assistant/facts";
+import { readAnswerStream } from "@/lib/ai/answer-stream";
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
 import { extractMemories } from "@/lib/assistant/memory";
@@ -112,13 +113,14 @@ export function FinanceAssistant() {
   const messages = state.assistantChat ?? [];
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [streaming, setStreaming] = useState<string>();
   const [editing, setEditing] = useState<string>();
   const [panel, setPanel] = useState<"changes" | "memory">();
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const briefed = useRef(false);
   const marketCache = useRef(new Map<string, { at: number; value: MarketSnapshot }>());
-  useEffect(() => { endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy]);
+  useEffect(() => { endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy, streaming]);
 
   const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) =>
     update((current) => {
@@ -271,14 +273,21 @@ export function FinanceAssistant() {
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
-      const response = await fetch("/api/ai/answer", {
+      const response = await fetch("/api/ai/answer?stream=1", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question, history, facts }),
       });
       if (!response.ok) return undefined;
+      if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
+        const text = await readAnswerStream(response.body, setStreaming);
+        // A rejected answer disappears again; the normal fallback takes over.
+        if (!text) setStreaming(undefined);
+        return text;
+      }
       const answer: { text?: unknown } = await response.json();
       return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
     } catch {
+      setStreaming(undefined);
       return undefined;
     }
   }
@@ -466,6 +475,7 @@ export function FinanceAssistant() {
       const memories = extractMemories(work, state, tool ?? (parsed?.success ? parsed.data.action : undefined));
       if (memories.length) remember(memories);
     }
+    setStreaming(undefined);
     setBusy(false);
     inputRef.current?.focus();
   }
@@ -540,7 +550,8 @@ export function FinanceAssistant() {
         {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
         {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
           <Bubble role={message.role} text={message.text} source={message.source} faded={message.status === "dismissed"}>
-            {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded />}
+            {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
+              onResult={storageError ? undefined : (result) => addResult(result, "Regel")} />}
           </Bubble>
           {message.card?.kind === "homeoffice" && <div className="pl-11">
             <HomeOfficeCard card={message.card} state={state} disabled={!!storageError} onResult={(result) => addResult(result, "Regel")} /></div>}
@@ -583,7 +594,7 @@ export function FinanceAssistant() {
               </>}
           </div>}
         </div>)}
-        {busy && <Thinking />}
+        {busy && (streaming ? <div aria-live="polite" aria-busy="true"><Bubble role="assistant" text={streaming} source="KI" /></div> : <Thinking />)}
         <div ref={endRef} />
       </FinancialData>
       <form onSubmit={send} className="mt-5 flex items-end gap-2 border-t border-border/60 pt-4">

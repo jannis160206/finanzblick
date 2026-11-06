@@ -31,7 +31,10 @@
     "mcp": "tsx --env-file-if-exists=.env.local scripts/mcp-server.ts",
     "mcp:web": "tsx scripts/web-mcp-server.ts",
     "ai:agent": "tsx --env-file-if-exists=.env.local scripts/ai-agent.ts",
-    "eval:assistant": "tsx --env-file-if-exists=.env.local scripts/eval-assistant.ts"
+    "eval:assistant": "tsx --env-file-if-exists=.env.local scripts/eval-assistant.ts",
+    "watch:run": "tsx --env-file-if-exists=.env.local scripts/watch.ts",
+    "watch:install": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/watch-task.ps1 -Install",
+    "watch:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/watch-task.ps1 -Uninstall"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",

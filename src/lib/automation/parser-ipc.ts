@@ -25,7 +25,7 @@ export const parserRequestSchema = z.object({
 export type ParserRequest = z.infer<typeof parserRequestSchema>;
 
 export const parserResultSchema = z.object({
-  source: z.enum(["Raiffeisen", "Revolut", "Amex", "Trade Republic"]).nullable(),
+  source: z.enum(["Raiffeisen", "Revolut", "Amex", "Trade Republic", "PDF"]).nullable(),
   file: z.string().max(200),
   rows: z.array(transactionSchema).max(MAX_STATEMENT_ROWS),
   skipped: z.number().int().nonnegative(),

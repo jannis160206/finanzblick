@@ -1,6 +1,7 @@
 "use client";
 
-import { CircleHelp, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { CircleHelp, MoreHorizontal, Pencil, Receipt, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -10,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SharedRowAction } from "@/components/shared-costs";
+import { ReceiptSplitDialog } from "@/components/receipt-split-dialog";
 import { needsMerchantLookup } from "@/lib/merchant-lookup";
 import { bookingDescription } from "@/lib/import/merchant-description";
 import type { AccountedTransaction } from "@/lib/shared-holiday";
@@ -35,6 +37,7 @@ export function TransactionActions({
   onLookup: () => void;
   onDelete: () => void;
 }) {
+  const [receiptOpen, setReceiptOpen] = useState(false);
   return (
     <div className="flex items-center justify-end gap-1">
       <Tooltip label="Zuordnung ändern">
@@ -91,9 +94,21 @@ export function TransactionActions({
         </DropdownMenuTrigger>
         <DropdownMenuContent
           onCloseAutoFocus={(event) => {
-            if (dialogOpen) event.preventDefault();
+            if (dialogOpen || receiptOpen) event.preventDefault();
           }}
         >
+          {booking.amount < 0 && (
+            <DropdownMenuItem
+              aria-label={`Kassenbon aufteilen: ${bookingDescription(booking)}`}
+              onSelect={() => {
+                onTrigger(booking.id, "menu");
+                setReceiptOpen(true);
+              }}
+            >
+              <Receipt />
+              {booking.splits?.length ? "Aufteilung ansehen" : "Kassenbon aufteilen"}
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem
             aria-label={`Löschen: ${bookingDescription(booking)}`}
             className="text-destructive data-[highlighted]:bg-destructive/10"
@@ -107,6 +122,7 @@ export function TransactionActions({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {receiptOpen && <ReceiptSplitDialog booking={booking} onClose={() => setReceiptOpen(false)} />}
     </div>
   );
 }

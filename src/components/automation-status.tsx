@@ -192,6 +192,9 @@ export function AutomationJobCard({ job, exiting = false, label: customLabel, in
         </div>
         {completed && <div className="order-last w-full min-w-0 space-y-2 text-xs">
           {result ? <>
+            {/\.pdf$/i.test(job.name) && result.status !== "unsupported" && <p className="font-medium">
+              {`PDF erkannt: ${result.inserted + result.updated + result.duplicates + result.review} Buchungen${result.review > 0 ? `, ${result.review} bitte prüfen` : ""}`}
+            </p>}
             <dl className="flex flex-wrap gap-x-4 gap-y-1" aria-label="Importergebnis">
               {[
                 ["Neu", result.inserted], ["Aktualisiert", result.updated], ["Duplikate", result.duplicates],

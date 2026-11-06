@@ -4,7 +4,8 @@ import { groundModelExtraction, mergeDraft, missingQuestion, parseAssistantMessa
 import { normalizeMessage } from "@/lib/assistant/normalize";
 import { assistantTools, detectTool, isAssistantTool, isDraftTool, matchName, toolDescriptions, type AssistantTool } from "@/lib/assistant/tools";
 import { categories } from "@/lib/categories";
-import { chat, type ChatOptions } from "./client";
+import { chat, type ChatMessage, type ChatOptions } from "./client";
+import { readAiConfig } from "./config";
 import { cleanUntrusted, DATA_RULE } from "./untrusted";
 
 export const assistantRequestSchema = z.object({
@@ -73,6 +74,9 @@ const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du w
   "\"wie viel kann ich noch ausgeben\" = budget; \"bin ich sparsam\" = check; \"wie stehe ich finanziell da\" = check; " +
   "\"wie haben sich meine ausgaben entwickelt\" = query; andere Fragen zu den eigenen Finanzen = ask. " + DATA_RULE;
 
+// Tools whose local execution reads model hints (names, category, merchant); all others are decided by the rules alone.
+export const hintTools: readonly AssistantTool[] = ["query", "edit", "booking", "rule"];
+
 const fold = (value: string) => value.toLowerCase().normalize("NFKC");
 
 // The model may only name things that really exist and appear in the message; everything else is dropped.
@@ -97,28 +101,44 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
   const parsed = parseAssistantMessage(input.message, input.asOf);
   const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
   const ruleTool = detectTool(input.message, names);
+  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.
+  if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool)) return { tool: ruleTool, hints: {}, source: "Regel" };
   let model: z.infer<typeof modelSchema> | undefined;
   let source: AssistantReply["source"] = "Regel";
-  try {
-    const answer = await chat([
-      { role: "system", content: systemPrompt },
-      { role: "user", content: [
-        `Heute: ${input.asOf}`,
-        input.context?.goals.length ? `Sparziele: ${input.context.goals.join(", ")}` : "Sparziele: keine",
-        input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
-        `Kategorien: ${categories.join(", ")}`,
-        input.pending ? `Offener Entwurf: ${JSON.stringify(input.pending)}` : "",
-        input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
-        `In der Nachricht gefundene Beträge: ${parsed.numbers.join(", ") || "keine"}`,
-        `Nachricht: ${input.message}`,
-      ].filter(Boolean).join("\n") },
-    ], { ...options, maxTokens: 300, temperature: 0 });
+  const messages: ChatMessage[] = [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: [
+      `Heute: ${input.asOf}`,
+      input.context?.goals.length ? `Sparziele: ${input.context.goals.join(", ")}` : "Sparziele: keine",
+      input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
+      `Kategorien: ${categories.join(", ")}`,
+      input.pending ? `Offener Entwurf: ${JSON.stringify(input.pending)}` : "",
+      input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
+      `In der Nachricht gefundene Beträge: ${parsed.numbers.join(", ") || "keine"}`,
+      `Nachricht: ${input.message}`,
+    ].filter(Boolean).join("\n") },
+  ];
+  const route = async (name?: string) => {
+    const answer = await chat(messages, { ...options, ...(name ? { model: name } : {}), maxTokens: 300, temperature: 0 });
     const candidate = modelSchema.safeParse(extractJsonObject(answer.content));
-    if (candidate.success) { model = candidate.data; source = "KI"; }
+    return candidate.success ? candidate.data : undefined;
+  };
+  // The small router model is tried first when configured; the main model steps in if it fails or answers nonsense.
+  const routerModel = (options.config ?? readAiConfig()).routerModel;
+  if (routerModel) {
+    try {
+      model = await route(routerModel);
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+    }
+  }
+  try {
+    model ??= await route();
   } catch (error) {
     if (options.signal?.aborted) throw error;
     // Without the model the rule parser still understands clear messages.
   }
+  if (model) source = "KI";
   const modelTool = isAssistantTool(model?.tool) ? model.tool : isAssistantTool(model?.action) ? model.action : undefined;
   // Clear commands stay deterministic; an open draft keeps priority for answers to its question.
   let tool: AssistantTool | undefined = ruleTool ?? modelTool;
