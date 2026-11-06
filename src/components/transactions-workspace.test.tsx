@@ -188,30 +188,28 @@ it.each([false, true])(
     expect(rows).toHaveLength(5);
     expect(rows.map((row) => row.textContent)).toEqual([
       expect.stringContaining("Möbel Müller"),
-      expect.stringContaining("Billa"),
+      expect.stringContaining("BILLA"),
       expect.stringContaining("Martin Auer"),
       expect.stringContaining("Eigenes Konto"),
       expect.stringContaining("Lohnzahlung"),
     ]);
     const description = within(rows[0] as HTMLElement).getByText("Möbel Müller");
-    expect(description.getAttribute("title")).toBe("Möbel Müller");
-    const merchantMark = description.parentElement!.previousElementSibling!;
+    const merchantMark = description.previousElementSibling!;
     expect(merchantMark.className).toContain("size-8");
     expect(merchantMark.textContent).toBe("MM");
     expect(description.className).toContain("md:truncate");
     expect(description.className).toContain("break-words");
-    const unknown = within(rows[1] as HTMLElement).getByTitle("BILLA");
-    expect(unknown.textContent).toBe("Billa");
-    expect(unknown.parentElement!.previousElementSibling?.textContent).toBe("?");
+    const unknown = within(rows[1] as HTMLElement).getByText("BILLA");
+    expect(unknown.previousElementSibling?.textContent).toBe("?");
     const refund = within(rows[2] as HTMLElement).getByText("Martin Auer");
-    expect(refund.parentElement!.previousElementSibling?.textContent).toBe("MA");
+    expect(refund.previousElementSibling?.textContent).toBe("MA");
     expect(
       within(rows[3] as HTMLElement).getByText("Eigenes Konto")
-        .parentElement!.previousElementSibling,
+        .previousElementSibling,
     ).toBeNull();
     expect(
       within(rows[4] as HTMLElement).getByText("Lohnzahlung")
-        .parentElement!.previousElementSibling,
+        .previousElementSibling,
     ).toBeNull();
     expect(ledger.querySelector("img")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
@@ -576,7 +574,7 @@ it("uses the same row model for mobile sorting, sharing and selection", () => {
     target: { value: "amount-desc" },
   });
   expect(within(list).getAllByRole("listitem")[0].textContent).toContain(
-    "Billa",
+    "BILLA",
   );
   fireEvent.click(
     within(list).getByRole("checkbox", { name: "Auswählen: BILLA" }),

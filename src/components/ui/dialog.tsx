@@ -74,7 +74,7 @@ function DialogContent({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
-  variant?: "default" | "confirmation" | "work" | "navigation" | "panel"
+  variant?: "default" | "confirmation" | "work" | "navigation"
 }) {
   useNativeSelectBoundary()
   const { locked } = useSecurityMode()
@@ -90,8 +90,6 @@ function DialogContent({
           "fixed z-50 flex min-h-0 flex-col overflow-hidden border bg-card text-card-foreground shadow-[0_20px_60px_-16px_rgb(0_0_0/0.2)] outline-none duration-200 ease-out motion-reduce:animate-none! data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
           variant === "navigation"
             ? "inset-y-0 left-0 h-dvh w-[min(320px,calc(100vw-3rem))] rounded-r-2xl data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left"
-            : variant === "panel"
-            ? "inset-y-0 right-0 h-dvh w-[min(560px,100vw)] rounded-l-2xl data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right"
             : "top-1/2 left-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
           variant === "default" && "max-w-xl",
           variant === "confirmation" && "max-w-md",

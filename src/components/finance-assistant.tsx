@@ -108,20 +108,10 @@ const monthDiff = (from: string, to: string) => {
 };
 const monthEnd = (month: string) => `${month}-${String(lastDay(month)).padStart(2, "0")}`;
 
-export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number } } = {}) {
+export function FinanceAssistant() {
   const { state, dashboard, update, storageError, ready } = useFinance();
   const messages = state.assistantChat ?? [];
-  const [input, setInput] = useState(prompt?.text ?? "");
-  // A question started from a booking, budget or category lands in the input, ready to send.
-  const [seenPrompt, setSeenPrompt] = useState(prompt?.at);
-  if (prompt?.text && prompt.at !== seenPrompt) {
-    setSeenPrompt(prompt.at);
-    setInput(prompt.text);
-  }
-  useEffect(() => {
-    if (!prompt?.text) return;
-    requestAnimationFrame(() => inputRef.current?.focus());
-  }, [prompt?.text, prompt?.at]);
+  const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState<string>();
   const [editing, setEditing] = useState<string>();
@@ -535,24 +525,17 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   const changes = state.assistantChanges ?? [];
   const memory = state.assistantMemory ?? [];
-  const panelMode = variant === "panel";
-  const actionSize = panelMode ? "min-h-9" : "min-h-11";
-  const actions = <>
-      <Button type="button" variant={panel === "memory" ? "secondary" : "outline"} size="sm" className={actionSize} aria-pressed={panel === "memory"}
+  return <div className="mx-auto flex max-w-4xl flex-col">
+    <PageHeading eyebrow="KI-Assistent · lokal auf der NPU" title="Finanz-Assistent"
+      description="Fragen zu deinen Ausgaben, Sparziele und Ausgaben planen, Bestehendes ändern, Regeln, Spar-Coach, Depot-Rechner und Arbeitnehmerveranlagung.">
+      <Button type="button" variant={panel === "memory" ? "secondary" : "outline"} size="sm" className="min-h-11" aria-pressed={panel === "memory"}
         onClick={() => setPanel(panel === "memory" ? undefined : "memory")}><Brain aria-hidden="true" className="size-4" />Gedächtnis{memory.length + (state.assistantKnowledge?.length ?? 0) ? ` (${memory.length + (state.assistantKnowledge?.length ?? 0)})` : ""}</Button>
-      <Button type="button" variant={panel === "changes" ? "secondary" : "outline"} size="sm" className={actionSize} aria-pressed={panel === "changes"}
+      <Button type="button" variant={panel === "changes" ? "secondary" : "outline"} size="sm" className="min-h-11" aria-pressed={panel === "changes"}
         onClick={() => setPanel(panel === "changes" ? undefined : "changes")}><History aria-hidden="true" className="size-4" />Änderungen{changes.length ? ` (${changes.length})` : ""}</Button>
-      {messages.length > 0 && <Button type="button" variant="outline" size="sm" className={actionSize} onClick={() => {
+      {messages.length > 0 && <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => {
         if (window.confirm("Den gesamten Chatverlauf löschen? Angelegte Ziele, Ausgaben, das Gedächtnis und die Änderungsliste bleiben erhalten.")) update((current) => ({ ...current, assistantChat: [] }));
       }}><Trash2 aria-hidden="true" className="size-4" />Verlauf löschen</Button>}
-  </>;
-  return <div className={panelMode ? "flex h-full min-h-0 flex-col" : "mx-auto flex max-w-4xl flex-col"}>
-    {panelMode ? <div className="flex shrink-0 flex-wrap gap-2 px-4 pb-3 sm:px-6">{actions}</div>
-      : <PageHeading eyebrow="KI-Assistent · lokal auf der NPU" title="Finanz-Assistent"
-      description="Fragen zu deinen Ausgaben, Sparziele und Ausgaben planen, Bestehendes ändern, Regeln, Spar-Coach, Depot-Rechner und Arbeitnehmerveranlagung.">
-      {actions}
-    </PageHeading>}
-    {panel && <div className={panelMode ? "max-h-[40vh] shrink-0 overflow-y-auto px-4 sm:px-6" : undefined}>
+    </PageHeading>
     {panel === "changes" && <ChangesPanel changes={changes} disabled={!!storageError} onUndo={undo} />}
     {panel === "memory" && <MemoryPanel memory={memory} knowledge={state.assistantKnowledge ?? []} phrases={state.assistantPhrases?.length ?? 0}
       disabled={!!storageError} onDelete={forget}
@@ -561,9 +544,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       aliases={state.assistantAliases ?? []} gaps={state.assistantGaps ?? []}
       onForgetAlias={(from) => { update((current) => ({ ...current, assistantAliases: (current.assistantAliases ?? []).filter((entry) => entry.from !== from) })); toast.success("Vergessen"); }}
       onRemoveGap={(text) => update((current) => ({ ...current, assistantGaps: (current.assistantGaps ?? []).filter((entry) => entry.text !== text) }))} />}
-    </div>}
-    <section className={panelMode ? "flex min-h-0 flex-1 flex-col border-t border-border/60" : "panel flex min-h-[60vh] flex-col p-4 sm:p-6"} aria-label="Chat mit dem Finanz-Assistenten">
-      <FinancialData className={panelMode ? "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6" : "flex flex-1 flex-col gap-4"} aria-live="polite">
+    <section className="panel flex min-h-[60vh] flex-col p-4 sm:p-6" aria-label="Chat mit dem Finanz-Assistenten">
+      <FinancialData className="flex flex-1 flex-col gap-4" aria-live="polite">
         <Bubble role="assistant" text={intro} />
         {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
         {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
@@ -615,7 +597,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         {busy && (streaming ? <div aria-live="polite" aria-busy="true"><Bubble role="assistant" text={streaming} source="KI" /></div> : <Thinking />)}
         <div ref={endRef} />
       </FinancialData>
-      <form onSubmit={send} className={panelMode ? "flex shrink-0 items-end gap-2 border-t border-border/60 px-4 pt-3 pb-1 sm:px-6" : "mt-5 flex items-end gap-2 border-t border-border/60 pt-4"}>
+      <form onSubmit={send} className="mt-5 flex items-end gap-2 border-t border-border/60 pt-4">
         <Label htmlFor="assistant-input" className="sr-only">Nachricht an den Finanz-Assistenten</Label>
         <textarea id="assistant-input" ref={inputRef} value={input} rows={2} maxLength={1000} disabled={busy}
           onChange={(event) => setInput(event.target.value)}
@@ -631,7 +613,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
           className="min-h-11 flex-1 resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <Button type="submit" className="min-h-11" disabled={busy || !input.trim() || !!storageError}><Send aria-hidden="true" className="size-4" />Senden</Button>
       </form>
-      <p className={cn("mt-2 text-2xs text-muted-foreground", panelMode && "shrink-0 px-4 pb-4 sm:px-6")}>Die KI wählt nur die passende Funktion und liest Namen und Beträge heraus. Alle Zahlen rechnet der Code. Gespeichert wird nur nach deinem Klick, der Verlauf bleibt in deiner lokalen Datenbank.</p>
+      <p className="mt-2 text-2xs text-muted-foreground">Die KI wählt nur die passende Funktion und liest Namen und Beträge heraus. Alle Zahlen rechnet der Code. Gespeichert wird nur nach deinem Klick, der Verlauf bleibt in deiner lokalen Datenbank.</p>
     </section>
   </div>;
 }

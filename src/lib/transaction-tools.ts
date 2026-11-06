@@ -5,7 +5,6 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { statementFingerprint } from "@/lib/import/identity";
 import { rememberMerchantRename, rememberMerchants } from "@/lib/import/merchant-rules";
 import { merchantAliasAssignment } from "@/lib/merchant-identity";
-import { cleanMerchantName } from "@/lib/merchant-display";
 import {
   isSharedHoliday,
   personalAmount,
@@ -44,8 +43,6 @@ export function matchesTransactionSearch(
       row.bank,
       accountLabel(row),
       merchant ?? classify(row).merchant,
-      cleanMerchantName(row.description),
-      ...(row.tags ?? []).map((tag) => `#${tag}`),
     ]
       .filter(Boolean)
       .join(" "),

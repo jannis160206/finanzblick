@@ -21,12 +21,9 @@ describe("web app manifest", () => {
       expect.objectContaining({ media: "(prefers-color-scheme: dark)", color: "#101313" }),
     ]);
   });
-  it("ships a notification-only service worker without offline caching", async () => {
-    const { existsSync, readFileSync } = await import("node:fs");
-    expect(existsSync("public/sw.js")).toBe(true);
-    const worker = readFileSync("public/sw.js", "utf8");
-    expect(worker).toContain("notificationclick");
-    expect(worker).not.toMatch(/addEventListener\(\s*["']fetch["']/);
+  it("does not ship a service worker", async () => {
+    const { existsSync } = await import("node:fs");
+    expect(existsSync("public/sw.js")).toBe(false);
     expect(existsSync("src/app/sw.ts")).toBe(false);
   });
 });

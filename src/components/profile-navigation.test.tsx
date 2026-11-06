@@ -10,7 +10,7 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { calculateDashboard } from "@/lib/calc";
 
 const navigation = vi.hoisted(() => ({ path: "/", locked: false }));
-vi.mock("next/navigation", () => ({ usePathname: () => navigation.path, useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ usePathname: () => navigation.path }));
 vi.mock("next/link", () => ({
   default: ({ href, children, onClick, ...props }: ComponentProps<"a">) => <a href={href} {...props} onClick={(event) => {
     event.preventDefault();

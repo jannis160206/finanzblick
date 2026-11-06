@@ -12,7 +12,7 @@ import { createSeed } from "@/lib/seed";
 import { calculateDashboard } from "@/lib/calc";
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/gehalt-steuern", useSearchParams: () => new URLSearchParams(), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/gehalt-steuern", useSearchParams: () => new URLSearchParams(),
   notFound: () => { throw new Error("Not found"); },
 }));
 vi.mock("next/link", () => ({

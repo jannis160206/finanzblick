@@ -53,7 +53,6 @@ import { useUploadActivity, type UploadActivity } from "@/components/upload-acti
 import { UploadStatus } from "@/components/upload-status";
 import { PaypalActivityImport, usePaypalActivityImport } from "@/components/paypal-activity-import";
 import { isPaypalActivityExport } from "@/lib/import/paypal-activity";
-import { useImportInbox } from "@/components/use-import-inbox";
 import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "@/lib/automation/schema";
 import { type UploadedStatementResult } from "@/lib/import/results";
 import { automationFailure, classifyParserError } from "@/lib/automation/errors";
@@ -434,7 +433,6 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
   useEffect(() => {
     latestState.current = state;
   }, [state]);
-  useImportInbox("statement", ready && !storageError, (files) => { void selectFiles(files); });
 
   useEffect(() => {
     if (!ui.pending || statementImport?.requestId !== ui.pending.requestId)

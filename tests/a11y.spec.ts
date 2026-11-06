@@ -9,8 +9,7 @@ const storageKey = "finanzdashboard.v1";
 const pages = [
   { path: "/", heading: "Übersicht" },
   { path: "/umsaetze", heading: "Umsätze" },
-  { path: "/budget", heading: "Budget" },
-  { path: "/sparen", heading: "Sparen" },
+  { path: "/monate", heading: "Monate" },
   { path: "/einstellungen", heading: "Einstellungen" },
 ] as const;
 const blocking = new Set(["critical", "serious"]);

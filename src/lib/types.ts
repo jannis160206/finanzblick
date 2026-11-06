@@ -143,9 +143,6 @@ const transactionFieldsSchema = z.object({
   sharedPaidManually: z.boolean().optional(),
   // Excluded from every statistic, budget, insight and agent answer; balances and import dedup still see it.
   ignored: z.boolean().optional(),
-  // Free labels across categories, e.g. a trip ("Malaga 2026").
-  tags: z.array(z.string().trim().min(1).max(40)).max(10)
-    .transform((tags) => [...new Set(tags)]).optional(),
   // Receipt split (Kassenbon): category parts that must sum to `amount`; see lib/splits.ts.
   splits: z.array(z.object({
     category: categorySchema,

@@ -106,7 +106,7 @@ it("shows actual balances and source dates without presenting goal opening credi
   expect(screen.queryByText("Kein Ziel festgelegt")).toBeNull();
   expect(
     screen.getByRole("link", { name: "Sparziele" }).getAttribute("href"),
-  ).toBe("/sparen#sparziele");
+  ).toBe("/einstellungen#sparziele");
   expect(view.read().state).toBe(state);
 });
 

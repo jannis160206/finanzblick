@@ -17,7 +17,6 @@ import { currency, monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PayslipRecords } from "@/components/payslip-records";
 import { applyPayslipIncome } from "@/lib/payslip-income";
-import { useImportInbox } from "@/components/use-import-inbox";
 
 const moneyFields = [
   ["netPay", "Netto laut Abrechnung"],
@@ -45,7 +44,7 @@ function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncome> | un
   if (!result) return "";
   const parts = result.applied.map((income) => `Abrechnung ${monthLabel(income.payrollMonth)} → ${monthLabel(income.month)}: Netto ${currency(income.net)}` +
     (income.special > 0 ? ` (davon Sonderzahlung ${currency(income.special)})` : ""));
-  const done = parts.length ? `Ins Budget eingetragen – ${parts.join(", ")}.` : "";
+  const done = parts.length ? `In „Monate“ eingetragen – ${parts.join(", ")}.` : "";
   const skipped = result.skipped.length
     ? `Netto nicht eindeutig für Abrechnung ${result.skipped.map((month) => monthLabel(month)).join(", ")} – im Folgemonat bitte manuell eintragen.` : "";
   return [done, skipped].filter(Boolean).join(" ");
@@ -75,7 +74,6 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const mutate = usePayslipMutation(state, update);
   useEffect(() => { live.current = { state, update, storageError, onImported }; }, [state, update, storageError, onImported]);
   useEffect(() => () => { request.current++; }, []);
-  useImportInbox("payslip", !storageError, (files) => { void readFiles(files); });
 
   function storeEntries(entries: Payslip[], allowReplace: boolean, review?: PayslipReview) {
     const currentFinance = live.current;
@@ -264,8 +262,8 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         </details>
       </div>}
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Folgemonat der Abrechnung im Budget eingetragen (Oktober-Abrechnung → November; Gehalt, Rufbereitschaft, Sonderzahlungen). Kontoumsätze bleiben unverändert.</p>
-        {(state.payslips?.length ?? 0) > 0 && <Button variant="outline" size="sm" disabled={busy || !!storageError} onClick={syncStoredPayslips}>Gespeicherte ins Budget übertragen</Button>}
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Folgemonat der Abrechnung unter „Monate“ eingetragen (Oktober-Abrechnung → November; Gehalt, Rufbereitschaft, Sonderzahlungen). Kontoumsätze bleiben unverändert.</p>
+        {(state.payslips?.length ?? 0) > 0 && <Button variant="outline" size="sm" disabled={busy || !!storageError} onClick={syncStoredPayslips}>Gespeicherte in „Monate“ übertragen</Button>}
       </div>
       <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />
     </section>

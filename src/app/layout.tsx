@@ -12,9 +12,6 @@ export const metadata: Metadata = {
   description:
     "Umsätze, Monatsplanung und Sparziele in deinem privaten Finanzdashboard.",
   robots: { index: false, follow: false },
-  applicationName: "Finanzblick",
-  appleWebApp: { capable: true, title: "Finanzblick", statusBarStyle: "black-translucent" },
-  icons: { apple: "/icon.svg" },
 };
 
 export const viewport = appViewport;

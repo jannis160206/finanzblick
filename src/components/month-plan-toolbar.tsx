@@ -84,28 +84,19 @@ export function MonthPlanToolbar({
             ))}
           </div>
           {view === "year" ? (
-            <div role="group" aria-label="Planungsjahr" className="flex items-center gap-1">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-10"
-                aria-label="Vorheriges Jahr"
-                disabled={year <= 2026}
-                onClick={() => onMonthChange(`${year - 1}${month.slice(4)}`)}
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <span aria-live="polite" className="min-w-14 text-center text-sm font-medium tabular-nums">{year}</span>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-10"
-                aria-label="Nächstes Jahr"
-                disabled={year >= 2027}
-                onClick={() => onMonthChange(`${year + 1}${month.slice(4)}`)}
-              >
-                <ChevronRight className="size-4" />
-              </Button>
+            <div role="group" aria-label="Planungsjahr" className="flex gap-1">
+              {[2026, 2027].map((value) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={year === value ? "outline" : "ghost"}
+                  className="min-h-10 tabular-nums"
+                  aria-pressed={year === value}
+                  onClick={() => onMonthChange(`${value}${month.slice(4)}`)}
+                >
+                  {value}
+                </Button>
+              ))}
             </div>
           ) : (
             <div className="flex min-w-0 max-w-full items-center gap-1">
