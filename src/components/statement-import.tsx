@@ -51,7 +51,8 @@ import { useAccountWorkspace } from "@/components/account-context";
 import { useAutomation } from "@/components/automation-context";
 import { useUploadActivity, type UploadActivity } from "@/components/upload-activity";
 import { UploadStatus } from "@/components/upload-status";
-import { PaypalActivityImport } from "@/components/paypal-activity-import";
+import { PaypalActivityImport, usePaypalActivityImport } from "@/components/paypal-activity-import";
+import { isPaypalActivityExport } from "@/lib/import/paypal-activity";
 import { MAX_UPLOAD_BYTES, statementUploadResponseSchema } from "@/lib/automation/schema";
 import { type UploadedStatementResult } from "@/lib/import/results";
 import { automationFailure, classifyParserError } from "@/lib/automation/errors";
@@ -391,6 +392,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
   }, []);
   const { state, ready, saved, storageError, appendStatements, statementImport, openReviewCount } =
     useFinance();
+  const importPaypalActivity = usePaypalActivityImport();
   const fileInput = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const busyRef = useRef(false);
@@ -563,12 +565,27 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     }
     addActivities(uploads);
     const parsedIds: string[] = [];
+    // PayPal's own export only names shops behind Amex/bank bookings; it never becomes bookings itself.
+    const handledAsPaypal = async (file: File, id: string) => {
+      if (!/\.csv$/i.test(file.name) || !file.size || file.size > MAX_UPLOAD_BYTES) return false;
+      let head = "";
+      try {
+        head = await file.slice(0, 4096).text();
+      } catch {
+        return false;
+      }
+      if (!isPaypalActivityExport(head)) return false;
+      await importPaypalActivity(file);
+      removeActivity(id);
+      return true;
+    };
     try {
       if (workspace) {
         if (!saved) throw new Error("Bitte zuerst die laufende Synchronisierung abwarten.");
         for (const [index, file] of files.entries()) {
           const id = uploads[index].id;
           if (cancelledUploads.current.has(id)) continue;
+          if (await handledAsPaypal(file, id)) continue;
           const uploadController = new AbortController();
           uploadControllers.current.set(id, uploadController);
           changeActivities([id], "uploading");
@@ -608,6 +625,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
       }
       for (const [index, file] of files.entries()) {
         const id = uploads[index].id;
+        if (await handledAsPaypal(file, id)) continue;
         changeActivities([id], "reading");
         try {
           const result = await parseStatementFile(file);

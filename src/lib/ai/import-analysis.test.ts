@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { knownMerchantCategory } from "@/lib/categories";
-import { matchPaypalActivity, parsePaypalActivity } from "@/lib/import/paypal-activity";
+import { isPaypalActivityExport, matchPaypalActivity, parsePaypalActivity } from "@/lib/import/paypal-activity";
 import { fixUmlautCase } from "@/lib/import/statements";
 import { learningCurve } from "@/lib/insights";
 import { importResultSchema } from "@/lib/import/result-schema";
@@ -192,6 +192,23 @@ describe("PayPal activity export", () => {
     expect(result).toMatchObject({ ambiguous: 1, unmatched: 1, matched: [{ id: "r", name: "Renovaro GmbH" }] });
     const draft = result.state.reviewQueue!.find((item) => item.id === "r");
     expect(draft?.kind === "booking" && draft.draft.merchantAlias).toBe("Renovaro GmbH");
+  });
+
+  it("names Amex PayPal bookings whose shop is cut off, but only when the names agree", () => {
+    const card = (id: string, description: string, amount: number) => booking(id, { bank: "Amex", date: "2026-03-06", amount, description });
+    const state = withOpen([], [
+      card("cut", "PAYPAL *RENOVARO 06136922270", -42),
+      card("eea", "PAYPAL *PAYPAL EEA 07517591951", -42),
+      card("other", "PAYPAL *FUGENDICHTB 27344958130", -42),
+      card("named", "PAYPAL *SPOTIFY*P477531 07517591951", -9.9),
+    ]);
+    const result = matchPaypalActivity(state, parsePaypalActivity(csv));
+    expect(result.matched.map((match) => [match.id, match.name])).toEqual([["cut", "Renovaro GmbH"], ["eea", "Renovaro GmbH"]]);
+  });
+
+  it("recognises PayPal's activity download by its header", () => {
+    expect(isPaypalActivityExport(`\uFEFF${csv}`)).toBe(true);
+    expect(isPaypalActivityExport('"Datum","Beschreibung","Karteninhaber","Konto #","Betrag"\n')).toBe(false);
   });
 });
 
