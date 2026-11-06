@@ -46,7 +46,8 @@ import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FinanceInsightsPanel } from "@/components/finance-insights";
-import { goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
+import { bankPocketBalance, goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
+import { OverviewTodos } from "@/components/overview-todos";
 
 const chartTooltip = {
   background: "var(--popover)",
@@ -60,6 +61,7 @@ const tooltipCurrency = (value: unknown) => currency(Number(value));
 export function Overview() {
   const { state, dashboard: d } = useFinance();
   const [showCashflow, setShowCashflow] = useState(false);
+  const [showMore, setShowMore] = useState(false);
   const allocationBlocked = "allocationBlocked" in d.current && d.current.allocationBlocked === true;
   const monthSplit = d.monthlyFunding.some((item) => item.id === "savings") ? d.monthlyFunding : [
     { id: "savings", name: "Sparkonto", pocket: "Sparkonto", amount: 0, transferred: 0, done: false },
@@ -72,18 +74,12 @@ export function Overview() {
   const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
   const bikeExtraLabel = (month: string) => month.slice(5) === "12" ? "Dec" :
     monthLabel(month, true).replace(/\s+\d{4}$/, "").replace(/\.$/, "");
+  const reserveBalances = pocketNames.map((pocket) => bankPocketBalance(state, pocket, d.actual));
+  const reserves = reserveBalances.reduce<number>((total, amount) => total + (amount ?? 0), 0);
   const kpis = [
     {
-      label: "Überschuss · Plan",
-      value: d.current.surplus,
-      icon: Wallet,
-      color: d.current.surplus >= 0 ? "text-primary" : "text-destructive",
-      prominent: true,
-      hint: "Nach Fixkosten, Alltagsbudget und geplanten Ausgaben.",
-    },
-    {
-      label: "Einnahmen · Plan",
-      value: d.current.salaryPlan,
+      label: "Einnahmen",
+      value: d.current.income,
       note: `Erhalten: ${currency(d.current.salaryReceived)}`,
       icon: ArrowDownLeft,
       color: "text-primary",
@@ -96,11 +92,12 @@ export function Overview() {
       hint: "Gebuchte Ausgaben ohne Umbuchungen.",
     },
     {
-      label: "Ersparnisse gesamt",
-      value: d.totalAssets,
-      note: incompleteAssets ? "Unvollständig · unbekannte Guthaben nicht enthalten" : undefined,
+      label: "Reserven",
+      value: reserves,
+      note: reserveBalances.some((amount) => amount === null) ? "Unvollständig · unbekannte Guthaben nicht enthalten" : undefined,
       icon: PiggyBank,
       color: "text-primary",
+      hint: "Summe der Spar-Pockets – derselbe Wert wie unter Sparen.",
     },
   ];
   const forecast = d.timeline
@@ -126,15 +123,35 @@ export function Overview() {
           </Button>
         </div>
       </div>
-      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)]">
+        <section aria-label="Frei diesen Monat" aria-describedby="overview-free-hint" className={cn("panel min-w-0 p-5 sm:p-6",
+          d.current.surplus >= 0 ? "border-primary/25 bg-primary/5" : "border-destructive/25 bg-destructive/5")}>
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-medium text-muted-foreground">Frei diesen Monat</p>
+            <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted/60", d.current.surplus >= 0 ? "text-primary" : "text-destructive")}>
+              <Wallet aria-hidden="true" className="size-4" />
+            </span>
+          </div>
+          <FinancialData as="p" className={cn("mt-3 break-words text-4xl font-semibold tracking-tight tabular-nums sm:text-[44px]", d.current.surplus >= 0 ? "text-primary" : "text-destructive")}>
+            {currency(d.current.surplus)}
+          </FinancialData>
+          <p id="overview-free-hint" className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            Einnahmen minus Fixkosten, Alltagsbudget und geplante Ausgaben. Daraus kommen die Sparraten.
+          </p>
+          {allocationBlocked && <p role="status" className="mt-2 text-2xs text-muted-foreground">Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.</p>}
+        </section>
+        <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-3">
         {kpis.map((kpi, index) => (
           <section key={kpi.label} aria-label={kpi.label} aria-describedby={kpi.hint ? `overview-metric-${index}-hint` : undefined} className={cn("panel min-w-0 p-4 sm:p-5",
-            kpi.prominent ? cn("col-span-2 md:col-span-1", d.current.surplus >= 0 ? "border-primary/25 bg-primary/5" : "border-destructive/25 bg-destructive/5") :
-              kpi.label === "Ersparnisse gesamt" ? "col-span-2 md:col-span-1" : "")}>
+            kpi.label === "Reserven" && "col-span-2 sm:col-span-1")}>
             <div className="flex items-start justify-between gap-2">
               <p className="pt-2 text-xs font-medium text-muted-foreground">
                 {kpi.label === "Ausgaben · Ist" ? (
                   <Link href={ledgerHref({ month: d.currentMonth })} className="inline-flex min-h-11 items-center gap-1 rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring -mt-2 sm:min-h-0 sm:mt-0">
+                    {kpi.label}<ArrowRight aria-hidden="true" className="size-3" />
+                  </Link>
+                ) : kpi.label === "Reserven" ? (
+                  <Link href="/sparen" className="inline-flex min-h-11 items-center gap-1 rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring -mt-2 sm:min-h-0 sm:mt-0">
                     {kpi.label}<ArrowRight aria-hidden="true" className="size-3" />
                   </Link>
                 ) : kpi.label}
@@ -143,24 +160,30 @@ export function Overview() {
                 {kpi.label === "Ausgaben · Ist" ? <SeasonalIcon slot="expense" className="seasonal-detail size-4" fallback={<kpi.icon aria-hidden="true" className="size-4" />} /> : <kpi.icon aria-hidden="true" className="size-4" />}
               </span>
             </div>
-            <FinancialData as="p" className={cn("mt-4 break-words text-2xl font-semibold tracking-tight tabular-nums sm:text-[28px]", kpi.prominent && cn("text-3xl sm:text-[34px]", kpi.color))}>
+            <FinancialData as="p" className="mt-4 break-words text-xl font-semibold tracking-tight tabular-nums sm:text-2xl">
               {currency(kpi.value)}
             </FinancialData>
             {kpi.note && <FinancialData as="p" className="mt-2 text-2xs text-muted-foreground">{kpi.note}</FinancialData>}
             {kpi.hint && <p id={`overview-metric-${index}-hint`} className="mt-2 text-2xs leading-relaxed text-muted-foreground">{kpi.hint}</p>}
           </section>
         ))}
+        </div>
       </div>
-      <div className="mb-5 grid gap-4 empty:hidden lg:grid-cols-2 [&>section:only-child]:col-span-full">
+      <OverviewTodos />
+      <div className="mb-5 empty:hidden"><PlannedOneOffLines /></div>
+      <details className="overview-more group" open={showMore} onToggle={(event) => setShowMore(event.currentTarget.open)}>
+        <summary className="panel mb-5 flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-5 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <span><span className="block text-sm font-semibold">Mehr</span><span className="block text-2xs text-muted-foreground">Monatsverteilung, Pockets, Sparziel, Hinweise, Prognose und Diagramme</span></span>
+          <ChevronDown aria-hidden="true" className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+        </summary>
+        {showMore && <>
+      <div className="mb-5">
         <section
           className="panel min-w-0 p-4 sm:p-5"
           aria-label="Pocket-Verteilung diesen Monat"
         >
           <h2 className="mb-4 flex items-center gap-2 text-sm font-medium"><PiggyBank aria-hidden="true" className="size-4 text-muted-foreground" />Monatsverteilung</h2>
-          {allocationBlocked && <FinancialData as="p" role="status" className="mb-3 text-xs text-muted-foreground">
-            Automatische Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.
-          </FinancialData>}
-          <div className="space-y-2">
+          <div className="grid gap-2 sm:grid-cols-2">
           {monthSplit.map((item) => {
             const combined = "combined" in item && item.combined === true;
             const confirmedSavings = item.id === "savings" && !combined && item.done;
@@ -177,7 +200,6 @@ export function Overview() {
           })}
           </div>
         </section>
-      <PlannedOneOffLines />
       </div>
       <div className="mb-5 grid items-start gap-5 xl:grid-cols-[1.2fr_1fr]">
         <section className="panel min-w-0 p-5 sm:p-6" aria-label="Deine Pockets">
@@ -185,7 +207,7 @@ export function Overview() {
             title="Deine Pockets"
           >
             <Link
-              href="/pockets"
+              href="/sparen"
               className="inline-flex min-h-8 items-center gap-1 text-xs text-muted-foreground hover:text-primary"
             >
               Details <ArrowUpRight aria-hidden="true" className="size-3" />
@@ -197,7 +219,7 @@ export function Overview() {
               const balance = physicalPocketBalance(state, pocket, d.actual);
               return (
                 <Link
-                  href="/pockets"
+                  href="/sparen"
                   key={pocket}
                   className="group min-w-0 rounded-2xl border border-border/70 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4"
                 >
@@ -298,7 +320,7 @@ export function Overview() {
               .map(([month, amount]) => ` · ${bikeExtraLabel(month)} +${number(amount, 0)}`).join("")} · monatlich ${number(motorcycle.funding.monthly, 0)} €`}
           </p>}
           <Link
-            href="/einstellungen#sparziele"
+            href="/sparen#sparziele"
             className="mt-3 inline-flex min-h-9 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Sparziel anpassen <ArrowRight className="size-3" />
@@ -324,7 +346,7 @@ export function Overview() {
               <p className="text-sm font-medium">Noch kein Sparziel</p>
             </div>}
           </FinancialData>
-          <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
+          <Link href="/sparen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
         </section>}
       </div>
       <FinanceInsightsPanel />
@@ -401,7 +423,7 @@ export function Overview() {
               </AreaChart>
             </ResponsiveContainer>
           </FinancialData><ChartDataTable caption={incompleteAssets ? "Bekannte Pocket-Guthaben pro Monat" : "Pocket-Vermögen pro Monat"} columns={["Monat", "Vermögen"]} rows={forecast.map((row) => ({ key: row.month, cells: [row.label, currency(row.total)] }))} /></> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
-            <Link href="/monate" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
+            <Link href="/budget?ansicht=jahr" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
           </div>}
         </section>
         <section className="panel min-w-0 p-5 sm:p-6">
@@ -501,6 +523,8 @@ export function Overview() {
           </FinancialData>}
         </details>}
       </div>
+        </>}
+      </details>
     </>
   );
 }

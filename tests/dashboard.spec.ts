@@ -83,9 +83,9 @@ test("all six screens render without runtime errors and theme persists", async (
   for (const [route, title] of [
     ["/", "Übersicht"],
     ["/umsaetze", "Umsätze"],
-    ["/monate", "Monate"],
-    ["/pockets", "Deine Pockets"],
-    ["/plan", "Alltagsbudget"],
+    ["/budget", "Budget"],
+    ["/sparen", "Sparen"],
+    ["/gehalt-steuern", "Gehalt & Steuern"],
     ["/einstellungen", "Einstellungen"],
   ]) {
     await page.goto(route);
@@ -200,7 +200,7 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
 });
 
 test("month inputs update and survive reload", async ({ page }) => {
-  await page.goto("/monate");
+  await page.goto("/budget?ansicht=jahr");
   await page.getByRole("button", { name: "Plan bearbeiten" }).click();
   const input = page.getByRole("textbox", {
     name: "Nettogehalt September 2026",
@@ -321,7 +321,7 @@ test("transactions default to this month with transfers hidden but retained", as
           .length,
     ),
   ).toBe(5);
-  await page.goto("/pockets");
+  await page.goto("/sparen");
   const savings = page.locator("section").filter({
     has: page.getByRole("heading", { name: "Sparkonto", exact: true }),
   });
@@ -331,7 +331,7 @@ test("transactions default to this month with transfers hidden but retained", as
 test("months omit pocket chains and Revolut pots have no manual movement form", async ({
   page,
 }) => {
-  await page.goto("/monate");
+  await page.goto("/budget?ansicht=jahr");
   const grid = page.locator(".month-grid");
   await expect(grid).not.toContainText(
     /Sparrate|Entnahme|Endstand|Zinsen|Motorrad|Notgroschen|Sparkonto|Urlaub|Start/,
@@ -342,7 +342,7 @@ test("months omit pocket chains and Revolut pots have no manual movement form", 
     grid.getByText("Variable Ausgaben", { exact: true }),
   ).toBeVisible();
   await expect(grid.locator("input")).toHaveCount(0);
-  await page.goto("/pockets");
+  await page.goto("/sparen");
   await expect(
     page.getByText(/Historische Startstände|01\.01\.2026|unabhängig/),
   ).toHaveCount(0);
@@ -417,10 +417,10 @@ test("mobile navigation and layout", async ({ page }) => {
   await page.getByRole("button", { name: "Navigation öffnen" }).click();
   await page
     .getByRole("dialog")
-    .getByRole("link", { name: "Pockets", exact: true })
+    .getByRole("link", { name: "Sparen", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Deine Pockets", exact: true }),
+    page.getByRole("heading", { name: "Sparen", exact: true }),
   ).toBeVisible();
   expect(
     await page.evaluate(

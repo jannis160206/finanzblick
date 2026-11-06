@@ -59,17 +59,17 @@ it("shows the automatic gap inside variable costs and updates surplus after rese
   const view = mount();
   const initial = view.read().state;
   const budgets = initial.financeRows.filter((row) => row.kind === "variable");
-  const row = screen.getByRole("row", { name: /^Amex offen / });
-  fireEvent.click(within(row).getByRole("button", { name: "Amex offen: Details" }));
+  const row = screen.getByRole("row", { name: /^Amex noch zu überweisen / });
+  fireEvent.click(within(row).getByRole("button", { name: "Amex noch zu überweisen: Details" }));
   const plain = (value: string) => value.replace(/\u00a0/g, " ");
   expect(screen.getByText((text) => plain(text).includes(`Rücklage ${plain(currency(125))}`))).toBeTruthy();
   const rows = screen.getAllByRole("row");
   expect(rows.indexOf(row)).toBeGreaterThan(rows.indexOf(screen.getByRole("row", { name: "Variable Ausgaben" })));
   expect(rows.indexOf(row)).toBeLessThan(rows.indexOf(screen.getByRole("row", { name: /^Variabel gesamt / })));
-  expect(within(row).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Amex offen: Details"]);
+  expect(within(row).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual(["Amex noch zu überweisen: Details"]);
   expect(within(row).queryByRole("textbox")).toBeNull();
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(375));
-  expect(monthCell("Amex offen", 11).textContent).toBe(number(0));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(375));
+  expect(monthCell("Amex noch zu überweisen", 11).textContent).toBe(number(0));
   expect(monthCell("Variabel gesamt", 10).textContent).toBe(number(view.read().dashboard.current.variablePlan));
   const before = view.read().dashboard.current.surplus;
   expect(monthCell("Überschuss", 10).textContent).toBe(number(before));
@@ -79,16 +79,16 @@ it("shows the automatic gap inside variable costs and updates surplus after rese
       description: "Um EUR Amex einzustecken", amount: 200, category: "Transfer intern", includeInPlan: false,
     }],
   })));
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(175));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(175));
   expect(monthCell("Überschuss", 10).textContent).toBe(number(before + 200));
   expect(view.read().state.financeRows.filter((item) => item.kind === "variable")).toEqual(budgets);
   expect(view.read().state.transactions[0]).toEqual(initial.transactions[0]);
   expect(view.read().saved).toBe(true);
   view.unmount();
   const restored = mount();
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(175));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(175));
   act(() => restored.read().update((state) => ({ ...state, transactions: state.transactions.filter((item) => item.id !== "card") })));
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(0));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(0));
 });
 
 it("replaces the historical total with the screenshot balance on a duplicate-only import and persists the exact remaining gap", () => {
@@ -119,16 +119,16 @@ it("replaces the historical total with the screenshot balance on a duplicate-onl
   act(() => view.read().appendStatements([], prepared.duplicates, "capture-balance", [], prepared.metadata));
   expect(view.read().state.transactions).toEqual(before);
   expect(view.read().state.amexBalanceSnapshots).toEqual([{ periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 }]);
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83));
-  expect(monthCell("Amex offen", 11).textContent).toBe(number(0));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(415.83));
+  expect(monthCell("Amex noch zu überweisen", 11).textContent).toBe(number(0));
   expect(view.read().dashboard.amex).toMatchObject({ outstanding: 1619.19, ownOutstanding: 1369.83, reserved: 954 });
   expect(view.read().saved).toBe(true);
   view.unmount();
   const loaded = mount();
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(415.83));
   act(() => loaded.read().update((state) => ({ ...state, accountSnapshots: state.accountSnapshots!.map((row) =>
     row.name === "Amex Rückzahlung" ? { ...row, balance: 854 } : row) })));
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(515.83));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(515.83));
 });
 
 it("repairs an already saved legacy screenshot automatically, without a second import, lost edits or duplicate bookings", async () => {
@@ -155,13 +155,13 @@ it("repairs an already saved legacy screenshot automatically, without a second i
     snapshot: { periodStart: "2026-09-11", date: "2026-10-05", balance: 1619.19 },
     bookingKeys: initial.transactions.slice(1).map(amexBookingKey),
   }] })));
-  await waitFor(() => expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83)));
+  await waitFor(() => expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(415.83)));
   expect(view.read().state.transactions).toEqual(before);
   expect(view.read().saved).toBe(true);
   expect(view.read().dashboard.amex).toMatchObject({ outstanding: 1619.19, ownOutstanding: 1369.83, reserved: 954 });
   view.unmount();
   const reloaded = mount();
-  expect(monthCell("Amex offen", 10).textContent).toBe(number(415.83));
+  expect(monthCell("Amex noch zu überweisen", 10).textContent).toBe(number(415.83));
   expect(reloaded.read().state.transactions).toEqual(before);
   expect(fetch).toHaveBeenCalledOnce();
 });

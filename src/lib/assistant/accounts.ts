@@ -88,7 +88,7 @@ export function accountBalances(state: AppState, dashboard: Dashboard, text: str
   const shown = all.filter((item) => item.amount === null || Math.abs(item.amount) >= 0.005).sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
   const lines: Line[] = shown.slice(0, 20).map((item) => item.amount === null ? { label: item.name, detail: "unbekannt", tone: "warn" as const }
     : { label: item.name, value: item.amount, ...(reserveKey(item.key) ? { detail: "für die Amex-Abrechnung reserviert" } : {}) });
-  if (dashboard.amex.outstanding > 0) lines.push({ label: "Amex offen", value: -dashboard.amex.outstanding, tone: "warn", detail: "Kreditkarte, noch nicht abgebucht" });
+  if (dashboard.amex.outstanding > 0) lines.push({ label: "Amex-Saldo offen", value: -dashboard.amex.outstanding, tone: "warn", detail: "Kreditkarte, noch nicht abgebucht" });
   const empty = all.length - shown.length;
   return { text: `Deine Ersparnisse liegen gesamt bei ${currency(dashboard.totalAssets)}.` +
     (shown.length ? ` Am meisten liegt auf „${shown[0].name}“.` : ""),

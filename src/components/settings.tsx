@@ -11,7 +11,7 @@ import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 import { AppearanceControls } from "@/components/appearance-controls";
 import { ThemePicker, type ThemeChoice } from "@/components/theme-picker";
 import { InteractionSoundsSetting } from "@/components/interaction-sounds";
-import { SavingsGoals } from "@/components/savings-goals";
+import { NotificationSettings } from "@/components/pwa-notifications";
 import { ExcelActions } from "@/components/excel-actions";
 import { BackupAge } from "@/components/backup-age";
 import { ClearBookings } from "@/components/clear-bookings";
@@ -26,7 +26,7 @@ import { currency, dateLabel, percent } from "@/lib/format";
 import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
 import { defaultSeasonalPreference, type SeasonalPreference } from "@/lib/seasonal-theme";
 
-function TradeRepublicSettings() {
+export function TradeRepublicSettings() {
   const { state, update } = useFinance();
   const latest = latestTRBalance(state);
   const savedDate = latest?.date ?? state.settings.asOf;
@@ -91,7 +91,19 @@ export function Settings() {
     <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
     <div className="space-y-4">
       <AccountProfileSettings />
+      <SettingsSection id="sicherung" title="Sicherung" description="Eine Kopie deiner Daten. Jederzeit in deiner Hand." icon={DatabaseBackup}>
+        <div className="flex flex-wrap items-center justify-between gap-5 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:p-5">
+          <div className="flex max-w-md items-start gap-3">
+            <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
+            <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p><BackupAge /></div>
+          </div>
+          <FinancialData><ExcelActions compact /></FinancialData>
+        </div>
+        <FinancialData><ClearBookings /></FinancialData>
+        <AccountSyncTools manual />
+      </SettingsSection>
       <SecurityModeSettings />
+      <NotificationSettings />
       <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Deine Farben, dein Komfort. So fühlt sich Finanzblick nach dir an." icon={Palette}>
         <ThemePicker preference={saved} suggested={suggestedTheme} onChoose={chooseTheme} />
         <form className="mt-6 border-t border-border/70 pt-6" onSubmit={(event) => {
@@ -111,19 +123,6 @@ export function Settings() {
         <div className="mt-6 border-t border-border/70 pt-6">
         <InteractionSoundsSetting />
         </div>
-      </SettingsSection>
-      <SavingsGoals />
-      <TradeRepublicSettings />
-      <SettingsSection id="sicherung" title="Sicherung" description="Eine Kopie deiner Daten. Jederzeit in deiner Hand." icon={DatabaseBackup}>
-        <div className="flex flex-wrap items-center justify-between gap-5 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:p-5">
-          <div className="flex max-w-md items-start gap-3">
-            <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
-            <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p><BackupAge /></div>
-          </div>
-          <FinancialData><ExcelActions compact /></FinancialData>
-        </div>
-        <FinancialData><ClearBookings /></FinancialData>
-        <AccountSyncTools manual />
       </SettingsSection>
     </div>
   </>;

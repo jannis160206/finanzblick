@@ -43,7 +43,12 @@ function mount(initial = fixture(), settings = false) {
     });
     return settings ? <SavingsGoals /> : <Overview />;
   }
-  render(<Harness />);
+  const { container } = render(<Harness />);
+  const more = container.querySelector<HTMLDetailsElement>("details.overview-more");
+  if (more) {
+    more.open = true;
+    fireEvent(more, new Event("toggle"));
+  }
   return () => current;
 }
 

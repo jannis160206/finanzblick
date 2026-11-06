@@ -28,8 +28,8 @@ export function Pockets() {
   return (
     <>
       <PageHeading
-        eyebrow="SPAREN & RESERVEN"
-        title="Deine Pockets"
+        eyebrow="POCKETS · ZIELE · ZINSEN"
+        title="Sparen"
         description={`Stand ${dateLabel(state.settings.asOf)}`}
         sensitiveDescription
       >
@@ -52,7 +52,7 @@ export function Pockets() {
           <h2 className="text-sm font-semibold">Sparen & Reserven</h2>
           <Link
             ref={goalsLink}
-            href="/einstellungen#sparziele"
+            href="/sparen#sparziele"
             className="inline-flex min-h-10 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
           >
             Sparziele

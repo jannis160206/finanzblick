@@ -17,7 +17,7 @@ const ledgerHrefFor = (id: string, month: string) => {
   return group ? ledgerHref({ month, group }) : undefined;
 };
 
-export function Plan() {
+export function Plan({ embedded = false }: { embedded?: boolean } = {}) {
   const {
     dashboard: { plan, currentMonth },
     state,
@@ -33,7 +33,7 @@ export function Plan() {
 
   return (
     <>
-      <PageHeading
+      {!embedded && <PageHeading
         eyebrow="BUDGETDETAILS"
         title="Alltagsbudget"
         description={`${monthLabel(plan.currentMonth)} · Ist bis ${dateLabel(state.settings.asOf)}`}
@@ -45,13 +45,13 @@ export function Plan() {
             <ArrowRight className="size-4" aria-hidden="true" />
           </Link>
         </Button>
-      </PageHeading>
+      </PageHeading>}
       <div className="space-y-6">
         <BudgetSummary total={plan.total} actual={actual} />
         <section aria-labelledby="budget-positions">
           <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 id="budget-positions" className="font-semibold tracking-tight">
-              Monatsbudgets
+              {embedded ? `Alltagsbudget · ${monthLabel(plan.currentMonth)}` : "Monatsbudgets"}
             </h2>
             <div
               className="flex flex-wrap gap-1"

@@ -50,7 +50,12 @@ function mount(initial: AppState, overview = false) {
     });
     return overview ? <Overview /> : <SavingsGoals />;
   }
-  render(<Harness />);
+  const { container } = render(<Harness />);
+  const more = container.querySelector<HTMLDetailsElement>("details.overview-more");
+  if (more) {
+    more.open = true;
+    fireEvent(more, new Event("toggle"));
+  }
   return () => current;
 }
 
@@ -75,10 +80,10 @@ describe("observed and unknown goal UI", () => {
     expect(card.textContent).toContain("Kontostand unbekannt");
     expect(within(card).getByRole("progressbar").hasAttribute("aria-valuenow")).toBe(false);
     expect(within(card).getByRole("progressbar").getAttribute("aria-valuetext")).toBe("Kontostand unbekannt");
-    expect(screen.getByRole("status").textContent).toContain("Automatische Sparempfehlung pausiert");
+    expect(screen.getByRole("status").textContent).toContain(overview ? "Sparempfehlung pausiert" : "Automatische Sparempfehlung pausiert");
     if (overview) {
       expect(screen.getByLabelText("Pocket-Verteilung diesen Monat").textContent).toContain("Empfehlung pausiert");
-      expect(screen.getByLabelText("Ersparnisse gesamt").textContent).toContain("Unvollständig");
+      expect(screen.getByText(/unvollständige Datenbasis/)).toBeTruthy();
       expect(screen.getByLabelText("Prognose bekannter Pocket-Guthaben")).toBeTruthy();
       expect(screen.queryByLabelText("Prognose des gesamten Pocket-Vermögens")).toBeNull();
     }

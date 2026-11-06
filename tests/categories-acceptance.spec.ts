@@ -147,7 +147,7 @@ test("legacy categories migrate and grouped choices work in review, filters, bud
   });
 
   await test.step("fixed-cost category links persist without adding variable budget lines", async () => {
-    await page.goto("/monate");
+    await page.goto("/budget?ansicht=jahr");
     await page.getByRole("button", { name: "Plan bearbeiten", exact: true }).click();
     for (const label of ["Spotify", "PayPal Abo"]) {
       await page.getByRole("button", { name: `${label} bearbeiten`, exact: true }).click();

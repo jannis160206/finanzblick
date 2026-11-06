@@ -4,6 +4,7 @@ import { isIncomeCategory } from "@/lib/fixed";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { detectDuplicateCharges, detectSubscriptions, forecastMonth, ledger } from "@/lib/insights";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
+import { openReviewCount } from "@/lib/import/review";
 import { matchesTransactionSearch, normalizeSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, Transaction } from "@/lib/types";
 import { reminderLines } from "./extras";
@@ -455,7 +456,9 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
   const behind: string[] = [];
   for (const goal of dashboard.goals) {
     if (goal.completedAt || goal.date < today) continue;
-    const goalMonth = goal.date.slice(0, 7);
+    // The balance on the goal date is the end of the month before; the goal month itself
+    // already contains the purchase, which would otherwise count as a shortfall.
+    const goalMonth = goal.date.slice(8, 10) === "01" ? addMonths(goal.date.slice(0, 7), -1) : goal.date.slice(0, 7);
     const projected = dashboard.timeline.find((row) => row.month === goalMonth)?.goalEnd[goal.id];
     if (projected === undefined || projected === null || projected + 0.5 >= goal.target) continue;
     const missing = round(goal.target - projected);
@@ -471,7 +474,7 @@ export function weeklyBriefing(state: AppState, dashboard: Dashboard, today: str
   if (forecast.averageSpending && forecast.projectedSpending > forecast.averageSpending * 1.1)
     lines.push({ label: `Prognose ${monthLabel(forecast.month)}`, value: forecast.projectedSpending,
       detail: `über deinem Schnitt von ${currency(forecast.averageSpending)}`, tone: "warn" });
-  const reviews = (state.reviewQueue ?? []).filter((item) => item.kind === "booking").length;
+  const reviews = openReviewCount(state.reviewQueue ?? []);
   const dueReminders = reminderLines(state, today, end);
   lines.unshift(...dueReminders);
   if (reviews) lines.push({ label: `${plural(reviews, "Buchung wartet", "Buchungen warten")} auf Prüfung`, tone: "info" });

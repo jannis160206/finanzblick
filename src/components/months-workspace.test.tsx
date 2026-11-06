@@ -161,8 +161,8 @@ it("keeps the complete annual comparison and reconciles one-offs, Amex and surpl
     ).getAllByRole("columnheader"),
   ).toHaveLength(13);
   expect(cell("Geplante Einmalausgaben", 9).textContent).toBe(number(980));
-  expect(cell("Amex offen", 9).textContent).toBe(number(90));
-  expect(cell("Amex offen", 10).textContent).toBe(number(0));
+  expect(cell("Amex noch zu überweisen", 9).textContent).toBe(number(90));
+  expect(cell("Amex noch zu überweisen", 10).textContent).toBe(number(0));
   const year = view
     .read()
     .dashboard.timeline.filter((row) => row.month.startsWith("2026"));
@@ -176,7 +176,8 @@ it("keeps the complete annual comparison and reconciles one-offs, Amex and surpl
   summary("Ausgaben", "2026", expenses);
   summary("Überschuss", "2026", surplus);
   expect(income - expenses).toBeCloseTo(surplus, 2);
-  fireEvent.click(screen.getByRole("button", { name: "2027" }));
+  fireEvent.click(screen.getByRole("button", { name: "Nächstes Jahr" }));
+  expect(within(screen.getByRole("group", { name: "Planungsjahr" })).getByText("2027")).toBeTruthy();
   expect(screen.queryByText("Geplante Einmalausgaben")).toBeNull();
   expect(
     screen.queryByRole("button", { name: /Fixkosten.*Oktober/ }),
@@ -321,7 +322,7 @@ it("keeps a selected area in a single compact card without changing complete tot
   expect(cell("Überschuss").textContent).toBe(
     number(view.read().dashboard.current.surplus),
   );
-  expect(cell("Amex offen").textContent).toBe(number(90));
+  expect(cell("Amex noch zu überweisen").textContent).toBe(number(90));
   expect(cell("Geplante Einmalausgaben").textContent).toBe(number(980));
   expect(view.read().state).toBe(initial);
 });

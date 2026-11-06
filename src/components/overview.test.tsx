@@ -6,9 +6,9 @@ import { Overview } from "./overview";
 import { useFinance } from "./finance-provider";
 import { calculateDashboard, monthsForYear } from "@/lib/calc";
 import { createEmptyAccountState } from "@/lib/account-state";
-import { initializeMotorcycleGoal } from "@/lib/goals";
+import { bankPocketBalance, initializeMotorcycleGoal } from "@/lib/goals";
 import { currency, monthLabel } from "@/lib/format";
-import { plannedOneOffSchema } from "@/lib/types";
+import { plannedOneOffSchema, pocketNames } from "@/lib/types";
 import { monthlyVariableBudget } from "@/lib/variable-budgets";
 
 const privacy = vi.hoisted(() => ({ locked: false }));
@@ -44,22 +44,31 @@ function fixture() {
   return initializeMotorcycleGoal(state, 0);
 }
 
-function mount(state = fixture(), overrides: Partial<ReturnType<typeof calculateDashboard>> = {}) {
+function mount(state = fixture(), overrides: Partial<ReturnType<typeof calculateDashboard>> = {}, openMore = true) {
   const dashboard = { ...calculateDashboard(state), ...overrides };
   const update = vi.fn();
   vi.mocked(useFinance).mockReturnValue({
     state, dashboard, update, replace: vi.fn(), ready: true, saved: true, storageError: null,
     openReviewCount: 0, retrySave: vi.fn(), appendStatements: vi.fn(), statementImport: undefined,
   });
-  return { ...render(<Overview />), dashboard, update };
+  const view = render(<Overview />);
+  if (openMore) {
+    const details = view.container.querySelector<HTMLDetailsElement>("details.overview-more")!;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+  }
+  return { ...view, dashboard, update };
 }
 
 it("prioritizes the surplus, keeps model values and plan/actual distinctions, and removes redundant copy", () => {
   const state = fixture();
   const before = JSON.stringify(state);
-  const { dashboard, container, update } = mount(state);
-  const metrics = ["Überschuss · Plan", "Einnahmen · Plan", "Ausgaben · Ist", "Ersparnisse gesamt"];
-  const values = [dashboard.current.surplus, dashboard.current.salaryPlan, dashboard.current.actualSpending, dashboard.totalAssets];
+  const { dashboard, container, update } = mount(state, {}, false);
+  expect(container.querySelector("details.overview-more summary")?.textContent).toContain("Mehr");
+  expect(screen.queryByRole("region", { name: "Pocket-Verteilung diesen Monat" })).toBeNull();
+  const reserves = pocketNames.reduce((total, pocket) => total + (bankPocketBalance(state, pocket, dashboard.actual) ?? 0), 0);
+  const metrics = ["Frei diesen Monat", "Einnahmen", "Ausgaben · Ist", "Reserven"];
+  const values = [dashboard.current.surplus, dashboard.current.income, dashboard.current.actualSpending, reserves];
   metrics.forEach((label, index) => expect(within(screen.getByRole("region", { name: label })).getByText(moneyText(values[index]))).toBeTruthy());
   expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(metrics[0]);
   expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.salaryReceived)}`)).toBeTruthy();
@@ -129,7 +138,7 @@ it("keeps negative surplus visible as a warning rather than presenting success",
   const state = fixture();
   state.financeRows = [];
   mount(state);
-  const surplus = screen.getByRole("region", { name: "Überschuss · Plan" });
+  const surplus = screen.getByRole("region", { name: "Frei diesen Monat" });
   expect(surplus.className).toContain("border-destructive");
   expect(within(surplus).getByText(moneyText(calculateDashboard(state).current.surplus)).className).toContain("text-destructive");
 });

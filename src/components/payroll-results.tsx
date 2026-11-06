@@ -55,68 +55,6 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
   const bonusExample = bonus.taxExample;
   return (
     <div className="min-w-0 space-y-4">
-      <div className="grid gap-3 lg:grid-cols-3">
-        <section
-          className="panel min-w-0 rounded-2xl p-5 shadow-sm"
-          aria-label="Jahressechstel Abrechnungsstand"
-        >
-          <SectionHeading
-            title="Jahressechstel · Abrechnungsstand"
-            subtitle={
-              latest
-                ? `Stand: ${monthLabel(payrollPeriod(latest.year, latest.month))}`
-                : "Noch keine Abrechnung"
-            }
-          />
-          <p className="break-words text-2xl font-semibold tracking-tight tabular-nums">
-            {payrollMoney(actual?.sixth)}
-          </p>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            {actual
-              ? actual.source === "reported"
-                ? "Laut Lohnabrechnung"
-                : "Aus den laufenden Bezügen berechnet"
-              : "Noch nicht vollständig belegt"}
-          </p>
-        </section>
-        <section
-          className="panel min-w-0 rounded-2xl p-5 shadow-sm lg:col-span-2"
-          aria-label="Jahressechstel Prognose"
-        >
-          <SectionHeading
-            title="Jahressechstel · Schätzung"
-            subtitle={
-              uncertain
-                ? "Vorläufige Spanne · je nach Prämienzuordnung"
-                : rough
-                  ? "Vorläufig · fehlende Monate geschätzt"
-                  : "Bei gleichbleibenden laufenden Bezügen"
-            }
-          />
-          <PayrollFigures
-            figures={[
-              {
-                label: monthLabel(payrollPeriod(year, estimateMonth)),
-                value: payrollEstimate(currentEstimate),
-              },
-              {
-                label: `Jahresende · Dezember ${year}`,
-                value:
-                  yearEndSixth === undefined
-                    ? payrollEstimate(yearEndEstimate)
-                    : payrollMoney(yearEndSixth),
-              },
-            ]}
-          />
-          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-            {analysis.contextIssues.length
-              ? "Nur belegte Abrechnungswerte; für diesen Kontext keine Fortschreibung."
-              : rough
-              ? "Lücken nur geschätzt, nicht als Abrechnungen gespeichert."
-              : "Prognose aktualisiert sich mit neuen Abrechnungen."}
-          </p>
-        </section>
-      </div>
       <section
         className="panel min-w-0 rounded-2xl p-5 shadow-sm"
         aria-label="Steuer nächste Sonderzahlung"
@@ -180,6 +118,73 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
           )
         )}
       </section>
+      <PayrollDisclosure
+        title="Details · Jahressechstel, Prämien-Spielraum und Steuerbeispiel"
+        label="Gehaltsdetails"
+      >
+        <div className="space-y-4 px-5 pb-5">
+      <div className="grid gap-3 lg:grid-cols-3">
+        <section
+          className="panel min-w-0 rounded-2xl p-5 shadow-sm"
+          aria-label="Jahressechstel Abrechnungsstand"
+        >
+          <SectionHeading
+            title="Jahressechstel · Abrechnungsstand"
+            subtitle={
+              latest
+                ? `Stand: ${monthLabel(payrollPeriod(latest.year, latest.month))}`
+                : "Noch keine Abrechnung"
+            }
+          />
+          <p className="break-words text-2xl font-semibold tracking-tight tabular-nums">
+            {payrollMoney(actual?.sixth)}
+          </p>
+          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+            {actual
+              ? actual.source === "reported"
+                ? "Laut Lohnabrechnung"
+                : "Aus den laufenden Bezügen berechnet"
+              : "Noch nicht vollständig belegt"}
+          </p>
+        </section>
+        <section
+          className="panel min-w-0 rounded-2xl p-5 shadow-sm lg:col-span-2"
+          aria-label="Jahressechstel Prognose"
+        >
+          <SectionHeading
+            title="Jahressechstel · Schätzung"
+            subtitle={
+              uncertain
+                ? "Vorläufige Spanne · je nach Prämienzuordnung"
+                : rough
+                  ? "Vorläufig · fehlende Monate geschätzt"
+                  : "Bei gleichbleibenden laufenden Bezügen"
+            }
+          />
+          <PayrollFigures
+            figures={[
+              {
+                label: monthLabel(payrollPeriod(year, estimateMonth)),
+                value: payrollEstimate(currentEstimate),
+              },
+              {
+                label: `Jahresende · Dezember ${year}`,
+                value:
+                  yearEndSixth === undefined
+                    ? payrollEstimate(yearEndEstimate)
+                    : payrollMoney(yearEndSixth),
+              },
+            ]}
+          />
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            {analysis.contextIssues.length
+              ? "Nur belegte Abrechnungswerte; für diesen Kontext keine Fortschreibung."
+              : rough
+              ? "Lücken nur geschätzt, nicht als Abrechnungen gespeichert."
+              : "Prognose aktualisiert sich mit neuen Abrechnungen."}
+          </p>
+        </section>
+      </div>
       <section
         className="panel min-w-0 rounded-2xl p-5 shadow-sm"
         aria-label="Zusätzlicher Prämien-Spielraum"
@@ -267,6 +272,8 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
           </div>
         </PayrollDisclosure>
       </section>
+        </div>
+      </PayrollDisclosure>
     </div>
   );
 }

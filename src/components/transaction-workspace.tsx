@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/popover";
 import { currency, dateLabel } from "@/lib/format";
 import { bookingDescription } from "@/lib/import/merchant-description";
+import { cleanMerchantName } from "@/lib/merchant-display";
 import type { classify } from "@/lib/calc";
 import type { Category } from "@/lib/types";
 import type { CategoryExplanation } from "@/lib/category-why";
@@ -123,14 +124,21 @@ export function TransactionDescriptionCell({
   classification: Pick<ReturnType<typeof classify>, "category" | "isTransfer">;
 }) {
   const description = bookingDescription(booking);
+  // Raw bank texts ("AMZNPRIME DE*BT15Q46J4") get a readable name; a user alias always wins.
+  const shown = booking.merchantAlias ? description : cleanMerchantName(description);
   return (
     <div className="flex min-w-0 items-center gap-2">
       <MerchantMark booking={booking} classification={classification} />
-      <span
-        className="block min-w-0 text-sm font-medium break-words md:max-w-[300px] md:truncate"
-        title={description}
-      >
-        {description}
+      <span className="min-w-0">
+        <span
+          className="block min-w-0 text-sm font-medium break-words md:max-w-[300px] md:truncate"
+          title={description}
+        >
+          {shown}
+        </span>
+        {!!booking.tags?.length && <span className="mt-1 flex flex-wrap gap-1">
+          {booking.tags.map((tag) => <span key={tag} className="rounded-full bg-primary/10 px-2 py-0.5 text-2xs text-primary">#{tag}</span>)}
+        </span>}
       </span>
     </div>
   );

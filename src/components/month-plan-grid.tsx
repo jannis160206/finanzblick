@@ -1,7 +1,7 @@
 "use client";
 
-import { Fragment, useEffect, useRef, type ReactNode } from "react";
-import { Info, Pencil, Trash2 } from "lucide-react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ChevronRight, Info, Pencil, Trash2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { MoneyInput } from "@/components/finance-ui";
@@ -42,17 +42,20 @@ function MonthGroupRows({
 }: MonthPlanGridProps & { group: (typeof groups)[number] }) {
   const { months, dashboard, timeline, rows } = props;
   const common = { months, currentMonth: dashboard.currentMonth };
+  const own = rows.filter((row) => row.kind === group.kind);
   return (
     <>
-      {rows
-        .filter((row) => row.kind === group.kind)
-        .map((row) => (
-          <MonthPositionRow key={row.id} {...props} row={row} />
-        ))}
+      {bundleRows(own, group.kind === "fixed" && !props.editing).map((entry) =>
+        entry.length === 1 ? (
+          <MonthPositionRow key={entry[0].id} {...props} row={entry[0]} />
+        ) : (
+          <MonthBundleRows key={entry[0].id} {...props} bundle={entry} />
+        ),
+      )}
       {group.kind === "variable" && (
         <CalculatedMonthRow
           {...common}
-          label="Amex offen"
+          label="Amex noch zu überweisen"
           values={timeline.map((row) => row.amexOpen)}
           title={`Karte ${currency(dashboard.amex.outstanding)} · Eigenanteil ${currency(dashboard.amex.ownOutstanding)} · Rücklage ${currency(dashboard.amex.reserved)}`}
         />
@@ -69,6 +72,58 @@ function MonthGroupRows({
               : row.variablePlan,
         )}
       />
+    </>
+  );
+}
+
+// Same-named fixed costs (e.g. six Amazon instalments) collapse into one expandable row.
+export function bundleRows(rows: FinanceRow[], enabled: boolean): FinanceRow[][] {
+  if (!enabled) return rows.map((row) => [row]);
+  const bundles = new Map<string, FinanceRow[]>();
+  for (const row of rows) {
+    const key = row.label.trim().toLocaleLowerCase("de");
+    bundles.set(key, [...(bundles.get(key) ?? []), row]);
+  }
+  return [...bundles.values()];
+}
+
+function MonthBundleRows({
+  bundle,
+  ...props
+}: MonthPlanGridProps & { bundle: FinanceRow[] }) {
+  const [open, setOpen] = useState(false);
+  const { months, dashboard, holidayRanges } = props;
+  const label = bundle[0].label.trim();
+  const id = useId();
+  const totals = months.map((month) =>
+    bundle.reduce((total, row) => total + financeRowValue(row, month, dashboard.plan, holidayRanges), 0));
+  return (
+    <>
+      <tr data-bundle={label}>
+        <th scope="row" className="sticky-label">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={open ? id : undefined}
+            onClick={() => setOpen((value) => !value)}
+            className="flex min-h-8 w-full items-center gap-1.5 rounded-md text-left text-xs font-normal focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            <ChevronRight aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none", open && "rotate-90")} />
+            <span className="min-w-0 break-words">{label}</span>
+            <span className="shrink-0 text-muted-foreground">({bundle.length})</span>
+          </button>
+        </th>
+        {totals.map((value, index) => (
+          <td key={months[index]} data-current={months[index] === dashboard.currentMonth}>
+            <span className="block text-right text-xs whitespace-nowrap tabular-nums" aria-label={`${label} gesamt ${monthLabel(months[index])}`}>
+              {number(value)}
+            </span>
+          </td>
+        ))}
+      </tr>
+      {open && bundle.map((row, index) => (
+        <MonthPositionRow key={row.id} {...props} row={row} nested={`${label} ${index + 1}`} rowId={index === 0 ? id : undefined} />
+      ))}
     </>
   );
 }
@@ -246,8 +301,12 @@ function MonthPositionRow({
   onEdit,
   onDelete,
   onCommit,
+  nested,
+  rowId,
 }: {
   row: FinanceRow;
+  nested?: string;
+  rowId?: string;
   months: string[];
   dashboard: Dashboard;
   holidayRanges: AppState["holidayRanges"];
@@ -259,8 +318,8 @@ function MonthPositionRow({
   onCommit: (row: FinanceRow, month: string, value: number | null) => void;
 }) {
   return (
-    <tr>
-      <th scope="row" className="sticky-label">
+    <tr id={rowId} className={cn(nested && "bg-muted/20")}>
+      <th scope="row" className={cn("sticky-label", nested && "pl-8")}>
         <div
           className={cn(
             "flex gap-2",
