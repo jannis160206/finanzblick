@@ -83,6 +83,14 @@ describe("payslip income for the month plan", () => {
   it("books the December payslip into January of the next year", () => {
     expect(payslipIncome({ ...base, month: 12 })).toMatchObject({ payrollMonth: "2026-12", month: "2027-01" });
   });
+
+  it("keeps the existing on-call split for older payslips without on-call data", () => {
+    const result = applyPayslipIncome(state(), [base]);
+    expect(value(result, "income-6")).toBe(210);
+    expect(value(result, "income-5")).toBe(2510);
+    expect(applyPayslipIncome(result.state, [base]).changed).toBe(false);
+    expect(value(applyPayslipIncome(state(), [{ ...base, netPay: 2720 }]), "income-6")).toBe(0);
+  });
 });
 
 describe("payslip merge with net-pay fields", () => {

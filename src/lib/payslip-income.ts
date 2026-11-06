@@ -13,6 +13,8 @@ export type PayslipIncome = {
   holidayWork: number;
   special: number;
   computed: boolean;
+  /** False for payslips stored before on-call shares were read: the existing on-call split is kept. */
+  splitKnown: boolean;
 };
 
 const cents = (value: number) => Math.round(value * 100);
@@ -56,6 +58,7 @@ export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
     holidayWork: holidayWork / 100,
     special: special / 100,
     computed,
+    splitKnown: entry.netPay !== undefined || entry.onCallGross !== undefined || entry.holidayWorkGross !== undefined,
   };
 }
 
@@ -99,14 +102,24 @@ export function applyPayslipIncome(state: AppState, entries: readonly Payslip[])
       found = payrollRows(rows);
     }
     let salary = income.salary;
+    let { onCall, holidayWork } = income;
+    if (!income.splitKnown) {
+      const existing = (row?: FinanceRow) => row?.values[income.month] ?? 0;
+      const kept = existing(found.onCall) + existing(found.holidayWork);
+      if (kept >= 0 && kept < salary) {
+        onCall = existing(found.onCall);
+        holidayWork = existing(found.holidayWork);
+        salary = Math.round((salary - kept) * 100) / 100;
+      }
+    }
     const targets = new Map<string, number>();
     const assign = (row: FinanceRow | undefined, amount: number) => {
       if (row) targets.set(row.id, Math.round(((targets.get(row.id) ?? 0) + amount) * 100) / 100);
       else salary += amount;
     };
     assign(found.special, income.special);
-    assign(found.onCall, income.onCall);
-    assign(found.holidayWork, income.holidayWork);
+    assign(found.onCall, onCall);
+    assign(found.holidayWork, holidayWork);
     targets.set(found.salary!.id, Math.round((salary + (targets.get(found.salary!.id) ?? 0)) * 100) / 100);
     rows = rows.map((row) => {
       if (!targets.has(row.id)) return row;

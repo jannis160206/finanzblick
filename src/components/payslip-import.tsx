@@ -125,6 +125,20 @@ export function PayslipImportPanel({ year, employer, onImported }: {
     }, (cause) => setError(cause.message));
   }
 
+  function syncStoredPayslips() {
+    if (live.current.storageError) { setError(live.current.storageError); return; }
+    let synced: ReturnType<typeof applyPayslipIncome> | undefined;
+    mutate((current) => {
+      synced = applyPayslipIncome(current, current.payslips ?? []);
+      return synced.state;
+    }, () => {
+      const message = payslipIncomeMessage(synced) || "Keine Abrechnung übertragbar.";
+      setNotice(message);
+      toast.success(message);
+      setError("");
+    }, (cause) => setError(cause.message));
+  }
+
   async function readFiles(files: File[]) {
     if (inFlight.current) return;
     if (storageError) { setError(storageError); return; }
@@ -245,7 +259,10 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </div>
         </details>
       </div>}
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Folgemonat der Abrechnung unter „Monate“ eingetragen (Oktober-Abrechnung → November) (Gehalt, Rufbereitschaft, Sonderzahlungen); Kontoumsätze bleiben unverändert.</p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Folgemonat der Abrechnung unter „Monate“ eingetragen (Oktober-Abrechnung → November; Gehalt, Rufbereitschaft, Sonderzahlungen). Kontoumsätze bleiben unverändert.</p>
+        {(state.payslips?.length ?? 0) > 0 && <Button variant="outline" size="sm" disabled={busy || !!storageError} onClick={syncStoredPayslips}>Gespeicherte in „Monate“ übertragen</Button>}
+      </div>
       <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {
