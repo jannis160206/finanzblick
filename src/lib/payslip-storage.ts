@@ -39,6 +39,15 @@ export function removeReviewedPayslip(existing: Payslip[], expected: Payslip): P
   return existing.filter((entry) => payslipKey(entry) !== key);
 }
 
+const netFields = ["netPay", "specialTax", "onCallGross", "holidayWorkGross"] as const;
+
+function isEnrichment(old: Payslip, entry: Payslip): boolean {
+  if (netFields.some((field) => old[field] !== undefined)) return false;
+  const stripped = { ...entry };
+  for (const field of netFields) delete stripped[field];
+  return JSON.stringify(old) === JSON.stringify(payslipSchema.parse(stripped));
+}
+
 export function preparePayslipMerge(existing: Payslip[], incoming: Payslip[]) {
   const byKey = new Map(existing.map((entry) => [payslipKey(entry), entry]));
   const unique = new Map<string, Payslip>();
@@ -61,7 +70,8 @@ export function preparePayslipMerge(existing: Payslip[], incoming: Payslip[]) {
       duplicates++;
       continue;
     }
-    if (old) conflicts.push(key);
+    // Re-uploading an older stored payslip only adds the net-pay fields; that is no conflicting value.
+    if (old && !isEnrichment(payslipSchema.parse(old), entry)) conflicts.push(key);
     byKey.set(key, entry);
     changed.push(entry);
   }

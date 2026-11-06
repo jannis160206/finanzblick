@@ -16,8 +16,10 @@ import { FinanceStorageError } from "@/lib/finance-storage";
 import { currency, monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { PayslipRecords } from "@/components/payslip-records";
+import { applyPayslipIncome } from "@/lib/payslip-income";
 
 const moneyFields = [
+  ["netPay", "Netto laut Abrechnung"],
   ["regularGross", "Sechstelrelevantes laufendes Brutto"],
   ["specialGross", "Sonderzahlungen brutto im Monat"],
   ["unresolvedSixthBonus", "Tarifbesteuerte Prämie · Sechstelzuordnung offen"],
@@ -26,12 +28,24 @@ const moneyFields = [
   ["regularTax", "Lohnsteuer laufend"],
   ["monthlyTaxableBase", "LSt-Bemessungsgrundlage laufend"],
   ["specialSv", "SV Sonderzahlungen im Monat"],
+  ["specialTax", "Lohnsteuer Sonderzahlungen im Monat"],
+  ["onCallGross", "Rufbereitschaft brutto"],
   ["reportedSixth", "Jahressechstel laut Abrechnung"],
 ] as const;
 
 function draftLabel(draft: PayslipDraft, index: number) {
   return draft.year && draft.month
     ? monthLabel(`${draft.year}-${String(draft.month).padStart(2, "0")}`) : `Abrechnung ${index + 1}`;
+}
+
+function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncome> | undefined) {
+  if (!result) return "";
+  const parts = result.applied.map((income) => `${monthLabel(income.month)}: Netto ${currency(income.net)}` +
+    (income.special > 0 ? ` (davon Sonderzahlung ${currency(income.special)})` : ""));
+  const done = parts.length ? `In „Monate“ eingetragen – ${parts.join(", ")}.` : "";
+  const skipped = result.skipped.length
+    ? `Netto nicht eindeutig für ${result.skipped.map((month) => monthLabel(month)).join(", ")} – dort bitte manuell eintragen.` : "";
+  return [done, skipped].filter(Boolean).join(" ");
 }
 
 export function PayslipImportPanel({ year, employer, onImported }: {
@@ -71,6 +85,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       throw new PayslipMutationError("Ersetzen abweichender Abrechnungen bestätigen.");
     const expected = review ?? capturePayslipReview(currentFinance.state.payslips ?? [], entries);
     assertPayslipReview(currentFinance.state.payslips ?? [], expected);
+    let synced: ReturnType<typeof applyPayslipIncome> | undefined;
     mutate((current) => {
       assertPayslipReview(current.payslips ?? [], expected);
       const next = preparePayslipMerge(current.payslips ?? [], entries);
@@ -78,9 +93,11 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         throw new PayslipMutationError(
           "Abrechnungen inzwischen geändert. PDFs erneut hochladen.",
         );
-      if (!next.changed.length) return current;
+      const income = applyPayslipIncome(current, entries);
+      synced = income;
+      if (!next.changed.length) return income.state;
       return {
-        ...current,
+        ...income.state,
         payslips: next.entries,
         payrollForecasts: current.payrollForecasts?.map((forecast) =>
           next.changed.some(
@@ -97,9 +114,10 @@ export function PayslipImportPanel({ year, employer, onImported }: {
       currentFinance.onImported(
         entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0],
       );
-      const message = merged.changed.length
+      const stored = merged.changed.length
         ? `${merged.changed.length} Abrechnung(en) automatisch übernommen.`
         : "Abrechnungen bereits vorhanden – nicht doppelt übernommen.";
+      const message = [stored, payslipIncomeMessage(synced)].filter(Boolean).join(" ");
       setNotice(message);
       toast.success(message);
       setReplacement(null);
@@ -227,7 +245,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </div>
         </details>
       </div>}
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Kontoumsätze bleiben unverändert.</p>
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Abrechnungsmonat unter „Monate“ eingetragen (Gehalt, Rufbereitschaft, Sonderzahlungen); Kontoumsätze bleiben unverändert.</p>
       <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {

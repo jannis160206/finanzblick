@@ -175,6 +175,7 @@ describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
       year: 2026, month: 1, employer: "Fabelwald Robotik GmbH", monthlyPayroll: true,
       regularGross: 3380, specialGross: 0, baseSalary: 2810.2,
       regularSv: 604.32, regularTax: 411.6, monthlyTaxableBase: 2704.38,
+      netPay: 2382.08, onCallGross: 302.75,
     }]);
     expect(payslipSchema.safeParse(result.drafts[0]).success).toBe(true);
     expect(JSON.stringify(result)).not.toMatch(/Testperson|777777|Freibetrag|bereits überwiesen/i);

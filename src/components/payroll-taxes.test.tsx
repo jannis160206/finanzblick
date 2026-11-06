@@ -132,7 +132,8 @@ it("automatically imports dropped PDFs without a form and keeps secrets and bank
   await waitFor(() => expect(latest.payslips).toEqual([january]));
   expect(pdf.parse).toHaveBeenCalledWith(expect.any(ArrayBuffer), "synthetic-password");
   expect(latest.transactions).toEqual(before.transactions);
-  expect(latest.financeRows).toEqual(before.financeRows);
+  expect(latest.financeRows).toEqual(before.financeRows.map((row) => row.id === "income-salary"
+    ? { ...row, values: { ...row.values, "2026-01": 2260 } } : row));
   expect(localStorage.getItem("payroll-test")).not.toContain("synthetic-password");
   expect(screen.queryByRole("dialog")).toBeNull();
   expectNoManualInputs();

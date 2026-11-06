@@ -30,6 +30,9 @@ const REGULAR = /^(?:gehalt|grundgehalt|monatsgehalt|grundlohn|monatslohn|lohn|�
 const BASE_SALARY = /^(?:gehalt|grundgehalt|monatsgehalt|grundlohn|monatslohn|lohn)$/i;
 const SPECIAL = /^(?:urlaubszuschuss|urlaubsbeihilfe|urlaubsgeld|weihnachtsremuneration|weihnachtsgeld|sonderzahlung|(?:13|14)\.(?:\s*\/\s*14\.)?\s*(?:gehalt|monatsgehalt|lohn))$/i;
 const VEB_BONUS = /^veb[- ]prämie$/i;
+const NET_PAY = /^netto(?:[- ]?(?:bezug|bezüge|betrag|entgelt|lohn|gehalt|einkommen|verdienst))?$/i;
+const PAYOUT = /^(?:(?:zur\s+)?auszahlung(?:sbetrag)?|auszahlungs?betrag|überweisung(?:sbetrag)?)$/i;
+const ADVANCE = /\b(?:akonto|vorschuss|abschlag(?:szahlung)?|bereits\s+(?:aus)?(?:bezahlt|überwiesen))\b/i;
 const EXPENSE = /^(?:(?:telearbeits|homeoffice)[- ]?pauschale|reisekostenersatz|fahrtkostenersatz|kilometergeld|diäten)\s+(?:frei|steuerfrei|§\s*26(?:\s+estg)?)$/i;
 const INFORMATIONAL = /^(?:freibetrag\s*§\s*68\s*\(\s*[12]\s*\)|(?:telearbeits|homeoffice)[- ]?tage)$/i;
 const CORPORATION = /^(?!.*(?:personal|versicher|arbeitnehmer|dienstnehmer|iban|@|\d{4})).*[a-zäöü].*\b(?:gmbh(?:\s*&\s*co\.?\s*kg)?|ag|kg|og|e\.?\s*u\.?)$/i;
@@ -269,9 +272,19 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     const record = (field: keyof PayslipDraft, value: number | undefined) => {
       if (value !== undefined) readings.set(field, [...(readings.get(field) ?? []), value]);
     };
+    const netReadings: number[] = [];
+    const payoutReadings: number[] = [];
+    let advancePaid = false;
     for (const line of lines) {
       const label = line.items.filter((item) => cents(item.text) === undefined)
         .sort((a, b) => a.x - b.x).map((item) => clean(item.text)).join(" ").replace(/:$/, "");
+      const payLabel = label.replace(/^\d{3,5}\s+/, "").replace(/\s*(?:€|eur)$/i, "").replace(/:$/, "").trim();
+      if (ADVANCE.test(payLabel)) advancePaid = true;
+      if (NET_PAY.test(payLabel) || PAYOUT.test(payLabel)) {
+        const values = amounts(line.items);
+        if (values.length === 1 && values[0] > 0) (NET_PAY.test(payLabel) ? netReadings : payoutReadings).push(values[0]);
+        else issue("Nettobetrag nicht eindeutig lesbar; er wird aus Brutto, SV und Lohnsteuer berechnet.");
+      }
       if (/^steuerpflichtige\s+sonderzahlungen\s+(?:kumuliert|ytd)\b/i.test(label) &&
         !SPECIAL_TAXABLE_YTD.test(label))
         issue("Kumulierte Sonderzahlungs-Steuerbasis nicht eindeutig als innerhalb des Jahressechstels, nach SV und vor 620-Euro-Freibetrag ausgewiesen; der Wert bleibt unbekannt.");
@@ -289,6 +302,8 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     let regularCount = 0;
     let specialCount = 0;
     let bonus = 0;
+    let onCall = 0;
+    let holidayWork = 0;
     let regularSvBase = 0;
     let tariffBase = 0;
     let bonusEvidenceComplete = true;
@@ -330,8 +345,10 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           if (value === undefined) issue("Ein Sozialversicherungsbeitrag ist nicht eindeutig lesbar und bleibt unbekannt.");
           else record(/\b(?:lfd\.?|laufend)$/i.test(label) ? "regularSv" : "specialSv", Math.abs(value));
         }
-        if (/^l(?:ohn)?st[- ]?beitrag\s+(?:sz|sonderzahlung(?:en)?)$/i.test(label)
-          && (value !== 0 || cell(line, layout, "tax") !== 0)) bonusEvidenceComplete = false;
+        if (/^l(?:ohn)?st[- ]?beitrag\s+(?:sz|sonderzahlung(?:en)?)$/i.test(label)) {
+          if (value !== undefined) record("specialTax", Math.abs(value));
+          if (value !== 0 || cell(line, layout, "tax") !== 0) bonusEvidenceComplete = false;
+        }
         if (/^l(?:ohn)?st[- ]?beitrag\s+(?:lfd\.?|laufend)$/i.test(label)) {
           if (value === undefined) issue("Laufender Lohnsteuerbeitrag nicht eindeutig lesbar und bleibt unbekannt.");
           else record("regularTax", Math.abs(value));
@@ -368,6 +385,10 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           regular += value;
           wageCount++;
           regularCount++;
+          if (/^rufbereitschaft/i.test(label)) {
+            if (/feiertag/i.test(label)) holidayWork += value;
+            else onCall += value;
+          }
           if (svBase === undefined || svBase < 0 || taxBase === undefined || taxBase < 0) bonusEvidenceComplete = false;
           else {
             regularSvBase += svBase;
@@ -426,8 +447,15 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
         draft.unresolvedSixthBonus = bonus / 100;
         issue("VEB-Prämie erkannt: SV-Sonderzahlung und laufender Lohnsteuertarif. Ihre Sechstelzuordnung ist im Beleg nicht ausgewiesen; die Auswertung zeigt dafür eine Schätzspanne.");
       }
-      if (regularCount) draft.regularGross = regular / 100;
-      else issue("Keine eindeutigen laufenden Bezüge; sie werden nicht aus Sonderzahlungen abgeleitet.");
+      if (regularCount) {
+        draft.regularGross = regular / 100;
+        if (onCall) draft.onCallGross = onCall / 100;
+        if (holidayWork) draft.holidayWorkGross = holidayWork / 100;
+      } else issue("Keine eindeutigen laufenden Bezüge; sie werden nicht aus Sonderzahlungen abgeleitet.");
+      // Prefer "Netto": "Auszahlung" can be only the remainder after an advance transfer.
+      const netCandidates = [...new Set(netReadings.length ? netReadings : advancePaid ? [] : payoutReadings)];
+      if (netCandidates.length === 1 && gross !== undefined && netCandidates[0] <= gross) draft.netPay = netCandidates[0] / 100;
+      else if (netCandidates.length > 1) issue("Mehrere unterschiedliche Nettobeträge; das Netto wird aus Brutto, SV und Lohnsteuer berechnet.");
       if (specialCount || (regularCount && draft.monthlyPayroll === true)) draft.specialGross = special / 100;
       else issue("Fehlende Sonderzahlungen sind bei unklarem oder unvollständigem Monat nicht automatisch null.");
     }

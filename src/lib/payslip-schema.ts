@@ -37,6 +37,11 @@ export const payslipSchema = z.object({
   specialTaxableYtd: amount.optional(),
   usedSixth: amount.optional(),
   baseSalary: amount.optional(),
+  // Net pay as printed on the payslip ("Netto"); special-payment tax and on-call gross split it for the month plan.
+  netPay: amount.optional(),
+  specialTax: amount.optional(),
+  onCallGross: amount.optional(),
+  holidayWorkGross: amount.optional(),
   monthlyPayroll: z.boolean(),
   payrollContextIssues: z.array(payrollContextIssueSchema).max(4)
     .refine((reasons) => new Set(reasons).size === reasons.length, "Kontextgründe dürfen nicht doppelt vorkommen.")
