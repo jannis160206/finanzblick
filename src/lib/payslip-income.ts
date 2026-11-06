@@ -3,6 +3,9 @@ import type { Payslip } from "@/lib/payslip-schema";
 import type { AppState, FinanceRow } from "@/lib/types";
 
 export type PayslipIncome = {
+  /** Abrechnungsmonat of the payslip. */
+  payrollMonth: string;
+  /** Month on "Monate" that receives the pay: always the month after the Abrechnungsmonat. */
   month: string;
   net: number;
   salary: number;
@@ -13,6 +16,7 @@ export type PayslipIncome = {
 };
 
 const cents = (value: number) => Math.round(value * 100);
+const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 const SPECIAL_ROW = /sonderzahl|urlaubs(?:geld|zuschuss)|weihnachts|1[34]\.\s*(?:monats)?(?:gehalt|lohn)/i;
 export const SPECIAL_ROW_ID = "income-special-payments";
 
@@ -42,8 +46,10 @@ export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
   const share = (gross: number) => regularGross > 0 ? Math.round(regularNet * gross / regularGross) : 0;
   const onCall = share(cents(entry.onCallGross ?? 0));
   const holidayWork = share(cents(entry.holidayWorkGross ?? 0));
+  const next = entry.month === 12 ? { year: entry.year + 1, month: 1 } : { year: entry.year, month: entry.month + 1 };
   return {
-    month: `${entry.year}-${String(entry.month).padStart(2, "0")}`,
+    payrollMonth: monthKey(entry.year, entry.month),
+    month: monthKey(next.year, next.month),
     net: net / 100,
     salary: (regularNet - onCall - holidayWork) / 100,
     onCall: onCall / 100,
@@ -66,7 +72,8 @@ function payrollRows(rows: FinanceRow[]): Rows {
 }
 
 /**
- * Writes payslip net pay into the income rows of its payroll month on the "Monate" page.
+ * Writes payslip net pay into the income rows of the following month on the "Monate" page
+ * (the October payslip is paid out and planned in November).
  * Only payroll rows are set; other income such as "Sonstiges" stays untouched. Re-applying
  * the same payslip yields the same values.
  */
@@ -77,7 +84,7 @@ export function applyPayslipIncome(state: AppState, entries: readonly Payslip[])
   for (const entry of [...entries].sort((a, b) => a.year - b.year || a.month - b.month)) {
     const income = payslipIncome(entry);
     if (!income) {
-      skipped.push(`${entry.year}-${String(entry.month).padStart(2, "0")}`);
+      skipped.push(monthKey(entry.year, entry.month));
       continue;
     }
     let found = payrollRows(rows);

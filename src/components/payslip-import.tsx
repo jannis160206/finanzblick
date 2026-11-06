@@ -40,11 +40,11 @@ function draftLabel(draft: PayslipDraft, index: number) {
 
 function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncome> | undefined) {
   if (!result) return "";
-  const parts = result.applied.map((income) => `${monthLabel(income.month)}: Netto ${currency(income.net)}` +
+  const parts = result.applied.map((income) => `Abrechnung ${monthLabel(income.payrollMonth)} → ${monthLabel(income.month)}: Netto ${currency(income.net)}` +
     (income.special > 0 ? ` (davon Sonderzahlung ${currency(income.special)})` : ""));
   const done = parts.length ? `In „Monate“ eingetragen – ${parts.join(", ")}.` : "";
   const skipped = result.skipped.length
-    ? `Netto nicht eindeutig für ${result.skipped.map((month) => monthLabel(month)).join(", ")} – dort bitte manuell eintragen.` : "";
+    ? `Netto nicht eindeutig für Abrechnung ${result.skipped.map((month) => monthLabel(month)).join(", ")} – im Folgemonat bitte manuell eintragen.` : "";
   return [done, skipped].filter(Boolean).join(" ");
 }
 
@@ -245,7 +245,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </div>
         </details>
       </div>}
-      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Abrechnungsmonat unter „Monate“ eingetragen (Gehalt, Rufbereitschaft, Sonderzahlungen); Kontoumsätze bleiben unverändert.</p>
+      <p className="mt-4 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Folgemonat der Abrechnung unter „Monate“ eingetragen (Oktober-Abrechnung → November) (Gehalt, Rufbereitschaft, Sonderzahlungen); Kontoumsätze bleiben unverändert.</p>
       <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {

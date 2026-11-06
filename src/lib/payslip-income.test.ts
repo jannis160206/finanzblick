@@ -11,13 +11,13 @@ const base: Payslip = {
   regularSv: 720, regularTax: 560, monthlyPayroll: true,
 };
 const rows: FinanceRow[] = [
-  { id: "income-5", label: "Nettogehalt", kind: "income", values: { "2026-10": 2500, "2026-11": 2500 } },
-  { id: "income-6", label: "Rufbereitschaft", kind: "income", values: { "2026-10": 210 } },
-  { id: "income-8", label: "Sonstiges", kind: "income", values: { "2026-10": 50 } },
+  { id: "income-5", label: "Nettogehalt", kind: "income", values: { "2026-11": 2500, "2026-12": 2500 } },
+  { id: "income-6", label: "Rufbereitschaft", kind: "income", values: { "2026-11": 210 } },
+  { id: "income-8", label: "Sonstiges", kind: "income", values: { "2026-11": 50 } },
   { id: "rent", label: "Miete", kind: "fixed", values: { "2026-10": 900 } },
 ];
 const state = (financeRows = rows) => ({ financeRows }) as AppState;
-const value = (result: { state: AppState }, id: string, month = "2026-10") =>
+const value = (result: { state: AppState }, id: string, month = "2026-11") =>
   result.state.financeRows.find((row) => row.id === id)?.values[month];
 
 describe("payslip net pay parsing", () => {
@@ -43,8 +43,9 @@ describe("payslip income for the month plan", () => {
     expect(value(result, "income-6")).toBe(280);
     expect(value(result, "income-5")).toBe(2520);
     expect(value(result, "income-8")).toBe(50);
-    expect(value(result, "income-5", "2026-11")).toBe(2500);
-    expect(result.applied[0]).toMatchObject({ net: 2800, computed: false });
+    expect(value(result, "income-5", "2026-12")).toBe(2500);
+    expect(value(result, "income-5", "2026-10")).toBeUndefined();
+    expect(result.applied[0]).toMatchObject({ payrollMonth: "2026-10", month: "2026-11", net: 2800, computed: false });
   });
 
   it("puts the special-payment net into its own row", () => {
@@ -52,9 +53,9 @@ describe("payslip income for the month plan", () => {
     const result = applyPayslipIncome(state(), [entry]);
     const special = result.state.financeRows.find((row) => row.label === "Sonderzahlungen");
     expect(special?.kind).toBe("income");
-    expect(special?.values["2026-06"]).toBe(2920);
-    expect(value(result, "income-5", "2026-06")).toBe(2680);
-    expect(value(result, "income-6", "2026-06")).toBe(0);
+    expect(special?.values["2026-07"]).toBe(2920);
+    expect(value(result, "income-5", "2026-07")).toBe(2680);
+    expect(value(result, "income-6", "2026-07")).toBe(0);
     expect(result.state.financeRows.findIndex((row) => row.label === "Sonderzahlungen")).toBe(1);
   });
 
@@ -74,9 +75,13 @@ describe("payslip income for the month plan", () => {
   it("is idempotent and creates a salary row if none exists", () => {
     const once = applyPayslipIncome(state([]), [base]);
     expect(once.state.financeRows).toEqual([
-      { id: "income-salary", label: "Nettogehalt", kind: "income", values: { "2026-10": 2720 } },
+      { id: "income-salary", label: "Nettogehalt", kind: "income", values: { "2026-11": 2720 } },
     ]);
     expect(applyPayslipIncome(once.state, [base]).changed).toBe(false);
+  });
+
+  it("books the December payslip into January of the next year", () => {
+    expect(payslipIncome({ ...base, month: 12 })).toMatchObject({ payrollMonth: "2026-12", month: "2027-01" });
   });
 });
 
