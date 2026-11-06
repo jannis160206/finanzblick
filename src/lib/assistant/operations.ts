@@ -53,6 +53,7 @@ function snapshotTransactions(undo: AssistantUndo, rows: Transaction[]) {
     ...(row.aiAssigned !== undefined ? { aiAssigned: row.aiAssigned } : {}),
     ...(row.fixedCost !== undefined ? { fixedCost: row.fixedCost } : {}),
     ...(row.merchantNameConfirmed !== undefined ? { merchantNameConfirmed: row.merchantNameConfirmed } : {}),
+    ...(row.ignored !== undefined ? { ignored: row.ignored } : {}),
   });
 }
 const yesNo = (value: boolean | undefined) => value ? "ja" : "nein";
@@ -260,6 +261,8 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         diffs.push({ label: `${label}: Fixkosten`, before: tally((row) => yesNo(row.fixedCost)), after: yesNo(operation.fixedCost) });
       if (operation.reviewed !== undefined && changed((row) => Boolean(row.reviewed), operation.reviewed))
         diffs.push({ label: `${label}: geprüft`, before: tally((row) => yesNo(row.reviewed)), after: yesNo(operation.reviewed) });
+      if (operation.ignored !== undefined && changed((row) => Boolean(row.ignored), operation.ignored))
+        diffs.push({ label: `${label}: ignoriert`, before: tally((row) => yesNo(row.ignored)), after: yesNo(operation.ignored) });
       if (diffs.length === start) throw new OperationError(`An ${rows.length === 1 ? "dieser Buchung" : "diesen Buchungen"} würde sich nichts ändern.`);
       snapshotTransactions(undo, rows);
       return { ...state, transactions: state.transactions.map((row) => {
@@ -269,6 +272,8 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         if (operation.includeInPlan !== undefined) next.includeInPlan = operation.includeInPlan;
         if (operation.fixedCost !== undefined) next.fixedCost = operation.fixedCost;
         if (operation.reviewed !== undefined) next.reviewed = operation.reviewed;
+        if (operation.ignored === true) next.ignored = true;
+        else if (operation.ignored === false) delete next.ignored;
         return next;
       }) };
     }
@@ -388,7 +393,7 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
       const before = fields.get(row.id);
       if (!before) return row;
       const restored = { ...row };
-      for (const key of ["categoryOverride", "manualCategory", "reviewed", "aiAssigned", "fixedCost"] as const) delete restored[key];
+      for (const key of ["categoryOverride", "manualCategory", "reviewed", "aiAssigned", "fixedCost", "ignored"] as const) delete restored[key];
       if (before.merchantAlias !== undefined) delete restored.merchantNameConfirmed;
       const result = { ...restored, ...before };
       if (result.merchantAlias === "") delete result.merchantAlias;

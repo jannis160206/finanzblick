@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleHelp,
+  EyeOff,
   Repeat,
   X,
 } from "lucide-react";
@@ -173,6 +174,15 @@ export function TransactionCategoryCell({
             <Repeat className="size-4" aria-hidden="true" />
           </span>
         )}
+        {booking.ignored && (
+          <span
+            title="Zählt in keiner Statistik, keinem Budget und keiner Auswertung"
+            className="inline-flex items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
+          >
+            <EyeOff className="size-3" aria-hidden="true" />
+            Ignoriert
+          </span>
+        )}
       </div>
       <Popover>
         <PopoverTrigger asChild>
@@ -306,7 +316,7 @@ export function MobileTransactionList({
         <li
           key={row.id}
           aria-label={`Buchung: ${row.original.merchantAlias ?? row.original.description}`}
-          className="space-y-3 p-4"
+          className={cn("space-y-3 p-4", row.original.ignored && "opacity-55")}
         >
           <div className="flex items-start gap-2">
             <div className="-mt-2 -ml-2 shrink-0">

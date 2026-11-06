@@ -141,8 +141,17 @@ function classifyUncached(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias" | "automaticCategoryEvidence">>,
-) {
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias" | "automaticCategoryEvidence" | "ignored">>,
+) : ReturnType<typeof classifyCounted> & { ignored?: true } {
+  if (!transaction.ignored) return classifyCounted(transaction);
+  // Ignored bookings keep their category and pocket (balances stay correct) but count like
+  // a transfer, so every spending, income, budget and insight calculation skips them.
+  return {
+    ...classifyCounted(transaction), isTransfer: true, isFixedCost: false, includeInPlan: false,
+    ignored: true as const, reason: "Ignoriert · zählt in keiner Statistik",
+  };
+}
+function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
   const recovered = recoverMerchant(transaction);
   const { description, amount } = recovered;
   const dutyFreeShopping = transaction.categoryOverride &&

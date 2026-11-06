@@ -7,7 +7,7 @@ import { isAtmBooking } from "@/lib/atm-logo";
 
 export type MarkClassification = Pick<
   ReturnType<typeof classify>,
-  "category" | "isTransfer"
+  "category" | "isTransfer" | "ignored"
 >;
 
 const transferCategories = [
@@ -25,7 +25,7 @@ export function shouldShowMerchantMark(
   if (isAtmBooking(booking)) return true;
   const operation = bankOperation(booking);
   return !(
-    classification.isTransfer ||
+    (classification.isTransfer && !classification.ignored) ||
     (!suppliedLogo &&
       (operation?.kind === "fee" ||
         operation?.kind === "interest" ||

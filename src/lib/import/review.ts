@@ -117,6 +117,8 @@ function indexReviewRules(state: AppState) {
 
 // For ledger rows (`acceptCategorized`) a concrete category settles name-only and worker-uncertainty reviews; import drafts keep asking.
 export function bookingReviewReason(state: AppState, row: AccountedTransaction, ruleIndex = indexReviewRules(state), acceptCategorized = false): string | undefined {
+  // An ignored booking no longer counts anywhere, so there is nothing left to review.
+  if (row.ignored) return undefined;
   if (isAmexScreenshot(row) && !transactionSchema.safeParse(row).success)
     return "Buchungsdaten unvollständig – bitte Datum, Händler und Betrag prüfen.";
   if (isAmexScreenshot(row) && row.rawDetails?.includes("OCR-Händler unklar") &&

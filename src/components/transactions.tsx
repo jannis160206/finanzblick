@@ -88,6 +88,7 @@ import {
   matchesTransactionSearch,
 } from "@/lib/transaction-tools";
 import { cn } from "@/lib/utils";
+import { setBookingsIgnored } from "@/lib/ignored-bookings";
 import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
 
@@ -148,6 +149,7 @@ const TransactionLedger = memo(function TransactionLedger({
         }
     }
     for (const row of ledger) {
+      if (row.ignored) continue;
       if (
         !(row.reviewed && row.categoryOverride) &&
         fixedKeys.size &&
@@ -272,6 +274,7 @@ const TransactionLedger = memo(function TransactionLedger({
         return (
           (filters.showTransfers ||
             !result.isTransfer ||
+            !!row.ignored ||
             !!row.holidayReimbursementFor) &&
           matchesTransactionSearch(row, filters.query, result.merchant) &&
           (filters.group
@@ -413,6 +416,7 @@ const TransactionLedger = memo(function TransactionLedger({
             void startLookup(row.original);
           }}
           onDelete={() => setDeleting(row.original)}
+          onToggleIgnored={() => toggleIgnored([row.original], !row.original.ignored)}
         />
       ),
     },
@@ -456,6 +460,15 @@ const TransactionLedger = memo(function TransactionLedger({
       ? [id]
       : [];
   });
+  function toggleIgnored(rows: Transaction[], ignored: boolean) {
+    const ids = rows.filter((row) => !!row.ignored !== ignored).map((row) => row.id);
+    if (!ids.length) return;
+    update((current) => setBookingsIgnored(current, ids, ignored));
+    const label = ids.length === 1 ? "Buchung" : `${ids.length} Buchungen`;
+    toast(ignored ? `${label} ignoriert – zählt in keiner Statistik mehr` : `${label} wird wieder berücksichtigt`, {
+      action: { label: "Rückgängig", onClick: () => update((current) => setBookingsIgnored(current, ids, !ignored)) },
+    });
+  }
   function exportView() {
     const rows = table
       .getPrePaginationRowModel()
@@ -521,6 +534,17 @@ const TransactionLedger = memo(function TransactionLedger({
               onClick={() => setSelection({ scope, rows: {} })}
             >
               Auswahl aufheben
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!!storageError}
+              onClick={() => {
+                toggleIgnored(selected, selected.some((row) => !row.ignored));
+                setSelection({ scope, rows: {} });
+              }}
+            >
+              {selected.some((row) => !row.ignored) ? "Ignorieren" : "Wieder berücksichtigen"}
             </Button>
             <Button
               ref={batchTrigger}
@@ -602,9 +626,10 @@ const TransactionLedger = memo(function TransactionLedger({
                   {displayedRows.map((row) => (
                     <tr
                       key={row.id}
-                      className={
-                        row.getIsSelected() ? "bg-primary/5" : undefined
-                      }
+                      className={cn(
+                        row.getIsSelected() && "bg-primary/5",
+                        row.original.ignored && "opacity-55",
+                      )}
                     >
                       {row.getVisibleCells().map((cell) => (
                         <td
@@ -641,7 +666,7 @@ const TransactionLedger = memo(function TransactionLedger({
         <LedgerFooter
           table={table}
           count={data.length}
-          total={sum(data.map(personalAmount))}
+          total={sum(data.filter((row) => !row.ignored).map(personalAmount))}
         />
       </section>
       {editor && (

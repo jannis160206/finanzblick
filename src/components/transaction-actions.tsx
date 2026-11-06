@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CircleHelp, MoreHorizontal, Pencil, Receipt, Trash2 } from "lucide-react";
+import { CircleHelp, Eye, EyeOff, MoreHorizontal, Pencil, Receipt, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
@@ -27,6 +27,7 @@ export function TransactionActions({
   onEdit,
   onLookup,
   onDelete,
+  onToggleIgnored,
 }: {
   booking: AccountedTransaction;
   disabled: boolean;
@@ -36,6 +37,7 @@ export function TransactionActions({
   onEdit: () => void;
   onLookup: () => void;
   onDelete: () => void;
+  onToggleIgnored: () => void;
 }) {
   const [receiptOpen, setReceiptOpen] = useState(false);
   return (
@@ -109,6 +111,16 @@ export function TransactionActions({
               {booking.splits?.length ? "Aufteilung ansehen" : "Kassenbon aufteilen"}
             </DropdownMenuItem>
           )}
+          <DropdownMenuItem
+            aria-label={`${booking.ignored ? "Wieder berücksichtigen" : "Ignorieren"}: ${bookingDescription(booking)}`}
+            onSelect={() => {
+              onTrigger(booking.id, "menu");
+              onToggleIgnored();
+            }}
+          >
+            {booking.ignored ? <Eye /> : <EyeOff />}
+            {booking.ignored ? "Wieder berücksichtigen" : "Ignorieren"}
+          </DropdownMenuItem>
           <DropdownMenuItem
             aria-label={`Löschen: ${bookingDescription(booking)}`}
             className="text-destructive data-[highlighted]:bg-destructive/10"

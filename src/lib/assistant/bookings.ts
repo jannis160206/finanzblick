@@ -15,6 +15,10 @@ const fixedVerb = /\b(?:ist|sind|als|markier\w*|zähl\w*|zaehl\w*|kein\w*|nicht|
 const fixedOff = /\bkeine?\b|\bnicht\b|variabel/;
 const reviewedWord = /\bgeprüft\b|\bgeprueft\b|abhak|\bhak\w*\b.*\bab\b|\bkontrolliert\b|ungeprüft|ungeprueft/;
 const reviewedOff = /ungeprüft|ungeprueft|nicht (?:als )?geprüft|nicht (?:als )?geprueft/;
+// "Ignorier die Buchung vom 3.11." drops bookings from every statistic; "im Plan ignorieren" stays a plan edit.
+const ignoreOn = /\bignorier\w*|aus (?:der|den|allen) (?:statistik\w*|auswertung\w*)|in keiner (?:statistik|auswertung)/;
+const ignoreOff = /nicht (?:mehr )?ignorier\w*|wieder (?:berücksichtig|beruecksichtig)\w*|wieder in (?:die|den) (?:statistik\w*|auswertung\w*)/;
+const planIgnore = /(?:im|aus dem) (?:monats)?plan ignorier/;
 const question = /^(?:wie|was|welche\w*|wo|wann|warum|wieso|weshalb|zeig mir|hab(?:e)? ich|sind|ist|gibt)\b|\?\s*$/;
 const renamePatterns = [
   /^(?:bitte\s+)?(?:benenn\w*|nenn\w*)\s+(.+?)\s+in\s+[„"']?(.+?)[“"']?\s+um\s*[.!]?$/i,
@@ -28,7 +32,8 @@ const fillers = new Set(["alle", "die", "der", "das", "den", "dem", "des", "buch
   "mach", "setz", "setze", "zähl", "zählen", "zaehlen", "mitzählen", "mitrechnen", "ab", "hak", "abhaken", "kontrolliert", "und", "auch", "mal", "doch",
   "jetzt", "immer", "eine", "einen", "ein", "mein", "meine", "meinen", "raus", "rein", "aufnehmen", "nehmen", "auf", "gehört", "gehoert", "zu", "variabel",
   "ignorieren", "ignorier", "euro", "€", "januar", "jänner", "februar", "feber", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober",
-  "november", "dezember", "monat", "diesen", "letzten", "heuer", "seit", "es", "sie", "er", "dieser", "diese", "dieses"]);
+  "november", "dezember", "monat", "diesen", "letzten", "heuer", "seit", "es", "sie", "er", "dieser", "diese", "dieses", "ignoriere", "ignoriert",
+  "statistik", "statistiken", "auswertung", "auswertungen", "berücksichtigen", "beruecksichtigen", "keiner", "allen"]);
 
 export function renameRequest(text: string): { target: string; alias: string } | undefined {
   for (const pattern of renamePatterns) {
@@ -44,6 +49,7 @@ export function bookingRequest(text: string, known: boolean): boolean {
   const lower = text.toLowerCase().trim();
   if (question.test(lower)) return false;
   const bookingWord = /\b(?:buchung|buchungen|umsatz|umsätze|umsaetze|zahlung|zahlungen)\b/.test(lower);
+  if ((ignoreOn.test(lower) || ignoreOff.test(lower)) && !planIgnore.test(lower) && (!known || bookingWord)) return true;
   if ((planOut.test(lower) || planIn.test(lower)) && (!known || bookingWord)) return true;
   if (fixedWord.test(lower) && fixedVerb.test(lower) && !/\bwie ?viel\b|\bwelche\b/.test(lower)) return true;
   if (reviewedWord.test(lower) && /markier|\bals\b|abhak|\bhak|\bsetz/.test(lower)) return true;
@@ -84,13 +90,15 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
   const rename = renameRequest(text);
   const update: Extract<AssistantOperation, { op: "transaction_update" }> = { op: "transaction_update", ids: ["pending"] };
   if (rename) update.alias = rename.alias;
+  else if (ignoreOff.test(lower)) update.ignored = false;
+  else if (ignoreOn.test(lower) && !planIgnore.test(lower)) update.ignored = true;
   else {
     if (planIn.test(lower)) update.includeInPlan = true;
     else if (planOut.test(lower)) update.includeInPlan = false;
     if (fixedWord.test(lower)) update.fixedCost = !fixedOff.test(lower);
     if (reviewedWord.test(lower)) update.reviewed = !reviewedOff.test(lower);
   }
-  if (Object.keys(update).length === 2) return "Was soll ich an den Buchungen ändern? Zum Beispiel „Benenne BILLA DANKT in Billa um“, „Netflix ist Fixkosten“ oder „Nimm die Buchung vom 3.11. aus dem Plan“.";
+  if (Object.keys(update).length === 2) return "Was soll ich an den Buchungen ändern? Zum Beispiel „Benenne BILLA DANKT in Billa um“, „Netflix ist Fixkosten“ oder „Nimm die Buchung vom 3.11. aus dem Plan“ oder „Ignorier die Buchung vom 3.11.“.";
   const scope = rename ? rename.target : text;
   const date = dateIn(scope, asOf);
   const amount = amountIn(scope);
@@ -107,15 +115,17 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
     .filter(Boolean).join(" ");
   if (!rows.length) return `Ich finde keine Buchung ${what}.`;
   update.ids = rows.slice(0, 2000).map((row) => row.id);
-  const action = update.alias ? `als „${update.alias}“ anzeigen` : update.includeInPlan === false ? "aus dem Monatsplan nehmen"
+  const action = update.alias ? `als „${update.alias}“ anzeigen` : update.ignored ? "ignorieren (zählt in keiner Statistik)"
+    : update.ignored === false ? "wieder berücksichtigen" : update.includeInPlan === false ? "aus dem Monatsplan nehmen"
     : update.includeInPlan ? "wieder in den Monatsplan nehmen" : update.fixedCost === true ? "als Fixkosten markieren" : update.fixedCost === false ? "nicht mehr als Fixkosten zählen"
     : update.reviewed === false ? "als ungeprüft markieren" : "als geprüft markieren";
   const count = rows.length;
   const card: AssistantCard = { kind: "answer", title: `${count === 1 ? "1 Buchung" : `${count} Buchungen`} ${what}`.slice(0, 200), total: Math.round(rows.reduce((sum, row) => sum + row.amount, 0) * 100) / 100,
     lines: rows.slice(0, 12).map((row) => ({ label: `${dateLabel(row.date)} · ${row.merchantAlias || row.description.slice(0, 60)}`.slice(0, 200), value: row.amount,
-      detail: [canonicalCategory(classify(row).category), row.includeInPlan ? "im Plan" : "nicht im Plan", row.fixedCost ? "Fixkosten" : "", row.reviewed ? "geprüft" : ""]
+      detail: [canonicalCategory(classify(row).category), row.includeInPlan ? "im Plan" : "nicht im Plan", row.fixedCost ? "Fixkosten" : "", row.reviewed ? "geprüft" : "", row.ignored ? "ignoriert" : ""]
         .filter(Boolean).join(" · "), transactionIds: [row.id] })),
     transactionIds: update.ids.slice(0, 50),
-    note: update.alias ? "Nur der Anzeigename ändert sich, Beschreibung und Kategorie bleiben gleich." : undefined };
+    note: update.alias ? "Nur der Anzeigename ändert sich, Beschreibung und Kategorie bleiben gleich."
+      : update.ignored ? "Die Buchungen bleiben in den Umsätzen und im Kontostand, zählen aber in keiner Statistik, keinem Budget und keiner Auswertung mehr." : undefined };
   return { operations: [update], title: `${count === 1 ? "Buchung" : `${count} Buchungen`} ${action}`.slice(0, 120), card, count };
 }

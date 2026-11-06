@@ -305,6 +305,7 @@ export async function parseWorkbook(
           : {}),
         ...(native && text(get("Uhrzeit")) ? { time: text(get("Uhrzeit")) } : {}),
         ...(native && text(get("Geteilt mit Raphael")) ? { sharedWithRaphael: /^(ja|true|1)$/i.test(text(get("Geteilt mit Raphael"))) } : {}),
+        ...(native && /^(ja|true|1)$/i.test(text(get("Ignoriert"))) ? { ignored: true } : {}),
         ...(native && text(get("Geteilt manuell bezahlt")) ? { sharedPaidManually: /^(ja|true|1)$/i.test(text(get("Geteilt manuell bezahlt"))) } : {}),
         ...(native && value(get("Händlererstattung für")) !== null && value(get("Händlererstattung für")) !== ""
           ? { sharedRefundFor: value(get("Händlererstattung für")) } : {}),
@@ -792,6 +793,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
     "Erstattung nicht geteilt",
     "Partnerzahlung für",
     "Manuell bezahlter Partneranteil",
+    "Ignoriert",
   ]);
   state.transactions.forEach((row) => {
     const result = classify(row);
@@ -840,6 +842,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       row.sharedRefundUnlinked === undefined ? "" : row.sharedRefundUnlinked ? "Ja" : "Nein",
       row.sharedRepaymentFor ?? "",
       row.sharedPaidAmount ?? "",
+      row.ignored ? "Ja" : "",
     ]);
   });
   for (const year of [2026, 2027]) {

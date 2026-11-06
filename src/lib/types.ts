@@ -141,6 +141,8 @@ const transactionFieldsSchema = z.object({
   occurrence: z.number().int().positive().optional(),
   sharedWithRaphael: z.boolean().optional(),
   sharedPaidManually: z.boolean().optional(),
+  // Excluded from every statistic, budget, insight and agent answer; balances and import dedup still see it.
+  ignored: z.boolean().optional(),
   // Receipt split (Kassenbon): category parts that must sum to `amount`; see lib/splits.ts.
   splits: z.array(z.object({
     category: categorySchema,
@@ -434,6 +436,7 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     includeInPlan: z.boolean().optional(),
     fixedCost: z.boolean().optional(),
     reviewed: z.boolean().optional(),
+    ignored: z.boolean().optional(),
   }).strict(),
   z.object({
     op: z.literal("categorize"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
@@ -606,6 +609,7 @@ const undoTransactionSchema = z.object({
   // "" means the booking had no alias; undefined (older entries) leaves the alias untouched.
   merchantAlias: z.string().max(200).optional(),
   merchantNameConfirmed: z.boolean().optional(),
+  ignored: z.boolean().optional(),
 }).strict();
 // Snapshot of exactly the entities an agent change touched, so it can be reverted.
 export const assistantUndoSchema = z.object({
