@@ -236,6 +236,7 @@ describe("conservative stale screenshot review reconciliation", () => {
     ["20 Sep 2026 • RAPHAEL PIBER", "AMEX Raphael"],
     ["20 Sep 2026 · RAPHAEL PIBER", "AMEX Raphael"],
     ["20 Sep 2026 – RAPHAEL PIBER", "AMEX Raphael"],
+    ["20 Sep 2026 + RAPHAEL PIBER", "AMEX Raphael"],
     ["20 Sep 2026 • JANNIS BRÜHL", "Amex"],
   ])("uses the parser's holder interpretation for %s", (date, pocket) => {
     const rawDetails = ["Amex-Screenshot", merchant, date, "€ 3,30"];
@@ -244,6 +245,31 @@ describe("conservative stale screenshot review reconciliation", () => {
     const result = redrop(fixture([review(old)]), [screenshot([next])]);
     expect(ids(result.state)).toEqual([]);
     expect(result.state.transactions).toMatchObject([{ id: "new", pocket }]);
+  });
+
+  it("repairs stuck legacy drafts in place once their raw OCR date line becomes parseable", () => {
+    const plusLine = "3 Nov 2026 + RAPHAEL PIBER";
+    const stuck = (id: string, description: string, amount: number, text: string) => review(oldDraft(id, {
+      description: `${description} ${plusLine}`, amount, rawDetails: ["Amex-Screenshot", description, plusLine, text] }),
+    "Amex-Screenshot: Datum fehlt – bitte ergänzen.");
+    const result = queueLedgerReview(fixture([
+      stuck("known", merchant, -3.3, "€ 3,30"), stuck("known-copy", merchant, -3.3, "€ 3,30"),
+      stuck("unknown", "Nordlicht Testatelier", -9.9, "€ 9,90"),
+      review({ ...oldDraft("rule", { description: `SHELL Teststation ${plusLine}`, amount: -2.36,
+        rawDetails: ["Amex-Screenshot", "SHELL Teststation", plusLine, "€ 2,36"] }),
+      merchantAlias: "SHELL", merchantMatch: "rule", category: "Cafés & Snacks", categoryOverride: true },
+      "Amex-Screenshot: Datum fehlt – bitte ergänzen."),
+      review(oldDraft("edited", { reviewed: true, description: `${merchant} ${plusLine}`,
+        rawDetails: ["Amex-Screenshot", merchant, plusLine, "€ 3,30"] })),
+    ]));
+
+    expect(result.transactions).toMatchObject([{ id: "known", date: "2026-11-03", pocket: "AMEX Raphael",
+      description: merchant, amount: -3.3 }, { id: "rule", date: "2026-11-03", pocket: "AMEX Raphael",
+      description: "SHELL Teststation", merchantAlias: "SHELL" }]);
+    expect(ids(result)).toEqual(["unknown", "edited"]);
+    expect(result.reviewQueue?.[0]).toMatchObject({ message: "Kategorie noch offen oder widersprüchlich.",
+      draft: { date: "2026-11-03", pocket: "AMEX Raphael", description: "Nordlicht Testatelier" } });
+    expect(result.reviewQueue?.[1]).toMatchObject({ draft: { date: "" } });
   });
 
   it("replaces an incomplete draft with exactly one complete still-uncategorized review", () => {

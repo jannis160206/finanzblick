@@ -46,7 +46,7 @@ import { isAutomationLocked } from "@/lib/automation/locks";
 import { mergeDuplicateBookings } from "./booking-dedup";
 import { bankOperationReviewMessage } from "@/lib/bank-operation";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
-import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews } from "./screenshot-review";
+import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews, repairScreenshotReviewDrafts } from "./screenshot-review";
 import { reconcileAmexImports, screenshotPendingBalance, type AmexReconciliation } from "./amex-reconciliation";
 import { groupedScreenshotIssueKey, resolveGroupedScreenshotIssues } from "./amex-screenshot-reconciliation";
 import {
@@ -245,8 +245,14 @@ export function queueLedgerReview(state: AppState): AppState {
   const beforeReview = state;
   if (state.reviewQueue) state = { ...state,
     reviewQueue: reconcileScreenshotReviews(state.reviewQueue, actualBookings(state)) };
+  const screenshotRepair = repairScreenshotReviewDrafts(state.reviewQueue ?? [], actualBookings(state));
+  if (screenshotRepair.repaired.size) state = { ...state, reviewQueue: screenshotRepair.items };
   state = repairPayrollBookings(repairMerchantBookings(state));
   const rules = indexReviewRules(state);
+  if (screenshotRepair.repaired.size) state = { ...state, reviewQueue: state.reviewQueue?.map((item) =>
+    item.kind === "booking" && screenshotRepair.repaired.has(item.id)
+      ? { ...item, message: bookingReviewReason(state, item.draft as Transaction, rules) ?? item.message }
+      : item) };
   const pending = (state.reviewQueue ?? []).flatMap((item) =>
     item.kind === "booking" && !item.sourceRepair && transactionSchema.safeParse(item.draft).success ? [item.draft as Transaction] : []);
   const ledger = actualBookings(state);

@@ -80,6 +80,28 @@ export function confirmedScreenshotDateMatcher(candidates: Transaction[]): (row:
   return (row) => !row.date && dates.get(croppedOrderKey(row) ?? "")?.size === 1;
 }
 
+// Re-reads untouched incomplete screenshot drafts whose raw OCR lines are now parseable
+// (e.g. the date/holder separator was misread as "+"). Exact duplicates collapse to one.
+export function repairScreenshotReviewDrafts(items: ReviewItem[], ledger: Transaction[]): { items: ReviewItem[]; repaired: Set<string> } {
+  const repaired = new Set<string>();
+  // A same-looking booking may be a second identical purchase or a duplicate – never guess.
+  const booked = new Set(ledger.map((row) => amexBookingKey(row)).filter(Boolean));
+  const seen = new Set<string>();
+  const result = items.flatMap((item): ReviewItem[] => {
+    // Filling a readable date/holder never overrides a category or alias, so only explicit user review blocks it.
+    if (item.kind !== "booking" || item.sourceRepair || item.draft.reviewed || item.draft.manualCategory || item.draft.date ||
+      transactionSchema.safeParse(item.draft).success) return [item];
+    const facts = screenshotFacts(item.draft, true);
+    if (!facts || !transactionSchema.safeParse(facts).success || booked.has(amexBookingKey(facts))) return [item];
+    const key = JSON.stringify([amexBookingKey(facts), facts.occurrence ?? 1, facts.bankReference ?? null]);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    repaired.add(item.id);
+    return [{ ...item, draft: facts }];
+  });
+  return { items: result, repaired };
+}
+
 export function reconcileScreenshotReviews(items: ReviewItem[], candidates: Transaction[]): ReviewItem[] {
   const confirmedDate = confirmedScreenshotDateMatcher(candidates);
   const keys = new Set(candidates.flatMap((row) => {

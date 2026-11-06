@@ -21,7 +21,8 @@ const months: Record<string, string> = {
   nov: "11", november: "11", dez: "12", dezember: "12",
 };
 
-const datePattern = /^(\d{1,2})\.?\s+([a-zä]+)\.?\s+(\d{4})(?:\s+[•·–-]\s*(.+))?$/i;
+// OCR often reads the "•" between date and card holder as "+" or "*".
+const datePattern = /^(\d{1,2})\.?\s+([a-zä]+)\.?\s+(\d{4})(?:\s+[•·–+*-]\s*(.+))?$/i;
 const groupedDatePattern = /^(\d{1,2})\.?\s*([a-zä]+)\.?$/i;
 export const screenshotGroupedDateLike = (text: string) => {
   const match = clean(text).match(groupedDatePattern) ?? clean(text).match(/^([0-9IlOS?]{1,2})\.?\s+([a-zä]+)\.?$/i);

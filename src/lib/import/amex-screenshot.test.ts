@@ -190,7 +190,7 @@ describe("Amex app screenshot facts", () => {
     expect(screenshotDate("29 Feb 2026")).toBeNull();
     expect(screenshotDate("4 Okt 2O26")).toBeNull();
   });
-  it.each(["•", "·", "-", "–"])("separates the date and named additional cardholder (%s)", (separator) => {
+  it.each(["•", "·", "-", "–", "+", "*"])("separates the date and named additional cardholder (%s)", (separator) => {
     const result = parse(booking("McDonalds Filiale", 140, `20 Sep 2026 ${separator} RAPHAEL PIBER`, "€ 3,30"));
     expect(result.issues).toEqual([]);
     expect(result.rows[0]).toMatchObject({
