@@ -39,10 +39,10 @@ export function removeReviewedPayslip(existing: Payslip[], expected: Payslip): P
   return existing.filter((entry) => payslipKey(entry) !== key);
 }
 
-const netFields = ["netPay", "specialTax", "onCallGross", "holidayWorkGross"] as const;
+const netFields = ["netPay", "specialTax", "onCallGross", "holidayWorkGross", "advancePay", "payout"] as const;
 
 function isEnrichment(old: Payslip, entry: Payslip): boolean {
-  if (netFields.some((field) => old[field] !== undefined)) return false;
+  if (netFields.some((field) => old[field] !== undefined && old[field] !== entry[field])) return false;
   const stripped = { ...entry };
   for (const field of netFields) delete stripped[field];
   return JSON.stringify(old) === JSON.stringify(payslipSchema.parse(stripped));

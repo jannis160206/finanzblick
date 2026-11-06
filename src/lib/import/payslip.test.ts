@@ -181,6 +181,14 @@ describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
     expect(JSON.stringify(result)).not.toMatch(/Testperson|777777|Freibetrag|bereits überwiesen/i);
   });
 
+  it("reads the already transferred salary and the remaining Auszahlung", () => {
+    const result = parsePayslipPages([page({ tail: [line(235, [89, "Auszahlung"], [379, "75,08"])] })]);
+    expect(result.drafts[0]).toMatchObject({ netPay: 2382.08, advancePay: 2300, payout: 75.08 });
+    const mismatch = parsePayslipPages([page({ tail: [line(235, [89, "Auszahlung"], [379, "90,00"])] })]);
+    expect(mismatch.drafts[0].advancePay).toBeUndefined();
+    expect(mismatch.drafts[0].payout).toBeUndefined();
+  });
+
   it("never subtracts BMG-only Freibeträge or quantity-only telework days from gross", () => {
     const original = page();
     const altered: PayslipPage = {

@@ -26,14 +26,16 @@ describe("payslip net pay parsing", () => {
     expect(entry.netPay).toBe(2260);
   });
 
-  it("ignores Auszahlung after an advance and keeps the total net", () => {
+  it("reads Akonto as salary and Auszahlung as the remainder", () => {
     const page = syntheticContextPage("");
     const lines = [...page.lines,
       positionedLine(265, [89, "Akonto"], [379, "-2.000,00"]),
       positionedLine(250, [89, "Auszahlung"], [379, "260,00"])];
-    expect(parsePayslipPages([{ lines }]).drafts[0].netPay).toBe(2260);
+    expect(parsePayslipPages([{ lines }]).drafts[0]).toMatchObject({ netPay: 2260, advancePay: 2000, payout: 260 });
     const withoutNet = lines.filter((line) => !line.items.some((item) => item.text === "Netto"));
-    expect(parsePayslipPages([{ lines: withoutNet }]).drafts[0].netPay).toBeUndefined();
+    expect(parsePayslipPages([{ lines: withoutNet }]).drafts[0]).toMatchObject({ netPay: 2260, advancePay: 2000, payout: 260 });
+    const onlyPayout = withoutNet.filter((line) => !line.items.some((item) => item.text === "Akonto"));
+    expect(parsePayslipPages([{ lines: onlyPayout }]).drafts[0].netPay).toBe(260);
   });
 });
 
@@ -46,6 +48,15 @@ describe("payslip income for the month plan", () => {
     expect(value(result, "income-5", "2026-12")).toBe(2500);
     expect(value(result, "income-5", "2026-10")).toBeUndefined();
     expect(result.applied[0]).toMatchObject({ payrollMonth: "2026-10", month: "2026-11", net: 2800, computed: false });
+  });
+
+  it("uses the transferred salary as Gehalt and the Auszahlung as Rufbereitschaft", () => {
+    const entry = { ...base, netPay: 4465.31, onCallGross: 500.62, advancePay: 2658.31, payout: 1800 };
+    const result = applyPayslipIncome(state(), [entry]);
+    expect(value(result, "income-5")).toBe(2658.31);
+    expect(value(result, "income-6")).toBe(1800);
+    expect(result.applied[0].net).toBe(4458.31);
+    expect(applyPayslipIncome(result.state, [entry]).changed).toBe(false);
   });
 
   it("puts the special-payment net into its own row", () => {

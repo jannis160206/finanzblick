@@ -28,6 +28,8 @@ export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
   const specialGross = cents(entry.specialGross);
   const specialDeductions = specialGross || bonus ? cents(entry.specialSv ?? NaN) + cents(entry.specialTax ?? 0) : 0;
   let net = entry.netPay === undefined ? NaN : cents(entry.netPay);
+  // With an advance transfer, what reaches the account is "bereits überwiesen" + "Auszahlung" (after e.g. Betriebsrat).
+  if (entry.advancePay !== undefined && entry.payout !== undefined) net = cents(entry.advancePay) + cents(entry.payout);
   const computed = !Number.isFinite(net);
   if (computed) {
     // Without a printed "Netto" only an exact reconstruction is used; tax on special payments must be known.
@@ -46,19 +48,31 @@ export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
   const regularNet = net - special;
   const regularGross = cents(entry.regularGross) + bonus;
   const share = (gross: number) => regularGross > 0 ? Math.round(regularNet * gross / regularGross) : 0;
-  const onCall = share(cents(entry.onCallGross ?? 0));
-  const holidayWork = share(cents(entry.holidayWorkGross ?? 0));
+  let onCall = share(cents(entry.onCallGross ?? 0));
+  let holidayWork = share(cents(entry.holidayWorkGross ?? 0));
+  let salary = regularNet - onCall - holidayWork;
+  const advance = cents(entry.advancePay ?? NaN);
+  if (Number.isFinite(advance) && entry.payout !== undefined && advance <= regularNet) {
+    // Salary was transferred in advance; the remaining payout is on-call pay (holiday work by its gross share).
+    salary = advance;
+    const rest = regularNet - advance;
+    const onCallGross = cents(entry.onCallGross ?? 0);
+    const holidayGross = cents(entry.holidayWorkGross ?? 0);
+    holidayWork = onCallGross + holidayGross > 0 ? Math.round(rest * holidayGross / (onCallGross + holidayGross)) : 0;
+    onCall = rest - holidayWork;
+  }
   const next = entry.month === 12 ? { year: entry.year + 1, month: 1 } : { year: entry.year, month: entry.month + 1 };
   return {
     payrollMonth: monthKey(entry.year, entry.month),
     month: monthKey(next.year, next.month),
     net: net / 100,
-    salary: (regularNet - onCall - holidayWork) / 100,
+    salary: salary / 100,
     onCall: onCall / 100,
     holidayWork: holidayWork / 100,
     special: special / 100,
     computed,
-    splitKnown: entry.netPay !== undefined || entry.onCallGross !== undefined || entry.holidayWorkGross !== undefined,
+    splitKnown: entry.netPay !== undefined || entry.onCallGross !== undefined || entry.holidayWorkGross !== undefined ||
+      entry.advancePay !== undefined,
   };
 }
 

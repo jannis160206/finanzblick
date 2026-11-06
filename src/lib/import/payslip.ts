@@ -275,11 +275,17 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     const netReadings: number[] = [];
     const payoutReadings: number[] = [];
     let advancePaid = false;
+    const advanceReadings: number[] = [];
     for (const line of lines) {
       const label = line.items.filter((item) => cents(item.text) === undefined)
         .sort((a, b) => a.x - b.x).map((item) => clean(item.text)).join(" ").replace(/:$/, "");
       const payLabel = label.replace(/^\d{3,5}\s+/, "").replace(/\s*(?:€|eur)$/i, "").replace(/:$/, "").trim();
-      if (ADVANCE.test(payLabel)) advancePaid = true;
+      if (ADVANCE.test(payLabel)) {
+        advancePaid = true;
+        const values = amounts(line.items);
+        const value = (layout ? cell(line, layout, "amount") : undefined) ?? (values.length === 1 ? values[0] : undefined);
+        if (value) advanceReadings.push(Math.abs(value));
+      }
       if (NET_PAY.test(payLabel) || PAYOUT.test(payLabel)) {
         const values = amounts(line.items);
         if (values.length === 1 && values[0] > 0) (NET_PAY.test(payLabel) ? netReadings : payoutReadings).push(values[0]);
@@ -454,6 +460,14 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
       } else issue("Keine eindeutigen laufenden Bezüge; sie werden nicht aus Sonderzahlungen abgeleitet.");
       // Prefer "Netto": "Auszahlung" can be only the remainder after an advance transfer.
       const netCandidates = [...new Set(netReadings.length ? netReadings : advancePaid ? [] : payoutReadings)];
+      const advances = [...new Set(advanceReadings)];
+      const payouts = [...new Set(payoutReadings)];
+      if (advances.length === 1 && payouts.length === 1 && gross !== undefined && advances[0] + payouts[0] <= gross &&
+        (netCandidates.length !== 1 || advances[0] + payouts[0] <= netCandidates[0] + 100)) {
+        draft.advancePay = advances[0] / 100;
+        draft.payout = payouts[0] / 100;
+        if (!netCandidates.length) netCandidates.push(advances[0] + payouts[0]);
+      }
       if (netCandidates.length === 1 && gross !== undefined && netCandidates[0] <= gross) draft.netPay = netCandidates[0] / 100;
       else if (netCandidates.length > 1) issue("Mehrere unterschiedliche Nettobeträge; das Netto wird aus Brutto, SV und Lohnsteuer berechnet.");
       if (specialCount || (regularCount && draft.monthlyPayroll === true)) draft.specialGross = special / 100;

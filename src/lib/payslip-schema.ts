@@ -42,6 +42,9 @@ export const payslipSchema = z.object({
   specialTax: amount.optional(),
   onCallGross: amount.optional(),
   holidayWorkGross: amount.optional(),
+  // "Bereits überwiesen" is the salary already paid; the remaining "Auszahlung" is the on-call pay.
+  advancePay: amount.optional(),
+  payout: amount.optional(),
   monthlyPayroll: z.boolean(),
   payrollContextIssues: z.array(payrollContextIssueSchema).max(4)
     .refine((reasons) => new Set(reasons).size === reasons.length, "Kontextgründe dürfen nicht doppelt vorkommen.")

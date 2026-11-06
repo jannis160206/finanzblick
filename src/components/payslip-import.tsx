@@ -20,6 +20,8 @@ import { applyPayslipIncome } from "@/lib/payslip-income";
 
 const moneyFields = [
   ["netPay", "Netto laut Abrechnung"],
+  ["advancePay", "Bereits überwiesen (Gehalt)"],
+  ["payout", "Auszahlung (Rufbereitschaft)"],
   ["regularGross", "Sechstelrelevantes laufendes Brutto"],
   ["specialGross", "Sonderzahlungen brutto im Monat"],
   ["unresolvedSixthBonus", "Tarifbesteuerte Prämie · Sechstelzuordnung offen"],
