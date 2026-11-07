@@ -13,6 +13,22 @@ import {
 import {
   autoSyncDue, bankStatus, completeBankAuthorization, configuredBankProvider, removeBankConnection, renewBankConnection, startBankConnection, syncBank,
 } from "./sync";
+import { callbackRedirect, localCallbackPlan } from "./https-callback";
+
+describe("local https bank callback", () => {
+  it("only starts for a local https redirect on a separate port", () => {
+    expect(localCallbackPlan({})).toBeNull();
+    expect(localCallbackPlan({ ENABLEBANKING_REDIRECT_URL: "https://finanzen.example.com/api/bank/callback" })).toBeNull();
+    expect(localCallbackPlan({ ENABLEBANKING_REDIRECT_URL: "https://localhost:3000/api/bank/callback" })).toBeNull();
+    expect(localCallbackPlan({ ENABLEBANKING_REDIRECT_URL: "https://localhost:3443/api/bank/callback" }))
+      .toEqual({ port: 3443, hostname: "127.0.0.1", target: "http://127.0.0.1:3000/api/bank/callback" });
+  });
+  it("forwards code and state to the app and rejects other paths", () => {
+    expect(callbackRedirect("/api/bank/callback?code=a&state=b", "http://127.0.0.1:3000/api/bank/callback"))
+      .toEqual({ status: 303, location: "http://127.0.0.1:3000/api/bank/callback?code=a&state=b" });
+    expect(callbackRedirect("/other", "http://127.0.0.1:3000/api/bank/callback")).toEqual({ status: 404 });
+  });
+});
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();

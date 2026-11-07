@@ -167,7 +167,8 @@ Im Kontomodus lassen sich Konten unter **Einstellungen → Bankverbindung** dire
 Enable Banking erlaubt die nicht-kommerzielle Nutzung mit den **eigenen Konten** ohne Vertrag („restricted mode“):
 
 1. Auf <https://enablebanking.com/sign-in/> mit der E-Mail-Adresse anmelden (Login-Link per Mail).
-2. Im Control Panel unter **API applications** eine neue App anlegen: Umgebung **Production**, Name z. B. „Finanzblick privat“, Redirect-URL `http://127.0.0.1:3000/api/bank/callback` (bzw. die eigene Adresse + `/api/bank/callback`). Den Schlüssel im Browser erzeugen lassen und die `.pem`-Datei mit dem privaten Schlüssel sicher speichern (z. B. `.local-data/enablebanking.pem`, wird nie eingecheckt).
+2. Im Control Panel unter **API applications** eine neue App anlegen: Umgebung **Production**, Name z. B. „Finanzblick privat“, Redirect-URL `https://localhost:3443/api/bank/callback` (Enable Banking akzeptiert nur https). Den Schlüssel im Browser erzeugen lassen und die `.pem`-Datei mit dem privaten Schlüssel sicher speichern (z. B. `.local-data/enablebanking.pem`, wird nie eingecheckt).
+   Für die lokale https-Adresse einmalig `powershell -ExecutionPolicy Bypass -File scripts\bank-callback-cert.ps1` ausführen (erstellt `.local-data/bank-callback.pfx` und vertraut dem Zertifikat für den eigenen Windows-Benutzer). Finanzblick startet dann auf Port 3443 einen kleinen https-Dienst, der den Rücksprung der Bank sofort an `http://127.0.0.1:3000/api/bank/callback` weiterreicht.
 3. Bei der App **Activate by linking accounts** wählen und die eigenen Bankkonten einmal verknüpfen – damit ist die App für genau diese Konten freigeschaltet.
 4. In `.env.local` eintragen und Finanzblick neu starten:
 
@@ -175,8 +176,8 @@ Enable Banking erlaubt die nicht-kommerzielle Nutzung mit den **eigenen Konten**
 # .env.local
 ENABLEBANKING_APP_ID=<Application ID aus dem Control Panel>
 ENABLEBANKING_PRIVATE_KEY_PATH=.local-data/enablebanking.pem
-# optional, falls die registrierte Redirect-URL abweicht (z. B. https bzw. eigene Domain)
-ENABLEBANKING_REDIRECT_URL=http://127.0.0.1:3000/api/bank/callback
+# lokal: https-Rücksprung (Port 3443) – auf einem Server mit Domain stattdessen https://<domain>/api/bank/callback
+ENABLEBANKING_REDIRECT_URL=https://localhost:3443/api/bank/callback
 ```
 
 - **Bank verbinden**: Land und Bank wählen, danach geht es zur Anmeldeseite der Bank und automatisch zurück nach Finanzblick. Die Rückkehr muss im selben Browser mit angemeldetem Finanzblick-Konto erfolgen.
