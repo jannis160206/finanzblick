@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Building2, Link2, Loader2, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Building2, ChevronDown, Link2, Loader2, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -97,6 +97,7 @@ export function BankConnections() {
   const [bic, setBic] = useState("");
   const [banks, setBanks] = useState<BankChoice[] | null>(null);
   const [aspsp, setAspsp] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const enableBanking = status?.provider === "enablebanking";
 
   useEffect(() => {
@@ -212,6 +213,9 @@ export function BankConnections() {
           {status.connections.map((connection) => {
             const name = connection.bankName ?? connection.bic ?? "Bank";
             const accounts = status.accounts.filter((entry) => entry.connectionId === connection.id);
+            const main = accounts.find((entry) => entry.label === "Persönliches Konto") ?? accounts.find((entry) => entry.pocket === "Persönliches Konto") ?? accounts[0];
+            const others = accounts.filter((entry) => entry !== main && entry.balance !== 0);
+            const open = expanded[connection.id] === true;
             const consent = connection.consentValidUntil?.slice(0, 10) ?? null;
             const expiresSoon = consent !== null && consent <= new Date(Date.parse(`${state.settings.asOf}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10);
             return <li key={connection.id} className="rounded-2xl border border-border/70 bg-muted/15 p-4">
@@ -229,11 +233,17 @@ export function BankConnections() {
                   <Button size="sm" variant="ghost" disabled={busy !== null} aria-label={`${name} trennen`} onClick={() => void remove(connection.id, name)}><Trash2 aria-hidden="true" className="size-4" /></Button>
                 </div>
               </div>
-              {accounts.length > 0 && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
-                {accounts.map((entry) => <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
+              {main && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
+                {[main, ...(open ? others : [])].map((entry) => <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
                   <span className="min-w-0"><span className="font-medium">{entry.label}</span>{entry.iban && <span className="ml-2 text-muted-foreground tabular-nums">{entry.iban}</span>}<span className="ml-2 text-muted-foreground">→ {entry.bank}{entry.pocket ? ` · ${entry.pocket}` : ""}</span></span>
                   {entry.balance !== null && <span className="font-semibold tabular-nums">{currency(entry.balance)}</span>}
                 </li>)}
+                {others.length > 0 && <li>
+                  <button type="button" aria-expanded={open} className="flex w-full items-center gap-1 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground" onClick={() => setExpanded((current) => ({ ...current, [connection.id]: !open }))}>
+                    <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+                    {open ? "Weniger anzeigen" : `${others.length} ${others.length === 1 ? "weiteres Konto" : "weitere Konten"}`}
+                  </button>
+                </li>}
               </ul>}
             </li>;
           })}
