@@ -93,6 +93,15 @@ describe("account and card questions", () => {
     const ctx = context(state);
     const giro = executeTool("accounts", "meine kontostände", ctx).card?.lines.find((line) => line.label === "Raiffeisen Giro");
     expect(giro).toMatchObject({ value: 697.71, detail: expect.stringContaining("Kontostand vom") });
+    state.accountSnapshots.push({ bank: "Revolut", name: "Persönliches Konto", date: "2026-11-04", balance: 0 });
+    for (const question of ["Wie hoch ist mein kontostand?", "Zeig mir alle Kontostände"]) {
+      const overview = executeTool("accounts", question, context(state));
+      expect(overview.card?.title, question).toBe("Kontostände");
+      expect(overview.card?.total).toBe(Math.round((ctx.dashboard.totalAssets + 697.71) * 100) / 100);
+      expect(overview.card?.lines[0]).toMatchObject({ label: "Raiffeisen Giro" });
+      expect(overview.text).toContain("Raiffeisen Giro");
+    }
+    expect(executeTool("accounts", "wie viel liegt auf persönliches konto", context(state)).card?.title).toBe("Kontostand · Persönliches Konto");
     expect(assistantFacts(ctx.state, ctx.dashboard, asOf).balances).toContainEqual({ name: "Raiffeisen Giro", amount: 697.71, asOf: "2026-11-04" });
   });
 

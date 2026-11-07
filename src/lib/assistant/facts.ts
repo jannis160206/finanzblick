@@ -22,10 +22,12 @@ export function assistantFacts(state: AppState, dashboard: Dashboard, today: str
     (byMonth[month] ??= {})[category] = value;
   }
   const row = dashboard.current;
+  const known = balances(state, dashboard);
   return {
     today,
     totalSavings: dashboard.totalAssets,
-    balances: balances(state, dashboard).filter((item) => item.amount !== null && Math.abs(item.amount) >= 0.005)
+    totalOnAllAccounts: round(dashboard.totalAssets + known.reduce((sum, item) => sum + (item.date && item.amount !== null ? item.amount : 0), 0)),
+    balances: known.filter((item) => item.amount !== null && Math.abs(item.amount) >= 0.005)
       .slice(0, 25).map((item) => ({ name: item.name, amount: item.amount, ...(item.date ? { asOf: item.date } : {}) })),
     amex: { open: dashboard.amex.outstanding, ownShare: dashboard.amex.ownOutstanding, onRepaymentPocket: dashboard.amex.reserved, stillToTransfer: dashboard.amex.shortfall },
     currentMonth: { month: dashboard.currentMonth, income: row.income, fixedCosts: row.fixed, everydayBudget: round(row.variablePlan - row.amexOpen),

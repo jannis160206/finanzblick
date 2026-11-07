@@ -86,7 +86,9 @@ export function amexSettlement(state: AppState, dashboard: Dashboard, text: stri
 
 export function accountBalances(state: AppState, dashboard: Dashboard, text: string): AgentResult {
   const all = balances(state, dashboard);
-  const named = matchName(text, all, (item) => item.name);
+  // Generic words like "Konto" would make "Kontostand" match "Persönliches Konto".
+  const distinctive = (name: string) => name.replace(/\b(?:konto|konten|pocket|account)\b/gi, " ").replace(/\s+/g, " ").trim() || name;
+  const named = /\balle[nm]?\b|übersicht|\binsgesamt\b|\bgesamt\b/i.test(text) ? undefined : matchName(text, all, (item) => distinctive(item.name));
   if (named) {
     return { text: named.amount === null ? `Für „${named.name}“ kenne ich gerade keinen sicheren Kontostand.`
       : `Auf „${named.name}“ liegen ${currency(named.amount)}${named.date ? ` (Stand ${dateLabel(named.date)})` : ""}.`,
@@ -94,15 +96,22 @@ export function accountBalances(state: AppState, dashboard: Dashboard, text: str
       lines: [{ label: named.name, ...(named.amount !== null ? { value: named.amount } : { detail: "unbekannt" }) }] },
     suggestions: ["Zeig mir alle Kontostände", "Was bleibt mir diesen Monat?"] };
   }
-  const shown = all.filter((item) => item.amount === null || Math.abs(item.amount) >= 0.005).sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
+  const shown = all.filter((item) => item.amount === null || Math.abs(item.amount) >= 0.005)
+    .sort((a, b) => Number(!a.date) - Number(!b.date) || (b.amount ?? 0) - (a.amount ?? 0));
   const lines: Line[] = shown.slice(0, 20).map((item) => item.amount === null ? { label: item.name, detail: "unbekannt", tone: "warn" as const }
-    : { label: item.name, value: item.amount, ...(reserveKey(item.key) ? { detail: "für die Amex-Abrechnung reserviert" } : item.date ? { detail: `Kontostand vom ${dateLabel(item.date)}` } : {}) });
+    : { label: item.name, value: item.amount, ...(reserveKey(item.key) ? { detail: "für die Amex-Abrechnung reserviert" } : item.date ? { detail: `Kontostand vom ${dateLabel(item.date)}`, tone: "info" as const } : {}) });
   if (dashboard.amex.outstanding > 0) lines.push({ label: "Amex-Saldo offen", value: -dashboard.amex.outstanding, tone: "warn", detail: "Kreditkarte, noch nicht abgebucht" });
+  const accounts = shown.filter((item) => item.date && item.amount !== null);
+  const accountSum = round(accounts.reduce((sum, item) => sum + (item.amount ?? 0), 0));
+  const total = round(dashboard.totalAssets + accountSum);
   const empty = all.length - shown.length;
-  return { text: `Deine Ersparnisse liegen gesamt bei ${currency(dashboard.totalAssets)}.` +
-    (shown.length ? ` Am meisten liegt auf „${shown[0].name}“.` : ""),
-  card: { kind: "answer", title: "Kontostände", total: dashboard.totalAssets, lines,
-    ...(empty ? { note: `${empty} leere Konten ausgeblendet.` } : {}) },
+  const accountText = accounts.map((item) => `„${item.name}“ ${currency(item.amount ?? 0)} (Stand ${dateLabel(item.date!)})`).join(", ");
+  return { text: `Auf deinen Konten liegen insgesamt ${currency(total)}.` +
+    (accounts.length ? ` Davon auf Giro- und Hauptkonten: ${accountText}.` : "") +
+    ` In deinen Pockets und Ersparnissen liegen ${currency(dashboard.totalAssets)}.` +
+    (dashboard.amex.outstanding > 0 ? ` Bei Amex sind noch ${currency(dashboard.amex.outstanding)} offen.` : ""),
+  card: { kind: "answer", title: "Kontostände", total, lines,
+    note: [`Gesamt = Giro-/Hauptkonten ${currency(accountSum)} + Pockets ${currency(dashboard.totalAssets)}.`, empty ? `${empty} leere Konten ausgeblendet.` : ""].filter(Boolean).join(" ") },
   suggestions: ["Wie viel muss ich auf Amex Rückzahlung überweisen?", "Was bleibt mir diesen Monat?"] };
 }
 
