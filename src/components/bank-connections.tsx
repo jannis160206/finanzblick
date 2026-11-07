@@ -11,7 +11,7 @@ import { useFinance } from "@/components/finance-provider";
 import { SettingsSection } from "@/components/settings-section";
 import { FinancialData } from "@/components/financial-data";
 import { currency, dateLabel } from "@/lib/format";
-import type { BankStatus } from "@/lib/banking/sync";
+import type { BankChoice, BankConnectStart, BankStatus } from "@/lib/banking/sync";
 
 const XS2A_ORIGIN = "https://api.xs2a.com";
 type Xs2aWidget = {
@@ -95,6 +95,19 @@ export function BankConnections() {
   const [wizard, setWizard] = useState<string | null>(null);
   const [country, setCountry] = useState("AT");
   const [bic, setBic] = useState("");
+  const [banks, setBanks] = useState<BankChoice[] | null>(null);
+  const [aspsp, setAspsp] = useState("");
+  const enableBanking = status?.provider === "enablebanking";
+
+  useEffect(() => {
+    if (!account || !enableBanking) return;
+    let active = true;
+    request(account, {}, `?banks=${country}`).then(
+      (body) => active && setBanks((body as { banks: BankChoice[] }).banks),
+      (error: unknown) => { if (active) { setBanks([]); toast.error(error instanceof Error ? error.message : "Bankliste nicht verfügbar."); } },
+    );
+    return () => { active = false; };
+  }, [account, enableBanking, country]);
 
   const load = useCallback(async () => {
     if (!account) return;
@@ -124,14 +137,42 @@ export function BankConnections() {
     if (!account) return;
     setBusy("connect");
     try {
-      const { wizardSessionKey } = await request(account, { method: "POST", json }) as { wizardSessionKey: string };
-      setWizard(wizardSessionKey);
+      const result = await request(account, { method: "POST", json }) as BankConnectStart;
+      if ("redirectUrl" in result) {
+        window.location.assign(result.redirectUrl);
+        return;
+      }
+      setWizard(result.wizardSessionKey);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Verbindung konnte nicht gestartet werden.");
     } finally { setBusy(null); }
   };
   const finished = useCallback(() => { setWizard(null); toast.success("Bank verbunden. Umsätze werden abgerufen …"); void sync(); }, [sync]);
   const closed = useCallback(() => setWizard(null), []);
+
+  // Return from the bank's own login page (Enable Banking redirect flow).
+  const returned = useRef(false);
+  useEffect(() => {
+    if (!account || returned.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("bank");
+    if (!result) return;
+    returned.current = true;
+    const message = params.get("message");
+    params.delete("bank");
+    params.delete("message");
+    const query = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+    queueMicrotask(() => {
+      if (result === "connected") {
+        toast.success("Bank verbunden. Umsätze werden abgerufen …");
+        void sync();
+      } else {
+        toast.error(message || "Die Bankverbindung wurde nicht abgeschlossen.");
+        void load();
+      }
+    });
+  }, [account, sync, load]);
 
   const remove = async (id: string, name: string) => {
     if (!account || !window.confirm(`Verbindung zu ${name} wirklich trennen? Bereits importierte Umsätze bleiben erhalten.`)) return;
@@ -148,8 +189,9 @@ export function BankConnections() {
   const configured = status?.configured ?? false;
   const normalizedBic = bic.replace(/\s/g, "").toUpperCase();
   const bicValid = !normalizedBic || /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(normalizedBic);
+  const aspspValid = !enableBanking || (banks ?? []).some((bank) => bank.name === aspsp);
   return <SettingsSection id="bankverbindung" title="Bankverbindung" icon={Building2}
-    description="Konten direkt über die Bank-Schnittstelle (FinTecSystems XS2A / Tink, PSD2) verbinden. Neue Umsätze kommen automatisch alle 6 Stunden."
+    description={`Konten direkt über die PSD2-Bankschnittstelle${status?.provider ? ` (${enableBanking ? "Enable Banking" : "FinTecSystems XS2A / Tink"})` : ""} verbinden. Neue Umsätze kommen automatisch alle 6 Stunden.`}
     action={configured && status?.connections.length ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void sync()}>
       {busy === "sync" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}Jetzt abrufen
     </Button> : undefined}>
@@ -157,8 +199,10 @@ export function BankConnections() {
       <div className="rounded-2xl border border-border/70 bg-muted/15 p-4 text-sm leading-relaxed sm:p-5">
         <p className="font-medium">Noch nicht eingerichtet</p>
         <p className="mt-1 text-xs text-muted-foreground">
-          Für die direkte Bankanbindung braucht der Server einen XS2A-API-Schlüssel von Tink (früher FinTecSystems).
-          Trage ihn als <code className="rounded bg-muted px-1">XS2A_API_KEY</code> in <code className="rounded bg-muted px-1">.env.local</code> ein und starte Finanzblick neu.
+          Für Privatpersonen kostenlos über <strong>Enable Banking</strong>: Auf enablebanking.com eine App registrieren, eigene Konten verknüpfen
+          und dann <code className="rounded bg-muted px-1">ENABLEBANKING_APP_ID</code> sowie <code className="rounded bg-muted px-1">ENABLEBANKING_PRIVATE_KEY_PATH</code> in
+          {" "}<code className="rounded bg-muted px-1">.env.local</code> eintragen (Anleitung in der README). Alternativ mit Firmenvertrag:
+          {" "}<code className="rounded bg-muted px-1">XS2A_API_KEY</code> von Tink. Danach Finanzblick neu starten.
           Bis dahin funktioniert der Import per CSV, PDF oder Screenshot wie gewohnt.
         </p>
       </div>
@@ -195,23 +239,28 @@ export function BankConnections() {
           })}
         </ul>}
         <form className="grid gap-3 rounded-2xl border border-dashed border-border/80 p-4 sm:grid-cols-[8rem_1fr_auto] sm:items-end" onSubmit={(event) => {
-          event.preventDefault(); if (!bicValid) return;
-          void start({ action: "connect", country, ...(normalizedBic ? { bic: normalizedBic } : {}) });
+          event.preventDefault(); if (!bicValid || !aspspValid) return;
+          void start(enableBanking ? { action: "connect", country, aspsp } : { action: "connect", country, ...(normalizedBic ? { bic: normalizedBic } : {}) });
         }}>
           <label className="text-xs font-medium">Land
-            <select aria-label="Land der Bank" className="mt-2 h-11 w-full rounded-md border border-input bg-background/50 px-3 text-sm" value={country} onChange={(event) => setCountry(event.target.value)}>
+            <select aria-label="Land der Bank" className="mt-2 h-11 w-full rounded-md border border-input bg-background/50 px-3 text-sm" value={country} onChange={(event) => { setCountry(event.target.value); setAspsp(""); }}>
               <option value="AT">Österreich</option><option value="DE">Deutschland</option>
             </select>
           </label>
-          <label className="text-xs font-medium">BIC (optional – sonst im Fenster suchen)
+          {enableBanking ? <label className="text-xs font-medium">Bank {banks === null && "(wird geladen …)"}
+            <Input aria-label="Bank auswählen" aria-invalid={aspsp !== "" && !aspspValid} list="bank-choices" className="mt-2 h-11 bg-background/50" placeholder="Bank suchen, z. B. Raiffeisen" maxLength={200} value={aspsp} onChange={(event) => setAspsp(event.target.value)} />
+            <datalist id="bank-choices">{(banks ?? []).map((bank) => <option key={bank.name} value={bank.name} />)}</datalist>
+          </label> : <label className="text-xs font-medium">BIC (optional – sonst im Fenster suchen)
             <Input aria-label="BIC der Bank" aria-invalid={!bicValid} className="mt-2 h-11 bg-background/50 uppercase" placeholder="z. B. RZKTAT2K" maxLength={14} value={bic} onChange={(event) => setBic(event.target.value)} />
-          </label>
-          <Button type="submit" className="h-11" disabled={busy !== null || !bicValid}>
+          </label>}
+          <Button type="submit" className="h-11" disabled={busy !== null || !bicValid || !aspspValid}>
             {busy === "connect" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Link2 aria-hidden="true" className="size-4" />}Bank verbinden
           </Button>
         </form>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Die Anmeldung läuft direkt im gesicherten Fenster der Bank-Schnittstelle – Finanzblick sieht deine Zugangsdaten nie.
+          {enableBanking
+            ? "Du wirst zur Anmeldeseite deiner Bank weitergeleitet und kommst danach automatisch zurück – Finanzblick sieht deine Zugangsdaten nie."
+            : "Die Anmeldung läuft direkt im gesicherten Fenster der Bank-Schnittstelle – Finanzblick sieht deine Zugangsdaten nie."}
           Bereits per CSV importierte Tage werden übersprungen, doppelte Buchungen erkannt.
           {status.lastSync && <> Letzter Abruf: {new Date(status.lastSync).toLocaleString("de-AT")}{status.lastSyncRows !== null && ` (${status.lastSyncRows} Umsätze)`}.</>}
         </p>

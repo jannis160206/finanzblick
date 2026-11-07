@@ -12,6 +12,7 @@ export { accountIdentity, coveredUntilByAccount, isBankSyncRow, BANK_REFERENCE_P
 
 export const BANK_SYNC_FORMAT = "finanzblick-bank-sync";
 export const BANK_SYNC_MARKER = "Bankverbindung (XS2A)";
+const PROVIDER_MARKERS = { xs2a: BANK_SYNC_MARKER, enablebanking: "Bankverbindung (Enable Banking)" } as const;
 
 const turnoverSchema = z.object({
   booking_date: z.string().min(10),
@@ -43,7 +44,7 @@ export const bankSyncAccountSchema = z.object({
 export const bankSyncFileSchema = z.object({
   format: z.literal(BANK_SYNC_FORMAT),
   version: z.literal(1),
-  provider: z.literal("xs2a"),
+  provider: z.enum(["xs2a", "enablebanking"]),
   fetchedAt: z.string(),
   accounts: z.array(bankSyncAccountSchema).max(100),
 });
@@ -118,7 +119,7 @@ export function parseBankSync(bytes: Uint8Array, file: string): StatementResult 
         ...purpose,
         ...(turnover.counter_iban ? [`IBAN ${compact(turnover.counter_iban)}`] : []),
         ...(turnover.creditor_id ? [`Gläubiger-ID ${compact(turnover.creditor_id)}`] : []),
-        BANK_SYNC_MARKER,
+        PROVIDER_MARKERS[parsed.data.provider],
       ].slice(0, 20);
       const currency = compact(turnover.currency_id ?? turnover.currency ?? "EUR").toUpperCase() || "EUR";
       if (currency !== "EUR") {

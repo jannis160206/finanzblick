@@ -158,9 +158,34 @@ Die Sicherung enthält Finanzdaten, Passwort-Hashes und Sitzungseinträge und ge
 
 Unter **Umsätze → ⋯ → Ignorieren** (oder für mehrere markierte Buchungen in der Auswahlleiste) zählt eine Buchung in keiner Statistik, keinem Budget, keiner Prognose, Abo-/Doppelbuchungserkennung und keiner KI-Auswertung mehr. Sie bleibt ausgegraut mit dem Hinweis **Ignoriert** in der Liste sichtbar, verändert keine Kontostände und wird beim erneuten Import weiterhin als vorhanden erkannt. **Wieder berücksichtigen** hebt das auf. Im Chat funktioniert z. B. „Ignorier die Buchung vom 3.11.“; die Excel-Sicherung enthält dafür die Spalte **Ignoriert**.
 
-### Bankverbindung (FinTecSystems XS2A / Tink)
+### Bankverbindung (Enable Banking oder FinTecSystems XS2A / Tink)
 
-Im Kontomodus lassen sich Konten unter **Einstellungen → Bankverbindung** direkt per PSD2 verbinden. Die Anmeldung läuft im eingebetteten XS2A-Widget (`api.xs2a.com`); Finanzblick sieht keine Bankzugangsdaten. Voraussetzung ist ein API-Schlüssel aus dem XS2A-Backoffice (Vertrag mit Tink Germany, früher FinTecSystems; zuerst den Testmodus-Schlüssel mit der Testbank `88888888` nutzen):
+Im Kontomodus lassen sich Konten unter **Einstellungen → Bankverbindung** direkt per PSD2 verbinden. Finanzblick sieht dabei nie Bankzugangsdaten. Zwei Anbieter werden unterstützt; ist Enable Banking eingerichtet, wird es bevorzugt.
+
+#### Enable Banking (für Privatpersonen kostenlos)
+
+Enable Banking erlaubt die nicht-kommerzielle Nutzung mit den **eigenen Konten** ohne Vertrag („restricted mode“):
+
+1. Auf <https://enablebanking.com/sign-in/> mit der E-Mail-Adresse anmelden (Login-Link per Mail).
+2. Im Control Panel unter **API applications** eine neue App anlegen: Umgebung **Production**, Name z. B. „Finanzblick privat“, Redirect-URL `http://127.0.0.1:3000/api/bank/callback` (bzw. die eigene Adresse + `/api/bank/callback`). Den Schlüssel im Browser erzeugen lassen und die `.pem`-Datei mit dem privaten Schlüssel sicher speichern (z. B. `.local-data/enablebanking.pem`, wird nie eingecheckt).
+3. Bei der App **Activate by linking accounts** wählen und die eigenen Bankkonten einmal verknüpfen – damit ist die App für genau diese Konten freigeschaltet.
+4. In `.env.local` eintragen und Finanzblick neu starten:
+
+```bash
+# .env.local
+ENABLEBANKING_APP_ID=<Application ID aus dem Control Panel>
+ENABLEBANKING_PRIVATE_KEY_PATH=.local-data/enablebanking.pem
+# optional, falls die registrierte Redirect-URL abweicht (z. B. https bzw. eigene Domain)
+ENABLEBANKING_REDIRECT_URL=http://127.0.0.1:3000/api/bank/callback
+```
+
+- **Bank verbinden**: Land und Bank wählen, danach geht es zur Anmeldeseite der Bank und automatisch zurück nach Finanzblick. Die Rückkehr muss im selben Browser mit angemeldetem Finanzblick-Konto erfolgen.
+- Die Freigabe gilt höchstens 180 Tage (je nach Bank kürzer) und wird über **Freigabe erneuern** verlängert. Abgelaufene Verbindungen werden pausiert und angezeigt.
+- Statt `ENABLEBANKING_PRIVATE_KEY_PATH` kann der Schlüssel auch direkt als `ENABLEBANKING_PRIVATE_KEY` (PEM, Zeilenumbrüche als `\n`) gesetzt werden.
+
+#### FinTecSystems XS2A / Tink (Firmenvertrag)
+
+Die Anmeldung läuft im eingebetteten XS2A-Widget (`api.xs2a.com`). Voraussetzung ist ein API-Schlüssel aus dem XS2A-Backoffice (Vertrag mit Tink Germany, früher FinTecSystems; zuerst den Testmodus-Schlüssel mit der Testbank `88888888` nutzen):
 
 ```bash
 # .env.local
@@ -169,11 +194,13 @@ XS2A_API_KEY=...
 XS2A_API_URL=https://api.xs2a.com
 ```
 
-- **Bank verbinden** öffnet das Widget, danach werden Umsätze der letzten 90 Tage geladen. **Jetzt abrufen** holt sofort neue Umsätze; der Hintergrund-Worker ruft alle 6 Stunden automatisch ab.
+#### Für beide Anbieter
+
+- Nach dem Verbinden werden Umsätze der letzten 90 Tage geladen. **Jetzt abrufen** holt sofort neue Umsätze; der Hintergrund-Worker ruft alle 6 Stunden automatisch ab.
 - Abgerufene Umsätze werden als `Bankabruf-JJJJ-MM-TT.bank.json` in die normale Importwarteschlange gelegt und laufen durch dieselbe Erkennung, Kategorisierung, Duplikatprüfung und Prüfliste wie CSV-Auszüge. Vorgemerkte und stornierte Umsätze werden übersprungen.
 - Tage, die für dasselbe Konto bereits per CSV/PDF importiert sind, werden übersprungen; zusätzlich gilt eine Buchung mit gleichem Konto, Tag und Betrag aus der jeweils anderen Quelle als vorhanden.
 - Raiffeisen-Girokonten landen auf **Raiffeisen Giro**, Revolut auf **Persönliches Konto**. Kontostände werden in der Verbindungsübersicht angezeigt.
-- Die Verbindung (Bank-Benutzer, Zugriffstoken) liegt pro Benutzer in `bank-links/<id>.json` neben der Datenbank (Dateirechte 0600) und wird nie eingecheckt. Die PSD2-Freigabe muss nach spätestens 90 Tagen über **Freigabe erneuern** bestätigt werden.
+- Die Verbindung (Bank-Benutzer bzw. Sitzung, Kontodaten) liegt pro Benutzer in `bank-links/<id>.json` neben der Datenbank (Dateirechte 0600) und wird nie eingecheckt. Die PSD2-Freigabe muss regelmäßig über **Freigabe erneuern** bestätigt werden.
 - Amex bietet in Österreich keine PSD2-Schnittstelle; dafür bleibt der CSV-/Screenshot-Import.
 
 ## Automatische Planung

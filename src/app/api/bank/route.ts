@@ -3,7 +3,7 @@ import { isAccountMode } from "@/lib/server/config";
 import { AccountError } from "@/lib/server/errors";
 import { accountErrorResponse, jsonResponse, readJsonBody, requestSessionToken, requireMutationOrigin } from "@/lib/server/http";
 import { getAccountRuntime } from "@/lib/server/runtime";
-import { bankStatus, removeBankConnection, renewBankConnection, startBankConnection, syncBank } from "@/lib/banking/sync";
+import { bankChoices, bankStatus, configuredBankProvider, removeBankConnection, renewBankConnection, startBankConnection, syncBank } from "@/lib/banking/sync";
 
 export const runtime = "nodejs";
 
@@ -12,6 +12,7 @@ const actionSchema = z.discriminatedUnion("action", [
     action: z.literal("connect"),
     country: z.string().regex(/^[A-Z]{2}$/).default("AT"),
     bic: z.string().regex(/^[A-Z0-9]{8}([A-Z0-9]{3})?$/).optional(),
+    aspsp: z.string().min(1).max(200).optional(),
   }),
   z.object({ action: z.literal("renew"), connection: z.string().min(1).max(200) }),
   z.object({ action: z.literal("sync") }),
@@ -30,6 +31,12 @@ async function authorized(request: Request) {
 export async function GET(request: Request): Promise<Response> {
   try {
     const { database, user } = await authorized(request);
+    const country = new URL(request.url).searchParams.get("banks");
+    if (country !== null) {
+      if (configuredBankProvider() !== "enablebanking") return jsonResponse({ banks: [] });
+      database.consumeRateLimit(`bank-list:${user.id}`, 30, 60_000);
+      return jsonResponse({ banks: await bankChoices(z.string().regex(/^[A-Z]{2}$/).parse(country)) });
+    }
     return jsonResponse(await bankStatus(database, user.id));
   } catch (error) {
     return accountErrorResponse(error);
@@ -42,10 +49,11 @@ export async function POST(request: Request): Promise<Response> {
     requireMutationOrigin(request, config);
     database.consumeRateLimit(`bank:${user.id}`, 20, 60_000);
     const body = actionSchema.parse(await readJsonBody(request, 4096));
+    const origin = config.origin ?? new URL(request.url).origin;
     if (body.action === "connect")
-      return jsonResponse(await startBankConnection(database, user, { country: body.country, ...(body.bic ? { bic: body.bic } : {}) }));
+      return jsonResponse(await startBankConnection(database, user, { country: body.country, origin, ...(body.bic ? { bic: body.bic } : {}), ...(body.aspsp ? { aspsp: body.aspsp } : {}) }));
     if (body.action === "renew")
-      return jsonResponse(await renewBankConnection(database, user, body.connection));
+      return jsonResponse(await renewBankConnection(database, user, body.connection, origin));
     return jsonResponse(await syncBank(database, user, { refresh: true }));
   } catch (error) {
     return accountErrorResponse(error);
