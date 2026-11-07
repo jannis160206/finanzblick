@@ -260,7 +260,7 @@ export function BankConnections() {
         <p className="text-xs leading-relaxed text-muted-foreground">
           {enableBanking
             ? "Du wirst zur Anmeldeseite deiner Bank weitergeleitet und kommst danach automatisch zurück – Finanzblick sieht deine Zugangsdaten nie."
-            : "Die Anmeldung läuft direkt im gesicherten Fenster der Bank-Schnittstelle – Finanzblick sieht deine Zugangsdaten nie."}
+            : "Die Anmeldung läuft direkt im gesicherten Fenster der Bank-Schnittstelle –             Finanzblick sieht deine Zugangsdaten nie."}{" "}
           Bereits per CSV importierte Tage werden übersprungen, doppelte Buchungen erkannt.
           {status.lastSync && <> Letzter Abruf: {new Date(status.lastSync).toLocaleString("de-AT")}{status.lastSyncRows !== null && ` (${status.lastSyncRows} Umsätze)`}.</>}
         </p>
