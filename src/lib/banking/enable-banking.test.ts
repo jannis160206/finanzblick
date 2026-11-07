@@ -186,6 +186,34 @@ describe("enable banking sync service", () => {
     expect(await autoSyncDue(accounts, userId, now + 20 * 3_600_000)).toBe(false);
   });
 
+  it("matches each account once to its CSV pocket and keeps the assignment", async () => {
+    const api = fakeApi();
+    vi.mocked(api.createSession).mockResolvedValueOnce({
+      session_id: "sess-r", aspsp: { name: "Revolut", country: "AT" }, access: { valid_until: "2027-05-01T00:00:00+00:00" },
+      accounts: [{ uid: "vault-1", name: "Jannis Brühl", cash_account_type: "SVGS" }, { uid: "vault-2", name: "Jannis Brühl", cash_account_type: "SVGS" }],
+    });
+    vi.mocked(api.transactions).mockImplementation(async (id: string) => id === "vault-1"
+      ? [tx({ entry_reference: "v1a", booking_date: "2026-11-08", transaction_amount: { currency: "EUR", amount: "250.00" }, credit_debit_indicator: "CRDT" }),
+        tx({ entry_reference: "v1b", booking_date: "2026-11-09", transaction_amount: { currency: "EUR", amount: "10.00" }, credit_debit_indicator: "DBIT" })]
+      : []);
+    const existing = [
+      { bank: "Revolut", pocket: "Sparen", date: "2026-11-08", amount: 250 },
+      { bank: "Revolut", pocket: "Sparen", date: "2026-11-09", amount: -10 },
+    ];
+    vi.spyOn(accounts, "getFinance").mockReturnValue({ state: { transactions: existing }, revision: 1 } as unknown as ReturnType<AccountDatabase["getFinance"]>);
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    const first = await syncBank(accounts, user(), { enableBanking: api, now });
+    expect(first.accounts.find((account) => account.id === "vault-1")).toMatchObject({ bank: "Revolut", pocket: "Sparen", label: "Sparen" });
+    expect(first.accounts.find((account) => account.id === "vault-2")).toMatchObject({ pocket: "Persönliches Konto" });
+    const transactionCalls = vi.mocked(api.transactions).mock.calls;
+    expect(transactionCalls[0][1]).toBe("2026-08-12");
+
+    vi.mocked(accounts.getFinance).mockReturnValue({ state: { transactions: [] }, revision: 1 } as unknown as ReturnType<AccountDatabase["getFinance"]>);
+    const second = await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });
+    expect(second.accounts.find((account) => account.id === "vault-1")).toMatchObject({ pocket: "Sparen" });
+    expect(transactionCalls.at(-2)![1]).toBe("2026-11-03");
+  });
+
   it("renews a session by replacing it and removes connections at the bank", async () => {
     const api = fakeApi();
     await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });

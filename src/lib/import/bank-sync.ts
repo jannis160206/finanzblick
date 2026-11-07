@@ -36,6 +36,8 @@ export const bankSyncAccountSchema = z.object({
   iban: z.string().max(50).nullish(),
   description: z.string().max(200).nullish(),
   type: z.string().max(50).nullish(),
+  /** Pocket assigned to this bank account (matched against existing CSV pockets). */
+  pocket: z.string().min(1).max(100).nullish(),
   /** Bookings on or before this date are already covered by other imports for this account. */
   coveredUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   turnovers: z.array(turnoverSchema).max(MAX_STATEMENT_ROWS),
@@ -60,7 +62,9 @@ export function isBankSyncName(name: string): boolean {
 const compact = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
 
 /** Maps a bank account to the bank/pocket names the dashboard already uses for CSV imports. */
-export function bankAccountTarget(account: Pick<BankSyncAccount, "bankName" | "bic" | "description" | "iban">): { bank: string; pocket: string | null } {
+export function bankAccountTarget(account: Pick<BankSyncAccount, "bankName" | "bic" | "description" | "iban"> & { pocket?: string | null }): { bank: string; pocket: string | null } {
+  const assigned = compact(account.pocket);
+  if (assigned) return { bank: bankAccountTarget({ ...account, pocket: null }).bank, pocket: assigned.slice(0, 100) };
   const bankName = compact(account.bankName);
   const bic = compact(account.bic).toUpperCase();
   const description = compact(account.description);

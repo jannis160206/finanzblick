@@ -9,6 +9,8 @@ import { MAX_UPLOAD_BYTES } from "@/lib/automation/schema";
 import { bankAccountTarget, BANK_SYNC_FORMAT, coveredUntilByAccount, accountIdentity, type BankSyncFile } from "@/lib/import/bank-sync";
 import { readXs2aConfig, Xs2aClient, Xs2aError, type Xs2aConnection } from "./xs2a";
 import { EnableBankingClient, EnableBankingError, pickBalances, readEnableBankingConfig, toTurnover, type EbAccount } from "./enable-banking";
+import { matchPockets } from "./pocket-match";
+import type { Transaction } from "@/lib/types";
 
 const DAY = 86_400_000;
 const FIRST_SYNC_DAYS = 90;
@@ -58,6 +60,8 @@ const linkSchema = z.object({
     iban: z.string().nullable(),
     description: z.string().nullable(),
     type: z.string().nullable(),
+    /** CSV pocket matched once from the bookings; null until a match was found. */
+    pocket: z.string().nullable().default(null),
   })).default([]),
   /** Open bank authorisations waiting for the redirect back (Enable Banking only). */
   pending: z.array(z.object({
@@ -330,6 +334,7 @@ function providerAccount(account: EbAccount, connectionId: string, bankName: str
     iban: account.account_id?.iban ?? null,
     description: (account.name || account.product || account.details || null)?.slice(0, 200) ?? null,
     type: account.cash_account_type ?? null,
+    pocket: null,
   };
 }
 
@@ -421,7 +426,7 @@ export async function removeBankConnection(
 const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10);
 const CONSENT_MESSAGE = "Die Bank verlangt eine erneute Bestätigung. Bitte bei der Verbindung „Freigabe erneuern“ wählen.";
 
-type SyncResult = { file: BankSyncFile; summaries: BankLink["accounts"]; connections: BankLink["connections"]; needsConsent: boolean };
+type SyncResult = { file: BankSyncFile; summaries: BankLink["accounts"]; connections: BankLink["connections"]; needsConsent: boolean; providerAccounts?: BankLink["providerAccounts"] };
 
 async function collectXs2a(api: Xs2aClient, link: BankLink, range: { from: string; to: string }, covered: Map<string, string>, refresh: boolean, now: number): Promise<SyncResult> {
   const token = link.token!.token;
@@ -470,10 +475,11 @@ async function collectXs2a(api: Xs2aClient, link: BankLink, range: { from: strin
 const consentLost = (error: unknown) =>
   error instanceof EnableBankingError && (error.status === 401 || error.status === 403 || /expired|revoked|consent|session/i.test(`${error.code} ${error.message}`));
 
-async function collectEnableBanking(api: EnableBankingClient, link: BankLink, range: { from: string; to: string }, covered: Map<string, string>, now: number): Promise<SyncResult> {
+async function collectEnableBanking(api: EnableBankingClient, link: BankLink, range: { from: string; to: string }, covered: Map<string, string>, now: number, existing: Transaction[] = []): Promise<SyncResult> {
   const file: BankSyncFile = { format: BANK_SYNC_FORMAT, version: 1, provider: "enablebanking", fetchedAt: new Date(now).toISOString(), accounts: [] };
   const summaries: BankLink["accounts"] = [];
   const connections: BankLink["connections"] = [];
+  const assigned = new Map<string, string>();
   let needsConsent = false;
   for (const connection of link.connections) {
     let active = true;
@@ -491,11 +497,13 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
     }
     const accounts = link.providerAccounts.filter((account) => account.connectionId === connection.id);
     if (active) {
+      const fetched: { account: BankLink["providerAccounts"][number]; turnovers: ReturnType<typeof toTurnover>[]; balance: ReturnType<typeof pickBalances> }[] = [];
       for (const account of accounts) {
-        const target = bankAccountTarget(account);
+        // Unassigned accounts look back further once, so their pocket can be matched reliably.
+        const from = account.pocket ? range.from : isoDay(now - FIRST_SYNC_DAYS * DAY);
         let transactions;
         try {
-          transactions = await api.transactions(account.id, range.from, range.to);
+          transactions = await api.transactions(account.id, from < range.from ? from : range.from, range.to);
         } catch (error) {
           if (!consentLost(error)) throw error;
           active = false;
@@ -503,13 +511,29 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
           break;
         }
         const balance = pickBalances(await api.balances(account.id).catch(() => []));
-        file.accounts.push({ ...account, coveredUntil: covered.get(accountIdentity(target)) ?? null, turnovers: transactions.map(toTurnover) });
+        fetched.push({ account, turnovers: transactions.map(toTurnover), balance });
+      }
+      const open = fetched.filter((entry) => !entry.account.pocket);
+      if (open.length) {
+        const taken = new Set(link.providerAccounts.filter((account) => account.pocket).map((account) => `${bankAccountTarget(account).bank}|${account.pocket}`));
+        const usable = existing.filter((row) => !taken.has(`${row.bank}|${row.pocket}`));
+        const matches = matchPockets(open.map((entry) => ({ id: entry.account.id, bank: bankAccountTarget(entry.account).bank, turnovers: entry.turnovers })), usable);
+        for (const entry of open) {
+          const match = matches.get(entry.account.id);
+          if (!match) continue;
+          entry.account = { ...entry.account, pocket: match.pocket };
+          assigned.set(entry.account.id, match.pocket);
+        }
+      }
+      for (const { account, turnovers, balance } of fetched) {
+        const target = bankAccountTarget(account);
+        file.accounts.push({ ...account, coveredUntil: covered.get(accountIdentity(target)) ?? null, turnovers });
         summaries.push({
           id: account.id,
           connectionId: connection.id,
           bank: target.bank,
           pocket: target.pocket,
-          label: account.description || target.pocket || target.bank,
+          label: account.pocket || account.description || target.pocket || target.bank,
           iban: maskIban(account.iban),
           balance: balance.balance,
           available: balance.available,
@@ -523,7 +547,8 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
     }
     connections.push({ ...connection, syncActive: active, message, consentValidUntil: validUntil, lastSynced: active ? new Date(now).toISOString() : connection.lastSynced });
   }
-  return { file, summaries, connections, needsConsent };
+  const providerAccounts = link.providerAccounts.map((account) => assigned.has(account.id) ? { ...account, pocket: assigned.get(account.id)! } : account);
+  return { file, summaries, connections, needsConsent, providerAccounts };
 }
 
 /**
@@ -543,10 +568,11 @@ export async function syncBank(
     let link = stored;
     try {
       const range = { from: isoDay(link.lastSync ? link.lastSync - OVERLAP_DAYS * DAY : now - FIRST_SYNC_DAYS * DAY), to: isoDay(now) };
-      const covered = coveredUntilByAccount(database.getFinance(user.id).state?.transactions ?? []);
+      const existing = database.getFinance(user.id).state?.transactions ?? [];
+      const covered = coveredUntilByAccount(existing);
       let result: SyncResult;
       if (link.provider === "enablebanking") {
-        result = await collectEnableBanking(options.enableBanking ?? enableBankingClient(), link, range, covered, now);
+        result = await collectEnableBanking(options.enableBanking ?? enableBankingClient(), link, range, covered, now, existing);
       } else {
         const api = options.api ?? xs2aClient();
         link = await ensureToken(api, database, user, stored, now);
@@ -555,6 +581,7 @@ export async function syncBank(
       const count = result.file.accounts.reduce((sum, account) => sum + account.turnovers.length, 0);
       const queued = count > 0 && await enqueue(database, user.id, result.file, now);
       link = { ...link, connections: result.connections, accounts: result.summaries, lastSync: now, lastSyncRows: count,
+        providerAccounts: result.providerAccounts ?? link.providerAccounts,
         lastError: result.needsConsent ? CONSENT_MESSAGE : null };
       await writeLink(database, user.id, link);
       return { ...(await bankStatus(database, user.id)), queued, rows: count };
