@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { classifyStatementRows, round } from "@/lib/calc";
 import { RAIFFEISEN_ACCOUNT } from "@/lib/accounts";
-import { transactionSchema, type Transaction } from "@/lib/types";
+import { transactionSchema } from "@/lib/types";
 import { MAX_STATEMENT_ROWS } from "@/lib/import/limits";
 import { numberStatementRows } from "./identity";
 import { recoverMerchant } from "./merchant-description";
@@ -25,6 +25,7 @@ const turnoverSchema = z.object({
   prebooked: z.boolean().nullish(),
   canceled: z.boolean().nullish(),
   creditor_id: z.string().nullish(),
+  transaction_id: z.string().max(200).nullish(),
 }).passthrough();
 
 export const bankSyncAccountSchema = z.object({
@@ -105,7 +106,10 @@ export function parseBankSync(bytes: Uint8Array, file: string): StatementResult 
       const holder = compact(turnover.counter_holder).slice(0, 200);
       const description = (compact([holder, purpose.join(" ")].filter(Boolean).join(" · ")) || "Bankumsatz").slice(0, 1000);
       const amount = round(turnover.amount);
-      const fingerprint = [account.id, date, amount.toFixed(2), purpose.join("|"), compact(turnover.counter_iban), holder].join("\u0001");
+      const transactionId = compact(turnover.transaction_id);
+      const fingerprint = transactionId
+        ? ["tx", account.id, transactionId].join("\u0001")
+        : [account.id, date, amount.toFixed(2), purpose.join("|"), compact(turnover.counter_iban), holder].join("\u0001");
       const hash = createHash("sha256").update(fingerprint).digest("hex").slice(0, 24);
       const repeat = (seen.get(hash) ?? 0) + 1;
       seen.set(hash, repeat);

@@ -237,10 +237,13 @@ export async function syncBank(
       link = await ensureToken(api, database, user, stored, now);
       const token = link.token!.token;
       let connections = await api.listConnections(token);
-      if (options.refresh)
-        await Promise.allSettled(connections.filter((connection) => connection.sync_active !== false)
+      let needsConsent = false;
+      if (options.refresh) {
+        const results = await Promise.allSettled(connections.filter((connection) => connection.sync_active !== false)
           .map((connection) => api.syncConnection(token, connection.id)));
-      if (options.refresh) connections = await api.listConnections(token);
+        needsConsent = results.some((result) => result.status === "fulfilled" && result.value !== null);
+        connections = await api.listConnections(token);
+      }
       const accounts = await api.listAccounts(token);
       const from = isoDay(link.lastSync ? link.lastSync - OVERLAP_DAYS * DAY : now - FIRST_SYNC_DAYS * DAY);
       const to = isoDay(now);
@@ -278,7 +281,8 @@ export async function syncBank(
       }
       const count = file.accounts.reduce((sum, account) => sum + account.turnovers.length, 0);
       const queued = count > 0 && await enqueue(database, user.id, file, now);
-      link = { ...link, connections: connections.map(mapConnection), accounts: summaries, lastSync: now, lastSyncRows: count, lastError: null };
+      link = { ...link, connections: connections.map(mapConnection), accounts: summaries, lastSync: now, lastSyncRows: count,
+        lastError: needsConsent ? "Die Bank verlangt eine erneute Bestätigung. Bitte bei der Verbindung „Freigabe erneuern“ wählen." : null };
       await writeLink(database, user.id, link);
       return { ...(await bankStatus(database, user.id)), queued, rows: count };
     } catch (error) {

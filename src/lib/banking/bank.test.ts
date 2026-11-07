@@ -49,6 +49,14 @@ describe("bank sync parser", () => {
     expect(first[1]).toMatch(/#2$/);
   });
 
+  it("prefers the bank's transaction_id for the reference", () => {
+    const a = parseBankSync(encode(syncFile([turnover("2026-11-05", -2.5, ["Kaffee"], { transaction_id: "tx-1" })])), "a.bank.json").rows[0];
+    const b = parseBankSync(encode(syncFile([turnover("2026-11-05", -2.5, ["Kaffee Bar"], { transaction_id: "tx-1" })])), "b.bank.json").rows[0];
+    const c = parseBankSync(encode(syncFile([turnover("2026-11-05", -2.5, ["Kaffee"], { transaction_id: "tx-2" })])), "c.bank.json").rows[0];
+    expect(a.bankReference).toBe(b.bankReference);
+    expect(a.bankReference).not.toBe(c.bankReference);
+  });
+
   it("skips days already covered by CSV imports and reports foreign currencies", () => {
     const result = parseBankSync(encode(syncFile([
       turnover("2026-11-01", -5, ["alt"]),
@@ -114,6 +122,12 @@ describe("xs2a client", () => {
       (async () => Response.json({ message: "Invalid api key" }, { status: 401 })) as unknown as typeof fetch);
     await expect(client.createUser("a", "b@c.d")).rejects.toEqual(new Xs2aError(401, "Invalid api key"));
   });
+  it("reports when a sync needs user interaction (202) and accepts 204", async () => {
+    const respond = (response: () => Response) => new Xs2aClient({ apiKey: "k", baseUrl: "https://api.xs2a.com" }, (async () => response()) as unknown as typeof fetch);
+    expect(await respond(() => new Response(null, { status: 204 })).syncConnection("t", "bcn_1")).toBeNull();
+    expect(await respond(() => Response.json({ wizard_session_key: "w", transaction: "x" }, { status: 202 })).syncConnection("t", "bcn_1"))
+      .toMatchObject({ wizard_session_key: "w" });
+  });
 });
 
 describe("bank sync service", () => {
@@ -137,7 +151,7 @@ describe("bank sync service", () => {
       createUser: vi.fn(async () => ({ id: "bus_1" })),
       createAccessToken: vi.fn(async () => ({ id: "tok_1", token: "access" })),
       listConnections: vi.fn(async () => [{ id: "bcn_1", bank_name: "Raiffeisen", sync_active: true, consent_valid_until: "2027-02-01 00:00:00" }]),
-      syncConnection: vi.fn(async () => ({})),
+      syncConnection: vi.fn(async () => null),
       listAccounts: vi.fn(async () => [{ id: "bac_1", bank_connection_id: "bcn_1", bank_name: "Raiffeisenbank Kärnten", bic: "RZKTAT2K", iban: "AT611904300234573201", description: "Girokonto" }]),
       turnovers: vi.fn(async () => [turnover("2026-11-02", -4, ["alt"]), turnover("2026-11-05", -23.45, ["neu"])]),
       balance: vi.fn(async () => ({ balance: 1234.56, available: 1200, date: "2026-11-10" })),
@@ -175,6 +189,10 @@ describe("bank sync service", () => {
     expect(await autoSyncDue(accounts, userId, now + 60_000)).toBe(false);
     expect(await autoSyncDue(accounts, userId, now + 7 * 3_600_000)).toBe(true);
     const link = await readFile(join(linkDir, `${userId}.json`), "utf8");
-    expect(JSON.parse(link)).toMatchObject({ token: { token: "access" }, lastSync: now });
+    expect(JSON.parse(link)).toMatchObject({ token: { token: "access" }, lastSync: now, lastError: null });
+    const consent = fakeApi();
+    vi.mocked(consent.syncConnection).mockResolvedValue({ wizard_session_key: "w", transaction: "x" });
+    const again = await syncBank(accounts, { id: userId, username: "alice" }, { api: consent, now: now + 3_600_000, refresh: true });
+    expect(again.lastError).toMatch(/Freigabe erneuern/);
   });
 });

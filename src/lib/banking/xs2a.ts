@@ -64,6 +64,7 @@ export const xs2aTurnoverSchema = z.object({
   canceled: z.boolean().nullish(),
   creditor_id: z.string().nullish(),
   category_id: z.string().nullish(),
+  transaction_id: z.string().nullish(),
 }).passthrough();
 const balanceSchema = z.object({
   available: z.number().nullish(),
@@ -158,8 +159,11 @@ export class Xs2aClient {
     return this.paged("/v1/api/connections", xs2aConnectionSchema, token);
   }
 
-  syncConnection(token: string, connectionId: string) {
-    return this.request("POST", `/v1/api/connections/${encodeURIComponent(connectionId)}/sync`, z.unknown(), { secret: token, body: {} });
+  /** Returns a wizard session when the bank needs user interaction (HTTP 202), otherwise null (HTTP 204). */
+  async syncConnection(token: string, connectionId: string) {
+    const result = await this.request("POST", `/v1/api/connections/${encodeURIComponent(connectionId)}/sync`, z.unknown(), { secret: token, body: {} });
+    const session = sessionSchema.safeParse(result);
+    return session.success ? session.data : null;
   }
 
   resetConnection(token: string, connectionId: string) {
