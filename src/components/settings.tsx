@@ -21,6 +21,7 @@ import { useAccountWorkspace } from "@/components/account-context";
 import { SettingsSection } from "@/components/settings-section";
 import { SecurityModeSettings } from "@/components/security-mode-settings";
 import { FinancialData } from "@/components/financial-data";
+import { BankConnections } from "@/components/bank-connections";
 import { latestTRBalance } from "@/lib/calc";
 import { currency, dateLabel, percent } from "@/lib/format";
 import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
@@ -102,6 +103,7 @@ export function Settings() {
         <FinancialData><ClearBookings /></FinancialData>
         <AccountSyncTools manual />
       </SettingsSection>
+      <BankConnections />
       <SecurityModeSettings />
       <NotificationSettings />
       <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Deine Farben, dein Komfort. So fühlt sich Finanzblick nach dir an." icon={Palette}>

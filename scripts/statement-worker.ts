@@ -6,6 +6,7 @@ import { MerchantIndex, seedMerchants } from "../src/lib/automation/merchants";
 import { AutomationWorker } from "../src/lib/automation/worker";
 import { PublicMerchantCatalogue } from "../src/lib/automation/catalogue-refresh";
 import { assertParserRuntimeAvailable } from "../src/lib/automation/parser-runtime";
+import { startBankAutoSync } from "../src/lib/banking/auto-sync";
 
 const config = readAccountConfig();
 const accounts = new AccountDatabase(config.databasePath);
@@ -22,6 +23,7 @@ try {
   store.upsertMerchants(seedMerchants);
   const index = new MerchantIndex(store.loadMerchants());
   const catalogue = new PublicMerchantCatalogue(store);
+  startBankAutoSync(accounts, stop.signal);
   console.info("Statement worker ready (concurrency=1, isolated local parser, budget=120s).");
   await new AutomationWorker(store, randomUUID(), index, {}, (signal, owner) => catalogue.maintain(signal, owner)).run(stop.signal);
 } finally {

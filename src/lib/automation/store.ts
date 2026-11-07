@@ -232,7 +232,7 @@ export class AutomationStore {
   ): AutomationJob {
     z.string().uuid().parse(id);
     if (
-      !/\.(csv|xlsx|pdf|png|jpe?g|webp)$/i.test(name) ||
+      !/\.(csv|xlsx|pdf|png|jpe?g|webp|bank\.json)$/i.test(name) ||
       name.length > 200 ||
       /[\x00-\x1f]/.test(name)
     )

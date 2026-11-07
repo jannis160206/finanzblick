@@ -9,6 +9,7 @@ import { parseAmexScreenshotLines } from "../import/amex-screenshot";
 import { assertImportSize } from "../import/limits";
 import { parseStatementFile, type StatementResult } from "../import/statements";
 import { parseGenericPdfText } from "../import/generic-pdf";
+import { isBankSyncName, parseBankSync } from "../import/bank-sync";
 import { createPdfAiExtractor } from "../ai/pdf-ai";
 import { classifyParserError, ParserFailure } from "./errors";
 
@@ -245,6 +246,7 @@ export async function parseServerStatement(
   try {
     assertImportSize(bytes.byteLength);
     if (!bytes.byteLength) throw new ParserFailure("PARSE_DAMAGED", "Die Kontoauszugsdatei ist leer.");
+    if (isBankSyncName(name)) return parseBankSync(bytes, name);
     if (/\.pdf$/i.test(name)) return await parsePdf(bytes, name, options);
     if (/\.(png|jpe?g|webp)$/i.test(name))
       return await parseImage(bytes, name, options.workspace ?? process.cwd());

@@ -16,9 +16,10 @@ import { amexBookingKey, isAmexScreenshot, numberStatementRows, statementBaseKey
 import { hasTerminalText, recoverMerchant, sameTerminalBooking, unresolvedTerminal } from "./merchant-description";
 import type { ImportResult } from "./result-schema";
 import { isTradeRepublicHeader, parseTradeRepublicRows } from "./trade-republic";
+import { accountIdentity, isBankSyncRow } from "./bank-identity";
 export { statementFingerprint } from "./identity";
 
-export type StatementSource = "Raiffeisen" | "Revolut" | "Amex" | "Trade Republic" | "PDF";
+export type StatementSource = "Raiffeisen" | "Revolut" | "Amex" | "Trade Republic" | "PDF" | "Bank";
 export type StatementDraft = z.infer<typeof statementRepairDraftSchema>;
 export type StatementIssue = {
   file: string;
@@ -928,6 +929,22 @@ export function deduplicateStatements<T extends Transaction>(
     group.push(row);
     terminalExisting.set(key, group);
   }
+  // Bank-connection rows carry different texts than CSV/PDF rows of the same booking:
+  // the same account, day and amount from the other source counts as already imported.
+  const crossKey = (row: Transaction) => JSON.stringify([row.date.slice(0, 10), accountIdentity(row), row.amount.toFixed(2)]);
+  const crossExisting = new Map<string, { bank: number; other: number }>();
+  for (const row of numbered) {
+    const entry = crossExisting.get(crossKey(row)) ?? { bank: 0, other: 0 };
+    if (isBankSyncRow(row)) entry.bank++; else entry.other++;
+    crossExisting.set(crossKey(row), entry);
+  }
+  const crossDuplicate = (row: Transaction) => {
+    const entry = crossExisting.get(crossKey(row));
+    const side = isBankSyncRow(row) ? "other" : "bank";
+    if (!entry || entry[side] < 1) return false;
+    entry[side]--;
+    return true;
+  };
   const unique: T[] = [];
   const positions = new Map<string, number>();
   let duplicates = 0;
@@ -939,7 +956,7 @@ export function deduplicateStatements<T extends Transaction>(
     const amexKey = amexBookingKey(row);
     const screenshotDuplicate = amexKey !== null && (amex.get(amexKey) ?? []).some((old) =>
       (isAmexScreenshot(old) || isAmexScreenshot(row)) && old.occurrence === row.occurrence);
-    if (seen.has(key) || legacyDuplicate || screenshotDuplicate) {
+    if (seen.has(key) || legacyDuplicate || screenshotDuplicate || crossDuplicate(row)) {
       duplicates++;
       const index = positions.get(key);
       if (index !== undefined && unresolvedTerminal(unique[index].description) && !unresolvedTerminal(row.description))
