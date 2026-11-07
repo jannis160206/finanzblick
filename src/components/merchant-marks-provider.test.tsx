@@ -1192,7 +1192,7 @@ it.each([false, true])(
       ]),
     );
     expect(ledger.querySelector('img[src*="private-revolut"]')).toBeNull();
-    expect(screen.getByText("Eigenes Konto").previousElementSibling).toBeNull();
+    expect(screen.getByText("Eigenes Konto").parentElement!.previousElementSibling).toBeNull();
     expect(state).toEqual(before);
     expect(update).not.toHaveBeenCalled();
   },
@@ -1372,19 +1372,19 @@ it.each([false, true])(
         booking.description,
         "MONATSGEBÜHR",
         "Habenzinsen",
-      ]).toContain(image.closest("a")!.nextElementSibling!.textContent);
+      ]).toContain(image.closest("a")!.nextElementSibling!.querySelector("[title]")!.getAttribute("title"));
     }
     expect(
       screen
-        .getByText(booking.description)
-        .previousElementSibling?.querySelector("img"),
+        .getByTitle(booking.description)
+        .parentElement!.previousElementSibling?.querySelector("img"),
     ).not.toBeNull();
-    expect(screen.getByText("Eigenes Konto").previousElementSibling).toBeNull();
+    expect(screen.getByText("Eigenes Konto").parentElement!.previousElementSibling).toBeNull();
     expect(
-      screen.getByText("Externes Konto").previousElementSibling,
+      screen.getByText("Externes Konto").parentElement!.previousElementSibling,
     ).toBeNull();
     expect(
-      screen.getByText("Mein Händler").previousElementSibling?.textContent,
+      screen.getByText("Mein Händler").parentElement!.previousElementSibling?.textContent,
     ).toBe("MH");
     expect(actualBookings(state)).toEqual(ledgerBefore);
     expect(update).not.toHaveBeenCalled();

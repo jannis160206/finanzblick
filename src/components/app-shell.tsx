@@ -8,14 +8,12 @@ import {
   ArrowLeftRight,
   CalendarRange,
   Calculator,
-  ChartNoAxesCombined,
   Check,
   ChevronRight,
   CircleAlert,
   LayoutDashboard,
   LockKeyhole,
   Menu,
-  MessageSquareText,
   Moon,
   Settings2,
   Shield,
@@ -44,15 +42,16 @@ import { AccountSyncTools } from "@/components/account-tools";
 import { AccountSidebarProfile } from "@/components/account-profile";
 import { FinancialData } from "@/components/financial-data";
 import { Skeleton } from "@/components/ui/skeleton";
+import { AssistantLauncher } from "@/components/assistant-launcher";
+import { GlobalImport } from "@/components/global-import";
+import { PwaNotifications } from "@/components/pwa-notifications";
 
 const navigation = [
   { href: "/", label: "Übersicht", icon: LayoutDashboard },
   { href: "/umsaetze", label: "Umsätze", icon: ArrowLeftRight },
-  { href: "/monate", label: "Monate", icon: CalendarRange },
-  { href: "/pockets", label: "Pockets", icon: Wallet },
-  { href: "/plan", label: "Budgetdetails", icon: ChartNoAxesCombined },
+  { href: "/budget", label: "Budget", icon: CalendarRange },
+  { href: "/sparen", label: "Sparen", icon: Wallet },
   { href: "/gehalt-steuern", label: "Gehalt & Steuern", icon: Calculator },
-  { href: "/assistent", label: "Finanz-Assistent", icon: MessageSquareText },
   { href: "/einstellungen", label: "Einstellungen", icon: Settings2 },
 ];
 export function AppShell({
@@ -85,7 +84,7 @@ export function AppShell({
               : "text-muted-foreground hover:bg-accent hover:text-foreground",
           )}
         >
-          {item.href === "/" || item.href === "/pockets" ? (
+          {item.href === "/" || item.href === "/sparen" ? (
             <SeasonalIcon
               slot={item.href === "/" ? "navigation" : "pockets"}
               className="size-[18px]"
@@ -179,6 +178,7 @@ export function AppShell({
                 </span>
               </>
             )}
+            {!security.locked && <GlobalImport />}
             <div className="mx-1 h-5 border-l" />
             <Button
               variant="ghost"
@@ -265,6 +265,7 @@ export function AppShell({
           </footer>
         </main>
       </div>
+      {ready && <><AssistantLauncher /><PwaNotifications /></>}
       <Dialog open={menuOpen} onOpenChange={setMenuOpen} allowWhenLocked>
         <DialogContent variant="navigation" onCloseAutoFocus={(event) => {
           event.preventDefault();

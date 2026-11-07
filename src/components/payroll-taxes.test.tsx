@@ -316,7 +316,7 @@ it("shows current and year-end estimates prominently while a missing February bl
   const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
   const estimates = forecast.getAllByText(moneyText(6000));
   expect(estimates).toHaveLength(2);
-  expect(estimates.every((entry) => !entry.closest("details"))).toBe(true);
+  expect(estimates.every((entry) => entry.closest("details")?.getAttribute("aria-label") === "Gehaltsdetails")).toBe(true);
   expect(forecast.getByText(monthLabel("2026-09"))).toBeTruthy();
   expect(forecast.getByText("Jahresende · Dezember 2026")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain(`Fehlende Abrechnung: ${monthLabel("2026-02")}`);

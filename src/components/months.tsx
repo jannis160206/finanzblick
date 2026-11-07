@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,11 +25,16 @@ import type { FinanceRow } from "@/lib/types";
 import { normalizeSearch } from "@/lib/transaction-tools";
 import { cn } from "@/lib/utils";
 
-export function Months() {
+export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialView, monthExtras }: {
+  title?: string;
+  eyebrow?: string;
+  initialView?: MonthPlanView;
+  monthExtras?: ReactNode;
+} = {}) {
   const { state, dashboard, update, storageError } = useFinance();
   const compact = useCompactLayout();
   const [chosenView, setView] = useState<MonthPlanView | null>(null);
-  const view = chosenView ?? (compact ? "month" : "year");
+  const view = chosenView ?? initialView ?? (compact ? "month" : "year");
   const [month, setMonth] = useState(dashboard.currentMonth);
   const year = Number(month.slice(0, 4));
   const months = useMemo(
@@ -109,7 +114,7 @@ export function Months() {
   }
   return (
     <>
-      <PageHeading eyebrow="JAHRESPLANUNG" title="Monate" />
+      <PageHeading eyebrow={eyebrow} title={title} />
       <section
         aria-label={`Planübersicht ${periodLabel}`}
         className="mb-5 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
@@ -218,14 +223,17 @@ export function Months() {
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
           <span>{view === "year" ? "12 Monate" : "1 Monat"} · EUR</span>
           <Link
-            href="/plan"
+            href="/umsaetze"
             className="inline-flex min-h-9 items-center gap-1 rounded-md px-1 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
           >
-            Budgetdetails
+            Umsätze ansehen
             <ArrowUpRight className="size-3.5" />
           </Link>
         </footer>
       </section>
+      {view === "month" && month === dashboard.currentMonth && monthExtras && (
+        <div className="mt-5 space-y-5">{monthExtras}</div>
+      )}
       {months.includes(dashboard.currentMonth) && (
         <div className="mt-5">
           <FixedCostSchedule />

@@ -40,9 +40,9 @@ function Harness() {
   return <Transactions />;
 }
 const shown = () => ({
-  food: !!screen.queryByText(/Billa Zentrum/),
-  out: !!screen.queryByText(/Restaurant Linde/),
-  old: !!screen.queryByText(/Spar Altmonat/),
+  food: !!screen.queryByTitle(/Billa Zentrum/),
+  out: !!screen.queryByTitle(/Restaurant Linde/),
+  old: !!screen.queryByTitle(/Spar Altmonat/),
 });
 
 beforeEach(() => { nav.search = ""; nav.replace.mockClear(); });

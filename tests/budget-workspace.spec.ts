@@ -42,7 +42,7 @@ async function snapshot(page: Page) {
     headers,
   };
 }
-async function unlock(page: Page, heading = "Alltagsbudget") {
+async function unlock(page: Page, heading = "Budget") {
   const security = page.getByRole("button", {
     name: /^Sicherheitsmodus (aktivieren|deaktivieren)$/,
   });
@@ -59,7 +59,7 @@ async function unlock(page: Page, heading = "Alltagsbudget") {
 async function open(page: Page, state = budgetFixture()) {
   await page.clock.setFixedTime(new Date("2026-10-08T10:00:00Z"));
   await page.context().addCookies(cookies);
-  await page.goto("/plan");
+  await page.goto("/budget");
   await expect(
     page.getByText("Synchronisiert", { exact: true }),
   ).toBeAttached();
@@ -69,7 +69,7 @@ async function open(page: Page, state = budgetFixture()) {
     data: { state, revision: previous.revision },
   });
   expect(response.status()).toBe(200);
-  await page.goto("/plan");
+  await page.goto("/budget");
   await page.reload();
   await unlock(page);
   return (await snapshot(page)).state;
@@ -196,7 +196,7 @@ for (const width of [1440, 390]) {
     await expect(
       page.getByText("Synchronisiert", { exact: true }),
     ).toBeAttached();
-    await page.goto("/plan");
+    await page.goto("/budget");
     await unlock(page);
     await expect(
       page.getByLabel("Mittagessen Plan", { exact: true }),
@@ -241,7 +241,7 @@ for (const width of [1440, 390]) {
       })
       .click();
     await dialog.getByRole("button", { name: "Fertig" }).click();
-    await page.goto("/plan");
+    await page.goto("/budget");
     await unlock(page);
     await expect(
       page.getByLabel("Mittagessen Plan", { exact: true }),

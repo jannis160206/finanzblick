@@ -1,6 +1,8 @@
 "use client";
 
-import { memo, useMemo, useRef, useState, type SetStateAction } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { BulkReviewPanel } from "@/components/bulk-review-panel";
+import { TagDialog, TagSummaryPanel } from "@/components/transaction-tags";
 import { explainCategory } from "@/lib/category-why";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -116,6 +118,15 @@ const TransactionLedger = memo(function TransactionLedger({
   "use no memo";
   const { locked } = useSecurityMode();
   const [reviewRequest, setReviewRequest] = useState(0);
+  // "/umsaetze?pruefen=1" (from the overview to-do list) opens the review dialog once.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("pruefen")) return;
+    url.searchParams.delete("pruefen");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    const timer = window.setTimeout(() => setReviewRequest((request) => request + 1), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   const mobile = useMobileLedger();
   const ledger = useMemo(() => actualBookings(state), [state]);
   // Preserve cached classifications when only other rows receive an approval.
@@ -172,6 +183,7 @@ const TransactionLedger = memo(function TransactionLedger({
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
   const [batch, setBatch] = useState<AccountedTransaction[] | null>(null);
+  const [tagging, setTagging] = useState<string[] | null>(null);
   const [lookup, setLookup] = useState<{
     booking: Transaction;
     results: MerchantLookupResult[] | null;
@@ -500,6 +512,11 @@ const TransactionLedger = memo(function TransactionLedger({
         sensitiveDescription
       />
       <FinancialData><StatementImport reviewRequest={reviewRequest} /></FinancialData>
+      <BulkReviewPanel disabled={locked || !!storageError} />
+      <TagSummaryPanel query={filters.query} onSelect={(query) => {
+        setSelection({ scope: "", rows: {} });
+        setFilters((previous) => ({ ...previous, query, month: query ? "" : previous.month }));
+      }} />
       <section
         aria-label="Umsatzliste"
         className="min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
@@ -545,6 +562,14 @@ const TransactionLedger = memo(function TransactionLedger({
               }}
             >
               {selected.some((row) => !row.ignored) ? "Ignorieren" : "Wieder berücksichtigen"}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!!storageError}
+              onClick={() => setTagging(selected.map((row) => row.id))}
+            >
+              Tag vergeben
             </Button>
             <Button
               ref={batchTrigger}
@@ -685,6 +710,9 @@ const TransactionLedger = memo(function TransactionLedger({
             if (saved) setSelection({ scope, rows: {} });
           }}
         />
+      )}
+      {tagging && (
+        <TagDialog ids={tagging} onClose={() => { setTagging(null); setSelection({ scope, rows: {} }); }} />
       )}
       {lookup && (
         <MerchantLookupDialog

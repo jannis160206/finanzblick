@@ -185,7 +185,7 @@ export function Overview() {
             title="Deine Pockets"
           >
             <Link
-              href="/pockets"
+              href="/sparen"
               className="inline-flex min-h-8 items-center gap-1 text-xs text-muted-foreground hover:text-primary"
             >
               Details <ArrowUpRight aria-hidden="true" className="size-3" />
@@ -197,7 +197,7 @@ export function Overview() {
               const balance = physicalPocketBalance(state, pocket, d.actual);
               return (
                 <Link
-                  href="/pockets"
+                  href="/sparen"
                   key={pocket}
                   className="group min-w-0 rounded-2xl border border-border/70 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4"
                 >
@@ -298,7 +298,7 @@ export function Overview() {
               .map(([month, amount]) => ` · ${bikeExtraLabel(month)} +${number(amount, 0)}`).join("")} · monatlich ${number(motorcycle.funding.monthly, 0)} €`}
           </p>}
           <Link
-            href="/einstellungen#sparziele"
+            href="/sparen#sparziele"
             className="mt-3 inline-flex min-h-9 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             Sparziel anpassen <ArrowRight className="size-3" />
@@ -324,7 +324,7 @@ export function Overview() {
               <p className="text-sm font-medium">Noch kein Sparziel</p>
             </div>}
           </FinancialData>
-          <Link href="/einstellungen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
+          <Link href="/sparen#sparziele" className="mt-5 inline-flex items-center gap-1 text-xs text-primary">Sparziele bearbeiten <ArrowRight className="size-3" /></Link>
         </section>}
       </div>
       <FinanceInsightsPanel />
@@ -401,7 +401,7 @@ export function Overview() {
               </AreaChart>
             </ResponsiveContainer>
           </FinancialData><ChartDataTable caption={incompleteAssets ? "Bekannte Pocket-Guthaben pro Monat" : "Pocket-Vermögen pro Monat"} columns={["Monat", "Vermögen"]} rows={forecast.map((row) => ({ key: row.month, cells: [row.label, currency(row.total)] }))} /></> : <div className="flex min-h-48 items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center">
-            <Link href="/monate" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
+            <Link href="/budget?ansicht=jahr" className="inline-flex min-h-11 items-center gap-2 text-sm text-muted-foreground hover:text-primary">Monatsplan ergänzen <ArrowRight aria-hidden="true" className="size-4" /></Link>
           </div>}
         </section>
         <section className="panel min-w-0 p-5 sm:p-6">
