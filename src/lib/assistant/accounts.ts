@@ -35,7 +35,16 @@ export function balances(state: AppState, dashboard: Dashboard) {
   (state.pocketSnapshots ?? []).forEach((item) => add(item.pocket));
   state.transactions.forEach((row) => { if (row.bank === "Revolut") add(row.pocket); });
   const physical = physicalPocketBalances(state, dashboard.actual);
-  return Object.entries(physical).map(([key, balance]) => ({ key, name: names.get(key) ?? key, amount: balance.amount }));
+  const pockets = Object.entries(physical).map(([key, balance]) => ({ key, name: names.get(key) ?? key, amount: balance.amount, date: undefined as string | undefined }));
+  // Giro and main accounts are not pockets; their latest known balance comes from the bank connection or CSV export.
+  const latest = new Map<string, { name: string; balance: number; date: string }>();
+  for (const item of state.accountSnapshots ?? []) {
+    const key = pocketKey(item.name);
+    if (physical[key] || item.date > state.settings.asOf) continue;
+    const previous = latest.get(key);
+    if (!previous || item.date > previous.date) latest.set(key, item);
+  }
+  return [...pockets, ...[...latest].map(([key, item]) => ({ key, name: item.name, amount: item.balance as number | null, date: item.date as string | undefined }))];
 }
 
 // Card bill vs. the Revolut pocket that collects the repayment; same calculation as the dashboard.
@@ -80,20 +89,20 @@ export function accountBalances(state: AppState, dashboard: Dashboard, text: str
   const named = matchName(text, all, (item) => item.name);
   if (named) {
     return { text: named.amount === null ? `Für „${named.name}“ kenne ich gerade keinen sicheren Kontostand.`
-      : `Auf „${named.name}“ liegen ${currency(named.amount)}.`,
+      : `Auf „${named.name}“ liegen ${currency(named.amount)}${named.date ? ` (Stand ${dateLabel(named.date)})` : ""}.`,
     card: { kind: "answer", title: `Kontostand · ${named.name}`, ...(named.amount !== null ? { total: named.amount } : {}),
       lines: [{ label: named.name, ...(named.amount !== null ? { value: named.amount } : { detail: "unbekannt" }) }] },
     suggestions: ["Zeig mir alle Kontostände", "Was bleibt mir diesen Monat?"] };
   }
   const shown = all.filter((item) => item.amount === null || Math.abs(item.amount) >= 0.005).sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0));
   const lines: Line[] = shown.slice(0, 20).map((item) => item.amount === null ? { label: item.name, detail: "unbekannt", tone: "warn" as const }
-    : { label: item.name, value: item.amount, ...(reserveKey(item.key) ? { detail: "für die Amex-Abrechnung reserviert" } : {}) });
+    : { label: item.name, value: item.amount, ...(reserveKey(item.key) ? { detail: "für die Amex-Abrechnung reserviert" } : item.date ? { detail: `Kontostand vom ${dateLabel(item.date)}` } : {}) });
   if (dashboard.amex.outstanding > 0) lines.push({ label: "Amex-Saldo offen", value: -dashboard.amex.outstanding, tone: "warn", detail: "Kreditkarte, noch nicht abgebucht" });
   const empty = all.length - shown.length;
   return { text: `Deine Ersparnisse liegen gesamt bei ${currency(dashboard.totalAssets)}.` +
     (shown.length ? ` Am meisten liegt auf „${shown[0].name}“.` : ""),
   card: { kind: "answer", title: "Kontostände", total: dashboard.totalAssets, lines,
-    ...(empty ? { note: `${empty} leere Pockets ausgeblendet. Girokonten ohne Kontostand-Import sind nicht enthalten.` } : {}) },
+    ...(empty ? { note: `${empty} leere Konten ausgeblendet.` } : {}) },
   suggestions: ["Wie viel muss ich auf Amex Rückzahlung überweisen?", "Was bleibt mir diesen Monat?"] };
 }
 

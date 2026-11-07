@@ -84,6 +84,18 @@ describe("account and card questions", () => {
     expect(budget.card?.month).toBe(ctx.dashboard.currentMonth);
   });
 
+  it("shows bank balances of giro and main accounts with their date", () => {
+    const state = fixture();
+    state.accountSnapshots = [
+      { bank: "Raiffeisen", name: "Raiffeisen Giro", date: "2026-11-01", balance: 500 },
+      { bank: "Raiffeisen", name: "Raiffeisen Giro", date: "2026-11-04", balance: 697.71 },
+    ];
+    const ctx = context(state);
+    const giro = executeTool("accounts", "meine kontostände", ctx).card?.lines.find((line) => line.label === "Raiffeisen Giro");
+    expect(giro).toMatchObject({ value: 697.71, detail: expect.stringContaining("Kontostand vom") });
+    expect(assistantFacts(ctx.state, ctx.dashboard, asOf).balances).toContainEqual({ name: "Raiffeisen Giro", amount: 697.71, asOf: "2026-11-04" });
+  });
+
   it("builds compact facts for free questions", () => {
     const ctx = context(fixture());
     const facts = assistantFacts(ctx.state, ctx.dashboard, asOf);

@@ -192,7 +192,7 @@ export const fixedReceiptSchema = z.object({
 });
 export type FixedReceipt = z.infer<typeof fixedReceiptSchema>;
 export const accountSnapshotSchema = z.object({
-  bank: z.literal("Revolut"),
+  bank: z.string().min(1).max(100),
   name: z.string().min(1).max(100),
   date: dateSchema,
   balance: moneySchema,

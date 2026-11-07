@@ -68,6 +68,8 @@ const amexRepayment = (text: string) => /zahlung\s*\/\s*überweisung\s+erhalten/
 
 // Giro balance the user told the assistant ("Merk dir: Girokonto 1.200 €").
 export function giroNote(state: AppState): number | undefined {
+  // A balance from the bank connection replaces a manually noted giro balance.
+  if ((state.accountSnapshots ?? []).some((item) => item.bank !== "Revolut")) return undefined;
   const note = (state.assistantMemory ?? []).findLast((entry) => entry.key === "note" && /giro|raiffeisen|hauptkonto/i.test(entry.text) &&
     /\d/.test(entry.text));
   const match = note && /(-?\d[\d.\s]*(?:,\d{1,2})?)\s*(k\b|tsd|tausend)?/i.exec(note.text.replace(/\b20\d{2}-\d{2}-\d{2}\b/g, ""));

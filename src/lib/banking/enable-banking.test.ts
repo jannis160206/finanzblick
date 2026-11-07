@@ -4,7 +4,7 @@ import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountDatabase } from "@/lib/server/database";
-import { createTestDirectory } from "@/lib/server/test-support";
+import { blankTestState, createTestDirectory } from "@/lib/server/test-support";
 import { parseBankSync, type BankSyncFile } from "@/lib/import/bank-sync";
 import { RAIFFEISEN_ACCOUNT } from "@/lib/accounts";
 import {
@@ -212,6 +212,38 @@ describe("enable banking sync service", () => {
     const second = await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });
     expect(second.accounts.find((account) => account.id === "vault-1")).toMatchObject({ pocket: "Sparen" });
     expect(transactionCalls.at(-2)![1]).toBe("2026-11-03");
+  });
+
+  it("stores synced balances as account snapshots for the assistant and forecast", async () => {
+    accounts.putFinance(userId, blankTestState(), 0);
+    const api = fakeApi();
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    await syncBank(accounts, user(), { enableBanking: api, now });
+    expect(accounts.getFinance(userId).state?.accountSnapshots).toEqual([
+      { bank: "Raiffeisen", name: RAIFFEISEN_ACCOUNT, date: "2026-11-10", balance: 1234.56 }]);
+    const revision = accounts.getFinance(userId).revision;
+    await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });
+    expect(accounts.getFinance(userId).revision).toBe(revision);
+  });
+
+  it("assigns an unmatched Revolut account by a unique CSV balance and skips unassigned ones", async () => {
+    accounts.putFinance(userId, { ...blankTestState(), accountSnapshots: [
+      { bank: "Revolut", name: "Pro", date: "2026-11-06", balance: 4.03 },
+      { bank: "Revolut", name: "Sparen", date: "2026-11-06", balance: 50 },
+    ] }, 0);
+    const api = fakeApi();
+    vi.mocked(api.createSession).mockResolvedValueOnce({
+      session_id: "sess-r", aspsp: { name: "Revolut", country: "AT" }, access: { valid_until: "2027-05-01T00:00:00+00:00" },
+      accounts: [{ uid: "pro", name: "Jannis Brühl", cash_account_type: "CACC" }, { uid: "other", name: "Jannis Brühl", cash_account_type: "SVGS" }],
+    });
+    vi.mocked(api.transactions).mockResolvedValue([]);
+    vi.mocked(api.balances).mockImplementation(async (id: string) => [{ balance_amount: { currency: "EUR", amount: id === "pro" ? "4.03" : "12.00" }, balance_type: "CLBD", reference_date: "2026-11-10" }]);
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    const result = await syncBank(accounts, user(), { enableBanking: api, now });
+    expect(result.accounts.find((account) => account.id === "pro")).toMatchObject({ pocket: "Pro" });
+    const snapshots = accounts.getFinance(userId).state?.accountSnapshots ?? [];
+    expect(snapshots).toContainEqual({ bank: "Revolut", name: "Pro", date: "2026-11-10", balance: 4.03 });
+    expect(snapshots.filter((item) => item.date === "2026-11-10")).toHaveLength(1);
   });
 
   it("renews a session by replacing it and removes connections at the bank", async () => {

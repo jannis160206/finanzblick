@@ -26,7 +26,7 @@ export function assistantFacts(state: AppState, dashboard: Dashboard, today: str
     today,
     totalSavings: dashboard.totalAssets,
     balances: balances(state, dashboard).filter((item) => item.amount !== null && Math.abs(item.amount) >= 0.005)
-      .slice(0, 25).map((item) => ({ name: item.name, amount: item.amount })),
+      .slice(0, 25).map((item) => ({ name: item.name, amount: item.amount, ...(item.date ? { asOf: item.date } : {}) })),
     amex: { open: dashboard.amex.outstanding, ownShare: dashboard.amex.ownOutstanding, onRepaymentPocket: dashboard.amex.reserved, stillToTransfer: dashboard.amex.shortfall },
     currentMonth: { month: dashboard.currentMonth, income: row.income, fixedCosts: row.fixed, everydayBudget: round(row.variablePlan - row.amexOpen),
       plannedOneOffs: row.plannedOneOffs, surplus: row.surplus, spentSoFar: row.actualSpending },

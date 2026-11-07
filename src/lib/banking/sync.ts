@@ -10,7 +10,7 @@ import { bankAccountTarget, BANK_SYNC_FORMAT, coveredUntilByAccount, accountIden
 import { readXs2aConfig, Xs2aClient, Xs2aError, type Xs2aConnection } from "./xs2a";
 import { EnableBankingClient, EnableBankingError, pickBalances, readEnableBankingConfig, toTurnover, type EbAccount } from "./enable-banking";
 import { matchPockets } from "./pocket-match";
-import type { Transaction } from "@/lib/types";
+import type { AppState, Transaction } from "@/lib/types";
 
 const DAY = 86_400_000;
 const FIRST_SYNC_DAYS = 90;
@@ -475,7 +475,20 @@ async function collectXs2a(api: Xs2aClient, link: BankLink, range: { from: strin
 const consentLost = (error: unknown) =>
   error instanceof EnableBankingError && (error.status === 401 || error.status === 403 || /expired|revoked|consent|session/i.test(`${error.code} ${error.message}`));
 
-async function collectEnableBanking(api: EnableBankingClient, link: BankLink, range: { from: string; to: string }, covered: Map<string, string>, now: number, existing: Transaction[] = []): Promise<SyncResult> {
+type AccountSnapshot = NonNullable<AppState["accountSnapshots"]>[number];
+
+/** Latest known balance per account name, e.g. from the Revolut CSV export. */
+function latestSnapshots(snapshots: AccountSnapshot[]): Map<string, AccountSnapshot> {
+  const latest = new Map<string, AccountSnapshot>();
+  for (const item of snapshots) {
+    const key = `${item.bank}|${item.name}`;
+    const previous = latest.get(key);
+    if (!previous || item.date > previous.date) latest.set(key, item);
+  }
+  return latest;
+}
+
+async function collectEnableBanking(api: EnableBankingClient, link: BankLink, range: { from: string; to: string }, covered: Map<string, string>, now: number, existing: Transaction[] = [], snapshots: AccountSnapshot[] = []): Promise<SyncResult> {
   const file: BankSyncFile = { format: BANK_SYNC_FORMAT, version: 1, provider: "enablebanking", fetchedAt: new Date(now).toISOString(), accounts: [] };
   const summaries: BankLink["accounts"] = [];
   const connections: BankLink["connections"] = [];
@@ -524,6 +537,20 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
           entry.account = { ...entry.account, pocket: match.pocket };
           assigned.set(entry.account.id, match.pocket);
         }
+        // Accounts without bookings: a unique, non-zero balance identical to the last CSV balance identifies the pocket.
+        const used = new Set([...taken, ...open.filter((entry) => entry.account.pocket).map((entry) => `${bankAccountTarget(entry.account).bank}|${entry.account.pocket}`)]);
+        const known = [...latestSnapshots(snapshots).values()].filter((item) => !used.has(`${item.bank}|${item.name}`));
+        const same = (a: number, b: number) => Math.abs(a - b) < 0.005;
+        for (const entry of open) {
+          const value = entry.balance.balance;
+          if (entry.account.pocket || value === null || same(value, 0)) continue;
+          const bank = bankAccountTarget(entry.account).bank;
+          const candidates = known.filter((item) => item.bank === bank && same(item.balance, value));
+          const twins = open.filter((other) => !other.account.pocket && other.balance.balance !== null && same(other.balance.balance, value));
+          if (candidates.length !== 1 || twins.length !== 1) continue;
+          entry.account = { ...entry.account, pocket: candidates[0].name };
+          assigned.set(entry.account.id, candidates[0].name);
+        }
       }
       for (const { account, turnovers, balance } of fetched) {
         const target = bankAccountTarget(account);
@@ -568,11 +595,12 @@ export async function syncBank(
     let link = stored;
     try {
       const range = { from: isoDay(link.lastSync ? link.lastSync - OVERLAP_DAYS * DAY : now - FIRST_SYNC_DAYS * DAY), to: isoDay(now) };
-      const existing = database.getFinance(user.id).state?.transactions ?? [];
+      const finance = database.getFinance(user.id).state;
+      const existing = finance?.transactions ?? [];
       const covered = coveredUntilByAccount(existing);
       let result: SyncResult;
       if (link.provider === "enablebanking") {
-        result = await collectEnableBanking(options.enableBanking ?? enableBankingClient(), link, range, covered, now, existing);
+        result = await collectEnableBanking(options.enableBanking ?? enableBankingClient(), link, range, covered, now, existing, finance?.accountSnapshots ?? []);
       } else {
         const api = options.api ?? xs2aClient();
         link = await ensureToken(api, database, user, stored, now);
@@ -584,6 +612,7 @@ export async function syncBank(
         providerAccounts: result.providerAccounts ?? link.providerAccounts,
         lastError: result.needsConsent ? CONSENT_MESSAGE : null };
       await writeLink(database, user.id, link);
+      storeBalances(database, user.id, bankSnapshots(link, now));
       return { ...(await bankStatus(database, user.id)), queued, rows: count };
     } catch (error) {
       const message = error instanceof Xs2aError || error instanceof EnableBankingError || error instanceof AccountError ? error.message : "Bankabruf fehlgeschlagen.";
@@ -591,6 +620,45 @@ export async function syncBank(
       return bankError(error);
     }
   });
+}
+
+/**
+ * Booked bank balances as account snapshots, so dashboard, forecast and assistant work with
+ * the real balance. Revolut accounts only count once their pocket is known.
+ */
+export function bankSnapshots(link: Pick<BankLink, "accounts" | "providerAccounts">, now: number): AccountSnapshot[] {
+  const today = isoDay(now);
+  const assigned = new Set(link.providerAccounts.filter((account) => account.pocket).map((account) => account.id));
+  const result = new Map<string, AccountSnapshot>();
+  for (const account of link.accounts) {
+    if (account.balance === null || !account.pocket) continue;
+    if (account.bank === "Revolut" && !assigned.has(account.id)) continue;
+    const date = account.balanceDate && /^\d{4}-\d{2}-\d{2}$/.test(account.balanceDate) && account.balanceDate <= today ? account.balanceDate : today;
+    result.set(`${account.pocket}|${date}`, { bank: account.bank.slice(0, 100), name: account.pocket.slice(0, 100), date, balance: Math.round(account.balance * 100) / 100 });
+  }
+  return [...result.values()];
+}
+
+function storeBalances(database: AccountDatabase, userId: string, items: AccountSnapshot[]): void {
+  if (!items.length) return;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { state, revision } = database.getFinance(userId);
+    if (!state) return;
+    const key = (item: AccountSnapshot) => `${item.name}|${item.date}`;
+    const merged = new Map((state.accountSnapshots ?? []).map((item) => [key(item), item]));
+    const changed = items.filter((item) => {
+      const previous = merged.get(key(item));
+      return !previous || previous.bank !== item.bank || previous.balance !== item.balance;
+    });
+    if (!changed.length) return;
+    for (const item of changed) merged.set(key(item), item);
+    try {
+      database.putFinance(userId, { ...state, accountSnapshots: [...merged.values()] }, revision);
+      return;
+    } catch {
+      // A concurrent save won; retry on the fresh revision. Balances are refreshed on the next sync anyway.
+    }
+  }
 }
 
 async function enqueue(database: AccountDatabase, userId: string, file: BankSyncFile, now: number): Promise<boolean> {
