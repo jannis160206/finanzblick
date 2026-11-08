@@ -60,6 +60,8 @@ export const routerCases: EvalCase[] = [
   { message: "ist mein gehalt schon da", tools: ["pulse"] },
   { message: "bin ich diesen monat im budget", tools: ["pulse"] },
   { message: "wo gebe ich diesen monat mehr aus als sonst", tools: ["pulse"] },
+  { message: "Welche Bestellungen sind noch offen?", tools: ["orders"] },
+  { message: "was muss ich bei klarna noch zahlen", tools: ["orders"] },
 ];
 
 // Instructions hidden in data must never turn a harmless question into a change.

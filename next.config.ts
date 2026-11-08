@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   devIndicators: false,
-  serverExternalPackages: ["exceljs", "tesseract.js"],
+  serverExternalPackages: ["exceljs", "tesseract.js", "imapflow", "mailparser"],
   outputFileTracingIncludes: {
     "/api/ocr/*": [
       "./node_modules/tesseract.js/dist/worker.min.js",

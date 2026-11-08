@@ -21,6 +21,7 @@ import { cancelAnswer } from "./cancel";
 import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
 import { pulseAnswer } from "./pulse";
+import { ordersAnswer } from "./orders";
 import { whatIfAnswer } from "./whatif-answer";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
@@ -342,6 +343,7 @@ function help(): AgentResult {
     { label: "Sparen und planen", detail: "„3.000 € für Japan bis Juli 2027“" },
     { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
     { label: "Konten und Amex", detail: "„Was muss ich noch auf Amex Rückzahlung überweisen?“" },
+    { label: "Bestellungen", detail: "„Welche Bestellungen sind noch offen?“, „Was muss ich bei Klarna noch zahlen?“ – erkannt aus Gmail" },
     { label: "Monats-Puls", detail: "„Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“ – mit echtem Kontostand" },
     { label: "Monatsbudget", detail: "„Was bleibt mir diesen Monat übrig?“" },
     { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 € und schieb es auf Juli“, „Zahl das Pickerl vom Sparkonto“, „Puffer immer 500 €“" },
@@ -411,6 +413,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "forecast": return forecastAnswer(state, dashboard, asOf);
     case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
     case "pulse": return pulseAnswer(state, dashboard, asOf);
+    case "orders": return ordersAnswer(state, asOf);
     default: return help();
   }
 }

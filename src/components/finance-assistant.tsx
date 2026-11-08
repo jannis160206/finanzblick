@@ -54,6 +54,7 @@ const followUps: Partial<Record<AssistantTool, string[]>> = {
   accounts: ["Wie viel muss ich auf Amex Rückzahlung überweisen?", "Was bleibt mir diesen Monat?"],
   amex: ["Was habe ich seit 11.10. mit Amex bezahlt?", "Zeig mir meine Kontostände"],
   budget: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
+  orders: ["Wie viel kann ich heute noch ausgeben?", "Wird mein Konto knapp?"],
   pulse: ["Wird mein Konto knapp?", "Wo gebe ich diesen Monat mehr aus als sonst?"],
   briefing: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"],
   check: ["Wo könnte ich kürzen?", "Wie haben sich meine Ausgaben entwickelt?"],
