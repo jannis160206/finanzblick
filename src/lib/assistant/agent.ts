@@ -5,8 +5,8 @@ import { savingsGoals } from "@/lib/goals";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { financialCheck } from "./check";
-import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
-import { accountBalances, amexQuestion, amexSettlement, monthBudget } from "./accounts";
+import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing, goalsStatus } from "./answers";
+import { accountBalances, amexQuestion, amexSettlement, monthBudget, goalsQuestion } from "./accounts";
 import { explainDashboard } from "./explain";
 import { loanAnswer, parseReminder, reminderList, reminderListQuestion, reminderRequest, yearReview } from "./extras";
 import { homeOfficeStart } from "./homeoffice";
@@ -374,7 +374,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
   switch (tool) {
     case "query": return answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage));
     case "amex": return amexSettlement(state, dashboard, text, asOf);
-    case "accounts": return amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
+    case "accounts": return goalsQuestion(text.toLowerCase()) ? goalsStatus(dashboard, asOf) : amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
     case "budget": return monthBudget(dashboard, text);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));
     case "check": return financialCheck(state, dashboard, asOf, text);
@@ -414,7 +414,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "forecast": return forecastAnswer(state, dashboard, asOf);
     case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
     case "pulse": {
-      const pulse = pulseAnswer(state, dashboard, asOf);
+      const pulse = pulseAnswer(state, dashboard, asOf, text);
       const topUp = giroTopUp(state, dashboard, asOf);
       if (!topUp) return pulse;
       return { ...pulse, text: `${pulse.text} ${topUpText(topUp, true)}`.trim(),

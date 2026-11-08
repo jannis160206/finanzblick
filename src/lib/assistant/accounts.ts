@@ -14,6 +14,11 @@ const amexWords = /\bamex\b|american express|kreditkarte/;
 
 export const amexQuestion = (lower: string) => amexWords.test(lower) &&
   /abrechnung|überweis|rückzahl|zurückzahl|offen|saldo|schuld|bezahlen|\bzahlen\b|muss ich|abbuchung|abgebucht|zieht|begleichen|ausgleich|fällig|stand|fehlt|reicht|deck|zusammen|gegen|rechne|kostet|wie viel (?:ist|steht) (?:auf|bei)/.test(lower);
+// "Wie stehen meine Sparziele?", "Was ist mit meinen Zielen?", "Bin ich bei Japan im Plan?"
+export const goalsQuestion = (lower: string) => !/\d|anleg|erstell|\bneue[snr]?\b|lösch|loesch|ändern|aendern|verschieb|erhöh|senk|\bdas mit\b|funktionier|wie geht das|wie mache ich|erklär|erklaer/.test(lower) &&
+  (/(?:wie (?:steht|stehen|läuft|laufen|weit|schaut|schauen|sieht|sehen)|was ist mit|status|stand|überblick|ueberblick)\b.*\b(?:spar)?ziel(?:e|en)?\b/.test(lower) ||
+    /^(?:meine |alle )?sparziele\??$/.test(lower) || /(?:schaffe|erreiche) ich (?:meine|alle) (?:spar)?ziele/.test(lower));
+
 export const balanceQuestion = (lower: string) =>
   /kontost(?:a|ä)nde?|\bvermögen|\bguthaben|\bsaldo\b|erspar(?:nisse|tes)|wie viel geld hab(?:e)? ich(?: (?:noch|gerade|aktuell|jetzt|insgesamt|gespart))*\s*\??$|was hab(?:e)? ich (?:alles )?(?:auf|gespart)/.test(lower) ||
   /\bwie viel\b.*\b(?:ist|liegt|liegen|hab(?:e)?|sind)\b.*\b(?:auf (?:dem|meinem|der|meiner)|im|am)\b.*\b(?:konto|pocket|notgroschen|sparkonto|tagesgeld|depot|urlaub|motorrad)\b/.test(lower) ||

@@ -95,7 +95,7 @@ export function salaryStatus(state: AppState, today: string) {
 const fixedAmount = (state: AppState, label: string, month: string) =>
   state.financeRows.find((row) => row.kind === "fixed" && row.label === label)?.values[month] ?? 0;
 
-export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string): Result {
+export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string, question = ""): Result {
   const month = today.slice(0, 7);
   const daysLeft = daysInMonth(month) - Number(today.slice(8, 10)) + 1;
   const pace = budgetPace(dashboard, today);
@@ -145,6 +145,21 @@ export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string
       : salary.late ? `Dein Gehalt ist noch nicht da, üblich wäre der ${dateLabel(salary.expected!)}.` : salary.expected ? `Gehalt kommt voraussichtlich am ${dateLabel(salary.expected)}.` : "",
     missing.length ? `Noch abgebucht werden ${missing.length === 1 ? missing[0].label : `${missing.length} Fixkosten`} (${currency(round(missing.reduce((sum, item) => sum + item.amount, 0)))}).` : "",
   ].filter(Boolean);
+  const asked = question.toLowerCase();
+  const salaryText = parts[3];
+  // "Wann kommt mein Gehalt?" gets the salary first; "Was kann ich heute ausgeben?" a clear amount first.
+  if (/gehalt|lohn/.test(asked) && !/ausgeben|reicht|kann ich|darf ich|komm\w* ich/.test(asked) && salaryText) {
+    const wait = salary.expected && salary.received <= 0 && !salary.late ? daysBetween(today, salary.expected) : 0;
+    const notYet = salary.received <= 0 && /schon|gekommen|eingegangen|\bda\b|drauf/.test(asked) ? "Noch nicht. " : "";
+    parts.splice(0, parts.length, `${notYet}${wait > 0 ? `${salaryText.slice(0, -1)} – noch ${wait === 1 ? "1 Tag" : `${wait} Tage`}.` : salaryText}`, parts[0]);
+  } else if (/fixkosten|abbuchung|zahlungen|lastschrift/.test(asked) && missing.length) {
+    const due = parts.findIndex((part) => part.startsWith("Noch abgebucht"));
+    const grouped = new Map<string, number>();
+    for (const item of missing) grouped.set(item.label, round((grouped.get(item.label) ?? 0) + item.amount));
+    const largest = [...grouped].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, amount]) => `${label} ${currency(amount)}`).join(", ");
+    parts.splice(due, 1);
+    parts.unshift(`Noch abgebucht werden diesen Monat ${missing.length === 1 ? missing[0].label : `${missing.length} Fixkosten`} (${currency(round(missing.reduce((sum, item) => sum + item.amount, 0)))})${missing.length > 1 ? `, die größten: ${largest}` : ""}.`);
+  } else if (perDay <= 0 && /heute|pro tag|am tag|täglich|ausgeben/.test(asked)) parts.unshift("Heute ist eigentlich nichts mehr frei.");
   return {
     text: parts.join(" "),
     card: { kind: "answer", title: "Monats-Puls", total: perDay, month, lines: lines.slice(0, 40),

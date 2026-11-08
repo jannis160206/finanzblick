@@ -57,6 +57,7 @@ export const accountRuleRequest = (lower: string) => accountWords.test(lower) &&
   !/leisten|leistbar|geht sich|ausgehen/.test(lower);
 export const fundsQuestion = (lower: string) =>
   /kontoregeln?|verwendungsregeln?|welche konten (?:darf|kann|soll)|welches konto (?:darf|kann|soll|nehm)|von welchem konto|wofür darf ich|wofuer darf ich|welches konto ist für|welche konten sind für/.test(lower) ||
+  /\d/.test(lower) && /wie lange (?:brauch|muss ich|dauert)|wann (?:kann ich mir|hab ich|habe ich|hätte ich)\b.{0,40}\b(?:leisten|zusammen|beisammen)/.test(lower) && !/sparziel|\bziel\b|depot|etf|kredit|rate\b/.test(lower) ||
   /\d/.test(lower) && (/\b(?:ok|okay|passt das|geht das|machbar|drin)\s*\??$/.test(lower) ||
     /\b(?:kann|darf|könnte|koennte) ich\b.{0,60}\b(?:ausgeben|zahlen|bezahlen|kaufen|nehmen|verwenden|holen)\b/.test(lower) && !/wie ?viel/.test(lower));
 

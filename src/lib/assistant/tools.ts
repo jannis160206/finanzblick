@@ -1,4 +1,4 @@
-import { amexQuestion, balanceQuestion, budgetQuestion } from "./accounts";
+import { amexQuestion, balanceQuestion, budgetQuestion, goalsQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
 import { bookingRequest } from "./bookings";
 import { cancelQuestion } from "./cancel";
@@ -98,13 +98,15 @@ const explainPattern = new RegExp([
 
 const months = "jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember";
 const periodWords = new RegExp(`\\b(?:${months})\\b|letzte[nrs]? (?:monat|woche|jahr)|vorigen? (?:monat|jahr)|diese[nrs]? (?:monat|woche|jahr)|\\bheuer\\b|\\bvorjahr\\b|\\b20\\d{2}\\b`);
-const spentWords = /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|kosten mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt|draufgegangen|drauf gegangen|gelassen|verballert|verprasst|rausgehauen|ausgeben|gebe ich|geb ich|liegen gelassen|gezahlt|verbraten|\bdrauf\b|war ich (?:bei|beim|im|in)\b|preiserhöh|teurer geworden/;
+const spentWords = /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|kosten mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt|draufgegangen|drauf gegangen|gelassen|verballert|verprasst|rausgehauen|ausgeben|gebe ich|geb ich|liegen gelassen|gezahlt|verbraten|\bdrauf\b|war ich (?:bei|beim|im|in)\b|preiserhöh|teurer geworden|\bbestellt\b|fixkosten|fixe kosten|laufenden kosten|\bzahl(?:e)? ich\b|gespart|übrig geblieben|uebrig geblieben/;
 const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert)\b/;
 const spendingQuestion = (lower: string) =>
   /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:mein|das|unser) geld/.test(lower) ||
   /^(?:ausgaben|einnahmen|kosten|umsätze|umsaetze)\b/.test(lower) && periodWords.test(lower) ||
+  /^was (?:war|ist|lief) (?:gestern|heute|vorgestern|letzte woche|diese woche|am wochenende|letztes wochenende) (?:so )?los\b/.test(lower) ||
+  /^(?:alle |meine )?(?:buchungen|ausgaben|umsätze|umsaetze|käufe|kaeufe|einkäufe|einkaeufe|abbuchungen)\b.*(?:über|ueber|mehr als|unter|weniger als|ab)\s+\d/.test(lower) ||
   /\bwie ?viel\b/.test(lower) && periodWords.test(lower) && !/bleib|übrig|reicht|leist|spar|brauch|monatlich|rate|\bbis\b/.test(lower) ||
-  /^(?:wie ?viel|was|wo|wann|wofür|wohin|welche[rsn]?|wie oft|hab(?:e)? ich|zeig|liste)\b/.test(lower) && spentWords.test(lower);
+  /^(?:wie ?viel|wie hoch|was|wo|wann|wofür|wohin|welche[rsn]?|wie oft|hab(?:e)? ich|zeig|liste)\b/.test(lower) && spentWords.test(lower);
 
 // "Lieferando ist immer Essen"; looser forms: "Lieferando gehört zu Lieferdienste", "mach Lieferando zu Lieferdienste", "Lieferando soll unter Lieferdienste laufen".
 const strictRule = /\bist\s+immer\b|\bsind\s+immer\b|immer als\b|\bordne\b.*\bzu\b|kategorisier|als .{2,30} (?:verbuchen|buchen|einordnen|zuordnen)|in die kategorie|der kategorie/;
@@ -179,6 +181,7 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   // Casual term questions: "etf was is des eigentlich", "kest bedeutung".
   if (!hasAmount && lower.split(" ").length <= 6 && /\b(?:was|wos) (?:is|ist|isn) (?:des|das)\b|\bbedeutung\b|\bdefinition\b/.test(lower) &&
     knowledgeTopics(text, names, true).length) return "knowledge";
+  if (goalsQuestion(lower)) return "accounts";
   if (whatIfQuestion(lower)) return "whatif";
   if (ordersQuestion(lower)) return "orders";
   if (fundsQuestion(lower)) return "funds";
