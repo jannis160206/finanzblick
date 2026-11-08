@@ -256,7 +256,7 @@ describe("enable banking sync service", () => {
     await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
     const empty = await syncBank(accounts, user(), { enableBanking: api, now });
     expect(empty.accounts).toEqual([]);
-    expect(empty.connections[0]).toMatchObject({ id: "sess-t", syncActive: true, message: expect.stringMatching(/keine Konten geteilt/), lastSynced: new Date(now).toISOString() });
+    expect(empty.connections[0]).toMatchObject({ id: "sess-t", syncActive: true, message: expect.stringMatching(/Linked accounts/), lastSynced: new Date(now).toISOString() });
 
     vi.mocked(api.session).mockResolvedValueOnce({ status: "AUTHORIZED", accounts: ["tr-1"], access: { valid_until: "2027-02-06T00:00:00+00:00" } });
     const later = await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });

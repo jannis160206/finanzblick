@@ -432,7 +432,7 @@ export async function removeBankConnection(
 }
 
 const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10);
-const NO_ACCOUNTS_MESSAGE = "Die Bank hat bei der Freigabe keine Konten geteilt. Bitte „Freigabe erneuern“ und das Konto auswählen.";
+const NO_ACCOUNTS_MESSAGE = "Keine Konten freigegeben. Bei einer eingeschränkten Enable-Banking-App muss das Konto zuerst im Control Panel unter „Linked accounts“ verknüpft werden, danach „Freigabe erneuern“.";
 const CONSENT_MESSAGE = "Die Bank verlangt eine erneute Bestätigung. Bitte bei der Verbindung „Freigabe erneuern“ wählen.";
 
 type SyncResult = { file: BankSyncFile; summaries: BankLink["accounts"]; connections: BankLink["connections"]; needsConsent: boolean; providerAccounts?: BankLink["providerAccounts"] };

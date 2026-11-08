@@ -237,7 +237,7 @@ export function BankConnections() {
               </div>
               {!main && <p role="status" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                 <span aria-hidden="true" className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
-                <span>Keine Konten abrufbar – {connection.syncActive === false ? connection.message ?? "Freigabe nicht aktiv." : "die Bank hat bei der Freigabe kein Konto geteilt. Bitte „Freigabe erneuern“ wählen und im Bankfenster das Konto auswählen."}</span>
+                <span>Keine Konten abrufbar – {connection.syncActive === false ? connection.message ?? "Freigabe nicht aktiv." : connection.message ?? "die Bank hat bei der Freigabe kein Konto geteilt."}</span>
               </p>}
               {main && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
                 {[main, ...(open ? others : [])].map((entry) => <Tooltip key={entry.id} className="w-72 max-w-[90vw]" label={<AccountSyncInfo entry={entry} connection={connection} lastSync={status.lastSync} lastError={status.lastError} />}>
