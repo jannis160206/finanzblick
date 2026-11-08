@@ -3,7 +3,7 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { calculateDashboard } from "@/lib/calc";
 import type { AppState } from "@/lib/types";
 import { executeTool } from "./agent";
-import { checkFunds, parseAccountRules, servesPurpose, storeAccountRules } from "./funds";
+import { checkFunds, fundsResult, giroTopUp, parseAccountRules, servesPurpose, storeAccountRules, topUpText } from "./funds";
 import { detectTool } from "./tools";
 
 const asOf = "2026-11-08";
@@ -72,5 +72,25 @@ describe("funds check", () => {
     expect(detectTool("geht sich ein service beim auto um 300 aus")).toBe("funds");
     expect(detectTool(teach)).toBe("account_rule");
     expect(detectTool("Notgroschen nicht angreifen")).toBe("account_rule");
+  });
+
+  it("says from when a not-OK purchase works out", () => {
+    const state = fixture();
+    const result = fundsResult({ ...checkFunds(state, calculateDashboard(state), { amount: 2000, purpose: "Fernseher", label: "Fernseher" }, asOf), ready: { month: "2027-01", perMonth: 600 } });
+    expect(result.text).toContain("ab Jänner 2027");
+    expect(result.suggestions).toContain("Plane Fernseher 2000 € im Jänner 2027 ein");
+  });
+});
+
+describe("giro top-up", () => {
+  it("stays quiet without a known giro", () => {
+    const state = fixture();
+    expect(giroTopUp(state, calculateDashboard(state), asOf)).toBeUndefined();
+  });
+
+  it("names the account to move money from", () => {
+    expect(topUpText({ need: 50, until: "2026-11-28", from: "Sparkonto", after: 800 })).toMatch(/Buche 50,00\s?€ vom Sparkonto aufs Giro/u);
+    expect(topUpText({ need: 50, until: "2026-11-28", from: "Sparkonto", after: 800 }, true)).toMatch(/^Tipp: Buche/);
+    expect(topUpText({ need: 50, until: "2026-11-28" })).toContain("kein frei verwendbares Konto");
   });
 });
