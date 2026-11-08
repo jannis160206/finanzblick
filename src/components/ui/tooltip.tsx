@@ -1,14 +1,16 @@
 "use client";
 
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Tooltip as Primitive } from "radix-ui";
 
 export function Tooltip({
   label,
   children,
+  className = "max-w-64",
 }: {
-  label: string;
+  label: ReactNode;
   children: ReactElement;
+  className?: string;
 }) {
   return (
     <Primitive.Provider delayDuration={350}>
@@ -18,7 +20,7 @@ export function Tooltip({
           <Primitive.Content
             sideOffset={6}
             collisionPadding={12}
-            className="z-[70] max-w-64 rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm"
+            className={`z-[70] ${className} rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm`}
           >
             {label}
           </Primitive.Content>

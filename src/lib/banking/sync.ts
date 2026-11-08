@@ -50,6 +50,14 @@ const linkSchema = z.object({
     balance: z.number().nullable(),
     available: z.number().nullable(),
     balanceDate: z.string().nullable(),
+    /** Last time bookings were read successfully for this account. */
+    syncedAt: z.number().nullable().default(null),
+    /** Bookings the bank returned in that fetch. */
+    fetchedRows: z.number().nullable().default(null),
+    /** Whether the bank also returned a balance in that fetch. */
+    balanceOk: z.boolean().nullable().default(null),
+    /** Why the last attempt for this account did not succeed. */
+    syncError: z.string().nullable().default(null),
   })).default([]),
   /** Account details as delivered once at session creation (Enable Banking only). */
   providerAccounts: z.array(z.object({
@@ -467,6 +475,10 @@ async function collectXs2a(api: Xs2aClient, link: BankLink, range: { from: strin
       balance: balance?.balance ?? null,
       available: balance?.available ?? null,
       balanceDate: balance?.date ?? null,
+      syncedAt: now,
+      fetchedRows: turnovers.length,
+      balanceOk: balance !== null,
+      syncError: null,
     });
   }
   return { file, summaries, connections: connections.map(mapConnection), needsConsent };
@@ -565,12 +577,17 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
           balance: balance.balance,
           available: balance.available,
           balanceDate: balance.date,
+          syncedAt: now,
+          fetchedRows: turnovers.length,
+          balanceOk: balance.balance !== null,
+          syncError: null,
         });
       }
     }
     if (!active) {
       needsConsent = true;
-      summaries.push(...link.accounts.filter((account) => account.connectionId === connection.id && !summaries.some((entry) => entry.id === account.id)));
+      summaries.push(...link.accounts.filter((account) => account.connectionId === connection.id && !summaries.some((entry) => entry.id === account.id))
+        .map((account) => ({ ...account, syncError: message ?? "Abruf nicht möglich" })));
     }
     connections.push({ ...connection, syncActive: active, message, consentValidUntil: validUntil, lastSynced: active ? new Date(now).toISOString() : connection.lastSynced });
   }
@@ -616,7 +633,8 @@ export async function syncBank(
       return { ...(await bankStatus(database, user.id)), queued, rows: count };
     } catch (error) {
       const message = error instanceof Xs2aError || error instanceof EnableBankingError || error instanceof AccountError ? error.message : "Bankabruf fehlgeschlagen.";
-      await writeLink(database, user.id, { ...link, lastError: message.slice(0, 300) }).catch(() => undefined);
+      await writeLink(database, user.id, { ...link, lastError: message.slice(0, 300),
+        accounts: link.accounts.map((account) => ({ ...account, syncError: message.slice(0, 300) })) }).catch(() => undefined);
       return bankError(error);
     }
   });

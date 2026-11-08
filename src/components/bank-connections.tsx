@@ -5,6 +5,7 @@ import { Building2, ChevronDown, Link2, Loader2, RefreshCw, RotateCcw, Trash2 } 
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAccountWorkspace } from "@/components/account-context";
 import { useFinance } from "@/components/finance-provider";
@@ -234,10 +235,12 @@ export function BankConnections() {
                 </div>
               </div>
               {main && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
-                {[main, ...(open ? others : [])].map((entry) => <li key={entry.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
-                  <span className="min-w-0"><span className="font-medium">{entry.label}</span>{entry.iban && <span className="ml-2 text-muted-foreground tabular-nums">{entry.iban}</span>}<span className="ml-2 text-muted-foreground">→ {entry.bank}{entry.pocket ? ` · ${entry.pocket}` : ""}</span></span>
-                  {entry.balance !== null && <span className="font-semibold tabular-nums">{currency(entry.balance)}</span>}
-                </li>)}
+                {[main, ...(open ? others : [])].map((entry) => <Tooltip key={entry.id} className="w-72 max-w-[90vw]" label={<AccountSyncInfo entry={entry} connection={connection} lastSync={status.lastSync} lastError={status.lastError} />}>
+                  <li tabIndex={0} className="flex cursor-default flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
+                    <span className="flex min-w-0 items-center"><SyncDot state={syncState(entry, connection)} /><span className="font-medium">{entry.label}</span>{entry.iban && <span className="ml-2 text-muted-foreground tabular-nums">{entry.iban}</span>}<span className="ml-2 text-muted-foreground">→ {entry.bank}{entry.pocket ? ` · ${entry.pocket}` : ""}</span></span>
+                    {entry.balance !== null && <span className="font-semibold tabular-nums">{currency(entry.balance)}</span>}
+                  </li>
+                </Tooltip>)}
                 {others.length > 0 && <li>
                   <button type="button" aria-expanded={open} className="flex w-full items-center gap-1 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground" onClick={() => setExpanded((current) => ({ ...current, [connection.id]: !open }))}>
                     <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -287,4 +290,59 @@ export function BankConnections() {
       </DialogContent>
     </Dialog>
   </SettingsSection>;
+}
+
+type BankAccountEntry = BankStatus["accounts"][number];
+type BankConnectionEntry = BankStatus["connections"][number];
+type SyncState = "ok" | "warn" | "error" | "none";
+const AUTO_SYNC_MS = 6 * 3_600_000;
+
+function accountSyncedAt(entry: BankAccountEntry, connection: BankConnectionEntry): number | null {
+  if (entry.syncedAt) return entry.syncedAt;
+  const fallback = connection.lastSynced ? Date.parse(connection.lastSynced) : NaN;
+  return Number.isFinite(fallback) ? fallback : null;
+}
+
+function syncState(entry: BankAccountEntry, connection: BankConnectionEntry): SyncState {
+  if (entry.syncError || connection.syncActive === false) return "error";
+  if (!accountSyncedAt(entry, connection)) return "none";
+  return entry.balanceOk === false ? "warn" : "ok";
+}
+
+const dotTone: Record<SyncState, string> = { ok: "bg-emerald-500", warn: "bg-amber-500", error: "bg-destructive", none: "bg-muted-foreground/50" };
+const stateText: Record<SyncState, string> = { ok: "Bank-API funktioniert", warn: "Umsätze ok, Kontostand fehlt", error: "Abruf fehlgeschlagen", none: "Noch nicht abgerufen" };
+
+function SyncDot({ state }: { state: SyncState }) {
+  return <span aria-label={stateText[state]} role="img" className={`mr-2 inline-block size-2 shrink-0 rounded-full ${dotTone[state]}`} />;
+}
+
+function ago(ms: number): string {
+  const minutes = Math.max(0, Math.round((Date.now() - ms) / 60_000));
+  if (minutes < 1) return "gerade eben";
+  if (minutes < 60) return `vor ${minutes} Min.`;
+  const hours = Math.round(minutes / 60);
+  return hours < 48 ? `vor ${hours} Std.` : `vor ${Math.round(hours / 24)} Tagen`;
+}
+
+const timeLabel = (ms: number) => new Date(ms).toLocaleString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+function AccountSyncInfo({ entry, connection, lastSync, lastError }: { entry: BankAccountEntry; connection: BankConnectionEntry; lastSync: number | null; lastError: string | null }) {
+  const state = syncState(entry, connection);
+  const syncedAt = accountSyncedAt(entry, connection);
+  const error = entry.syncError ?? (connection.syncActive === false ? connection.message ?? lastError : null);
+  const rows: [string, string][] = [];
+  rows.push(["Letzter erfolgreicher Abruf", syncedAt ? `${timeLabel(syncedAt)} (${ago(syncedAt)})` : "noch keiner"]);
+  if (lastSync && lastSync !== syncedAt) rows.push(["Letzter Versuch", `${timeLabel(lastSync)} (${ago(lastSync)})`]);
+  if (entry.fetchedRows !== null && entry.fetchedRows !== undefined) rows.push(["Buchungen im Abruf", String(entry.fetchedRows)]);
+  rows.push(["Kontostand", entry.balance === null ? "nicht geliefert" : `${currency(entry.balance)}${entry.balanceDate ? ` · Stand ${dateLabel(entry.balanceDate.slice(0, 10))}` : ""}`]);
+  if (entry.available !== null && entry.balance !== null && Math.abs(entry.available - entry.balance) >= 0.005) rows.push(["Verfügbar", currency(entry.available)]);
+  if (connection.syncActive !== false && lastSync) rows.push(["Nächster Auto-Abruf", `ca. ${timeLabel(lastSync + AUTO_SYNC_MS)}`]);
+  return <div className="space-y-2">
+    <p className="flex items-center text-sm font-semibold"><SyncDot state={state} />{stateText[state]}</p>
+    {error && <p className="rounded-md bg-destructive/10 px-2 py-1 text-destructive">{error}</p>}
+    <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+      {rows.map(([label, value]) => <div key={label} className="contents"><dt className="text-muted-foreground">{label}</dt><dd className="text-right tabular-nums">{value}</dd></div>)}
+    </dl>
+    <p className="text-[11px] text-muted-foreground">{connection.bankName ?? entry.bank} · PSD2-Bankschnittstelle</p>
+  </div>;
 }

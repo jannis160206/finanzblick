@@ -167,7 +167,8 @@ describe("enable banking sync service", () => {
 
     const result = await syncBank(accounts, user(), { enableBanking: api, now });
     expect(result).toMatchObject({ queued: true, rows: 2, lastError: null });
-    expect(result.accounts[0]).toMatchObject({ id: "uid-1", bank: "Raiffeisen", pocket: RAIFFEISEN_ACCOUNT, balance: 1234.56, iban: "AT61 •••• 3201" });
+    expect(result.accounts[0]).toMatchObject({ id: "uid-1", bank: "Raiffeisen", pocket: RAIFFEISEN_ACCOUNT, balance: 1234.56, iban: "AT61 •••• 3201",
+      syncedAt: now, fetchedRows: 2, balanceOk: true, syncError: null });
     const uploads = await readdir(join(dirname(accounts.path), "statement-uploads"));
     const payload = JSON.parse(await readFile(join(dirname(accounts.path), "statement-uploads", uploads[0]), "utf8")) as BankSyncFile;
     expect(payload.provider).toBe("enablebanking");
@@ -182,7 +183,7 @@ describe("enable banking sync service", () => {
     const expired = await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });
     expect(expired.lastError).toMatch(/Freigabe erneuern/);
     expect(expired.connections[0]).toMatchObject({ syncActive: false });
-    expect(expired.accounts[0]).toMatchObject({ id: "uid-1", balance: 1234.56 });
+    expect(expired.accounts[0]).toMatchObject({ id: "uid-1", balance: 1234.56, syncedAt: now, syncError: expect.stringMatching(/Status: EXPIRED/) });
     expect(await autoSyncDue(accounts, userId, now + 20 * 3_600_000)).toBe(false);
   });
 
