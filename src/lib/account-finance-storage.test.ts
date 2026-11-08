@@ -379,6 +379,33 @@ describe("account finance persistence", () => {
     expect(localStorage.getItem(key)).toBe(raw);
   });
 
+  it("lets the server stand replace a reconciled device stand whose older conflict copy it already contains", async () => {
+    const key = accountStorageKey("alice");
+    const older = JSON.stringify({ state: changed("old local"), revision: 1, pending: true });
+    const merged = changed("old local");
+    merged.transactions.push(...changed("server").transactions);
+    localStorage.setItem(key, JSON.stringify({ state: merged, revision: 2, pending: true, reconcileRequired: true }));
+    localStorage.setItem(accountConflictKey("alice"), older);
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 4)));
+    const { controller } = storage();
+    await controller.load();
+    expect((await controller.useServer())?.transactions.map((row) => row.id)).toEqual(["remote"]);
+    expect(JSON.parse(localStorage.getItem(accountConflictKey("alice"))!).state).toEqual(merged);
+    expect(cached().pending).toBe(false);
+  });
+
+  it("merges an older conflict copy with new device changes before loading the server stand", async () => {
+    const key = accountStorageKey("alice");
+    localStorage.setItem(key, JSON.stringify({ state: changed("new local"), revision: 2, pending: true }));
+    localStorage.setItem(accountConflictKey("alice"), JSON.stringify({ state: changed("old local"), revision: 1, pending: true }));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => response(changed("remote"), 4)));
+    const { controller } = storage();
+    await controller.load();
+    await controller.useServer();
+    const backup = JSON.parse(localStorage.getItem(accountConflictKey("alice"))!).state;
+    expect(new Set(backup.transactions.map((row: { id: string }) => row.id))).toEqual(new Set(["new local", "old local"]));
+  });
+
   it("keeps pending data unchanged if the conflict backup cannot be written", async () => {
     const raw = JSON.stringify({ state: changed("pending"), revision: 1, pending: true });
     localStorage.setItem(accountStorageKey("alice"), raw);

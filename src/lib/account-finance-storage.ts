@@ -316,6 +316,20 @@ export class AccountFinanceStorage {
     return this.load();
   }
 
+  /** Returns a conflict backup that keeps everything of the older one, or undefined if none is safe. */
+  private supersedingConflictBackup(conflictRaw: string, selected: Cache | undefined): string | undefined {
+    if (!selected) return;
+    try {
+      const older = parseAccountConflictBackup(conflictRaw, this.userId);
+      // A reconciled device stand already contains the older backup's data.
+      const state = selected.reconcileRequired ? selected.state : mergeFinanceStates(selected.state, older);
+      return JSON.stringify({ ...withoutBaseState(selected), state });
+    } catch (error) {
+      if (error instanceof FinanceStorageError) return;
+      throw error;
+    }
+  }
+
   async useServer(): Promise<AppState | null> {
     if (this.busy) throw new FinanceStorageError("Bitte warten, bis die laufende Synchronisierung beendet ist.");
     const selected = this.cache;
@@ -334,10 +348,13 @@ export class AccountFinanceStorage {
       assertAccountConflictUnchanged(this.userId, conflictRaw);
       const recoveryRaw = selected?.pending || !selected ? selectedRaw : null;
       if (recoveryRaw !== null) {
-        if (conflictRaw !== null && conflictRaw !== recoveryRaw)
+        const replacement = conflictRaw === null || conflictRaw === recoveryRaw
+          ? conflictRaw === null ? recoveryRaw : null
+          : this.supersedingConflictBackup(conflictRaw, selected);
+        if (replacement === undefined)
           throw new FinanceStorageError("Eine ältere Konfliktsicherung ist noch vorhanden. Bitte zuerst wiederherstellen oder sichern und ausdrücklich verwerfen; sie wird nicht überschrieben.");
-        if (conflictRaw === null) {
-          localStorage.setItem(conflictKey, recoveryRaw);
+        if (replacement !== null) {
+          localStorage.setItem(conflictKey, replacement);
           window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
         }
       }
