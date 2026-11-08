@@ -248,6 +248,34 @@ describe("enable banking sync service", () => {
     expect(snapshots.filter((item) => item.date === "2026-11-10")).toHaveLength(1);
   });
 
+  it("uses the Trade Republic balance as the Notgroschen and names its text-less bookings", async () => {
+    accounts.putFinance(userId, { ...blankTestState(), accountSnapshots: [{ bank: "Trade Republic", name: "Verrechnungskonto", date: "2026-11-09", balance: 3000 }],
+      trBalances: [{ date: "2026-11-02", balance: 3606 }] }, 0);
+    const api = fakeApi();
+    vi.mocked(api.createSession).mockResolvedValueOnce({
+      session_id: "sess-t", aspsp: { name: "Trade Republic", country: "AT" }, access: { valid_until: "2027-02-06T00:00:00+00:00" },
+      accounts: [{ uid: "tr-1", account_id: { iban: "AT831900108509552611" }, name: "Jannis Brühl", cash_account_type: "CACC" }] });
+    vi.mocked(api.session).mockResolvedValue({ status: "AUTHORIZED", accounts: ["tr-1"], access: { valid_until: "2027-02-06T00:00:00+00:00" } });
+    const bare = { creditor: null, debtor: null, creditor_account: null, remittance_information: null, entry_reference: null };
+    vi.mocked(api.transactions).mockResolvedValue([
+      tx({ ...bare, booking_date: "2026-11-01", transaction_amount: { currency: "EUR", amount: "6.09" }, credit_debit_indicator: "CRDT" }),
+      tx({ ...bare, booking_date: "2026-11-07", transaction_amount: { currency: "EUR", amount: "140.30" } }),
+    ]);
+    vi.mocked(api.balances).mockResolvedValue([{ balance_amount: { currency: "EUR", amount: "3465.00" }, balance_type: "CLBD", reference_date: "2026-11-10" }]);
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    const result = await syncBank(accounts, user(), { enableBanking: api, now });
+    expect(result.accounts[0]).toMatchObject({ bank: "Trade Republic", pocket: "Verrechnungskonto", balance: 3465 });
+    const state = accounts.getFinance(userId).state!;
+    expect(state.trBalances).toEqual([{ date: "2026-11-02", balance: 3606 }, { date: "2026-11-10", balance: 3465 }]);
+    expect(state.accountSnapshots).toEqual([]);
+    const uploads = await readdir(join(dirname(accounts.path), "statement-uploads"));
+    const payload = await readFile(join(dirname(accounts.path), "statement-uploads", uploads[0]));
+    expect(parseBankSync(payload, "x.bank.json").rows.map((row) => [row.description, row.bank, row.pocket])).toEqual([
+      ["Zinsgutschrift Trade Republic", "Trade Republic", "Verrechnungskonto"],
+      ["Trade Republic · Umsatz ohne Buchungstext", "Trade Republic", "Verrechnungskonto"],
+    ]);
+  });
+
   it("names anonymous PayPal bank bookings from a linked PayPal account instead of importing them twice", async () => {
     const paypalDebit = { id: "rb-1", date: "2026-11-07", description: "1054114922583/PAYPAL", amount: -9.58, category: "Sonstiges",
       bank: "Raiffeisen", pocket: RAIFFEISEN_ACCOUNT, source: "csv", includeInPlan: true };

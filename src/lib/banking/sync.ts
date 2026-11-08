@@ -8,6 +8,7 @@ import { AutomationStore } from "@/lib/automation/store";
 import { MAX_UPLOAD_BYTES } from "@/lib/automation/schema";
 import { bankAccountTarget, BANK_SYNC_FORMAT, coveredUntilByAccount, accountIdentity, isPaypalAccount, type BankSyncFile } from "@/lib/import/bank-sync";
 import { matchPaypalActivity, type PaypalActivity } from "@/lib/import/paypal-activity";
+import { TRADE_REPUBLIC_BANK } from "@/lib/import/trade-republic";
 import { readXs2aConfig, Xs2aClient, Xs2aError, type Xs2aConnection } from "./xs2a";
 import { EnableBankingClient, EnableBankingError, pickBalances, readEnableBankingConfig, toTurnover, type EbAccount } from "./enable-banking";
 import { matchPockets } from "./pocket-match";
@@ -692,21 +693,37 @@ export function bankSnapshots(link: Pick<BankLink, "accounts" | "providerAccount
   return [...result.values()];
 }
 
+const isTradeRepublic = (item: AccountSnapshot) => item.bank === TRADE_REPUBLIC_BANK;
+
+/**
+ * Trade Republic is the Notgroschen: its bank balance becomes the Notgroschen balance (trBalances) instead of a
+ * separate account, otherwise assistant, net worth and forecast would count the same money twice.
+ */
+export function mergeBankBalances(state: AppState, items: AccountSnapshot[]): AppState | null {
+  const key = (item: AccountSnapshot) => `${item.name}|${item.date}`;
+  const accounts = new Map((state.accountSnapshots ?? []).filter((item) => !isTradeRepublic(item)).map((item) => [key(item), item]));
+  for (const item of items) if (!isTradeRepublic(item)) accounts.set(key(item), item);
+  const trBalances = new Map((state.trBalances ?? []).map((item) => [item.date, item]));
+  for (const item of items) if (isTradeRepublic(item)) trBalances.set(item.date, { date: item.date, balance: item.balance });
+  const next = {
+    ...state,
+    accountSnapshots: [...accounts.values()],
+    ...(trBalances.size ? { trBalances: [...trBalances.values()].sort((a, b) => a.date.localeCompare(b.date)) } : {}),
+  };
+  const same = JSON.stringify(next.accountSnapshots) === JSON.stringify(state.accountSnapshots ?? []) &&
+    JSON.stringify(next.trBalances ?? []) === JSON.stringify(state.trBalances ?? []);
+  return same ? null : next;
+}
+
 function storeBalances(database: AccountDatabase, userId: string, items: AccountSnapshot[]): void {
   if (!items.length) return;
   for (let attempt = 0; attempt < 3; attempt++) {
     const { state, revision } = database.getFinance(userId);
     if (!state) return;
-    const key = (item: AccountSnapshot) => `${item.name}|${item.date}`;
-    const merged = new Map((state.accountSnapshots ?? []).map((item) => [key(item), item]));
-    const changed = items.filter((item) => {
-      const previous = merged.get(key(item));
-      return !previous || previous.bank !== item.bank || previous.balance !== item.balance;
-    });
-    if (!changed.length) return;
-    for (const item of changed) merged.set(key(item), item);
+    const next = mergeBankBalances(state, items);
+    if (!next) return;
     try {
-      database.putFinance(userId, { ...state, accountSnapshots: [...merged.values()] }, revision);
+      database.putFinance(userId, next, revision);
       return;
     } catch {
       // A concurrent save won; retry on the fresh revision. Balances are refreshed on the next sync anyway.

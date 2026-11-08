@@ -65,6 +65,7 @@ const topics: Topic[] = [
     test: /umsätze|umsaetze|import|csv|hochlad|kategori|regel|prüfliste|pruefliste|ki.?prüf|ki.?zuordn|händler|haendler|paypal|amex|revolut|trade republic/,
     about: [
       "Unter Umsätze lädst du Auszüge hoch: Raiffeisen, Amex, Revolut, PayPal und Trade Republic. Doppelte Buchungen werden erkannt.",
+      "Über die Bankverbindung kommen Raiffeisen, Revolut und Trade Republic alle 6 Stunden automatisch. Der Trade-Republic-Kontostand ist dein Notgroschen. PayPal ergänzt bei „…/PAYPAL“-Abbuchungen den echten Shop, ohne Buchungen doppelt anzulegen.",
       "Jede Buchung bekommt eine Kategorie: zuerst feste Händlerregeln, dann deine bisherigen Zuordnungen, dann die lokale KI. Unsichere Fälle landen in der Prüfliste.",
       "Bestätigst du eine Zuordnung, merkt sich das Dashboard den Händler für künftige Importe.",
     ],

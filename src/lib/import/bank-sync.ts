@@ -8,6 +8,7 @@ import { numberStatementRows } from "./identity";
 import { recoverMerchant } from "./merchant-description";
 import type { StatementResult } from "./statements";
 import { BANK_REFERENCE_PREFIX } from "./bank-identity";
+import { TRADE_REPUBLIC_BANK, TRADE_REPUBLIC_POCKET } from "./trade-republic";
 export { accountIdentity, coveredUntilByAccount, isBankSyncRow, BANK_REFERENCE_PREFIX } from "./bank-identity";
 
 export const BANK_SYNC_FORMAT = "finanzblick-bank-sync";
@@ -82,6 +83,7 @@ export function bankAccountTarget(account: Pick<BankSyncAccount, "bankName" | "b
   }
   if (/revolut/i.test(bankName) || /^REVO/.test(bic)) return { bank: "Revolut", pocket: "Persönliches Konto" };
   if (isPaypalAccount(account)) return { bank: "PayPal", pocket: "PayPal" };
+  if (/trade\s*republic/i.test(bankName) || /^TRBK/.test(bic)) return { bank: TRADE_REPUBLIC_BANK, pocket: TRADE_REPUBLIC_POCKET };
   const bank = (bankName || bic || "Bank").slice(0, 100);
   const ibanTail = compact(account.iban).replace(/\s/g, "").slice(-4);
   return { bank, pocket: (description || (ibanTail ? `Konto …${ibanTail}` : "Girokonto")).slice(0, 100) };
@@ -90,6 +92,16 @@ export function bankAccountTarget(account: Pick<BankSyncAccount, "bankName" | "b
 function purposeLines(turnover: Turnover): string[] {
   const raw = Array.isArray(turnover.purpose) ? turnover.purpose : turnover.purpose ? [turnover.purpose] : [];
   return raw.map(compact).filter(Boolean).slice(0, 15).map((line) => line.slice(0, 1000));
+}
+
+/**
+ * Trade Republic shares only date and amount over PSD2. Its monthly interest is a small credit on the first
+ * days of the month and gets the CSV export's text, so the usual rules sort it; anything else stays recognisable.
+ */
+function textlessDescription(bank: string, date: string, amount: number): string {
+  if (bank !== TRADE_REPUBLIC_BANK) return "Bankumsatz";
+  if (amount > 0 && amount < 100 && Number(date.slice(8, 10)) <= 2) return "Zinsgutschrift Trade Republic";
+  return "Trade Republic · Umsatz ohne Buchungstext";
 }
 
 export function parseBankSync(bytes: Uint8Array, file: string): StatementResult {
@@ -118,7 +130,7 @@ export function parseBankSync(bytes: Uint8Array, file: string): StatementResult 
       }
       const purpose = purposeLines(turnover);
       const holder = compact(turnover.counter_holder).slice(0, 200);
-      const description = (compact([holder, purpose.join(" ")].filter(Boolean).join(" · ")) || "Bankumsatz").slice(0, 1000);
+      const description = (compact([holder, purpose.join(" ")].filter(Boolean).join(" · ")) || textlessDescription(target.bank, date, turnover.amount)).slice(0, 1000);
       const amount = round(turnover.amount);
       const transactionId = compact(turnover.transaction_id);
       const fingerprint = transactionId
