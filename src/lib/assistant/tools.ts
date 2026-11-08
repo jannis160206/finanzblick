@@ -11,6 +11,7 @@ import { marketQuestion } from "./market";
 import { normalizeMessage } from "./normalize";
 import { pulseQuestion } from "./pulse";
 import { ordersQuestion } from "./orders";
+import { accountRuleRequest, fundsQuestion } from "./funds";
 import { whatIfQuestion } from "./whatif";
 import { whyQuestion } from "./why";
 
@@ -18,7 +19,7 @@ import { whyQuestion } from "./why";
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
-  "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders",
+  "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -28,7 +29,7 @@ export const isAssistantTool = (value: unknown): value is AssistantTool => typeo
 export const toolDescriptions: Record<AssistantTool, string> = {
   savings_goal: "neues Sparziel anlegen oder durchrechnen",
   expense: "neue künftige Ausgabe oder Ratenkauf planen",
-  affordability: "prüfen, ob man sich etwas leisten kann",
+  affordability: "einen künftigen Kauf im Monatsplan durchrechnen (nur wenn ausdrücklich ein Plan gewünscht ist; „Kann ich mir … leisten?“ ist funds)",
   query: "Frage zu vergangenen Buchungen, Ausgaben, Einnahmen oder Abos beantworten, auch je Konto/Karte (z. B. „mit Amex“) und Zeitraum (z. B. „seit 11.10.“)",
   accounts: "Kontostände, Pockets, Ersparnisse, Vermögen anzeigen („Wie viel ist auf dem Sparkonto?“)",
   amex: "Amex-Kreditkartenabrechnung: wie viel offen ist und wie viel noch auf das Amex-Rückzahlungs-Pocket überwiesen werden muss",
@@ -61,6 +62,8 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   forecast: "Kontoprognose für die nächsten 12 Monate pro Konto: wann wird das Girokonto knapp (Gehalt, Fixkosten, Abos, Amex-Abbuchung, geplante Ausgaben, Sparraten), z. B. „Wird mein Konto knapp?“, „Reicht mein Geld bis Jänner?“",
   whatif: "Was-wäre-wenn-Rechner: Abo kündigen und/oder monatlich mehr sparen und sehen, wann ein Sparziel früher erreicht ist (z. B. „Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“)",
   orders: "Offene Online-Bestellungen aus Gmail (Bestellbestätigungen, Klarna, PayPal, Kauf auf Rechnung) mit Betrag und Fälligkeit, die noch nicht abgebucht wurden (z. B. „Welche Bestellungen sind noch offen?“, „Was muss ich bei Klarna noch zahlen?“)",
+  funds: "Konten-Check: ob sich eine Ausgabe oder ein Kauf mit den Konten ausgeht, die man dafür verwenden darf, mit OK / nicht OK und von welchem Konto zahlen – legt nichts an (z. B. „Kann ich mir eine Kaffeemaschine um 850 € leisten?“, „Geht sich ein Ölwechsel um 120 € aus?“, „Reifen 600 € ok?“, „Welche Konten darf ich wofür verwenden?“)",
+  account_rule: "Kontoregel festlegen, wofür ein Konto verwendet werden darf (z. B. „Sparkonto ist für alle Ausgaben“, „Trade Republic nur für Autowerkstatt und Ölwechsel“, „Notgroschen nicht angreifen“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
@@ -136,7 +139,13 @@ export function splitCommands(input: string, names: string[] = []): string[] | u
   return parts;
 }
 
+// "Kann ich mir … leisten?" checks the usable accounts; it never opens a plan or a savings goal.
 function detectSingle(text: string, names: string[]): AssistantTool | undefined {
+  const tool = detectRaw(text, names);
+  return tool === "affordability" ? "funds" : tool;
+}
+
+function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   const lower = text.toLowerCase().trim();
   const known = mentionsName(text, names);
   const hasAmount = /\d/.test(lower);
@@ -144,6 +153,7 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:\S+ ){0,2}(?:geändert|gemacht|umgestellt)|protokoll/.test(lower)) return "changes";
   if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
   if (reviewQuestion(lower)) return "review";
+  if (accountRuleRequest(lower)) return "account_rule";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir (?:\S+ ){0,3}gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
@@ -165,6 +175,7 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
     knowledgeTopics(text, names, true).length) return "knowledge";
   if (whatIfQuestion(lower)) return "whatif";
   if (ordersQuestion(lower)) return "orders";
+  if (fundsQuestion(lower)) return "funds";
   if (pulseQuestion(lower)) return "pulse";
   if (forecastQuestion(lower)) return "forecast";
   if (whyQuestion(lower)) return "why";

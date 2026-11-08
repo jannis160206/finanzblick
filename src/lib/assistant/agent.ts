@@ -22,6 +22,7 @@ import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
 import { pulseAnswer } from "./pulse";
 import { ordersAnswer } from "./orders";
+import { fundsAnswer, rulesResult } from "./funds";
 import { whatIfAnswer } from "./whatif-answer";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
@@ -414,6 +415,8 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
     case "pulse": return pulseAnswer(state, dashboard, asOf);
     case "orders": return ordersAnswer(state, asOf);
+    case "funds": return fundsAnswer(state, dashboard, text, asOf);
+    case "account_rule": return rulesResult(state, dashboard, asOf);
     default: return help();
   }
 }

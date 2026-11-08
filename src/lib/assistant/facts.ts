@@ -5,6 +5,7 @@ import { plannedOccurrences } from "@/lib/planned-one-offs";
 import type { AppState } from "@/lib/types";
 import { balances } from "./accounts";
 import { budgetPace, safeToSpend, salaryStatus, unusualCategories } from "./pulse";
+import { accountLabel, accountsWithRules, ruleText } from "./funds";
 import { financialCheck } from "./check";
 import { accountForecast } from "./forecast";
 
@@ -52,6 +53,8 @@ export function assistantFacts(state: AppState, dashboard: Dashboard, today: str
     // Empty accounts stay listed, so "Wieso ist Revolut auf 0?" can be answered.
     balances: known.filter((item) => item.amount !== null)
       .slice(0, 25).map((item) => ({ name: item.name, ...(item.bank ? { bank: item.bank } : {}), amount: item.amount, ...(item.date ? { asOf: item.date } : {}) })),
+    // Which account may pay for what; "Kann ich mir … leisten?" must only count the allowed ones.
+    accountRules: accountsWithRules(state, dashboard, today).slice(0, 20).map((item) => ({ account: accountLabel(item), usableNow: item.available, rule: ruleText(item) })),
     amex: { open: dashboard.amex.outstanding, ownShare: dashboard.amex.ownOutstanding, onRepaymentPocket: dashboard.amex.reserved, stillToTransfer: dashboard.amex.shortfall },
     currentMonth: { month: dashboard.currentMonth, income: row.income, fixedCosts: row.fixed, everydayBudget: round(row.variablePlan - row.amexOpen),
       plannedOneOffs: row.plannedOneOffs, surplus: row.surplus, spentSoFar: row.actualSpending,

@@ -13,6 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
 import { assistantFacts } from "@/lib/assistant/facts";
+import { balances } from "@/lib/assistant/accounts";
+import { parseAccountRules, ruleText, rulesResult, storeAccountRules } from "@/lib/assistant/funds";
 import { readAnswerStream } from "@/lib/ai/answer-stream";
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
@@ -463,7 +465,17 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
     const free = !tool && !parsed?.success ? await freeAnswer(work, history) : undefined;
     await settle();
-    if (tool === "remember") {
+    if (tool === "account_rule") {
+      // "Sparkonto ist für alle Ausgaben", "Trade Republic nur für Autowerkstatt": saved right away, deletable under „Gedächtnis“.
+      const rules = parseAccountRules(work, [...balances(state, dashboard).map((item) => item.name), ...goals]);
+      if (rules.length) {
+        const next = { ...state, accountRules: storeAccountRules(state.accountRules, rules) };
+        update((current) => ({ ...current, accountRules: storeAccountRules(current.accountRules, rules) }));
+        addResult(rulesResult(next, dashboard, asOf, `Gemerkt: ${rules.map((rule) => `${rule.account} ${ruleText(rule)}`).join("; ")}. ` +
+          "Bei „Kann ich mir … leisten?“ prüfe ich ab jetzt genau diese Konten und sage dir OK oder nicht OK."), "Regel", { tool, asked: work });
+      } else addResult({ text: "Welches Konto meinst du und wofür darf es verwendet werden? Zum Beispiel „Sparkonto ist für alle Ausgaben“ oder „Trade Republic nur für Autowerkstatt, Ölwechsel“.",
+        suggestions: ["Welche Konten darf ich wofür verwenden?"] }, reply.source);
+    } else if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
       const operation = parseMemory(work);
       if (operation) remember([operation]);
@@ -484,7 +496,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       }
       addResult(withNotes(result.suggestions || result.change || result.undoId || result.choices ? result : { ...result, suggestions: followUps[tool] }), reply.source,
         { tool, asked: work, clarify: work });
-    } else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
+    } else if (parsed?.success && parsed.data.action === "affordability")
+      // Affordability never opens a plan form: it checks the accounts that may be used and says OK or not OK.
+      addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work });
+    else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
     else if (free) addResult(withNotes({ text: free, suggestions: ["Zeig mir meine Kontostände", "Was bleibt mir diesen Monat?", "Was kannst du alles?"] }), "KI", { tool: "free", asked: work });
     else {
       update((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
@@ -547,11 +562,12 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   const changes = state.assistantChanges ?? [];
   const memory = state.assistantMemory ?? [];
+  const memoryCount = memory.length + (state.assistantKnowledge?.length ?? 0) + (state.accountRules?.length ?? 0);
   const panelMode = variant === "panel";
   const actionSize = panelMode ? "min-h-9" : "min-h-11";
   const actions = <>
       <Button type="button" variant={panel === "memory" ? "secondary" : "outline"} size="sm" className={actionSize} aria-pressed={panel === "memory"}
-        onClick={() => setPanel(panel === "memory" ? undefined : "memory")}><Brain aria-hidden="true" className="size-4" />Gedächtnis{memory.length + (state.assistantKnowledge?.length ?? 0) ? ` (${memory.length + (state.assistantKnowledge?.length ?? 0)})` : ""}</Button>
+        onClick={() => setPanel(panel === "memory" ? undefined : "memory")}><Brain aria-hidden="true" className="size-4" />Gedächtnis{memoryCount ? ` (${memoryCount})` : ""}</Button>
       <Button type="button" variant={panel === "changes" ? "secondary" : "outline"} size="sm" className={actionSize} aria-pressed={panel === "changes"}
         onClick={() => setPanel(panel === "changes" ? undefined : "changes")}><History aria-hidden="true" className="size-4" />Änderungen{changes.length ? ` (${changes.length})` : ""}</Button>
       {messages.length > 0 && <Button type="button" variant="outline" size="sm" className={actionSize} onClick={() => {
@@ -570,7 +586,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       disabled={!!storageError} onDelete={forget}
       onForgetKnowledge={(id) => { update((current) => ({ ...current, assistantKnowledge: (current.assistantKnowledge ?? []).filter((entry) => entry.id !== id) })); toast.success("Vergessen"); }}
       onResetPhrases={() => { update((current) => ({ ...current, assistantPhrases: [] })); toast.success("Gelernte Formulierungen zurückgesetzt"); }}
-      aliases={state.assistantAliases ?? []} gaps={state.assistantGaps ?? []}
+      aliases={state.assistantAliases ?? []} gaps={state.assistantGaps ?? []} rules={state.accountRules ?? []}
+      onForgetRule={(id) => { update((current) => ({ ...current, accountRules: (current.accountRules ?? []).filter((entry) => entry.id !== id) })); toast.success("Kontoregel gelöscht"); }}
       onForgetAlias={(from) => { update((current) => ({ ...current, assistantAliases: (current.assistantAliases ?? []).filter((entry) => entry.from !== from) })); toast.success("Vergessen"); }}
       onRemoveGap={(text) => update((current) => ({ ...current, assistantGaps: (current.assistantGaps ?? []).filter((entry) => entry.text !== text) }))} />}
     </div>}

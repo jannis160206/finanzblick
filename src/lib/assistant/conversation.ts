@@ -3,7 +3,7 @@ import { draftTools, type AssistantTool } from "./tools";
 import type { AgentResult } from "./agent";
 
 // Tools that change data or start a form; never run as a side effect of a question like "Sollte ich …?".
-export const changingTools: readonly AssistantTool[] = [...draftTools, "edit", "booking", "batch", "rule", "remember", "forget", "undo", "reminder"];
+export const changingTools: readonly AssistantTool[] = [...draftTools, "edit", "booking", "batch", "rule", "remember", "forget", "undo", "reminder", "account_rule"];
 
 // Questions asking for an explanation, an opinion, advice or a summary want a written answer, not just a number card.
 const CONVERSATIONAL = new RegExp([

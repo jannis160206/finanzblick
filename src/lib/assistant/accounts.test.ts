@@ -51,7 +51,7 @@ describe("account and card questions", () => {
     for (const text of ["Was bleibt mir diesen Monat?", "wie viel kann ich im dezember noch ausgeben", "was bleibt übrig", "Monatsplan"])
       expect(detectTool(text), text).toBe("budget");
     expect(detectTool("Was habe ich seit 11.10. mit Amex bezahlt?")).toBe("query");
-    expect(detectTool("Kann ich mir im Mai einen Fernseher um 900 € leisten?")).toBe("affordability");
+    expect(detectTool("Kann ich mir im Mai einen Fernseher um 900 € leisten?")).toBe("funds");
     expect(amexQuestion("amex")).toBe(false);
     expect(balanceQuestion("wie viel hab ich im oktober ausgegeben")).toBe(false);
     expect(budgetQuestion("wie viel hab ich im oktober ausgegeben")).toBe(false);

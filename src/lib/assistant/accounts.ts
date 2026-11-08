@@ -37,6 +37,8 @@ export function balances(state: AppState, dashboard: Dashboard) {
   const physical = physicalPocketBalances(state, dashboard.actual);
   // Only the bank connection says reliably where an account lives.
   const bankOf = new Map((state.accountSnapshots ?? []).map((item) => [pocketKey(item.name), item.bank] as const));
+  // The Notgroschen lives at Trade Republic once its balance comes from there.
+  if (state.trBalances?.length) bankOf.set(pocketKey("Notgroschen"), "Trade Republic");
   const pockets = Object.entries(physical).map(([key, balance]) => ({ key, name: names.get(key) ?? key, bank: bankOf.get(key), amount: balance.amount, date: undefined as string | undefined }));
   // Giro and main accounts are not pockets; their latest known balance comes from the bank connection or CSV export.
   const latest = new Map<string, { bank: string; name: string; balance: number; date: string }>();

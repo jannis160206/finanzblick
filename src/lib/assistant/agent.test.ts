@@ -47,7 +47,7 @@ describe("assistant tool detection", () => {
     expect(detectTool("Was kann ich bei der Arbeitnehmerveranlagung absetzen?")).toBe("tax");
     expect(detectTool("Ich will 200 € mehr im Monat sparen.")).toBe("coach");
     expect(detectTool("Ich will bis Juli 2027 3.000 € für Japan sparen")).toBe("savings_goal");
-    expect(detectTool("Kann ich mir im Mai einen Fernseher um 900 € leisten?")).toBe("affordability");
+    expect(detectTool("Kann ich mir im Mai einen Fernseher um 900 € leisten?")).toBe("funds");
   });
 
   it("matches the longest known name as a whole word", () => {

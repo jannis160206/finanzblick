@@ -545,6 +545,16 @@ export const assistantMemorySchema = z.object({
 }).strict();
 export type AssistantMemory = z.infer<typeof assistantMemorySchema>;
 export const MAX_ASSISTANT_MEMORY = 50;
+// Which account may pay for what: "Sparkonto für alles", "Trade Republic nur für Autowerkstatt", "Notgroschen nie".
+export const accountRuleSchema = z.object({
+  id: agentIdSchema,
+  account: z.string().trim().min(1).max(80),
+  use: z.enum(["any", "only", "never"]),
+  purposes: z.array(z.string().trim().min(1).max(60)).max(20),
+  at: z.number().nonnegative(),
+}).strict();
+export type AccountRule = z.infer<typeof accountRuleSchema>;
+export const MAX_ACCOUNT_RULES = 30;
 // General knowledge the assistant looked up on the internet (public encyclopedia text, never personal data).
 export const assistantKnowledgeSchema = z.object({
   id: agentIdSchema,
@@ -733,6 +743,7 @@ export const appStateSchema = z.object({
   assistantChat: z.array(assistantMessageSchema).max(MAX_ASSISTANT_MESSAGES).optional(),
   // Facts the user asked the assistant to remember; visible and deletable in the chat.
   assistantMemory: z.array(assistantMemorySchema).max(MAX_ASSISTANT_MEMORY).optional(),
+  accountRules: z.array(accountRuleSchema).max(MAX_ACCOUNT_RULES).optional(),
   // What the assistant learned by itself: looked-up knowledge and phrasings it now understands without the model.
   assistantKnowledge: z.array(assistantKnowledgeSchema).max(MAX_ASSISTANT_KNOWLEDGE).optional(),
   assistantPhrases: z.array(assistantPhraseSchema).max(MAX_ASSISTANT_PHRASES).optional(),

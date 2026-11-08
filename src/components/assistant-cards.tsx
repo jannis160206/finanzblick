@@ -10,7 +10,8 @@ import { classify } from "@/lib/calc";
 import { canonicalCategory } from "@/lib/categories";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { downloadTaxFolder, taxFolder } from "@/lib/tax-folder";
-import type { AppState, AssistantAlias, AssistantCard, AssistantChangeLog, AssistantGap, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
+import { ruleText } from "@/lib/assistant/funds";
+import type { AccountRule, AppState, AssistantAlias, AssistantCard, AssistantChangeLog, AssistantGap, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const toneClass = {
@@ -223,9 +224,10 @@ export function ChangesPanel({ changes, disabled, onUndo }: { changes: Assistant
   </section>;
 }
 
-export function MemoryPanel({ memory, knowledge = [], phrases = 0, aliases = [], gaps = [], disabled, onDelete, onForgetKnowledge, onResetPhrases, onForgetAlias, onRemoveGap }: {
-  memory: AssistantMemory[]; knowledge?: AssistantKnowledge[]; phrases?: number; aliases?: AssistantAlias[]; gaps?: AssistantGap[]; disabled: boolean;
+export function MemoryPanel({ memory, knowledge = [], phrases = 0, aliases = [], gaps = [], rules = [], disabled, onDelete, onForgetKnowledge, onResetPhrases, onForgetAlias, onRemoveGap, onForgetRule }: {
+  memory: AssistantMemory[]; knowledge?: AssistantKnowledge[]; phrases?: number; aliases?: AssistantAlias[]; gaps?: AssistantGap[]; rules?: AccountRule[]; disabled: boolean;
   onDelete: (id: string) => void; onForgetKnowledge?: (id: string) => void; onResetPhrases?: () => void; onForgetAlias?: (from: string) => void; onRemoveGap?: (text: string) => void;
+  onForgetRule?: (id: string) => void;
 }) {
   const openGapList = gaps.filter((entry) => !entry.resolved).sort((a, b) => b.at - a.at).slice(0, 10);
   return <section className="panel mb-4 p-4" aria-label="Gedächtnis des Assistenten">
@@ -240,6 +242,17 @@ export function MemoryPanel({ memory, knowledge = [], phrases = 0, aliases = [],
             <X aria-hidden="true" className="size-4" />Vergessen</Button>
         </li>)}
       </ul>}
+    {rules.length > 0 && <>
+      <h3 className="mt-5 text-sm font-semibold">Kontoregeln</h3>
+      <ul className="mt-2 divide-y divide-border/50 text-sm">
+        {rules.map((rule) => <li key={rule.id} className="flex items-center justify-between gap-3 py-2">
+          <span className="min-w-0">{rule.account}: {ruleText(rule)}
+            <span className="block text-xs text-muted-foreground">gilt beim Konten-Check „Kann ich mir … leisten?“ · seit {new Date(rule.at).toLocaleDateString("de-AT")}</span></span>
+          {onForgetRule && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={() => onForgetRule(rule.id)}
+            aria-label={`Kontoregel für ${rule.account} löschen`}><X aria-hidden="true" className="size-4" />Löschen</Button>}
+        </li>)}
+      </ul>
+    </>}
     <h3 className="mt-5 flex items-center gap-2 text-sm font-semibold"><Globe aria-hidden="true" className="size-4 text-primary" />Selbst dazugelernt</h3>
     {!knowledge.length ? <p className="mt-2 text-sm text-muted-foreground">Noch nichts. Frag zum Beispiel „Was ist ein ETF?“; ich schlage es nach und merke es mir.</p>
       : <ul className="mt-3 divide-y divide-border/50 text-sm">
