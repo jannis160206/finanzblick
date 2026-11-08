@@ -177,8 +177,8 @@ export function Settings() {
 
   return <>
     <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
-    <div className="grid gap-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start">
-      <aside className="space-y-3 lg:sticky lg:top-6">
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start">
+      <aside className="min-w-0 space-y-3 lg:sticky lg:top-6">
         <label className="relative block">
           <span className="sr-only">Einstellungen durchsuchen</span>
           <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -188,7 +188,7 @@ export function Settings() {
             className="absolute right-2 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <X aria-hidden="true" className="size-3.5" /></button>}
         </label>
-        <nav aria-label="Einstellungsbereiche" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 lg:mx-0 lg:block lg:space-y-4 lg:overflow-visible lg:px-0 lg:pb-0">
+        <nav aria-label="Einstellungsbereiche" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] lg:mx-0 lg:block lg:space-y-4 lg:overflow-visible lg:px-0 lg:pb-0">
           {groups.map((group) => <div key={group.id} className="contents lg:block">
             <p className="hidden px-2.5 pb-1 text-2xs font-medium uppercase tracking-[0.16em] text-muted-foreground lg:block">{group.label}</p>
             {group.items.filter((item) => shown(item.id)).map((item) => <a key={item.id} href={`#${item.id}`} onClick={() => jump(item.id)}

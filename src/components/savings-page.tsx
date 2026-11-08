@@ -57,9 +57,9 @@ export function NetWorthPanel() {
       </FinancialData>}
       <ChartDataTable caption="Nettovermögen pro Monat" columns={["Monat", "Nettovermögen"]}
         rows={points.map((point) => ({ key: point.month, cells: [point.label, currency(point.total)] }))} />
-      {Object.keys(latest.parts).length > 0 && <FinancialData as="dl" className="mt-4 grid gap-2 border-t border-border/60 pt-4 text-xs sm:grid-cols-3">
-        {Object.entries(latest.parts).map(([name, value]) => <div key={name} className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">{partLabel(name)}</dt><dd className="tabular-nums">{currency(value)}</dd>
+      {Object.values(latest.parts).some((value) => Math.abs(value) >= 0.005) && <FinancialData as="dl" className="mt-4 grid gap-x-6 gap-y-2 border-t border-border/60 pt-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        {Object.entries(latest.parts).filter(([, value]) => Math.abs(value) >= 0.005).sort(([, a], [, b]) => b - a).map(([name, value]) => <div key={name} className="flex justify-between gap-2">
+          <dt className="text-muted-foreground">{partLabel(name)}</dt><dd className={value < 0 ? "tabular-nums text-destructive" : "tabular-nums"}>{currency(value)}</dd>
         </div>)}
       </FinancialData>}
     </section>

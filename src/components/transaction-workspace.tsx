@@ -308,8 +308,10 @@ function mobileCell(row: Row<AccountedTransaction>, id: string) {
 
 export function MobileTransactionList({
   rows,
+  groupByDay = false,
 }: {
   rows: Row<AccountedTransaction>[];
+  groupByDay?: boolean;
 }) {
   const { locked } = useSecurityMode();
   return (
@@ -320,39 +322,53 @@ export function MobileTransactionList({
       aria-label="Mobile Buchungen"
       className="divide-y divide-border/70 md:hidden"
     >
-      {rows.map((row) => (
-        <li
-          key={row.id}
-          aria-label={`Buchung: ${row.original.merchantAlias ?? row.original.description}`}
-          className={cn("space-y-3 p-4", row.original.ignored && "opacity-55")}
-        >
-          <div className="flex items-start gap-2">
-            <div className="-mt-2 -ml-2 shrink-0">
-              {mobileCell(row, "selection")}
+      {rows.map((row, index) => {
+        const showDay = groupByDay && rows[index - 1]?.original.date !== row.original.date;
+        return [
+          showDay && (
+            <li key={`day-${row.original.date}-${index}`} role="presentation" className="bg-muted/40 px-4 py-1.5 text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
+              {dayHeading(row.original.date)}
+            </li>
+          ),
+          <li
+            key={row.id}
+            aria-label={`Buchung: ${row.original.merchantAlias ?? row.original.description}`}
+            className={cn("space-y-2 px-4 py-3", row.original.ignored && "opacity-55")}
+          >
+            <div className="flex items-start gap-2">
+              <div className="-mt-2 -ml-2 shrink-0">
+                {mobileCell(row, "selection")}
+              </div>
+              <div className="min-w-0 flex-1">
+                {mobileCell(row, "description")}
+                {!groupByDay && <p className="mt-1 text-xs text-muted-foreground">
+                  {dateLabel(row.original.date)}
+                </p>}
+              </div>
+              <div className="min-w-0 max-w-[48%]">
+                {mobileCell(row, "amount")}
+              </div>
             </div>
-            <div className="min-w-0 flex-1">
-              {mobileCell(row, "description")}
-              <p className="mt-1 text-xs text-muted-foreground">
-                {dateLabel(row.original.date)}
-              </p>
+            <div className="flex items-end justify-between gap-3">
+              <div className="min-w-0">{mobileCell(row, "category")}</div>
+              <div className="flex min-w-0 flex-col items-end gap-1">
+                <div className="max-w-full text-right text-xs text-muted-foreground">
+                  {mobileCell(row, "account")}
+                </div>
+                {mobileCell(row, "actions")}
+              </div>
             </div>
-            <div className="min-w-0 max-w-[48%]">
-              {mobileCell(row, "amount")}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            {mobileCell(row, "category")}
-            <div className="max-w-full text-xs text-muted-foreground">
-              {mobileCell(row, "account")}
-            </div>
-          </div>
-          <div className="flex justify-end border-t border-border/50 pt-2">
-            {mobileCell(row, "actions")}
-          </div>
-        </li>
-      ))}
+          </li>,
+        ];
+      })}
     </ol>
   );
+}
+
+function dayHeading(date: string) {
+  const parsed = new Date(`${date}T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return date;
+  return parsed.toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 }
 
 export function MobileLedgerControls({

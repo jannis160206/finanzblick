@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
+import { netWorthHistory } from "@/lib/net-worth";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
@@ -25,6 +26,7 @@ export function Pockets() {
   const balances = pocketNames.map((pocket) => bankPocketBalance(state, pocket, dashboard.actual));
   const total = sum(balances.map((amount) => amount ?? 0));
   const incomplete = balances.some((amount) => amount === null);
+  const netWorth = useMemo(() => netWorthHistory(state, dashboard).at(-1)?.total, [state, dashboard]);
   return (
     <>
       <PageHeading
@@ -32,21 +34,29 @@ export function Pockets() {
         title="Sparen"
         description={`Stand ${dateLabel(state.settings.asOf)}`}
         sensitiveDescription
-      >
-        <div
-          aria-label="Reserven gesamt"
-          className="min-w-0 rounded-xl border border-border/70 bg-card px-4 py-3"
-        >
-          <p className="text-xs text-muted-foreground">Reserven gesamt</p>
-          <FinancialData
-            as="p"
-            className="mt-1 text-2xl font-semibold tracking-tight tabular-nums"
-          >
+      />
+      <div className="mb-5 overflow-hidden rounded-3xl border border-border/70 bg-gradient-to-br from-primary/10 via-card to-card shadow-sm">
+        <div aria-label="Reserven gesamt" className="px-5 pt-5 pb-4 sm:px-6">
+          <p className="text-xs font-medium text-muted-foreground">Reserven gesamt</p>
+          <FinancialData as="p" className="mt-1 break-words text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl">
             {currency(total)}
           </FinancialData>
-          {incomplete && <p className="mt-1 text-xs text-muted-foreground">Unvollständig · unbekannte Kontostände nicht enthalten</p>}
+          <p className="mt-1.5 text-xs text-muted-foreground">
+            {incomplete ? "Unvollständig · unbekannte Kontostände nicht enthalten" : pocketNames.join(" · ")}
+          </p>
         </div>
-      </PageHeading>
+        <FinancialData as="dl" className="grid grid-cols-2 divide-x divide-border/60 border-t border-border/60">
+          {[
+            { label: "Guthaben gesamt", hint: "inkl. Alltagskonten", value: dashboard.totalAssets },
+            { label: "Nettovermögen", hint: "inkl. Depot, minus Amex", value: netWorth },
+          ].map((item) => item.value !== undefined && (
+            <div key={item.label} className="min-w-0 px-5 py-3 sm:px-6">
+              <dt className="text-2xs text-muted-foreground">{item.label} <span className="hidden sm:inline">· {item.hint}</span></dt>
+              <dd className="mt-0.5 truncate text-base font-semibold tabular-nums">{currency(item.value)}</dd>
+            </div>
+          ))}
+        </FinancialData>
+      </div>
       <section aria-label="Sparen und Reserven" className="mb-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold">Sparen & Reserven</h2>

@@ -58,9 +58,9 @@ it("prioritizes the surplus, keeps model values and plan/actual distinctions, an
   const state = fixture();
   const before = JSON.stringify(state);
   const { dashboard, container, update } = mount(state);
-  const metrics = ["Überschuss · Plan", "Einnahmen · Plan", "Ausgaben · Ist", "Ersparnisse gesamt"];
+  const metrics = ["Überschuss · Plan", "Einnahmen · Plan", "Ausgaben · Ist", "Guthaben gesamt"];
   const values = [dashboard.current.surplus, dashboard.current.income, dashboard.current.actualSpending, dashboard.totalAssets];
-  metrics.forEach((label, index) => expect(within(screen.getByRole("region", { name: label })).getByText(moneyText(values[index]))).toBeTruthy());
+  metrics.forEach((label, index) => expect(within(screen.getByRole("region", { name: label })).getAllByText(moneyText(values[index])).length).toBeGreaterThan(0));
   expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(metrics[0]);
   expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.received)}`)).toBeTruthy();
   expect(dashboard.monthlyFunding.find((row) => row.id === "savings")?.amount).toBe(dashboard.current.surplus);

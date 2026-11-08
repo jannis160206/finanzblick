@@ -220,19 +220,20 @@ export function BankConnections() {
             const consent = connection.consentValidUntil?.slice(0, 10) ?? null;
             const expiresSoon = consent !== null && consent <= new Date(Date.parse(`${state.settings.asOf}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10);
             return <li key={connection.id} className="rounded-2xl border border-border/70 bg-muted/15 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm font-medium"><Link2 aria-hidden="true" className="size-4 text-primary" />{name}{connection.testmode && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">Testmodus</span>}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
+              <div className="flex items-start gap-3">
+                <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-sm font-semibold text-primary">{name.slice(0, 2).toUpperCase()}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">{name}{connection.testmode && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">Testmodus</span>}</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                     {connection.syncActive === false ? `Abruf pausiert${connection.message ? `: ${connection.message}` : ""}` : "Automatischer Abruf aktiv"}
                     {consent && <> · Freigabe bis {dateLabel(consent)}</>}
-                    {connection.lastSynced && <> · zuletzt geprüft {new Date(connection.lastSynced).toLocaleString("de-AT", { dateStyle: "short", timeStyle: "short" })}</>}
+                    {connection.lastSynced && <> · geprüft {new Date(connection.lastSynced).toLocaleString("de-AT", { dateStyle: "short", timeStyle: "short" })}</>}
                   </p>
                   {expiresSoon && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">Die Bankfreigabe läuft bald ab – bitte erneuern.</p>}
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void start({ action: "renew", connection: connection.id })}><RotateCcw aria-hidden="true" className="size-4" />Freigabe erneuern</Button>
-                  <Button size="sm" variant="ghost" disabled={busy !== null} aria-label={`${name} trennen`} onClick={() => void remove(connection.id, name)}><Trash2 aria-hidden="true" className="size-4" /></Button>
+                <div className="flex shrink-0 gap-1">
+                  <Button size="icon" variant={expiresSoon ? "outline" : "ghost"} disabled={busy !== null} aria-label={`${name}: Freigabe erneuern`} title="Freigabe erneuern" onClick={() => void start({ action: "renew", connection: connection.id })}><RotateCcw aria-hidden="true" className="size-4" /></Button>
+                  <Button size="icon" variant="ghost" disabled={busy !== null} aria-label={`${name} trennen`} title="Bank trennen" onClick={() => void remove(connection.id, name)}><Trash2 aria-hidden="true" className="size-4" /></Button>
                 </div>
               </div>
               {!main && <p role="status" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
@@ -241,9 +242,15 @@ export function BankConnections() {
               </p>}
               {main && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
                 {[main, ...(open ? others : [])].map((entry) => <Tooltip key={entry.id} className="w-72 max-w-[90vw]" label={<AccountSyncInfo entry={entry} connection={connection} lastSync={status.lastSync} lastError={status.lastError} />}>
-                  <li tabIndex={0} className="flex cursor-default flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
-                    <span className="flex min-w-0 items-center"><SyncDot state={syncState(entry, connection)} /><span className="font-medium">{entry.label}</span>{entry.iban && <span className="ml-2 text-muted-foreground tabular-nums">{entry.iban}</span>}<span className="ml-2 text-muted-foreground">→ {entry.bank}{entry.pocket ? ` · ${entry.pocket}` : ""}</span></span>
-                    {entry.balance !== null && <span className="font-semibold tabular-nums">{currency(entry.balance)}</span>}
+                  <li tabIndex={0} className="flex min-h-12 cursor-default items-center justify-between gap-3 px-3 py-2.5 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
+                    <span className="flex min-w-0 items-center">
+                      <SyncDot state={syncState(entry, connection)} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{entry.label}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{entry.iban && <span className="tabular-nums">{entry.iban} · </span>}→ {entry.pocket ?? entry.bank}</span>
+                      </span>
+                    </span>
+                    {entry.balance !== null && <span className="shrink-0 text-sm font-semibold tabular-nums">{currency(entry.balance)}</span>}
                   </li>
                 </Tooltip>)}
                 {others.length > 0 && <li>

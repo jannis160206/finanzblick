@@ -25,7 +25,7 @@ export function PocketBalanceCards({
   onEdit: () => void;
 }) {
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <ul className="min-w-0 divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
       {pocketNames.map((pocket) => {
         const Icon = pocketIcons[pocket];
         const bank = pocket === "Notgroschen" ? "Trade Republic" : "Revolut";
@@ -35,32 +35,48 @@ export function PocketBalanceCards({
             : latestPocketSnapshot(state, pocket);
         const basis = physicalPocketBalance(state, pocket, actual);
         const bankBalance = bankPocketBalance(state, pocket, actual);
+        const source = bankBalance === null ? "Kein eindeutiger belegter Startstand" : snapshot
+          ? `${pocket === "Notgroschen" ? "Stand" : "Auszugbasis"} ${dateLabel(snapshot.date)}`
+          : basis.source === "snapshot" ? "Auszugssaldo" : `Startstand ${dateLabel(state.settings.baselineDate)}`;
         return (
-          <article
-            key={pocket}
-            aria-label={`${pocket} Pocket`}
-            className="min-w-0 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-3">
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted/40">
-                  <Icon
-                    className="size-4.5"
-                    style={{ color: pocketColors[pocket] }}
-                    aria-hidden="true"
-                  />
-                </span>
-                <div className="min-w-0">
-                  <h3 className="text-sm font-medium">{pocket}</h3>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{bank}</p>
-                </div>
+          <li key={pocket}>
+            <article
+              aria-label={`${pocket} Pocket`}
+              className="flex min-h-16 min-w-0 items-center gap-3 px-4 py-3 sm:px-5"
+            >
+              <span
+                className="flex size-10 shrink-0 items-center justify-center rounded-full"
+                style={{ background: `color-mix(in srgb, ${pocketColors[pocket]} 12%, transparent)` }}
+              >
+                <Icon
+                  className="size-4.5"
+                  style={{ color: pocketColors[pocket] }}
+                  aria-hidden="true"
+                />
+              </span>
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate text-sm font-medium">{pocket}</h3>
+                <FinancialData as="p" className="mt-0.5 truncate text-2xs text-muted-foreground">
+                  {bank} · <span>{source}</span>
+                </FinancialData>
               </div>
+              <FinancialData
+                as="p"
+                aria-label={`${pocket} Kontostand`}
+                className={cn(
+                  "shrink-0 text-right text-base font-semibold tabular-nums",
+                  bankBalance !== null && bankBalance < 0 && "text-destructive",
+                  bankBalance === null && "text-xs font-normal text-muted-foreground",
+                )}
+              >
+                {bankBalance === null ? "Kontostand unbekannt" : currency(bankBalance)}
+              </FinancialData>
               {pocket === "Notgroschen" && (
                 <Button
                   ref={editRef}
                   variant="ghost"
                   size="icon"
-                  className="size-10 shrink-0 text-muted-foreground"
+                  className="-mr-2 size-10 shrink-0 text-muted-foreground"
                   aria-label="Kontostand aktualisieren"
                   title="Kontostand aktualisieren"
                   disabled={disabled}
@@ -69,26 +85,11 @@ export function PocketBalanceCards({
                   <Pencil className="size-4" aria-hidden="true" />
                 </Button>
               )}
-            </div>
-            <FinancialData
-              as="p"
-              aria-label={`${pocket} Kontostand`}
-              className={cn(
-                "mt-5 text-2xl font-semibold tracking-tight break-words tabular-nums",
-                bankBalance !== null && bankBalance < 0 && "text-destructive",
-              )}
-            >
-              {bankBalance === null ? "Kontostand unbekannt" : currency(bankBalance)}
-            </FinancialData>
-            <FinancialData as="p" className="mt-2 text-2xs text-muted-foreground">
-              {bankBalance === null ? "Kein eindeutiger belegter Startstand" : snapshot
-                ? `${pocket === "Notgroschen" ? "Stand" : "Auszugbasis"} ${dateLabel(snapshot.date)}`
-                : basis.source === "snapshot" ? "Auszugssaldo" : `Startstand ${dateLabel(state.settings.baselineDate)}`}
-            </FinancialData>
-          </article>
+            </article>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
 
@@ -114,23 +115,23 @@ export function EverydayPocketBalances({ state }: { state: AppState }) {
         <span className="text-xs text-muted-foreground">Auszugssalden</span>
       </div>
       {known.length ? (
-        <FinancialData as="dl" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <FinancialData as="dl" className={cn("-mx-4 divide-y divide-border/60 border-t border-border/60 sm:-mx-5", missing.length ? "border-b" : "-mb-4 sm:-mb-5")}>
           {known.map(({ name, snapshot }) => (
             <div
               key={name}
-              className="min-w-0 rounded-xl bg-muted/20 px-3 py-3"
+              className="flex min-h-12 min-w-0 items-center gap-3 px-4 py-2.5 sm:px-5"
             >
-              <dt className="text-xs text-muted-foreground">{name}</dt>
+              <dt className="min-w-0 flex-1 truncate text-sm">{name}</dt>
+              <dd className="text-2xs text-muted-foreground">
+                {dateLabel(snapshot.date)}
+              </dd>
               <dd
                 className={cn(
-                  "mt-2 text-lg font-semibold break-words tabular-nums",
+                  "shrink-0 text-right text-sm font-semibold tabular-nums",
                   snapshot.balance < 0 && "text-destructive",
                 )}
               >
                 {currency(snapshot.balance)}
-              </dd>
-              <dd className="mt-1 text-2xs text-muted-foreground">
-                {dateLabel(snapshot.date)}
               </dd>
             </div>
           ))}

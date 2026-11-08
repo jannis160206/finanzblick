@@ -78,7 +78,7 @@ describe("observed and unknown goal UI", () => {
     expect(screen.getByRole("status").textContent).toContain("Automatische Sparempfehlung pausiert");
     if (overview) {
       expect(screen.getByLabelText("Pocket-Verteilung diesen Monat").textContent).toContain("Empfehlung pausiert");
-      expect(screen.getByLabelText("Ersparnisse gesamt").textContent).toContain("Unvollständig");
+      expect(screen.getByLabelText("Guthaben gesamt").textContent).toContain("Unvollständig");
       expect(screen.getByLabelText("Prognose bekannter Pocket-Guthaben")).toBeTruthy();
       expect(screen.queryByLabelText("Prognose des gesamten Pocket-Vermögens")).toBeNull();
     }

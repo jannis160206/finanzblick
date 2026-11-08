@@ -536,6 +536,25 @@ const TransactionLedger = memo(function TransactionLedger({
           onReview={() => setReviewRequest((request) => request + 1)}
           onExport={exportView}
         />
+        {data.length > 0 && (() => {
+          const counted = data.filter((row) => !row.ignored && !classifications.get(row)?.isTransfer);
+          const income = sum(counted.map(personalAmount).filter((value) => value > 0));
+          const spending = sum(counted.map(personalAmount).filter((value) => value < 0));
+          return (
+            <FinancialData as="dl" aria-label="Summe der gefilterten Umsätze" className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60 bg-muted/20">
+              {[
+                { label: "Einnahmen", value: income, tone: "text-emerald-700 dark:text-emerald-400" },
+                { label: "Ausgaben", value: spending, tone: "" },
+                { label: "Saldo", value: income + spending, tone: income + spending < 0 ? "text-destructive" : "text-primary" },
+              ].map((item) => (
+                <div key={item.label} className="min-w-0 px-4 py-2.5 sm:px-5">
+                  <dt className="text-2xs text-muted-foreground">{item.label}</dt>
+                  <dd className={cn("truncate text-sm font-semibold tabular-nums", item.tone)}>{currency(item.value)}</dd>
+                </div>
+              ))}
+            </FinancialData>
+          );
+        })()}
         {selected.length > 0 && (
           <FinancialData
             role="group"
@@ -589,7 +608,7 @@ const TransactionLedger = memo(function TransactionLedger({
           {mobile ? (
             <>
               <MobileLedgerControls table={table} disabled={!!storageError} />
-              <MobileTransactionList rows={displayedRows} />
+              <MobileTransactionList rows={displayedRows} groupByDay={sorting[0]?.id === "date"} />
             </>
           ) : (
             <div className="hidden overflow-x-auto md:block">

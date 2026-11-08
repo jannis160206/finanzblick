@@ -10,17 +10,22 @@ export function PayrollFigures({
   className?: string;
 }) {
   return (
-    <dl className={cn("grid grid-cols-1 gap-4 sm:grid-cols-2", className)}>
-      {figures.map(({ label, value }) => (
-        <div key={label} className="min-w-0">
-          <dt className="text-xs leading-relaxed text-muted-foreground">
-            {label}
-          </dt>
-          <dd className="mt-1 break-words text-xl font-semibold tracking-tight tabular-nums">
-            {value}
-          </dd>
-        </div>
-      ))}
+    <dl className={cn("divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-background/40", className)}>
+      {figures.map(({ label, value }, index) => {
+        const open = value === "Noch offen";
+        return (
+          <div key={label} className="flex min-h-12 min-w-0 items-center justify-between gap-4 px-4 py-2.5">
+            <dt className="min-w-0 text-sm leading-snug text-muted-foreground">
+              {label}
+            </dt>
+            <dd className={cn("shrink-0 text-right tabular-nums",
+              open ? "text-xs text-muted-foreground"
+                : index === 0 ? "text-lg font-semibold tracking-tight" : "text-sm font-semibold")}>
+              {value}
+            </dd>
+          </div>
+        );
+      })}
     </dl>
   );
 }

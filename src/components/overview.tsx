@@ -46,7 +46,9 @@ import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FinanceInsightsPanel } from "@/components/finance-insights";
-import { goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
+import { bankPocketBalance, goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
+import { round, sum } from "@/lib/calc";
+import { StackedBar } from "@/components/stacked-bar";
 
 const chartTooltip = {
   background: "var(--popover)",
@@ -72,15 +74,14 @@ export function Overview() {
   const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
   const bikeExtraLabel = (month: string) =>
     monthLabel(month, true).replace(/\s+\d{4}$/, "").replace(/\.$/, "");
-  const kpis = [
-    {
-      label: "Überschuss · Plan",
-      value: d.current.surplus,
-      icon: Wallet,
-      color: d.current.surplus >= 0 ? "text-primary" : "text-destructive",
-      prominent: true,
-      hint: "Nach Fixkosten, Alltagsbudget und geplanten Ausgaben.",
-    },
+  const reserves = sum(pocketNames.map((pocket) => bankPocketBalance(state, pocket, d.actual) ?? 0));
+  const surplusKpi = {
+    label: "Überschuss · Plan",
+    value: d.current.surplus,
+    color: d.current.surplus >= 0 ? "text-primary" : "text-destructive",
+    hint: "Noch frei nach Fixkosten, Alltagsbudget und geplanten Ausgaben.",
+  };
+  const statKpis: { label: string; value: number; icon: typeof Wallet; color: string; note?: string; hint?: string; href?: string }[] = [
     {
       label: "Einnahmen · Plan",
       value: d.current.income,
@@ -88,21 +89,23 @@ export function Overview() {
       icon: ArrowDownLeft,
       color: "text-primary",
       hint: d.current.income > d.current.salaryPlan && d.current.salaryPlan > 0
-        ? `Gehalt ${currency(d.current.salaryPlan)} + ${currency(d.current.income - d.current.salaryPlan)} weitere Einnahmen.` : undefined,
+        ? `Gehalt ${currency(d.current.salaryPlan)} + ${currency(d.current.income - d.current.salaryPlan)} weitere` : undefined,
     },
     {
       label: "Ausgaben · Ist",
       value: d.current.actualSpending,
       icon: ArrowUpRight,
       color: "text-chart-4",
-      hint: "Gebuchte Ausgaben ohne Umbuchungen.",
+      hint: "Gebucht, ohne Umbuchungen",
+      href: ledgerHref({ month: d.currentMonth }),
     },
     {
-      label: "Ersparnisse gesamt",
+      label: "Guthaben gesamt",
       value: d.totalAssets,
-      note: incompleteAssets ? "Unvollständig · unbekannte Guthaben nicht enthalten" : undefined,
+      note: incompleteAssets ? "Unvollständig · unbekannte Guthaben nicht enthalten" : `inkl. Alltagskonten · Reserven ${currency(reserves)}`,
       icon: PiggyBank,
       color: "text-primary",
+      href: "/sparen",
     },
   ];
   const forecast = d.timeline
@@ -128,30 +131,53 @@ export function Overview() {
           </Button>
         </div>
       </div>
-      <div className="mb-5 grid grid-cols-2 gap-3 xl:grid-cols-4">
-        {kpis.map((kpi, index) => (
-          <section key={kpi.label} aria-label={kpi.label} aria-describedby={kpi.hint ? `overview-metric-${index}-hint` : undefined} className={cn("panel min-w-0 p-4 sm:p-5",
-            kpi.prominent ? cn("col-span-2 md:col-span-1", d.current.surplus >= 0 ? "border-primary/25 bg-primary/5" : "border-destructive/25 bg-destructive/5") :
-              kpi.label === "Ersparnisse gesamt" ? "col-span-2 md:col-span-1" : "")}>
-            <div className="flex items-start justify-between gap-2">
-              <p className="pt-2 text-xs font-medium text-muted-foreground">
-                {kpi.label === "Ausgaben · Ist" ? (
-                  <Link href={ledgerHref({ month: d.currentMonth })} className="inline-flex min-h-11 items-center gap-1 rounded-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring -mt-2 sm:min-h-0 sm:mt-0">
-                    {kpi.label}<ArrowRight aria-hidden="true" className="size-3" />
-                  </Link>
-                ) : kpi.label}
-              </p>
-              <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted/60", kpi.color)}>
+      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+        <section aria-label={surplusKpi.label} aria-describedby="overview-metric-0-hint" className={cn("min-w-0 overflow-hidden rounded-3xl border bg-gradient-to-br to-card shadow-sm",
+          d.current.surplus >= 0 ? "border-primary/25 from-primary/10" : "border-destructive/25 from-destructive/10")}>
+          <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4 sm:px-6">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-muted-foreground">{surplusKpi.label}</p>
+              <FinancialData as="p" className={cn("mt-1 break-words text-4xl font-semibold tracking-tight tabular-nums sm:text-5xl", surplusKpi.color)}>
+                {currency(surplusKpi.value)}
+              </FinancialData>
+              <p id="overview-metric-0-hint" className="mt-1.5 text-xs text-muted-foreground">{surplusKpi.hint}</p>
+            </div>
+            <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-2xl bg-background/70", surplusKpi.color)}>
+              <Wallet aria-hidden="true" className="size-5" />
+            </span>
+          </div>
+          <StackedBar label="Aufteilung der Einnahmen" base={d.current.income} parts={[
+            { key: "Fixkosten", value: d.current.fixed, tone: "bg-chart-4" },
+            { key: "Alltag", value: round(d.current.variablePlan - d.current.amexOpen), tone: "bg-sky-500" },
+            { key: "Kreditkarte", value: d.current.amexOpen, tone: "bg-violet-500" },
+            { key: "Einmalig", value: d.current.plannedOneOffs, tone: "bg-rose-400" },
+            { key: "Frei", value: Math.max(0, d.current.surplus), tone: "bg-primary" },
+          ]} />
+        </section>
+        <div className="grid min-w-0 gap-3 sm:grid-cols-3 lg:grid-cols-1">
+          {statKpis.map((kpi, index) => {
+            const describedBy = kpi.hint ? `overview-metric-${index + 1}-hint` : undefined;
+            const body = <>
+              <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-full bg-muted/70", kpi.color)}>
                 {kpi.label === "Ausgaben · Ist" ? <SeasonalIcon slot="expense" className="seasonal-detail size-4" fallback={<kpi.icon aria-hidden="true" className="size-4" />} /> : <kpi.icon aria-hidden="true" className="size-4" />}
               </span>
-            </div>
-            <FinancialData as="p" className={cn("mt-4 break-words text-2xl font-semibold tracking-tight tabular-nums sm:text-[28px]", kpi.prominent && cn("text-3xl sm:text-[34px]", kpi.color))}>
-              {currency(kpi.value)}
-            </FinancialData>
-            {kpi.note && <FinancialData as="p" className="mt-2 text-2xs text-muted-foreground">{kpi.note}</FinancialData>}
-            {kpi.hint && <p id={`overview-metric-${index}-hint`} className="mt-2 text-2xs leading-relaxed text-muted-foreground">{kpi.hint}</p>}
-          </section>
-        ))}
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs text-muted-foreground">{kpi.label}</span>
+                <FinancialData as="span" className="block break-words text-xl font-semibold tracking-tight tabular-nums">{currency(kpi.value)}</FinancialData>
+                {kpi.note && <FinancialData as="span" className="block text-2xs text-muted-foreground">{kpi.note}</FinancialData>}
+                {kpi.hint && <FinancialData as="span" id={describedBy} className="block text-2xs text-muted-foreground">{kpi.hint}</FinancialData>}
+              </span>
+              {kpi.href && <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />}
+            </>;
+            return (
+              <section key={kpi.label} aria-label={kpi.label} aria-describedby={describedBy} className="min-w-0 rounded-2xl border border-border/70 bg-card shadow-sm">
+                {kpi.href
+                  ? <Link href={kpi.href} className="group flex min-h-16 items-center gap-3 rounded-2xl px-4 py-3 transition-colors hover:bg-muted/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring">{body}</Link>
+                  : <div className="flex min-h-16 items-center gap-3 px-4 py-3">{body}</div>}
+              </section>
+            );
+          })}
+        </div>
       </div>
       <div className="mb-5 grid gap-4 empty:hidden lg:grid-cols-2 [&>section:only-child]:col-span-full">
         <section
@@ -162,14 +188,14 @@ export function Overview() {
           {allocationBlocked && <FinancialData as="p" role="status" className="mb-3 text-xs text-muted-foreground">
             Automatische Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.
           </FinancialData>}
-          <div className="space-y-2">
+          <div className="-mx-4 -mb-4 divide-y divide-border/60 border-t border-border/60 sm:-mx-5 sm:-mb-5">
           {monthSplit.map((item) => {
             const combined = "combined" in item && item.combined === true;
             const confirmedSavings = item.id === "savings" && !combined && item.done;
-            return <div key={item.id} className={cn("grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-xl border p-3",
-              confirmedSavings ? "border-primary/20 bg-primary/5" : "border-border/60 bg-background/50")} data-funding-pot={item.pocket} data-funding-combined={combined || undefined}>
+            return <div key={item.id} className={cn("grid min-h-14 min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-2.5 sm:px-5",
+              confirmedSavings && "bg-primary/5")} data-funding-pot={item.pocket} data-funding-combined={combined || undefined}>
               <span className="min-w-0 break-words text-sm font-medium">{item.name}</span>
-              <FinancialData as="span" className={cn("inline-flex items-center gap-2 whitespace-nowrap text-xl font-semibold tracking-tight tabular-nums", confirmedSavings && "text-primary")}>
+              <FinancialData as="span" className={cn("inline-flex items-center gap-2 whitespace-nowrap text-base font-semibold tabular-nums", confirmedSavings && "text-primary")}>
                 {item.done && <Check className="size-3.5 text-emerald-600 dark:text-emerald-400" aria-label={`${item.name} überwiesen`} />}
                 <span>{currency(confirmedSavings ? item.transferred : item.amount)}</span>
               </FinancialData>
@@ -193,33 +219,35 @@ export function Overview() {
               Details <ArrowUpRight aria-hidden="true" className="size-3" />
             </Link>
           </SectionHeading>
-          <div className="grid grid-cols-2 gap-3">
+          <ul className="-mx-5 -mb-5 divide-y divide-border/60 border-t border-border/60 sm:-mx-6 sm:-mb-6">
             {pocketNames.map((pocket) => {
               const Icon = pocketIcons[pocket];
               const balance = physicalPocketBalance(state, pocket, d.actual);
+              const sub = balance.source === "opening" ? "Unabhängiger Startstand"
+                : pocket === "Notgroschen" ? "Trade Republic"
+                : pocket === "Sparkonto" && d.currentRoundUp > 0 ? `Round-up +${currency(d.currentRoundUp)}` : undefined;
               return (
-                <Link
-                  href="/sparen"
-                  key={pocket}
-                  className="group min-w-0 rounded-2xl border border-border/70 bg-background/40 p-3 transition-colors hover:border-primary/30 hover:bg-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-4"
-                >
-                  <div className="mb-4 flex items-center justify-between">
-                    <span className="flex size-9 items-center justify-center rounded-xl" style={{ color: pocketColors[pocket], background: `color-mix(in srgb, ${pocketColors[pocket]} 10%, transparent)` }}>
+                <li key={pocket}>
+                  <Link
+                    href="/sparen"
+                    className="group flex min-h-14 items-center gap-3 px-5 py-2.5 transition-colors hover:bg-muted/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring sm:px-6"
+                  >
+                    <span className="flex size-9 shrink-0 items-center justify-center rounded-full" style={{ color: pocketColors[pocket], background: `color-mix(in srgb, ${pocketColors[pocket]} 12%, transparent)` }}>
                       <Icon aria-hidden="true" className="size-4" />
                     </span>
-                    <ArrowUpRight aria-hidden="true" className="size-3 text-muted-foreground transition-colors group-hover:text-primary" />
-                  </div>
-                  <p className="mb-1 break-words text-xs text-muted-foreground">{pocket}</p>
-                  <FinancialData as="p" className="break-words text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
-                    {balance.amount === null ? "Kontostand unbekannt" : currency(balance.amount)}
-                  </FinancialData>
-                  {balance.source === "opening" && <p className="mt-2 text-2xs text-muted-foreground">Unabhängiger Startstand</p>}
-                  {pocket === "Notgroschen" && <p className="mt-2 text-2xs text-muted-foreground">Trade Republic</p>}
-                  {pocket === "Sparkonto" && d.currentRoundUp > 0 && <FinancialData as="p" className="mt-2 text-2xs text-muted-foreground">Round-up +{currency(d.currentRoundUp)}</FinancialData>}
-                </Link>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{pocket}</span>
+                      {sub && <FinancialData as="span" className="block truncate text-2xs text-muted-foreground">{sub}</FinancialData>}
+                    </span>
+                    <FinancialData as="span" className="shrink-0 text-sm font-semibold tabular-nums">
+                      {balance.amount === null ? "Kontostand unbekannt" : currency(balance.amount)}
+                    </FinancialData>
+                    <ArrowRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
+                  </Link>
+                </li>
               );
             })}
-          </div>
+          </ul>
         </section>
         {motorcycle ? <FinancialData as="section" className="panel min-w-0 overflow-hidden p-5 sm:p-6">
           <div className="flex items-center justify-between">
