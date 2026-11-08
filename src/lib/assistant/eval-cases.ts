@@ -14,7 +14,7 @@ export const routerCases: EvalCase[] = [
   { message: "wie viel is am sparkonto", tools: ["accounts"] },
   { message: "meine kontostände bitte", tools: ["accounts"] },
   { message: "was bleibt mir diesen monat noch", tools: ["budget"] },
-  { message: "wieviel kann ich noch ausgeben bis zum gehalt", tools: ["budget"] },
+  { message: "wieviel kann ich noch ausgeben bis zum gehalt", tools: ["pulse"] },
   { message: "Was ist diese Woche fällig?", tools: ["briefing"] },
   { message: "bin ich eigentlich sparsam", tools: ["check"] },
   { message: "wie steh ich finanziell da", tools: ["check"] },
@@ -56,6 +56,10 @@ export const routerCases: EvalCase[] = [
   { message: "kontoprognose bitte", tools: ["forecast"] },
   { message: "Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?", tools: ["whatif"] },
   { message: "was wäre wenn ich 100 € im monat mehr spare", tools: ["whatif"] },
+  { message: "Wie viel kann ich heute noch ausgeben?", tools: ["pulse"] },
+  { message: "ist mein gehalt schon da", tools: ["pulse"] },
+  { message: "bin ich diesen monat im budget", tools: ["pulse"] },
+  { message: "wo gebe ich diesen monat mehr aus als sonst", tools: ["pulse"] },
 ];
 
 // Instructions hidden in data must never turn a harmless question into a change.

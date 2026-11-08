@@ -1,21 +1,22 @@
 import { createHash } from "node:crypto";
-import { classify, round, type Dashboard } from "@/lib/calc";
+import { classify, daysInMonth, round, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { detectDuplicateCharges, detectSubscriptions } from "@/lib/insights";
 import type { AppState, Transaction } from "@/lib/types";
 import { memoryValue } from "./agent";
 import { reminders } from "./extras";
+import { budgetPace } from "./pulse";
 
 // Nightly background check: only things worth a Windows notification, each reported once.
 
-export type WatchAlertKind = "reminder" | "duplicate" | "buffer" | "amex" | "booking" | "price" | "renewal";
+export type WatchAlertKind = "reminder" | "duplicate" | "buffer" | "amex" | "budget" | "booking" | "price" | "renewal";
 export type WatchAlert = { key: string; kind: WatchAlertKind; title: string; detail: string; tone: "info" | "warn" | "bad" };
 // Keys are hashed so the state file holds no merchant names; transaction ids tell which bookings are new.
 export type WatchSeen = { version: 1; keys: Record<string, string>; transactionIds?: string[]; lastRun?: string };
 
 const DAY_MS = 86_400_000;
 const shiftDate = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
-const order: WatchAlertKind[] = ["reminder", "duplicate", "buffer", "amex", "booking", "price", "renewal"];
+const order: WatchAlertKind[] = ["reminder", "duplicate", "buffer", "amex", "budget", "booking", "price", "renewal"];
 const merchantKey = (row: Transaction) => (row.merchantAlias ?? row.description).trim().toLocaleLowerCase("de-AT");
 const merchantLabel = (row: Transaction) => (row.merchantAlias?.trim() || row.description.trim()).slice(0, 40);
 const median = (values: number[]) => {
@@ -79,6 +80,15 @@ export function findAlerts(state: AppState, dashboard: Dashboard, today: string,
     alerts.push({ key: `amex:${month}`, kind: "amex", tone: "warn",
       title: "Amex-Rückzahlung nicht gedeckt", detail: `es fehlen noch ${currency(amexShortfall)}` });
   if (seen.transactionIds) alerts.push(...unusualBookings(state, today, new Set(seen.transactionIds)));
+  // Budget lines that are used up, or 90 % gone with more than ten days left; each level once per month.
+  const daysLeft = daysInMonth(month) - Number(today.slice(8, 10));
+  for (const row of budgetPace(dashboard, today)) {
+    const level = row.actual > row.total + 0.5 ? "over" : row.total >= 50 && row.actual >= row.total * 0.9 && daysLeft > 10 ? "near" : undefined;
+    if (!level || row.id === "buffer") continue;
+    alerts.push({ key: `budget:${month}:${row.id}:${level}`, kind: "budget", tone: level === "over" ? "bad" : "warn",
+      title: level === "over" ? `Budget überschritten: ${row.label}` : `Budget fast aufgebraucht: ${row.label}`,
+      detail: `${currency(-row.actual)} von ${currency(-row.total)} · noch ${daysLeft} Tage im Monat` });
+  }
   const subscriptions = detectSubscriptions(state, today);
   for (const item of subscriptions.filter((entry) => entry.priceChange && entry.priceChange.date >= shiftDate(today, -35)))
     alerts.push({ key: `price:${item.merchant}:${item.priceChange!.date}`, kind: "price", tone: "warn",

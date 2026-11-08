@@ -9,6 +9,7 @@ import { detectAction, findExtra } from "./intent";
 import { knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
 import { marketQuestion } from "./market";
 import { normalizeMessage } from "./normalize";
+import { pulseQuestion } from "./pulse";
 import { whatIfQuestion } from "./whatif";
 import { whyQuestion } from "./why";
 
@@ -16,7 +17,7 @@ import { whyQuestion } from "./why";
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
-  "explain", "help", "ask", "cancel", "why", "forecast", "whatif",
+  "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -58,6 +59,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   why: "erklären, warum eine Buchung in ihrer Kategorie steht (Regel, gelernt, Web, KI, manuell), z. B. „Warum ist Billa Lebensmittel?“",
   forecast: "Kontoprognose für die nächsten 12 Monate pro Konto: wann wird das Girokonto knapp (Gehalt, Fixkosten, Abos, Amex-Abbuchung, geplante Ausgaben, Sparraten), z. B. „Wird mein Konto knapp?“, „Reicht mein Geld bis Jänner?“",
   whatif: "Was-wäre-wenn-Rechner: Abo kündigen und/oder monatlich mehr sparen und sehen, wann ein Sparziel früher erreicht ist (z. B. „Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“)",
+  pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
 const fold = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
@@ -160,6 +162,7 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
   if (!hasAmount && lower.split(" ").length <= 6 && /\b(?:was|wos) (?:is|ist|isn) (?:des|das)\b|\bbedeutung\b|\bdefinition\b/.test(lower) &&
     knowledgeTopics(text, names, true).length) return "knowledge";
   if (whatIfQuestion(lower)) return "whatif";
+  if (pulseQuestion(lower)) return "pulse";
   if (forecastQuestion(lower)) return "forecast";
   if (whyQuestion(lower)) return "why";
   if (cancelQuestion(lower)) return "cancel";
