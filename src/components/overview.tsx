@@ -46,7 +46,6 @@ import { cn } from "@/lib/utils";
 import { PlannedOneOffLines, PlannedOneOffs } from "@/components/planned-one-offs";
 import { EmptyState } from "@/components/ui/empty-state";
 import { FinanceInsightsPanel } from "@/components/finance-insights";
-import { AttentionPanel } from "@/components/attention-panel";
 import { goalBalanceStatus, physicalPocketBalance, physicalPocketBalances, pocketKey } from "@/lib/goals";
 
 const chartTooltip = {
@@ -152,7 +151,6 @@ export function Overview() {
           </section>
         ))}
       </div>
-      <AttentionPanel />
       <div className="mb-5 grid gap-4 empty:hidden lg:grid-cols-2 [&>section:only-child]:col-span-full">
         <section
           className="panel min-w-0 p-4 sm:p-5"
