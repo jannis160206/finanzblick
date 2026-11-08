@@ -219,7 +219,7 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
     /^umtausch$/i.test(sourceCategory) && /^umgetauscht (?:in|von) [a-z]{3}$/i.test(description);
   const isInternal =
    operation?.kind === "internal-transfer" ||
-   (!operation && (/einzustecken|einstecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\/überweisung erhalten/i.test(
+   (!operation && (/einzustecken|einstecken|auszahlung bei pocket|interne? (?:überweisung|umbuchung)|transfer intern|gesendet von revolut|revolut\*|american express europe|zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test(
       sourceText,
     ) ||
     (/^revolut$/i.test(transaction.bank ?? "") && /\bto jannis br(?:ü|ue)hl\b/i.test(description)) ||

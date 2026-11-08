@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { categories, categoryAliases, categoryGroups, canonicalCategory, isTravelCategory, type Category } from "./categories";
+import { categories, categoryAliases, categoryGroups, canonicalCategory, isTravelCategory, knownMerchantCategory, type Category } from "./categories";
 import { appStateSchema, fixedCategories, transactionSchema, type Transaction } from "./types";
 import { actualBookings, calculateDashboard, calculateMonthTotals, calculatePlan, classify, classifyStatementRows, missingFixedCosts } from "./calc";
 import { createSeed } from "./seed";
@@ -416,5 +416,29 @@ describe("grouped contracts and persistence", () => {
     expect(unplanned.financeRows).toEqual(withoutContracts.financeRows);
     expect(actualBookings(unplanned)).toHaveLength(1);
     expect(calculateDashboard(unplanned).plan.rows.every((row) => row.actual === 0)).toBe(true);
+  });
+});
+
+describe("merchant rules for card texts", () => {
+  it.each([
+    ["MPG MÄRZPARKGARAGE WIEN", -12, "Parken & Maut"],
+    ["BIP THEATERGARAGE KLAGE KLAGENFURT", -2, "Parken & Maut"],
+    ["HM VILLACH AT0159 VILLACH", -124.16, "Shopping"],
+    ["DR LEGRADI VILLACH 9500", -195, "Gesundheit"],
+    ["BLUMEN B B FILNR902 VILLACH 9500", -34, "Geschenke & Spenden"],
+    ["EUROPA PARK FREIZEIT RUST 77977", -5.5, "Freizeit"],
+    ["PAYPAL *EPIC GAMES 9198540070", -11.99, "Entertainment"],
+    ["PAYPAL *KINGUINDIGI 35529052 | KINGUIN DIGITAL LIMITED", -17.32, "Guthabenkarten"],
+    ["PAYPAL *GENERALLOGI | General Logistics Systems Austria GmbH", -10.9, "Porto & Versand"],
+    ["HOTEL ON BOOKING.COM AMSTERDAM", -661.56, "Urlaub"],
+    ["ZAHLUNG/UBERWEISUNG ERHALTEN BESTEN DANK", 1446.65, "Transfer intern"],
+    ["ZAHLUNG/ÜBERWEISUNG ERHALTEN BESTEN DANK", 310, "Transfer intern"],
+  ] as const)("%s => %s", (text, amount, category) => {
+    expect(knownMerchantCategory(text, amount)).toBe(category);
+  });
+
+  it("leaves a drink at a local hotel and a law office open", () => {
+    expect(knownMerchantCategory("Schlosshotel Velden Gmb Velden am Wörth", -20)).toBeUndefined();
+    expect(knownMerchantCategory("DR HUBER RECHTSANWALT KANZLEI", -300)).toBeUndefined();
   });
 });

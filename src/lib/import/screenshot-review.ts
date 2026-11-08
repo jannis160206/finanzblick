@@ -4,7 +4,7 @@ import { amexBookingKey, amexCardholder, isAmexScreenshot } from "./identity";
 
 type Draft = Extract<ReviewItem, { kind: "booking" }>["draft"];
 const clean = (text: string) => text.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
-const repayment = /^zahlung\s*\/\s*überweisung\s+erhalten\b/i;
+const repayment = /^zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten\b/i;
 const untouched = (row: Draft) => !row.reviewed && !row.manualCategory &&
   !row.categoryOverride && row.fixedCost === undefined && row.merchantAlias === undefined;
 

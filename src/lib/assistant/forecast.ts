@@ -64,7 +64,7 @@ export const forecastQuestion = (lower: string) =>
   /kontoprognose|cash-?flow|liquiditätsplan|liquiditaetsplan|liquiditätsprognose|wird (?:mein|das) (?:giro)?konto (?:knapp|leer|eng|negativ|ins minus)|(?:wann|wo) wird (?:es|mein (?:giro)?konto|das (?:giro)?konto) (?:knapp|eng|leer)|komm(?:e|t)? ich (?:ins|in den) minus|rutsch\w* (?:ich|mein konto|das konto) ins minus|wie entwickelt sich mein (?:konto(?:stand)?|girokonto|guthaben)|entwicklung (?:meines|des) kontostand|reicht (?:mein|das) geld bis|prognose (?:für |fuer )?(?:mein(?:e)? )?(?:giro)?kont/.test(lower);
 export const SAVINGS = "Sparkonto";
 const isAmexBank = (bank: string) => /^(?:amex|american express)$/i.test(bank.trim());
-const amexRepayment = (text: string) => /zahlung\s*\/\s*überweisung\s+erhalten/i.test(text);
+const amexRepayment = (text: string) => /zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test(text);
 
 // Giro balance the user told the assistant ("Merk dir: Girokonto 1.200 €").
 export function giroNote(state: AppState): number | undefined {

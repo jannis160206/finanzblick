@@ -25,7 +25,7 @@ import {
   type Category,
   type Transaction,
 } from "@/lib/types";
-import { groupReviews, suggestedDraft, type ReviewGroup } from "@/lib/ai/review-groups";
+import { groupReviews, reviewSuggestions, suggestedDraft, type ReviewGroup } from "@/lib/ai/review-groups";
 import type { AiSuggestion } from "@/lib/ai/suggestions";
 import {
   parseStatementFile,
@@ -516,7 +516,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     commit([row], 0, id);
   }, [commit]);
   const saveGroup = useCallback((group: ReviewGroup, category: Category) => {
-    const suggestions = latestState.current.aiSuggestions ?? [];
+    const suggestions = reviewSuggestions(group.items, latestState.current.aiSuggestions);
     const rows: Transaction[] = [];
     for (const item of group.items) {
       const draft = localUI.drafts[item.id] ?? suggestedDraft(item.draft, suggestions.find((entry) => entry.id === item.id));
@@ -802,8 +802,9 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
             {(() => {
               const reuploadOnly = (item: ReviewItem) => (state.importResults ?? []).some((result) =>
                 result.issues.some((issue) => issue.reviewId === item.id && issue.action === "reupload"));
-              const suggestionOf = (id: string) => state.aiSuggestions?.find((entry) => entry.id === id);
-              const { groups, singles } = groupReviews(ui.review, state.aiSuggestions, reuploadOnly);
+              const suggestions = reviewSuggestions(ui.review, state.aiSuggestions);
+              const suggestionOf = (id: string) => suggestions.find((entry) => entry.id === id);
+              const { groups, singles } = groupReviews(ui.review, suggestions, reuploadOnly);
               const renderItem = (item: ReviewItem) => item.kind === "booking" ? (
                 <BookingReview
                   key={item.id}

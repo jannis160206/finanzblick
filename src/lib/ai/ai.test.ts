@@ -139,7 +139,8 @@ describe("evidence gate", () => {
     const decide = (id: string, text: string, amount: number, category: string, merchant?: string) =>
       decideReviewWithEvidence(state, id, input(text, amount), answer(category, merchant));
     expect(decide("snack", "SHELL FURNITZ 8387", -12.5, "Tanken", "SHELL")).toMatchObject({ accepted: true, category: "Cafés & Snacks", source: "Historie" });
-    expect(decide("flowers", "BLUMEN B B FILNR902 VILLACH", -34, "Cafés & Snacks", "BLUMEN B B")).toMatchObject({ accepted: false });
+    // The flower-shop rule overrides the model's wrong guess.
+    expect(decide("flowers", "BLUMEN B B FILNR902 VILLACH", -34, "Cafés & Snacks", "BLUMEN B B")).toMatchObject({ accepted: true, category: "Geschenke & Spenden", source: "Regel" });
     expect(decide("fuel", "OMV 2595 2040OM2595 Villach", -67, "Tanken", "OMV")).toMatchObject({ accepted: true, category: "Tanken", source: "Regel" });
     expect(decide("dm", "DM-FIL. A055 DM-FIL. A0 Villach", -11.15, "Drogerie", "dm")).toMatchObject({ accepted: true, category: "Drogerie" });
     // The fixed merchant rule decides on its own, whatever the model says.
@@ -181,10 +182,10 @@ describe("evidence gate", () => {
   });
 
   it("suggests a category for bookings it leaves open", () => {
-    const state = withOpen([], [booking("etsy", { description: "PAYPAL *ETSY 4029357733", amount: -20 })]);
-    const decision = decideReviewWithEvidence(state, "etsy", input("PAYPAL *ETSY 4029357733", -20),
-      { ref: "b1", category: "Shopping", merchant: "Etsy", confidence: 80, accepted: false, reason: "Sicherheit 80 % < 90 %" });
-    expect(decision).toMatchObject({ accepted: false, suggestion: { category: "Shopping", merchantAlias: "Etsy", source: "KI" } });
+    const state = withOpen([], [booking("shop", { description: "PAYPAL *NORDLICHT 4029357733", amount: -20 })]);
+    const decision = decideReviewWithEvidence(state, "shop", input("PAYPAL *NORDLICHT 4029357733", -20),
+      { ref: "b1", category: "Shopping", merchant: "Nordlicht", confidence: 80, accepted: false, reason: "Sicherheit 80 % < 90 %" });
+    expect(decision).toMatchObject({ accepted: false, suggestion: { category: "Shopping", merchantAlias: "Nordlicht", source: "KI" } });
   });
 
   it("does not learn from open reviews or earlier AI decisions", () => {

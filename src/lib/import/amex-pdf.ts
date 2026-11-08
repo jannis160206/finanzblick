@@ -68,7 +68,7 @@ export function parseAmexText(
     const time = statementTime(pending.time, pending.rawDescription, pending.description);
     if (time) pending.time = time;
     const parsed = transactionSchema.safeParse(recoverMerchant(pending));
-    if (parsed.success && parsed.data.amount > 0 && /zahlung\s*\/\s*überweisung erhalten/i.test(parsed.data.description)) result.skipped++;
+    if (parsed.success && parsed.data.amount > 0 && /zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test(parsed.data.description)) result.skipped++;
     else if (parsed.success && !messy && !unknownHolder && (!descriptionHasAmount || confirmedForeign)) result.rows.push(parsed.data);
     else {
       result.skipped++;

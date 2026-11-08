@@ -148,7 +148,7 @@ export function parseAmexScreenshotLines(lines: ScreenshotLine[], file = "Amex.p
     const pocket = dates.length === 1 ? screenshotPocket(dates[0].text) : "Amex";
     const amount = amounts.length === 1 && !amounts[0].uncertain ? screenshotAmount(amounts[0].text) : null;
     // Card repayments are not new income, even when OCR misses their date.
-    if (amount !== null && amount > 0 && /^zahlung\s*\/\s*überweisung\s+erhalten\b/i.test(description)) {
+    if (amount !== null && amount > 0 && /^zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten\b/i.test(description)) {
       result.skipped++;
       continue;
     }
@@ -251,7 +251,7 @@ function parseGroupedScreenshot(lines: ScreenshotLine[], file: string, top: numb
     const name = merchants.find((line) => /\p{L}/u.test(line.text) && !/^(?=.*\d)[a-z\d]{6,}$/i.test(line.text));
     const uncertainMerchant = merchants.some((line) => line.uncertain) || !name || name.confidence < 35;
     const amount = matches.length === 1 && !matches[0].uncertain ? screenshotAmount(matches[0].text) : null;
-    if (amount !== null && amount > 0 && /zahlung\s*\/.*überweisung\s+erh/i.test(description)) {
+    if (amount !== null && amount > 0 && /zahlung\s*\/.*(?:ü|ue|u)berweisung\s+erh/i.test(description)) {
       result.skipped++;
       continue;
     }

@@ -10,7 +10,7 @@ const reservePocket = (name: string | null) => /^(amex(?: jannis| konto| pocket|
 const partner = (row: Transaction) => /\braphael\b/i.test(row.pocket ?? "");
 const source = (row: Transaction) => [row.description, row.rawDescription, ...(row.rawDetails ?? [])].join(" ");
 const cardPayment = (row: Transaction) => isCard(row) && row.amount > 0 &&
-  /zahlung\s*\/\s*überweisung\s+erhalten/i.test(source(row));
+  /zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test(source(row));
 // Amex SEPA creditor ID; legacy workbook rows carry only this or their original category.
 const amexDirectDebit = (row: Transaction) => /GB03ZZZSDDDEUT0000000165752/i.test(source(row)) ||
   /^amex abrechnung\b/i.test(row.sourceCategory ?? "");

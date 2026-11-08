@@ -3,7 +3,8 @@ import { createSeed } from "@/lib/seed";
 import { classify } from "@/lib/calc";
 import { commitStatementImport, queueLedgerReview } from "@/lib/import/review";
 import { appStateSchema, transactionSchema, type AppState, type Transaction } from "@/lib/types";
-import { groupReviews, suggestedDraft } from "./review-groups";
+import type { Category } from "@/lib/categories";
+import { groupReviews, reviewSuggestion, suggestedDraft } from "./review-groups";
 import { recordAiSuggestions } from "./suggestions";
 
 const booking = (id: string, overrides: Partial<Transaction> = {}): Transaction => ({
@@ -69,5 +70,23 @@ describe("review groups", () => {
     expect(open).toContain("zz");
     expect(next.transactions.filter((row) => ["a", "b"].includes(row.id)).map((row) => classify(row).category))
       .toEqual(["Shopping", "Shopping"]);
+  });
+});
+
+describe("review suggestions", () => {
+  const review = (description: string, amount = -20) =>
+    ({ kind: "booking" as const, id: "r", draft: booking("r", { description, amount }), message: "Händlerzuordnung unsicher – bitte prüfen." });
+  const guess = (category: Category, source: "KI" | "Historie" = "KI") => ({ id: "r", category, reason: "unsicher", source });
+
+  it("lets a merchant rule replace an older model guess and fill in missing ones", () => {
+    expect(reviewSuggestion(review("BLUMEN B B FILNR902 VILLACH 9500", -34), guess("Gesundheit"))).toMatchObject({ category: "Geschenke & Spenden", source: "Regel" });
+    expect(reviewSuggestion(review("MPG MÄRZPARKGARAGE WIEN", -12), undefined)).toMatchObject({ category: "Parken & Maut" });
+    expect(reviewSuggestion(review("ZAHLUNG/UBERWEISUNG ERHALTEN BESTEN DANK", 1446.65), undefined)).toMatchObject({ category: "Transfer intern" });
+  });
+
+  it("keeps the household's history and drops bank-fee guesses without a rule", () => {
+    expect(reviewSuggestion(review("BLUMEN B B 9500"), guess("Freizeit", "Historie"))).toMatchObject({ category: "Freizeit" });
+    expect(reviewSuggestion(review("ANDREA RUPP 2363", -3.4), guess("Rücklastschriftgebühren"))).toBeUndefined();
+    expect(reviewSuggestion(review("SP SMILEUNION GMBH", -9), guess("Freizeit"))).toMatchObject({ category: "Freizeit", source: "KI" });
   });
 });

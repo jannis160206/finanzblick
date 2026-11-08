@@ -600,7 +600,7 @@ function parseTables(tables: TableRow[][], file: string): StatementResult {
         result.skipped++;
         continue;
       }
-      if (source === "Amex" && amount !== null && amount > 0 && /zahlung\s*\/\s*überweisung erhalten/i.test(description)) {
+      if (source === "Amex" && amount !== null && amount > 0 && /zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test(description)) {
         result.skipped++;
         continue;
       }

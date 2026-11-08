@@ -8,7 +8,7 @@ import { matchName } from "./tools";
 
 type Line = AssistantCard["lines"][number];
 const isAmex = (row: Transaction) => /^(?:amex|american express)$/i.test(row.bank.trim());
-const amexRepayment = (row: Transaction) => row.amount > 0 && /zahlung\s*\/\s*überweisung\s+erhalten/i.test([row.description, row.rawDescription].join(" "));
+const amexRepayment = (row: Transaction) => row.amount > 0 && /zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test([row.description, row.rawDescription].join(" "));
 const reserveKey = (key: string) => /^(?:amex(?: jannis| konto| pocket| rückzahlung| ruckzahlung| rueckzahlung)?|american express)$/.test(key);
 const amexWords = /\bamex\b|american express|kreditkarte/;
 

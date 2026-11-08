@@ -40,19 +40,22 @@ const suggestions: [RegExp, Category][] = [
   [/\br(?:ü|ue|u)cklastschrift[-\s]*(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\b|\b(?:geb(?:ü|ue|u)hr(?:en)?|entgelte?|kosten)\s+(?:f[uü]r|wegen)\s+(?:(?:eine|einer|der)\s+)?r(?:ü|ue|u)cklastschrift\b|\bgeb(?:ü|ue|u)hr(?:en)?\s+f(?:ü|ue|u)r\s+(?:eine\s+)?retournierte\s+lastschrift\b/i, "Rücklastschriftgebühren"],
   [/\bspotify\b|\bnetflix\b|disney\s*\+|disney\s*plus|youtube\s*premium|apple\s*music|icloud\s*\+?|microsoft\s*365|adobe\s*(?:creative|acrobat)|chatgpt|nordvpn/i, "Abonnements"],
   [/\b(?:abo|abonnement|subscription|recurring)\b|wiederkehrend/i, "Abonnements"],
-  [/\bkino\b|cinema|cineplexx|cinemaxx|eventim|ticketmaster|oeticket|\bsteam(?:games)?\b|playstation|nintendo|xbox/i, "Entertainment"],
-  [/fitnessstudio|\bfitinn\b|\bmcfit\b|\bfitx\b|sportverein|\bdecathlon\b|\bintersport\b/i, "Sport & Fitness"],
+  [/\bkino\b|cinema|cineplexx|cinemaxx|eventim|ticketmaster|oeticket|\bsteam(?:games)?\b|playstation|nintendo|xbox|epic\s*games|riot\s*games|battle\.net/i, "Entertainment"],
+  [/europa[\s-]*park|freizeitpark|\btherme\b|\btierpark\b|\bzoo\b|minimundus|\bescape\s*room|\bwin2day\b|\btipico\b|\bbwin\b|\bcasino\b|\blotto\b/i, "Freizeit"],
+  [/fitnessstudio|\bfitinn\b|\bmcfit\b|\bfitx\b|sportverein|\bdecathlon\b|\bintersport\b|deporvillag/i, "Sport & Fitness"],
   [/\budemy\b|\bcoursera\b|buchhandlung|\bthalia\b|studiengeb[uü]hr|kursgeb[uü]hr/i, "Bildung"],
   [/\bfressnapf\b|\bzooplus\b|tierarzt|tierbedarf/i, "Haustiere"],
-  [/\bspende\b|\bcaritas\b|rotes\s*kreuz|geschenk/i, "Geschenke & Spenden"],
-  [/\bapotheke\b|\barzt\b|zahnarzt|krankenhaus|optiker|\bfielmann\b/i, "Gesundheit"],
+  [/\bspende\b|\bcaritas\b|rotes\s*kreuz|geschenk|geburtstag|\bblumen\b|florist|fleurop/i, "Geschenke & Spenden"],
+  [/\bapotheke\b|\barzt\b|zahnarzt|krankenhaus|optiker|\bfielmann\b|\bordination\b/i, "Gesundheit"],
+  // Card texts of a practice start with the title: "DR LEGRADI VILLACH 9500".
+  [/^(?!.*(?:anwalt|notar|steuerber|kanzlei))\s*dr\.?\s+(?:med\.?\s+)?\p{L}{3,}/iu, "Gesundheit"],
   [/\bdm\b|dm-drogerie|\bmueller\s*drogerie\b|\bmüller\s*drogerie\b/i, "Drogerie"],
   [/\bbarber\b|fris[eö]ur|friseur|frisör|kosmetikstudio/i, "Körperpflege"],
-  [/\bg2a\b|\bguthabenkarten?\b|\b(?:apple|itunes)[\s-]*guthaben\b|\bpaysafecard\b/i, "Guthabenkarten"],
-  [/\b(?:dhl|dpd|gls|ups|fedex)\b|(?:^|\W)(?:österreichische|oesterreichische|deutsche|schweizer(?:ische)?)\s+post\b|\bpost\s*(?:ag|filiale)\b|\bpost\.(?:at|de|ch)\b|\bhermes\s*(?:paket|versand|germany)|\b(?:briefmarken?|paketmarken?|portogeb[uü]hr|paketversand)\b|^\s*post(?=\s|$)/i, "Porto & Versand"],
+  [/\bg2a\b|\bkinguin(?:\s+digital)?\b|\beneba\b|\bmmoga\b|instant[\s-]*gaming|eldorado[\s.]*gg\b|\bguthabenkarten?\b|\b(?:apple|itunes)[\s-]*guthaben\b|\bpaysafecard\b/i, "Guthabenkarten"],
+  [/\b(?:dhl|dpd|gls|ups|fedex)\b|general\s*logistics\s*systems|(?:^|\W)(?:österreichische|oesterreichische|deutsche|schweizer(?:ische)?)\s+post\b|\bpost\s*(?:ag|filiale)\b|\bpost\.(?:at|de|ch)\b|\bhermes\s*(?:paket|versand|germany)|\b(?:briefmarken?|paketmarken?|portogeb[uü]hr|paketversand)\b|^\s*post(?=\s|$)/i, "Porto & Versand"],
   [/\bikea\b|\bmömax\b|\bmoemax\b|\bxxxlutz\b|\bhornbach\b|\bobi\b|\bbauhaus\b|\bmiete\b|stromrechnung|heizkosten/i, "Wohnen & Haushalt"],
   [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\bpostbus\b|wiener\s*linien|graz\s*linien|\bdeutsche\s*bahn\b|\btrenitalia\b|\bregiojet\b|\bsbb\s*(?:cff|ticket|app)\b/i, "Öffentliche Verkehrsmittel"],
-  [/\bpark(?:haus|garage|platz|deck|automat|ticket|geb[uü]hr|sheriff)\w*|\bparken\b|\bapcoa\b|\bcontipark\b|\beasypark\b|handy\s*parken|\bparkster\b|\basfinag\b|\bvignette\b|\bmaut(?:stelle)?\b/i, "Parken & Maut"],
+  [/\bpark(?:haus|garage|platz|deck|automat|ticket|geb[uü]hr|sheriff)\w*|(?:park|tief|theater|stadt|city)garage|\bparken\b|\bapcoa\b|\bcontipark\b|\beasypark\b|handy\s*parken|\bparkster\b|\basfinag\b|\bvignette\b|\bmaut(?:stelle)?\b/i, "Parken & Maut"],
   [/\buber\b(?!\s*eats\b)|\btaxi\b/i, "Mobilität"],
 ];
 export function suggestCategory(text: string): Category | undefined {
@@ -72,14 +75,20 @@ const merchantCategories: [RegExp, Category][] = [
   [/\bmartin\s+auer\b|\bstarbucks\b|\bcaf[eé]s?(?=\W|$)|\bsnacks?\b/i, "Cafés & Snacks"],
   [/\bdm\b|dm-fil|dm-drogerie/i, "Drogerie"],
   [amazonMerchant, "Shopping"],
+  [/(?:^|\|)\s*h\s*&?\s*m\s+(?!\d)|\bh&m\b|\bzara\b|\bprimark\b|\bc&a\b|\bdeichmann\b|\bzalando\b|about\s*you\b|\bnew\s*yorker\b|\bmedia\s*markt\b|\bmediamarkt\b|\bsaturn\b|\betsy\b|\batrio\b/i, "Shopping"],
   [/porsche\s*bank|\bleasing\b/i, "Leasing"],
   [/allianz|vollkasko|haftpflicht|apple[\s+-]*care/i, "Versicherungen"],
   [/\ba1\b|handy(?:vertrag)?|telekom/i, "Telefon & Internet"],
   [/\bbarber\b/i, "Körperpflege"],
 ];
 // Contradictory merchant signals are not a reason to choose the first regex.
+const lodging = /\bhotel\b|\bhostel\b|\bairbnb\b|booking\.com|\bmotel\b/i;
 export function knownMerchantCategory(text: string, amount: number): Category | undefined {
   const matches = new Set(merchantCategories.filter(([pattern]) => pattern.test(text)).map(([, category]) => category));
+  // A drink at a local hotel is leisure; only a real stay is travel.
+  if (lodging.test(text) && amount <= -50) matches.add("Urlaub");
+  // Amex confirms the repayment from the giro; Amex sometimes drops the umlaut.
+  if (amount > 0 && /zahlung\s*\/\s*(?:ü|ue|u)berweisung\s+erhalten/i.test(text)) return "Transfer intern";
   const suggested = suggestCategory(text);
   if (suggested && !(matches.has("Shopping") && amazonMerchant.test(text) && suggested === "Abonnements")) matches.add(suggested);
   if (/\batm\b|\bbankomat\b/i.test(text.replace(/\bban[ck]omat\s*\/\s*pos\b/gi, "")))
