@@ -226,6 +226,7 @@ export function BankConnections() {
                   <p className="mt-1 text-xs text-muted-foreground">
                     {connection.syncActive === false ? `Abruf pausiert${connection.message ? `: ${connection.message}` : ""}` : "Automatischer Abruf aktiv"}
                     {consent && <> · Freigabe bis {dateLabel(consent)}</>}
+                    {connection.lastSynced && <> · zuletzt geprüft {new Date(connection.lastSynced).toLocaleString("de-AT", { dateStyle: "short", timeStyle: "short" })}</>}
                   </p>
                   {expiresSoon && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">Die Bankfreigabe läuft bald ab – bitte erneuern.</p>}
                 </div>
@@ -234,6 +235,10 @@ export function BankConnections() {
                   <Button size="sm" variant="ghost" disabled={busy !== null} aria-label={`${name} trennen`} onClick={() => void remove(connection.id, name)}><Trash2 aria-hidden="true" className="size-4" /></Button>
                 </div>
               </div>
+              {!main && <p role="status" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                <span aria-hidden="true" className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
+                <span>Keine Konten abrufbar – {connection.syncActive === false ? connection.message ?? "Freigabe nicht aktiv." : "die Bank hat bei der Freigabe kein Konto geteilt. Bitte „Freigabe erneuern“ wählen und im Bankfenster das Konto auswählen."}</span>
+              </p>}
               {main && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
                 {[main, ...(open ? others : [])].map((entry) => <Tooltip key={entry.id} className="w-72 max-w-[90vw]" label={<AccountSyncInfo entry={entry} connection={connection} lastSync={status.lastSync} lastError={status.lastError} />}>
                   <li tabIndex={0} className="flex cursor-default flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">

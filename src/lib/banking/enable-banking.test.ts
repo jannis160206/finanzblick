@@ -193,6 +193,7 @@ describe("enable banking sync service", () => {
       session_id: "sess-r", aspsp: { name: "Revolut", country: "AT" }, access: { valid_until: "2027-05-01T00:00:00+00:00" },
       accounts: [{ uid: "vault-1", name: "Jannis Brühl", cash_account_type: "SVGS" }, { uid: "vault-2", name: "Jannis Brühl", cash_account_type: "SVGS" }],
     });
+    vi.mocked(api.session).mockResolvedValue({ status: "AUTHORIZED", accounts: ["vault-1", "vault-2"], access: { valid_until: "2027-05-01T00:00:00+00:00" } });
     vi.mocked(api.transactions).mockImplementation(async (id: string) => id === "vault-1"
       ? [tx({ entry_reference: "v1a", booking_date: "2026-11-08", transaction_amount: { currency: "EUR", amount: "250.00" }, credit_debit_indicator: "CRDT" }),
         tx({ entry_reference: "v1b", booking_date: "2026-11-09", transaction_amount: { currency: "EUR", amount: "10.00" }, credit_debit_indicator: "DBIT" })]
@@ -245,6 +246,22 @@ describe("enable banking sync service", () => {
     const snapshots = accounts.getFinance(userId).state?.accountSnapshots ?? [];
     expect(snapshots).toContainEqual({ bank: "Revolut", name: "Pro", date: "2026-11-10", balance: 4.03 });
     expect(snapshots.filter((item) => item.date === "2026-11-10")).toHaveLength(1);
+  });
+
+  it("reports a connection without shared accounts and adopts accounts released later", async () => {
+    const api = fakeApi();
+    vi.mocked(api.createSession).mockResolvedValueOnce({
+      session_id: "sess-t", aspsp: { name: "Trade Republic", country: "AT" }, access: { valid_until: "2027-02-06T00:00:00+00:00" }, accounts: [] });
+    vi.mocked(api.session).mockResolvedValueOnce({ status: "AUTHORIZED", accounts: [], access: { valid_until: "2027-02-06T00:00:00+00:00" } });
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    const empty = await syncBank(accounts, user(), { enableBanking: api, now });
+    expect(empty.accounts).toEqual([]);
+    expect(empty.connections[0]).toMatchObject({ id: "sess-t", syncActive: true, message: expect.stringMatching(/keine Konten geteilt/), lastSynced: new Date(now).toISOString() });
+
+    vi.mocked(api.session).mockResolvedValueOnce({ status: "AUTHORIZED", accounts: ["tr-1"], access: { valid_until: "2027-02-06T00:00:00+00:00" } });
+    const later = await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });
+    expect(later.accounts).toEqual([expect.objectContaining({ id: "tr-1", connectionId: "sess-t", syncError: null, fetchedRows: 2 })]);
+    expect(later.connections[0].message).toBeNull();
   });
 
   it("renews a session by replacing it and removes connections at the bank", async () => {

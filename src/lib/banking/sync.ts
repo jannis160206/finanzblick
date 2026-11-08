@@ -432,6 +432,7 @@ export async function removeBankConnection(
 }
 
 const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10);
+const NO_ACCOUNTS_MESSAGE = "Die Bank hat bei der Freigabe keine Konten geteilt. Bitte „Freigabe erneuern“ und das Konto auswählen.";
 const CONSENT_MESSAGE = "Die Bank verlangt eine erneute Bestätigung. Bitte bei der Verbindung „Freigabe erneuern“ wählen.";
 
 type SyncResult = { file: BankSyncFile; summaries: BankLink["accounts"]; connections: BankLink["connections"]; needsConsent: boolean; providerAccounts?: BankLink["providerAccounts"] };
@@ -505,13 +506,16 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
   const summaries: BankLink["accounts"] = [];
   const connections: BankLink["connections"] = [];
   const assigned = new Map<string, string>();
+  const added: BankLink["providerAccounts"] = [];
   let needsConsent = false;
   for (const connection of link.connections) {
     let active = true;
     let message: string | null = null;
     let validUntil = connection.consentValidUntil;
+    let sessionAccounts: string[] = [];
     try {
       const session = await api.session(connection.id);
+      sessionAccounts = session.accounts ?? [];
       validUntil = session.access?.valid_until ?? validUntil;
       active = session.status === "AUTHORIZED" && (!validUntil || Date.parse(validUntil) > now);
       if (!active) message = session.status === "AUTHORIZED" ? "Freigabe abgelaufen" : `Status: ${session.status}`;
@@ -520,7 +524,13 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
       active = false;
       message = "Freigabe abgelaufen";
     }
-    const accounts = link.providerAccounts.filter((account) => account.connectionId === connection.id);
+    // Accounts the bank released after the session was created are added here.
+    for (const uid of sessionAccounts) {
+      if (link.providerAccounts.some((account) => account.id === uid) || added.some((account) => account.id === uid)) continue;
+      added.push({ id: uid, connectionId: connection.id, bankName: connection.bankName, bic: connection.bic, iban: null, description: null, type: null, pocket: null });
+    }
+    const accounts = [...link.providerAccounts, ...added].filter((account) => account.connectionId === connection.id);
+    if (active && !accounts.length) message = NO_ACCOUNTS_MESSAGE;
     if (active) {
       const fetched: { account: BankLink["providerAccounts"][number]; turnovers: ReturnType<typeof toTurnover>[]; balance: ReturnType<typeof pickBalances> }[] = [];
       for (const account of accounts) {
@@ -591,7 +601,7 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
     }
     connections.push({ ...connection, syncActive: active, message, consentValidUntil: validUntil, lastSynced: active ? new Date(now).toISOString() : connection.lastSynced });
   }
-  const providerAccounts = link.providerAccounts.map((account) => assigned.has(account.id) ? { ...account, pocket: assigned.get(account.id)! } : account);
+  const providerAccounts = [...link.providerAccounts, ...added].map((account) => assigned.has(account.id) ? { ...account, pocket: assigned.get(account.id)! } : account);
   return { file, summaries, connections, needsConsent, providerAccounts };
 }
 
