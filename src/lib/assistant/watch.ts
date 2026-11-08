@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { classify, daysInMonth, round, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { detectDuplicateCharges, detectSubscriptions } from "@/lib/insights";
+import { detectDuplicateCharges, detectDuplicateFixedCosts, detectSubscriptions } from "@/lib/insights";
 import type { AppState, Transaction } from "@/lib/types";
 import { memoryValue } from "./agent";
 import { reminders } from "./extras";
@@ -68,6 +68,9 @@ export function findAlerts(state: AppState, dashboard: Dashboard, today: string,
   for (const item of detectDuplicateCharges(state, shiftDate(today, -14)))
     alerts.push({ key: `duplicate:${[...item.ids].sort().join("|")}`, kind: "duplicate", tone: "warn",
       title: `Doppelt abgebucht? ${item.merchant}`, detail: `${currency(item.amount)} am ${dateLabel(item.dates[0])} und ${dateLabel(item.dates[1])}` });
+  for (const item of detectDuplicateFixedCosts(state, today.slice(0, 7)))
+    alerts.push({ key: `duplicate-fixed:${today.slice(0, 7)}:${[...item.ids].sort().join("|")}`, kind: "duplicate", tone: "warn",
+      title: `Fixkosten doppelt? ${item.label}`, detail: `${item.count}× ${currency(item.amount)} im Monatsplan` });
   const month = today.slice(0, 7);
   const surplus = dashboard.current?.surplus;
   const buffer = memoryValue(state, "buffer") ?? 0;

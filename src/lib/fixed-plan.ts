@@ -1,5 +1,6 @@
 import { actualBookings, classify, monthsForYear, round } from "@/lib/calc";
-import { normalizeAccount } from "@/lib/accounts";
+import { isRevolutMainAccount, normalizeAccount } from "@/lib/accounts";
+import { amexCardholder } from "@/lib/import/identity";
 import { matchingFixedRow } from "@/lib/fixed";
 import { isSpecificMerchantKey, merchantAliasSourceKey, merchantRuleKey, rememberMerchants } from "@/lib/import/merchant-rules";
 import { personalAmount, type AccountedTransaction } from "@/lib/shared-holiday";
@@ -14,9 +15,63 @@ export class FixedPlanCapacityError extends Error {
   }
 }
 
+// Order references (AMAZON.DE*BB4ER51S4) change with every instalment and are not part of the merchant.
+export function fixedMerchantKey(row: AccountedTransaction) {
+  const source = merchantAliasSourceKey(row);
+  if (!source) return `booking:${row.id}`;
+  return source.replace(/\*\s*[a-z0-9]*\d[a-z0-9]*/gi, "*").replace(/\bwww\./gi, "").replace(/\s+/g, " ").trim();
+}
+
+// Statement PDFs and screenshots name the same card differently ("AMEX Jannis" / "Amex").
+export function fixedCardKey(row: AccountedTransaction) {
+  const holder = amexCardholder(row);
+  if (holder) return `amex:${holder}`;
+  if (isRevolutMainAccount(row)) return "revolut:main";
+  return normalizeAccount(row).pocket;
+}
+
 function sourceKey(row: AccountedTransaction) {
-  const merchant = merchantAliasSourceKey(row) ?? `booking:${row.id}`;
-  return JSON.stringify([merchant, normalizeAccount(row).pocket]);
+  return JSON.stringify([fixedMerchantKey(row), fixedCardKey(row)]);
+}
+
+const sameAmount = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.05, Math.abs(b) * 0.01);
+
+// Parallel instalments at one merchant (e.g. two Amazon payment plans) stay separate by amount;
+// a single plan whose price changes (PlayStation 13,99 → 15,99) stays one series.
+export function splitFixedSeries<T extends AccountedTransaction>(group: T[]): T[][] {
+  const marked = group.filter((row) => row.fixedCost);
+  const series: { rows: T[]; amount: number; months: Set<string> }[] = [];
+  const byMonth = new Map<string, T[]>();
+  for (const row of marked) byMonth.set(row.date.slice(0, 7), [...(byMonth.get(row.date.slice(0, 7)) ?? []), row]);
+  for (const [month, rows] of [...byMonth].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const rest: T[] = [];
+    const add = (entry: (typeof series)[number], row: T) => {
+      entry.rows.push(row);
+      entry.amount = Math.abs(personalAmount(row));
+      entry.months.add(month);
+    };
+    for (const row of rows) {
+      const amount = Math.abs(personalAmount(row));
+      const match = series.find((entry) => sameAmount(amount, entry.amount));
+      if (match) add(match, row); else rest.push(row);
+    }
+    for (const row of rest) {
+      const amount = Math.abs(personalAmount(row));
+      const change = series.find((entry) => sameAmount(amount, entry.amount)) ?? series.filter((entry) => !entry.months.has(month))
+        .sort((a, b) => Math.abs(a.amount - amount) - Math.abs(b.amount - amount))[0];
+      if (change) add(change, row);
+      else series.push({ rows: [row], amount, months: new Set([month]) });
+    }
+  }
+  if (series.length <= 1) return [group];
+  const result = series.map((entry) => [...entry.rows]);
+  // Explicit "not fixed" bookings end only the series with the same amount.
+  for (const row of group) {
+    if (row.fixedCost) continue;
+    const index = series.findIndex((entry) => entry.rows.some((item) => sameAmount(Math.abs(personalAmount(row)), Math.abs(personalAmount(item)))));
+    if (index >= 0) result[index].push(row);
+  }
+  return result;
 }
 
 function restore(row: FinanceRow): FinanceRow[] {
@@ -52,7 +107,12 @@ export function synchronizeFixedPlan(state: AppState): AppState {
   const additions: FinanceRow[] = [];
   const claimed = new Set<string>();
   const usedIds = new Set(state.financeRows.map((row) => row.id));
-  for (const [key, group] of groups) {
+  const series = [...groups].flatMap(([base, group]) => splitFixedSeries(group).map((rows, index) => {
+    if (!index) return [base, rows] as const;
+    const first = rows.find((row) => row.fixedCost) ?? rows[0];
+    return [JSON.stringify([...JSON.parse(base), Math.abs(personalAmount(first)).toFixed(2)]), rows] as const;
+  }));
+  for (const [key, group] of series) {
     // One recurring amount per merchant/account; a later ordinary booking ends it.
     group.sort((a, b) => a.date.localeCompare(b.date) ||
       Number(b.fixedCost) - Number(a.fixedCost) || a.id.localeCompare(b.id));
@@ -62,10 +122,13 @@ export function synchronizeFixedPlan(state: AppState): AppState {
     if (firstMonth > months.at(-1)!) continue;
     const latest = marked.at(-1)!;
     const category = classify(latest).category;
-    const previous = linked.find((row) => row.fixedSource?.key === key);
+    const ids = new Set(group.map((row) => row.id));
+    const previous = linked.find((row) => row.fixedSource?.key === key && !claimed.has(row.id)) ??
+      linked.find((row) => !claimed.has(row.id) && !series.some(([other]) => other === row.fixedSource?.key) &&
+        row.fixedSource?.bookingIds.some((id) => ids.has(id)));
     const matching = previous ?? matchingFixedRow(state, category, latest, merchantRuleKey(latest));
     const existing = matching && !claimed.has(matching.id) &&
-      (!matching.fixedSource || matching.fixedSource.key === key) ? matching : undefined;
+      (!matching.fixedSource || matching === previous || matching.fixedSource.key === key) ? matching : undefined;
     if (existing) claimed.add(existing.id);
     const originalValues = existing?.fixedSource
       ? existing.fixedSource.originalValues : existing?.values;

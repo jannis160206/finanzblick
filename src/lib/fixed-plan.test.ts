@@ -8,6 +8,7 @@ import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import { synchronizePlan } from "@/lib/planning";
 import { merchantRuleKey } from "@/lib/import/merchant-rules";
 import { statementFingerprint } from "@/lib/import/identity";
+import { detectDuplicateFixedCosts } from "@/lib/insights";
 
 const booking = (overrides: Partial<Transaction> = {}): Transaction => ({
   id: "october", date: "2026-10-01", bank: "Raiffeisen", pocket: "Giro",
@@ -183,5 +184,46 @@ describe("fixed markings in the monthly plan", () => {
     expect(state.financeRows).toHaveLength(1);
     expect(state.financeRows[0].fixedSource?.merchantKeys).toEqual([]);
     expect(matchingFixedRow(state, generic.category, { ...generic, id: "other", date: "2026-11-01" }, merchantRuleKey(generic))).toBeUndefined();
+  });
+});
+
+describe("fixed costs from card instalments", () => {
+  const amex = (id: string, date: string, amount: number, description: string, pocket: string) => booking({
+    id, date, amount, description, pocket, bank: "Amex", merchantAlias: description.startsWith("AMAZON") ? "Amazon" : "PlayStation",
+    category: "Shopping",
+  });
+  it("counts one card once, ignores order references and keeps parallel instalments apart", () => {
+    const state = synchronizeFixedPlan(fixture([
+      amex("ps-1", "2026-06-09", -13.99, "PAYPAL *PLAYSTATION 02039017000", "AMEX Jannis"),
+      amex("ps-2", "2026-10-02", -15.99, "PAYPAL *PLAYSTATION 02039017000", "AMEX Jannis"),
+      amex("ps-3", "2026-11-02", -15.99, "PAYPAL *PLAYSTATION 02039017000", "Amex"),
+      amex("a-1", "2026-07-28", -25.72, "AMAZON.DE*QI3S20DC5 WWW.AMAZON.DE", "AMEX Jannis"),
+      amex("a-2", "2026-08-29", -25.71, "AMAZON.DE*IE2SY1ZF5 WWW.AMAZON.DE", "AMEX Jannis"),
+      amex("a-3", "2026-10-01", -55.38, "AMAZON.DE*NK6Y194T4 WWW.AMAZON.DE", "AMEX Jannis"),
+      amex("a-4", "2026-10-28", -25.71, "AMAZON.DE*B29RY5SK4 WWW.AMAZON.DE", "Amex"),
+      amex("a-5", "2026-11-01", -55.38, "AMAZON.DE*BB4ER51S4 WWW.AMAZON.DE", "Amex"),
+    ]));
+    const rows = state.financeRows.map((row) => [row.label, row.values["2026-06"] ?? null, row.values["2026-11"]]);
+    expect(rows).toEqual(expect.arrayContaining([["PlayStation", 13.99, 15.99], ["Amazon", null, 25.71], ["Amazon", null, 55.38]]));
+    expect(state.financeRows).toHaveLength(3);
+    expect(detectDuplicateFixedCosts(state, "2026-11")).toEqual([]);
+    expect(synchronizeFixedPlan(state)).toEqual(state);
+  });
+
+  it("merges rows that an older version created twice", () => {
+    const bookings = [
+      amex("ps-2", "2026-10-02", -15.99, "PAYPAL *PLAYSTATION 02039017000", "AMEX Jannis"),
+      amex("ps-3", "2026-11-02", -15.99, "PAYPAL *PLAYSTATION 02039017000", "Amex"),
+    ];
+    const old = (id: string, pocket: string, ids: string[]) => ({
+      id, label: "PlayStation", kind: "fixed" as const, values: { "2026-11": 15.99 },
+      fixedSource: { key: JSON.stringify(["amex|paypal *playstation", pocket]), bookingIds: ids, merchantKeys: [], pocket,
+        appliedLabel: "PlayStation", applied: { "2026-11": 15.99 } },
+    });
+    const legacy = { ...fixture(bookings), financeRows: [old("old-1", "AMEX Jannis", ["ps-2"]), old("old-2", "Amex", ["ps-3"])] };
+    expect(detectDuplicateFixedCosts(legacy, "2026-11")).toEqual([{ label: "PlayStation", amount: 15.99, count: 2, ids: ["old-1", "old-2"] }]);
+    const next = synchronizeFixedPlan(legacy);
+    expect(next.financeRows.map((row) => row.id)).toEqual(["old-1"]);
+    expect(next.financeRows[0].fixedSource?.bookingIds).toEqual(["ps-2", "ps-3"]);
   });
 });

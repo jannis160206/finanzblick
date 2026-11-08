@@ -27,6 +27,7 @@ export type Subscription = {
   priceChange?: { from: number; to: number; percent: number; date: string };
 };
 export type DuplicateCharge = { merchant: string; amount: number; dates: [string, string]; ids: [string, string] };
+export type DuplicateFixedCost = { label: string; amount: number; count: number; ids: string[] };
 export type MonthSummary = {
   month: string;
   income: number;
@@ -55,6 +56,7 @@ export type FinanceInsights = {
   subscriptions: Subscription[];
   priceIncreases: Subscription[];
   duplicates: DuplicateCharge[];
+  duplicateFixedCosts: DuplicateFixedCost[];
   summary: MonthSummary;
   previousSummary?: MonthSummary;
   forecast: BudgetForecast;
@@ -251,6 +253,20 @@ export function forecastMonth(state: AppState, subscriptions: Subscription[], to
   };
 }
 
+// Plausibility check on the plan: the same fixed cost counted twice in one month.
+export function detectDuplicateFixedCosts(state: AppState, month: string): DuplicateFixedCost[] {
+  const groups = new Map<string, { label: string; amount: number; ids: string[] }>();
+  for (const row of state.financeRows) {
+    const amount = row.values[month];
+    if (row.kind !== "fixed" || !amount) continue;
+    const key = `${row.label.trim().toLocaleLowerCase("de")}|${Math.round(Math.abs(amount) * 10)}`;
+    const entry = groups.get(key) ?? { label: row.label.trim(), amount: money(Math.abs(amount)), ids: [] };
+    entry.ids.push(row.id);
+    groups.set(key, entry);
+  }
+  return [...groups.values()].filter((entry) => entry.ids.length > 1).map((entry) => ({ ...entry, count: entry.ids.length }));
+}
+
 export function financeInsights(state: AppState, today = new Date().toISOString().slice(0, 10)): FinanceInsights {
   const subscriptions = detectSubscriptions(state, today);
   const entries = accountedLedger(state);
@@ -264,6 +280,7 @@ export function financeInsights(state: AppState, today = new Date().toISOString(
     subscriptions,
     priceIncreases: subscriptions.filter((item) => item.priceChange && item.priceChange.date >= isoDate(time(today) - 120 * DAY_MS)),
     duplicates: detectDuplicateCharges(state, sixtyDaysAgo),
+    duplicateFixedCosts: detectDuplicateFixedCosts(state, month),
     summary: summarizeMonth(state, month, entries),
     previousSummary: {
       ...previousSummary,

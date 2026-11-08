@@ -70,6 +70,10 @@ export function FinanceInsightsPanel() {
   };
 
   const hints = [
+    ...insights.duplicateFixedCosts.map((item) => ({
+      key: `fixed-${item.ids.join("-")}`, merchant: item.label,
+      text: `${item.count}× ${currency(item.amount)} in den Fixkosten – vermutlich doppelt`,
+    })),
     ...insights.duplicates.map((item) => ({
       key: item.ids.join("-"), merchant: item.merchant,
       text: `${currency(Math.abs(item.amount))} zweimal abgebucht (${dateLabel(item.dates[0])}, ${dateLabel(item.dates[1])})`,

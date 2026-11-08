@@ -77,6 +77,7 @@ export function assistantFacts(state: AppState, dashboard: Dashboard, today: str
     unusuallyHighThisMonth: unusualCategories(state, today).slice(0, 4),
     projectedSpendingThisMonth: insights.forecast.projectedSpending,
     possibleDuplicateCharges: insights.duplicates.slice(0, 5).map((item) => ({ name: item.merchant, amount: item.amount, dates: item.dates })),
+    possibleDuplicateFixedCosts: insights.duplicateFixedCosts.slice(0, 5).map((item) => ({ name: item.label, amount: item.amount, count: item.count })),
     priceIncreases: insights.priceIncreases.slice(0, 5).map((item) => ({ name: item.merchant, from: item.priceChange!.from, to: item.priceChange!.to, since: item.priceChange!.date })),
     giroForecast12Months: giro ? { lowestBalance: giro.lowest.balance, lowestOn: giro.lowest.date, timesBelowBuffer: giro.lows.length,
       ...(giro.lows[0] ? { firstTightOn: giro.lows[0].date, firstTightBalance: giro.lows[0].balance, firstTightBecause: giro.lows[0].cause?.label ?? "Alltagsausgaben" } : {}) } : null,
