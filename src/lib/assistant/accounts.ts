@@ -13,10 +13,12 @@ const reserveKey = (key: string) => /^(?:amex(?: jannis| konto| pocket| rückzah
 const amexWords = /\bamex\b|american express|kreditkarte/;
 
 export const amexQuestion = (lower: string) => amexWords.test(lower) &&
-  /abrechnung|überweis|rückzahl|zurückzahl|offen|saldo|schuld|bezahlen|begleichen|ausgleich|fällig|stand|fehlt|reicht|deck|zusammen|gegen|rechne|kostet|wie viel (?:ist|steht) (?:auf|bei)/.test(lower);
+  /abrechnung|überweis|rückzahl|zurückzahl|offen|saldo|schuld|bezahlen|\bzahlen\b|muss ich|abbuchung|abgebucht|zieht|begleichen|ausgleich|fällig|stand|fehlt|reicht|deck|zusammen|gegen|rechne|kostet|wie viel (?:ist|steht) (?:auf|bei)/.test(lower);
 export const balanceQuestion = (lower: string) =>
   /kontost(?:a|ä)nde?|\bvermögen|\bguthaben|\bsaldo\b|erspar(?:nisse|tes)|wie viel geld hab(?:e)? ich(?: (?:noch|gerade|aktuell|jetzt|insgesamt|gespart))*\s*\??$|was hab(?:e)? ich (?:alles )?(?:auf|gespart)/.test(lower) ||
-  /\bwie viel\b.*\b(?:ist|liegt|liegen|hab(?:e)?|sind)\b.*\b(?:auf (?:dem|meinem|der|meiner)|im|am)\b.*\b(?:konto|pocket|notgroschen|sparkonto|tagesgeld|depot|urlaub|motorrad)\b/.test(lower);
+  /\bwie viel\b.*\b(?:ist|liegt|liegen|hab(?:e)?|sind)\b.*\b(?:auf (?:dem|meinem|der|meiner)|im|am)\b.*\b(?:konto|pocket|notgroschen|sparkonto|tagesgeld|depot|urlaub|motorrad)\b/.test(lower) ||
+  /\bwie viel\b.*\b(?:ist|liegt|liegen|hab(?:e)?|sind)\b.*\b(?:auf|bei|am|im)\s+(?:(?:dem|meinem|der|meiner)\s+)?(?:trade\s*republic|revolut|raiffeisen|paypal|giro(?:konto)?|n26|bawag|erste bank|sparkasse)\b/.test(lower) &&
+    !/ausgegeben|bezahlt|gezahlt|verdient|eingenommen|gekauft/.test(lower);
 export const budgetQuestion = (lower: string) =>
   /wie viel (?:kann|darf) ich (?:diesen monat |im \w+ |heuer |noch |jetzt )*(?:noch )?(?:ausgeben|verbrauchen|verballern|verprassen)\b/.test(lower) ||
   /was bleibt (?:mir )?(?:diesen monat |im \w+ |noch |am ende )*(?:noch )?(?:übrig|über)\b|was bleibt (?:mir )?(?:noch )?(?:diesen|im|nächsten|kommenden) (?:monat|\w+)\b(?! für)|wie viel bleibt (?:mir )?(?:diesen monat |im \w+ |noch |am monatsende )*(?:übrig|über)|\büberschuss\b(?! erklär)/.test(lower) ||
@@ -92,7 +94,20 @@ export function accountBalances(state: AppState, dashboard: Dashboard, text: str
   const all = balances(state, dashboard);
   // Generic words like "Konto" would make "Kontostand" match "Persönliches Konto".
   const distinctive = (name: string) => name.replace(/\b(?:konto|konten|pocket|account)\b/gi, " ").replace(/\s+/g, " ").trim() || name;
-  const named = /\balle[nm]?\b|übersicht|\binsgesamt\b|\bgesamt\b/i.test(text) ? undefined : matchName(text, all, (item) => distinctive(item.name));
+  const overview = /\balle[nm]?\b|übersicht|\binsgesamt\b|\bgesamt\b/i.test(text);
+  let named = overview ? undefined : matchName(text, all, (item) => distinctive(item.name));
+  // "Wie viel hab ich auf Trade Republic?" names the bank, not the account.
+  const bankName = overview || named ? undefined : matchName(text, [...new Set(all.map((item) => item.bank).filter((bank): bank is string => !!bank))], (bank) => bank);
+  const atBank = bankName ? all.filter((item) => item.bank === bankName && item.amount !== null && Math.abs(item.amount) >= 0.005) : [];
+  if (atBank.length === 1) named = atBank[0];
+  else if (atBank.length > 1) {
+    const sum = round(atBank.reduce((total, item) => total + (item.amount ?? 0), 0));
+    return { text: `Bei ${bankName} liegen insgesamt ${currency(sum)} auf ${atBank.length} Konten.`,
+      card: { kind: "answer", title: `Kontostände · ${bankName}`, total: sum,
+        lines: [...atBank].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0)).slice(0, 20).map((item) => ({ label: item.name, value: item.amount ?? 0,
+          ...(item.date ? { detail: `Stand ${dateLabel(item.date)}` } : {}) })) },
+      suggestions: ["Zeig mir alle Kontostände", "Was bleibt mir diesen Monat?"] };
+  }
   if (named) {
     return { text: named.amount === null ? `Für „${named.name}“ kenne ich gerade keinen sicheren Kontostand.`
       : `Auf „${named.name}“ liegen ${currency(named.amount)}${named.date ? ` (Stand ${dateLabel(named.date)})` : ""}.`,

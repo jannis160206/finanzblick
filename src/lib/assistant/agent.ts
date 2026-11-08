@@ -22,7 +22,7 @@ import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
 import { pulseAnswer } from "./pulse";
 import { ordersAnswer } from "./orders";
-import { fundsAnswer, rulesResult } from "./funds";
+import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
 import { whatIfAnswer } from "./whatif-answer";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
@@ -377,7 +377,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "accounts": return amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
     case "budget": return monthBudget(dashboard, text);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));
-    case "check": return financialCheck(state, dashboard, asOf);
+    case "check": return financialCheck(state, dashboard, asOf, text);
     case "coach": {
       const target = amountsIn(text).find((value) => value > 0 && value < 100_000) ?? 100;
       return savingsCoach(state, asOf, target);
@@ -413,7 +413,14 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "why": return whyAnswer(state, text);
     case "forecast": return forecastAnswer(state, dashboard, asOf);
     case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
-    case "pulse": return pulseAnswer(state, dashboard, asOf);
+    case "pulse": {
+      const pulse = pulseAnswer(state, dashboard, asOf);
+      const topUp = giroTopUp(state, dashboard, asOf);
+      if (!topUp) return pulse;
+      return { ...pulse, text: `${pulse.text} ${topUpText(topUp, true)}`.trim(),
+        card: { ...pulse.card, lines: [pulse.card.lines[0], { label: topUp.from ? `Umbuchen vom ${topUp.from}` : "Giro-Lücke bis zum Gehalt", value: topUp.need,
+          tone: "warn" as const, detail: topUp.from ? `danach dort ${currency(topUp.after ?? 0)}` : "kein frei verwendbares Konto hat genug" }, ...pulse.card.lines.slice(1)].slice(0, 40) } };
+    }
     case "orders": return ordersAnswer(state, asOf);
     case "funds": return fundsAnswer(state, dashboard, text, asOf);
     case "account_rule": return rulesResult(state, dashboard, asOf);

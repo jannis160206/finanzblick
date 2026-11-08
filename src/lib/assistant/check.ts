@@ -9,12 +9,12 @@ type Line = AssistantCard["lines"][number];
 type Tone = "good" | "warn" | "bad";
 
 export const checkQuestion = (lower: string) =>
-  /finanz-?check|gesundheits-?check|wie (?:steh|steh'?|geht'?s|gehts|läuft'?s|laeufts)\w* (?:es )?(?:um )?(?:mir|ich|meine finanzen|meinen finanzen|finanziell)|wie gut (?:wirtschafte|haushalte|spare) ich|bin ich (?:eher |zu |ziemlich |sehr )?(?:sparsam|verschwenderisch|ein sparfuchs|gut aufgestellt|auf (?:einem )?gutem? weg)|geb(?:e)? ich (?:eher |zu |ziemlich )?viel (?:geld )?aus|mach(?:e)? ich (?:das|es) gut|sparquote|wie viel prozent spar|wie (?:sind|stehen|sehen) meine finanzen|bewert\w* meine finanzen|zeugnis/.test(lower);
+  /finanz-?check|gesundheits-?check|wie (?:steh|steh'?|geht'?s|gehts|läuft'?s|laeufts)\w* (?:es )?(?:um )?(?:mir|ich|meine finanzen|meinen finanzen|finanziell)|wie gut (?:wirtschafte|haushalte|spare) ich|bin ich (?:eher |zu |ziemlich |sehr )?(?:sparsam|verschwenderisch|ein sparfuchs|gut aufgestellt|auf (?:einem )?gutem? weg)|geb(?:e)? ich (?:eher |zu |ziemlich )?viel (?:geld )?aus|mach(?:e)? ich (?:das|es) gut|sparquote|wie viel spar(?:e)? ich(?: (?:eigentlich|so|im schnitt|durchschnittlich|aktuell|gerade))*(?: (?:im|pro|jeden) monat| monatlich)?\s*\??$|wie viel prozent spar|wie (?:sind|stehen|sehen) meine finanzen|bewert\w* meine finanzen|zeugnis/.test(lower);
 
 const percent = (value: number) => `${Math.round(value * 100)} %`;
 
 // A deterministic financial health check over the last three full months.
-export function financialCheck(state: AppState, dashboard: Dashboard, today: string): AgentResult {
+export function financialCheck(state: AppState, dashboard: Dashboard, today: string, question = ""): AgentResult {
   const current = today.slice(0, 7);
   const months = [3, 2, 1].map((offset) => addMonths(current, -offset));
   const income = new Map(months.map((month) => [month, 0]));
@@ -86,7 +86,13 @@ export function financialCheck(state: AppState, dashboard: Dashboard, today: str
   if (fixedShare !== undefined && fixedShare > 0.5) issues.push(`die Fixkosten fressen ${percent(fixedShare)} vom Einkommen`);
   else if (fixedShare !== undefined) strengths.push(`deine Fixkosten sind mit ${percent(fixedShare)} vom Einkommen niedrig`);
   if (shortfall > 0.5) issues.push(`auf die Amex fehlen noch ${currency(shortfall)}`);
-  const text = `${verdict}: ${good} von ${scores.length} Punkten sind im grünen Bereich.` +
+  // "Wie viel spare ich im Monat?" gets the amount first, then the rating.
+  const saved = round(avgIncome - avgSpending);
+  const lead = /spar(?:e)? ich|sparquote/i.test(question) && avgIncome > 0
+    ? (saved >= 0 ? `Im Schnitt bleiben dir ${currency(saved)} im Monat übrig, das sind ${percent(rate)} vom Einkommen (${monthLabel(months[0])} bis ${monthLabel(months[2])}). `
+      : `Im Schnitt gibst du ${currency(-saved)} im Monat mehr aus, als reinkommt (${monthLabel(months[0])} bis ${monthLabel(months[2])}). `)
+    : "";
+  const text = lead + `${verdict}: ${good} von ${scores.length} Punkten sind im grünen Bereich.` +
     (strengths.length ? ` Gut: ${strengths.join(", ")}.` : "") + (issues.length ? ` Achtung: ${issues.join(", ")}.` : "");
   return { text, card: { kind: "check", title: `Finanz-Check · ${monthLabel(months[0])} bis ${monthLabel(months[2])}`, total: round(avgIncome - avgSpending), lines,
     note: "Durchschnitt der letzten drei vollen Monate. Die Grenzen (20 % Sparquote, 50 % Fixkosten, 3 Monate Reserve) sind gängige Faustregeln." },

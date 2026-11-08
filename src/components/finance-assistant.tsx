@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
 import { assistantFacts } from "@/lib/assistant/facts";
 import { balances } from "@/lib/assistant/accounts";
-import { parseAccountRules, ruleText, rulesResult, storeAccountRules } from "@/lib/assistant/funds";
+import { giroTopUp, parseAccountRules, ruleText, rulesResult, storeAccountRules, topUpText } from "@/lib/assistant/funds";
 import { readAnswerStream } from "@/lib/ai/answer-stream";
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
@@ -271,7 +271,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     if ((state.assistantChat ?? []).some((item) => item.card?.kind === "briefing" && sameDay(item.at, now))) return;
     try {
       const briefing = weeklyBriefing(state, dashboard, state.settings.asOf, memoryValue(state, "salaryDay"));
-      const message = assistantMessageSchema.safeParse({ id: newId(), role: "assistant", text: briefing.text.slice(0, 2000), at: now, source: "Regel",
+      const topUp = giroTopUp(state, dashboard, state.settings.asOf);
+      const text = topUp ? `⚠️ ${topUpText(topUp)}\n\n${briefing.text}` : briefing.text;
+      const message = assistantMessageSchema.safeParse({ id: newId(), role: "assistant", text: text.slice(0, 2000), at: now, source: "Regel",
         ...(briefing.card ? { card: briefing.card } : {}), suggestions: ["Kann ich mir im Mai 900 € leisten?", "Wo kann ich sparen?"] });
       // Checked again inside the update, so two quick page loads never add the overview twice.
       if (message.success) save((items) => items.some((item) => item.card?.kind === "briefing" && sameDay(item.at, now)) ? items : [...items, message.data]);

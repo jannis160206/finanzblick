@@ -1,5 +1,5 @@
-import { round, type Dashboard } from "@/lib/calc";
-import { currency, monthLabel } from "@/lib/format";
+import { addMonths, round, type Dashboard } from "@/lib/calc";
+import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { MAX_ACCOUNT_RULES, type AccountRule, type AppState, type AssistantCard } from "@/lib/types";
@@ -7,7 +7,7 @@ import type { AgentResult } from "./agent";
 import { balances } from "./accounts";
 import { findCategories } from "./answers";
 import { parseAssistantMessage } from "./intent";
-import { checkAffordability } from "./plan";
+import { checkAffordability, monthBasis, planningHorizon } from "./plan";
 import { safeToSpend } from "./pulse";
 import { matchName } from "./tools";
 
@@ -140,7 +140,43 @@ export type FundsCheck = {
   // Accounts that would have enough money but may not be used for this.
   blocked: string[];
   plan?: { month: string; light: string; after?: number; shortfall?: number };
+  // When the missing money is saved up from the free plan surplus of the coming months.
+  ready?: { month: string; perMonth: number };
 };
+
+function readyMonth(state: AppState, dashboard: Dashboard, missing: number): FundsCheck["ready"] {
+  const horizon = planningHorizon(dashboard);
+  let saved = 0;
+  let months = 0;
+  for (let offset = 1; offset <= 24; offset++) {
+    const month = addMonths(dashboard.currentMonth, offset);
+    if (month > horizon) return undefined;
+    const basis = monthBasis(state, dashboard, month);
+    if (!basis) return undefined;
+    saved = round(saved + Math.max(0, basis.free));
+    months += 1;
+    if (saved + 0.005 >= missing) return { month, perMonth: round(saved / months) };
+  }
+  return undefined;
+}
+
+// Giro below zero before payday: how much to move over and from which freely usable account.
+export function giroTopUp(state: AppState, dashboard: Dashboard, today: string) {
+  const pulse = safeToSpend(state, dashboard, today);
+  if (!pulse || pulse.free >= -0.5) return undefined;
+  const need = Math.ceil(-pulse.free);
+  const from = accountsWithRules(state, dashboard, today)
+    .filter((account) => account.use === "any" && !/giro|persönliches/i.test(account.name) && account.available >= need)
+    .sort((a, b) => b.available - a.available)[0];
+  return { need, until: pulse.until, ...(from ? { from: accountLabel(from), after: round(from.available - need) } : {}) };
+}
+
+export function topUpText(topUp: NonNullable<ReturnType<typeof giroTopUp>>, short = false) {
+  if (short) return topUp.from ? `Tipp: Buche ${currency(topUp.need)} vom ${topUp.from} aufs Giro, dann bleiben dort ${currency(topUp.after ?? 0)}.` : "";
+  return topUp.from
+    ? `Dein Giro reicht bis zum Gehalt am ${dateLabel(topUp.until)} nicht: Buche ${currency(topUp.need)} vom ${topUp.from} aufs Giro, dann bleiben dort ${currency(topUp.after ?? 0)}.`
+    : `Dein Giro reicht bis zum Gehalt am ${dateLabel(topUp.until)} nicht: Es fehlen ${currency(topUp.need)}, und kein frei verwendbares Konto hat genug.`;
+}
 
 const budgetPocket = /^(?:lebensmittel|mittagessen|tanken|snacks|haushalt|wocheneinkauf|entertainment|shopping|pro|essen|freizeit)/i;
 
@@ -231,7 +267,9 @@ export function checkFunds(state: AppState, dashboard: Dashboard, input: { amoun
     const result = checkAffordability(state, dashboard, { action: "affordability", amount: input.amount, date: `${input.month}-01` });
     if (!result.error) plan = { month: input.month, light: result.light, after: result.tightest?.after, shortfall: result.shortfall };
   }
-  return { amount: input.amount, label: input.label ?? "Ausgabe", ok: missing <= 0.005, missing, pay, accounts, blocked, ...(plan ? { plan } : {}) };
+  const ok = missing <= 0.005;
+  const ready = ok ? undefined : readyMonth(state, dashboard, missing);
+  return { amount: input.amount, label: input.label ?? "Ausgabe", ok, missing, pay, accounts, blocked, ...(plan ? { plan } : {}), ...(ready ? { ready } : {}) };
 }
 
 function accountLine(account: FundsCheck["accounts"][number], amount: number, purpose: string): Line {
@@ -262,6 +300,9 @@ export function fundsResult(check: FundsCheck): AgentResult {
       text += check.blocked.length > 1 ? ` ${names} hätten genug, sind aber laut deinen Regeln nicht dafür gedacht.`
         : ` ${names} hätte genug, ist aber laut deinen Regeln nicht dafür gedacht.`;
     }
+    text += check.ready
+      ? ` Mit deinem freien Überschuss von rund ${currency(check.ready.perMonth)} im Monat geht es sich voraussichtlich ab ${monthLabel(check.ready.month)} aus.`
+      : " Mit deinem aktuellen Monatsplan geht es sich in absehbarer Zeit nicht aus.";
   }
   if (check.plan) {
     const month = monthLabel(check.plan.month);
@@ -274,14 +315,16 @@ export function fundsResult(check: FundsCheck): AgentResult {
   lines.unshift(check.ok
     ? { label: "Ergebnis", detail: check.pay.map((pay) => `${currency(pay.amount)} vom ${pay.name} → danach ${currency(pay.after)}`).join(" · ").slice(0, 300), tone: "good" }
     : { label: "Ergebnis: es fehlen", value: check.missing, tone: "bad" });
+  if (check.ready) lines.splice(1, 0, { label: `Geht sich aus ab ${monthLabel(check.ready.month)}`, value: check.ready.perMonth, tone: "info",
+    detail: "freier Überschuss pro Monat laut Monatsplan, nach Fixkosten und Sparraten" });
   return {
     text,
     card: { kind: "answer", title: `${check.ok ? "✅ OK" : "❌ Nicht OK"} · ${check.label} ${currency(check.amount)}`.slice(0, 200), total: check.amount, lines,
       note: "Geprüft mit deinen echten Kontoständen und deinen Kontoregeln. Es wird nichts angelegt. Regeln ändern: z. B. „Sparkonto ist für alle Ausgaben“ oder „Trade Republic nur für Autowerkstatt, Ölwechsel“." },
     suggestions: [
-      ...(check.label !== "Ausgabe" ? [`Plane ${check.label} ${Math.round(check.amount)} € als Ausgabe ein`] : []),
+      ...(check.ok && check.label !== "Ausgabe" ? [`Plane ${check.label} ${Math.round(check.amount)} € als Ausgabe ein`] : []),
       "Welche Konten darf ich wofür verwenden?",
-      ...((check.ok ? [] : ["Wann geht sich das aus?"])),
+      ...(!check.ok && check.ready && check.label !== "Ausgabe" ? [`Plane ${check.label} ${Math.round(check.amount)} € im ${monthLabel(check.ready.month)} ein`] : []),
     ].slice(0, 3),
   };
 }
