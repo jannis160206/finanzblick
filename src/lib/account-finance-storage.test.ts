@@ -181,6 +181,20 @@ describe("account finance persistence", () => {
       expect(JSON.parse(request.mock.calls[2][1].body).revision).toBe(2);
     });
 
+    it("releases a conflict copy once the confirmed server stand holds all of its values", async () => {
+      const local = changed("local"), remote = structuredClone(local);
+      remote.transactions.push(changed("server").transactions[0]);
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      const request = vi.fn().mockResolvedValueOnce(response(remote, 2)).mockResolvedValueOnce(response(remote, 2))
+        .mockImplementationOnce(async (_url: string, options: RequestInit) => response(JSON.parse(String(options.body)).state, 3));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      await controller.reconcileServer(local);
+      expect(cached().pending).toBe(false);
+      expect(localStorage.getItem(accountConflictKey("alice"))).toBeNull();
+    });
+
     it("retries a worker revision race from fresh server evidence without dropping local or server additions", async () => {
       const local = changed("local"), first = changed("server-first"), second = changed("server-second");
       second.transactions.push(...first.transactions);
@@ -195,7 +209,7 @@ describe("account finance persistence", () => {
       expect(new Set(result.transactions.map((row) => row.id))).toEqual(new Set(["local", "server-first", "server-second"]));
       expect(cached().revision).toBe(4);
       expect(cached().pending).toBe(false);
-      expect(JSON.parse(localStorage.getItem(accountConflictKey("alice"))!).state).toEqual(local);
+      expect(localStorage.getItem(accountConflictKey("alice"))).toBeNull();
     });
 
     it("stops bounded revision retries explicitly while keeping the complete merged device stand", async () => {

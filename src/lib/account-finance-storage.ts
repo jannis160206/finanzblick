@@ -330,6 +330,22 @@ export class AccountFinanceStorage {
     }
   }
 
+  /** Drops the backup this reconciliation wrote, but only once the confirmed server state holds every one of its values. */
+  private releaseCoveredConflictBackup(confirmed: AppState, createdRaw: string | undefined) {
+    const conflictKey = accountConflictKey(this.userId);
+    const raw = localStorage.getItem(conflictKey);
+    if (raw === null || raw !== createdRaw) return;
+    try {
+      const older = parseAccountConflictBackup(raw, this.userId);
+      // The backup goes first so its own choices and notes would surface as a difference.
+      if (!sameFinanceData(mergeFinanceStates(older, confirmed), confirmed)) return;
+    } catch {
+      return;
+    }
+    localStorage.removeItem(conflictKey);
+    window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
+  }
+
   async useServer(): Promise<AppState | null> {
     if (this.busy) throw new FinanceStorageError("Bitte warten, bis die laufende Synchronisierung beendet ist.");
     const selected = this.cache;
@@ -382,6 +398,7 @@ export class AccountFinanceStorage {
     this.save(state);
     this.busy = true;
     let rebased = false;
+    let createdBackup: string | undefined;
     try {
       for (let attempt = 0; attempt < 3; attempt++) {
         const selected: Cache = this.cache;
@@ -395,8 +412,9 @@ export class AccountFinanceStorage {
           this.confirmed?.revision === selected.revision ? this.confirmed.state : undefined) : selected.state;
         const conflictKey = accountConflictKey(this.userId);
         if (selectedRaw !== null && localStorage.getItem(conflictKey) === null) {
-          localStorage.setItem(conflictKey, selected.baseState === undefined || selected.baseState === null
-            ? selectedRaw : JSON.stringify(withoutBaseState(selected)));
+          createdBackup = selected.baseState === undefined || selected.baseState === null
+            ? selectedRaw : JSON.stringify(withoutBaseState(selected));
+          localStorage.setItem(conflictKey, createdBackup);
           window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
         }
         this.writeCache({ state: combined, revision: remote.revision, pending: true, reconcileRequired: true, baseState: remote.state });
@@ -422,6 +440,7 @@ export class AccountFinanceStorage {
         this.paused = false;
         this.error = null;
         this.confirmed = { revision: saved.revision, state: saved.state };
+        this.releaseCoveredConflictBackup(saved.state, createdBackup);
         return saved.state;
       }
       throw new FinanceStorageError("Der Serverstand ändert sich weiterhin. Beide Datenstände bleiben erhalten; bitte erneut abgleichen.");

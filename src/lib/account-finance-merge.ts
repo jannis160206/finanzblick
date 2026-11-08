@@ -34,6 +34,7 @@ const assignments = new Set([
   "category",
   "categoryOverride",
   "manualCategory",
+  "aiAssigned",
   "reviewed",
   "merchantAlias",
   "merchantId",
@@ -47,6 +48,20 @@ const assignments = new Set([
   "afterBaseline",
   "fixedCost",
 ]);
+// Personal notes on a booking. Server-side bank sync never sets them, so the device copy wins instead of blocking the sync.
+const annotations = new Set([
+  "tags",
+  "ignored",
+  "splits",
+  "sharedWithRaphael",
+  "sharedPaidManually",
+  "sharedRefundFor",
+  "sharedRefundUnlinked",
+  "sharedRepaymentFor",
+  "sharedPaidAmount",
+]);
+const merchantFields = ["merchantAlias", "merchantId", "merchantLogo", "merchantMatch", "merchantNameConfirmed", "is_locked"] as const;
+const bookingMetadata = new Set([...assignments, ...annotations]);
 const collections: Record<string, readonly string[]> = {
   payslips: ["employer", "year", "month"],
   payrollForecasts: ["employer", "year"],
@@ -132,38 +147,34 @@ function merge(left: unknown, right: unknown, section: string, base?: unknown, k
     const localLocked = isAutomationLocked(local),
       remoteLocked = isAutomationLocked(remote);
     if (
-      !sameFinanceData(without(left, assignments), without(right, assignments))
+      !sameFinanceData(without(left, bookingMetadata), without(right, bookingMetadata))
     )
       conflict(section);
+    const notes = Object.fromEntries([...annotations].map((key) => [key, left[key]]));
+    // A category decision and a merchant confirmation are separate choices; only the same kind of choice can contradict.
+    const localChoice = hasCategoryChoice(local), remoteChoice = hasCategoryChoice(remote);
     if (
-      localLocked &&
-      remoteLocked &&
+      localChoice &&
+      remoteChoice &&
       !sameFinanceData(
-        [
-          local.category,
-          local.merchantAlias,
-          local.includeInPlan,
-          local.fixedCost,
-          local.merchantNameConfirmed === true,
-        ],
-        [
-          remote.category,
-          remote.merchantAlias,
-          remote.includeInPlan,
-          remote.fixedCost,
-          remote.merchantNameConfirmed === true,
-        ],
+        [local.category, local.includeInPlan, local.fixedCost],
+        [remote.category, remote.includeInPlan, remote.fixedCost],
       )
     )
       conflict(section);
-    if (
-      localLocked &&
-      remoteLocked &&
-      !hasCategoryChoice(local) &&
-      hasCategoryChoice(remote)
-    )
-      return remote;
-    return localLocked ? local : remote;
+    const localNamed = local.merchantNameConfirmed === true, remoteNamed = remote.merchantNameConfirmed === true;
+    if (localNamed && remoteNamed && local.merchantAlias !== remote.merchantAlias) conflict(section);
+    const chosen =
+      localChoice !== remoteChoice
+        ? localChoice ? local : remote
+        : localLocked && !remoteLocked ? local : remote;
+    const other = chosen === local ? remote : local;
+    const identity = other.merchantNameConfirmed === true && chosen.merchantNameConfirmed !== true
+      ? Object.fromEntries(merchantFields.map((key) => [key, Reflect.get(other, key)]))
+      : {};
+    return transactionSchema.parse(Object.fromEntries(
+      Object.entries({ ...without(chosen, annotations), ...identity, ...notes }).filter(([, value]) => value !== undefined),
+    ));
   }
   if (
     section === "fixedReceipts" &&

@@ -277,3 +277,19 @@ it("preserves incomplete and review-only bookings without accepting them into th
   ]);
   expect(result.transactions.map((row) => row.id)).toEqual(["local", "remote"]);
 });
+
+it("syncs AI-confirmed categories and personal notes instead of blocking on them", () => {
+  const remote = state("shared");
+  remote.transactions[0] = { ...remote.transactions[0], category: "Prüfen", includeInPlan: false };
+  const local = state("shared");
+  local.transactions[0] = { ...local.transactions[0], category: "Porto & Versand", manualCategory: true, categoryOverride: true,
+    reviewed: true, aiAssigned: true, fixedCost: false, tags: ["Urlaub"], ignored: true };
+  const merged = mergeFinanceStates(local, remote, null).transactions[0];
+  expect(merged).toMatchObject({ category: "Porto & Versand", aiAssigned: true, tags: ["Urlaub"], ignored: true });
+  // A server-side category update keeps the notes made on this device.
+  const automatic = state("shared");
+  automatic.transactions[0] = { ...automatic.transactions[0], category: "Lebensmittel" };
+  const noted = state("shared");
+  noted.transactions[0] = { ...noted.transactions[0], tags: ["Malaga"] };
+  expect(mergeFinanceStates(noted, automatic, null).transactions[0]).toMatchObject({ category: "Lebensmittel", tags: ["Malaga"] });
+});
