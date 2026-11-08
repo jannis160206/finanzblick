@@ -15,11 +15,14 @@ export const percent = (value: number) =>
     style: "percent",
     maximumFractionDigits: 2,
   }).format(value);
-export const shortCurrency = (value: number) =>
-  new Intl.NumberFormat("de-AT", {
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(value) + " €";
+const shortFormatter = new Intl.NumberFormat("de-DE", { maximumFractionDigits: 1, useGrouping: "always" });
+// Chart axes: "500 €", "5,5 Tsd. €", "1,2 Mio. €" – consistent instead of de-AT compact's "5500 €" next to "11 000 €".
+export const shortCurrency = (value: number) => {
+  const size = Math.abs(value);
+  if (size >= 1e6) return `${shortFormatter.format(value / 1e6)} Mio. €`;
+  if (size >= 1e3) return `${shortFormatter.format(value / 1e3)} Tsd. €`;
+  return `${shortFormatter.format(Math.round(value))} €`;
+};
 const dateFormatter = new Intl.DateTimeFormat("de-AT", { timeZone: "UTC" });
 const monthFormatters = {
   long: new Intl.DateTimeFormat("de-AT", { month: "long", year: "numeric", timeZone: "UTC" }),

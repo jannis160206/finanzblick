@@ -83,10 +83,12 @@ export function Overview() {
     },
     {
       label: "Einnahmen · Plan",
-      value: d.current.salaryPlan,
-      note: `Erhalten: ${currency(d.current.salaryReceived)}`,
+      value: d.current.income,
+      note: `Erhalten: ${currency(d.current.received)}`,
       icon: ArrowDownLeft,
       color: "text-primary",
+      hint: d.current.income > d.current.salaryPlan && d.current.salaryPlan > 0
+        ? `Gehalt ${currency(d.current.salaryPlan)} + ${currency(d.current.income - d.current.salaryPlan)} weitere Einnahmen.` : undefined,
     },
     {
       label: "Ausgaben · Ist",
@@ -341,7 +343,9 @@ export function Overview() {
             <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3 border-t border-border/60 pt-4">
               {[
                 { label: "Einnahmen", value: row.income }, { label: "Fixkosten", value: row.fixed },
-                { label: "Alltagsbudget", value: row.variablePlan }, { label: "Zielraten", value: row.surplus - row.remaining },
+                { label: "Alltagsbudget", value: row.variablePlan },
+                ...(row.plannedOneOffs ? [{ label: "Einmalig geplant", value: row.plannedOneOffs }] : []),
+                { label: "Zielraten", value: row.surplus - row.remaining },
               ].map(({ label, value }) => <div key={label} className="min-w-0">
                 <dt className="text-2xs text-muted-foreground">{label}</dt>
                 <dd className="mt-1 break-words text-xs font-medium tabular-nums">{currency(value)}</dd>

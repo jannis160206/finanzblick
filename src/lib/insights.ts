@@ -1,8 +1,9 @@
-import { classify } from "@/lib/calc";
+import { actualBookings, bookingMonth, classify } from "@/lib/calc";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { brandKey } from "@/lib/ai/evidence";
 import { categoryParts } from "@/lib/splits";
 import type { AppState, Transaction } from "@/lib/types";
+import { personalAmount, type AccountedTransaction } from "@/lib/shared-holiday";
 
 const DAY_MS = 86_400_000;
 const money = (value: number) => Math.round(value * 100) / 100;
@@ -150,22 +151,24 @@ export function detectSubscriptions(state: AppState, today = new Date().toISOStr
   return subscriptions.sort((a, b) => b.monthlyCost - a.monthlyCost);
 }
 
-// Same text, same amount, a few days apart and no other such charge nearby: likely billed twice.
+// Same account, same text and amount on the same day (or the next day for larger sums, which
+// banks sometimes post with a delay) and no other such charge nearby: likely billed twice.
+// Different cards, round trips (tolls) or a coffee on two days are separate purchases.
 export function detectDuplicateCharges(state: AppState, since?: string): DuplicateCharge[] {
   const rows = state.transactions.filter((row) => row.amount <= -5 && (!since || row.date >= since))
     .sort((a, b) => a.date.localeCompare(b.date));
   const buckets = new Map<string, Transaction[]>();
   for (const row of rows) {
     if (classify(row).isTransfer) continue;
-    const key = `${(row.merchantAlias ?? row.description).trim().toLocaleLowerCase("de-AT")}|${row.amount.toFixed(2)}`;
+    const key = `${row.bank}|${row.pocket ?? ""}|${(row.merchantAlias ?? row.description).trim().toLocaleLowerCase("de-AT")}|${row.amount.toFixed(2)}`;
     buckets.set(key, [...(buckets.get(key) ?? []), row]);
   }
   const duplicates: DuplicateCharge[] = [];
   for (const bucket of buckets.values()) {
     for (let index = 1; index < bucket.length; index++) {
       const [first, second] = [bucket[index - 1], bucket[index]];
-      const gap = (time(second.date) - time(first.date)) / DAY_MS;
-      if (gap > 3 || first.id === second.id) continue;
+      const gap = Math.round((time(second.date) - time(first.date)) / DAY_MS);
+      if (gap > (first.amount <= -20 ? 1 : 0) || first.id === second.id) continue;
       // Three or more in a short window is a habit (coffee, parking), not a double charge.
       const neighbours = bucket.filter((row) => Math.abs(time(row.date) - time(first.date)) <= 14 * DAY_MS);
       if (neighbours.length !== 2) continue;
@@ -175,25 +178,37 @@ export function detectDuplicateCharges(state: AppState, since?: string): Duplica
   return duplicates.sort((a, b) => b.dates[1].localeCompare(a.dates[1]));
 }
 
-export function summarizeMonth(state: AppState, month: string): MonthSummary {
+type AccountedEntry = { row: AccountedTransaction; category: Category; amount: number; month: string; income: boolean };
+const incomeCategories = new Set(["Einkommen", "Gehalt", "Rufbereitschaft"]);
+// Same accounting as the dashboard KPIs: own share of shared bookings, statement receipts,
+// payroll month and refunds – so "Einblicke" and "Ausgaben · Ist" never disagree.
+function accountedLedger(state: AppState): AccountedEntry[] {
+  return actualBookings(state).flatMap((row) => {
+    const result = classify(row);
+    const amount = personalAmount(row);
+    if (result.isTransfer || !amount) return [];
+    return [{ row, category: canonicalCategory(result.category), amount, month: bookingMonth(row), income: incomeCategories.has(result.category) }];
+  });
+}
+
+export function summarizeMonth(state: AppState, month: string, entries = accountedLedger(state)): MonthSummary {
   const totals = new Map<Category, number>();
   let income = 0;
-  const spendingRows: { row: Transaction; category: Category }[] = [];
-  for (const entry of ledger(state)) {
-    if (!entry.row.date.startsWith(month)) continue;
-    if (entry.row.amount > 0) income += entry.row.amount;
-    else {
-      for (const part of categoryParts(entry.row, entry.category))
-        totals.set(part.category, (totals.get(part.category) ?? 0) - part.amount);
-      spendingRows.push(entry);
-    }
+  const spendingRows: AccountedEntry[] = [];
+  for (const entry of entries) {
+    if (entry.month !== month) continue;
+    if (entry.income) { income += entry.amount; continue; }
+    for (const part of categoryParts(entry.row, entry.category))
+      totals.set(part.category, (totals.get(part.category) ?? 0) - entry.amount * part.share);
+    if (entry.amount < 0) spendingRows.push(entry);
   }
   const spending = [...totals.values()].reduce((sum, value) => sum + value, 0);
   return {
     month, income: money(income), spending: money(spending), balance: money(income - spending),
-    topCategories: [...totals].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([category, amount]) => ({ category, amount: money(amount) })),
-    largest: spendingRows.sort((a, b) => a.row.amount - b.row.amount).slice(0, 3).map(({ row, category }) =>
-      ({ date: row.date, merchant: merchantName(row), amount: money(row.amount), category })),
+    topCategories: [...totals].filter(([, amount]) => amount > 0.004).sort((a, b) => b[1] - a[1]).slice(0, 5)
+      .map(([category, amount]) => ({ category, amount: money(amount) })),
+    largest: spendingRows.sort((a, b) => a.amount - b.amount).slice(0, 3).map(({ row, category, amount }) =>
+      ({ date: row.date, merchant: merchantName(row), amount: money(amount), category })),
   };
 }
 
@@ -203,9 +218,9 @@ const shiftMonth = (month: string, delta: number) => {
   return date.toISOString().slice(0, 7);
 };
 
-export function forecastMonth(state: AppState, subscriptions: Subscription[], today: string): BudgetForecast {
+export function forecastMonth(state: AppState, subscriptions: Subscription[], today: string, entries = accountedLedger(state)): BudgetForecast {
   const month = today.slice(0, 7);
-  const current = summarizeMonth(state, month);
+  const current = summarizeMonth(state, month, entries);
   const recurring = new Set(subscriptions.map((item) => item.merchant));
   const [year, monthNumber] = month.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
@@ -215,17 +230,18 @@ export function forecastMonth(state: AppState, subscriptions: Subscription[], to
     .filter((item) => item.interval === "monatlich" ? item.nextDate > today && item.nextDate.startsWith(month)
       : item.nextDate.startsWith(month) && item.nextDate > today)
     .reduce((sum, item) => sum + item.amount, 0);
-  // Daily variable spending of the last three complete months.
+  // Daily variable spending (own share) of the last three complete months. The median keeps a
+  // single month with a large one-off purchase from inflating the rest of this month.
   const previous = [1, 2, 3].map((offset) => shiftMonth(month, -offset));
   const variable = previous.map((prior) => {
     const [y, m] = prior.split("-").map(Number);
     const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const spent = ledger(state).filter(({ row }) => row.date.startsWith(prior) && row.amount < 0 && !recurring.has(merchantName(row)))
-      .reduce((sum, { row }) => sum - row.amount, 0);
-    return { spent, days };
-  }).filter((item) => item.spent > 0);
-  const perDay = variable.length ? variable.reduce((sum, item) => sum + item.spent / item.days, 0) / variable.length : 0;
-  const totals = previous.map((prior) => summarizeMonth(state, prior).spending).filter((value) => value > 0);
+    const spent = entries.filter((entry) => entry.month === prior && !entry.income && entry.amount < 0 && !recurring.has(merchantName(entry.row)))
+      .reduce((sum, entry) => sum - entry.amount, 0);
+    return spent / days;
+  }).filter((value) => value > 0);
+  const perDay = variable.length ? median(variable) : 0;
+  const totals = previous.map((prior) => summarizeMonth(state, prior, entries).spending).filter((value) => value > 0);
   return {
     month, spentSoFar: current.spending, expectedSubscriptions: money(expectedSubscriptions),
     expectedVariable: money(perDay * daysLeft),
@@ -237,17 +253,18 @@ export function forecastMonth(state: AppState, subscriptions: Subscription[], to
 
 export function financeInsights(state: AppState, today = new Date().toISOString().slice(0, 10)): FinanceInsights {
   const subscriptions = detectSubscriptions(state, today);
+  const entries = accountedLedger(state);
   const month = today.slice(0, 7);
   const lastMonth = shiftMonth(month, -1);
-  const previousSummary = summarizeMonth(state, lastMonth);
-  const before = summarizeMonth(state, shiftMonth(month, -2));
+  const previousSummary = summarizeMonth(state, lastMonth, entries);
+  const before = summarizeMonth(state, shiftMonth(month, -2), entries);
   const beforeTotals = new Map(before.topCategories.map((item) => [item.category, item.amount]));
   const sixtyDaysAgo = isoDate(time(today) - 60 * DAY_MS);
   return {
     subscriptions,
     priceIncreases: subscriptions.filter((item) => item.priceChange && item.priceChange.date >= isoDate(time(today) - 120 * DAY_MS)),
     duplicates: detectDuplicateCharges(state, sixtyDaysAgo),
-    summary: summarizeMonth(state, month),
+    summary: summarizeMonth(state, month, entries),
     previousSummary: {
       ...previousSummary,
       ...(before.spending ? { previousSpending: before.spending } : {}),
@@ -256,7 +273,7 @@ export function financeInsights(state: AppState, today = new Date().toISOString(
         return prior ? { ...item, change: money(item.amount - prior) } : item;
       }),
     },
-    forecast: forecastMonth(state, subscriptions, today),
+    forecast: forecastMonth(state, subscriptions, today, entries),
     learning: learningCurve(state),
   };
 }

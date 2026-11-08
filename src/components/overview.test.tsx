@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, expect, it, vi } from "vitest";
 import { Overview } from "./overview";
 import { useFinance } from "./finance-provider";
-import { calculateDashboard, monthsForYear } from "@/lib/calc";
+import { calculateDashboard, monthsForYear, round } from "@/lib/calc";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { initializeMotorcycleGoal } from "@/lib/goals";
 import { currency, monthLabel } from "@/lib/format";
@@ -59,10 +59,10 @@ it("prioritizes the surplus, keeps model values and plan/actual distinctions, an
   const before = JSON.stringify(state);
   const { dashboard, container, update } = mount(state);
   const metrics = ["Überschuss · Plan", "Einnahmen · Plan", "Ausgaben · Ist", "Ersparnisse gesamt"];
-  const values = [dashboard.current.surplus, dashboard.current.salaryPlan, dashboard.current.actualSpending, dashboard.totalAssets];
+  const values = [dashboard.current.surplus, dashboard.current.income, dashboard.current.actualSpending, dashboard.totalAssets];
   metrics.forEach((label, index) => expect(within(screen.getByRole("region", { name: label })).getByText(moneyText(values[index]))).toBeTruthy());
   expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(metrics[0]);
-  expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.salaryReceived)}`)).toBeTruthy();
+  expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.received)}`)).toBeTruthy();
   expect(dashboard.monthlyFunding.find((row) => row.id === "savings")?.amount).toBe(dashboard.current.surplus);
   expect(screen.queryByText(/DEIN FINANZCOCKPIT|Ist · alle vier Pockets|Ohne Umbuchungen|NOCH BIS ZUM KAUF/)).toBeNull();
   expect(screen.getByRole("link", { name: "Kontoauszüge importieren" }).getAttribute("href")).toBe("/umsaetze");
@@ -84,6 +84,8 @@ it("keeps every 90-day forecast figure and labels rates for all goals, not only 
     for (const [label, value] of [["Einnahmen", row.income], ["Fixkosten", row.fixed], ["Alltagsbudget", row.variablePlan], ["Zielraten", row.surplus - row.remaining]] as const) {
       expect(card.getByText(label).nextElementSibling?.textContent).toBe(currency(value));
     }
+    if (row.plannedOneOffs) expect(card.getByText("Einmalig geplant").nextElementSibling?.textContent).toBe(currency(row.plannedOneOffs));
+    expect(round(row.income - row.fixed - row.variablePlan - row.plannedOneOffs - (row.surplus - row.remaining))).toBe(row.remaining);
   }
   expect(dashboard.ninetyDays[0].surplus - dashboard.ninetyDays[0].remaining).toBeGreaterThan(dashboard.ninetyDays[0].bikeTransfer);
 });
