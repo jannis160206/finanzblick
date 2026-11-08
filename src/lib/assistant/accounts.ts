@@ -35,16 +35,18 @@ export function balances(state: AppState, dashboard: Dashboard) {
   (state.pocketSnapshots ?? []).forEach((item) => add(item.pocket));
   state.transactions.forEach((row) => { if (row.bank === "Revolut") add(row.pocket); });
   const physical = physicalPocketBalances(state, dashboard.actual);
-  const pockets = Object.entries(physical).map(([key, balance]) => ({ key, name: names.get(key) ?? key, amount: balance.amount, date: undefined as string | undefined }));
+  // Only the bank connection says reliably where an account lives.
+  const bankOf = new Map((state.accountSnapshots ?? []).map((item) => [pocketKey(item.name), item.bank] as const));
+  const pockets = Object.entries(physical).map(([key, balance]) => ({ key, name: names.get(key) ?? key, bank: bankOf.get(key), amount: balance.amount, date: undefined as string | undefined }));
   // Giro and main accounts are not pockets; their latest known balance comes from the bank connection or CSV export.
-  const latest = new Map<string, { name: string; balance: number; date: string }>();
+  const latest = new Map<string, { bank: string; name: string; balance: number; date: string }>();
   for (const item of state.accountSnapshots ?? []) {
     const key = pocketKey(item.name);
     if (physical[key] || item.date > state.settings.asOf) continue;
     const previous = latest.get(key);
     if (!previous || item.date > previous.date) latest.set(key, item);
   }
-  return [...pockets, ...[...latest].map(([key, item]) => ({ key, name: item.name, amount: item.balance as number | null, date: item.date as string | undefined }))];
+  return [...pockets, ...[...latest].map(([key, item]) => ({ key, name: item.name, bank: item.bank as string | undefined, amount: item.balance as number | null, date: item.date as string | undefined }))];
 }
 
 // Card bill vs. the Revolut pocket that collects the repayment; same calculation as the dashboard.

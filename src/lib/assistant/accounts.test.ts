@@ -102,7 +102,9 @@ describe("account and card questions", () => {
       expect(overview.text).toContain("Raiffeisen Giro");
     }
     expect(executeTool("accounts", "wie viel liegt auf persönliches konto", context(state)).card?.title).toBe("Kontostand · Persönliches Konto");
-    expect(assistantFacts(ctx.state, ctx.dashboard, asOf).balances).toContainEqual({ name: "Raiffeisen Giro", amount: 697.71, asOf: "2026-11-04" });
+    expect(assistantFacts(ctx.state, ctx.dashboard, asOf).balances).toContainEqual({ name: "Raiffeisen Giro", bank: "Raiffeisen", amount: 697.71, asOf: "2026-11-04" });
+    // Empty accounts stay in the facts, so "Wieso ist Revolut auf 0?" can be answered.
+    expect(assistantFacts(ctx.state, ctx.dashboard, asOf).balances).toContainEqual({ name: "Persönliches Konto", bank: "Revolut", amount: 0, asOf: "2026-11-04" });
   });
 
   it("builds compact facts for free questions", () => {

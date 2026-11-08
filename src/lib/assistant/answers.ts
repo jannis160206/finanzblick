@@ -193,7 +193,7 @@ export function findCategories(text: string): { categories: Category[]; label: s
   return match ? { categories: match[1], label: match[2] } : undefined;
 }
 
-const nonMerchant = /^(?:essen|lebensmittel|abos?|monat|jahr|woche|heuer|urlaub|auto|miete|tanken|kaffee|shopping|kategorie|ausgaben|einnahmen|mich|mir|das|die|der|den|dem|ein|eine|amex|american|express|kreditkarte|karte|revolut|raiffeisen|giro|girokonto|konto|trade|republic|seit|heute|aktuell)$/i;
+const nonMerchant = /^(?:essen|lebensmittel|abos?|monat|jahr|woche|heuer|urlaub|auto|miete|tanken|kaffee|shopping|kategorie|ausgaben|einnahmen|mich|mir|das|die|der|den|dem|ein|eine|amex|american|express|kreditkarte|karte|revolut|raiffeisen|giro|girokonto|konto|trade|republic|seit|heute|aktuell|geld|euro|eur|buchungen|buchung|zahlungen|sachen|zeug|alle|alles)$/i;
 
 const banks: [RegExp, RegExp, string][] = [
   [/\bamex\b|american express|kreditkarte/, /^(?:amex|american express)$/i, "Amex"],

@@ -72,7 +72,14 @@ const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du w
   "\"wie viel muss ich noch auf amex rückzahlung überweisen\" = amex; \"was hab ich seit 11.10. mit amex bezahlt\" = query; " +
   "\"wie viel ist am sparkonto\" = accounts; \"meine kontostände\" = accounts; \"was bleibt mir diesen monat\" = budget; " +
   "\"wie viel kann ich noch ausgeben\" = budget; \"bin ich sparsam\" = check; \"wie stehe ich finanziell da\" = check; " +
-  "\"wie haben sich meine ausgaben entwickelt\" = query; andere Fragen zu den eigenen Finanzen = ask. " + DATA_RULE;
+  "\"wie haben sich meine ausgaben entwickelt\" = query; \"wann bin ich pleite\" = forecast; \"kommt noch was großes\" = forecast; " +
+  "\"wofür geb ich am meisten aus\" = ask; \"teuerste kategorie\" = ask; \"hab ich was doppelt bezahlt\" = ask; \"fass meinen monat zusammen\" = ask; " +
+  "\"wie viel hab ich seit jahresbeginn gespart\" = ask; \"wieso ist revolut auf 0\" = ask; \"sollte ich den notgroschen erhöhen\" = ask; " +
+  "\"was soll ich als nächstes tun\" = ask; \"sind meine abos zu teuer\" = cancel; \"zeig buchungen über 100 euro\" = query (merchant null). " +
+  "Fragen nach Meinung, Rat, Erklärung oder Gefühlen sind nie edit, booking, rule oder ein neuer Entwurf. Andere Fragen zu den eigenen Finanzen = ask. " + DATA_RULE;
+
+// Words the model sometimes takes for a merchant ("Wofür geb ich am meisten Geld aus", "über 100 Euro").
+const genericWords = new Set(["geld", "euro", "eur", "ausgaben", "ausgabe", "buchungen", "buchung", "sachen", "zeug", "kategorie", "kategorien", "monat", "jahr", "konto", "konten", "zahlungen"]);
 
 // Tools whose local execution reads model hints (names, category, merchant); all others are decided by the rules alone.
 export const hintTools: readonly AssistantTool[] = ["query", "edit", "booking", "rule"];
@@ -91,7 +98,7 @@ function groundHints(model: z.infer<typeof modelSchema> | undefined, input: Assi
   const category = model.category?.trim();
   if (category && (categories as readonly string[]).includes(category)) hints.category = category;
   const merchant = model.merchant?.trim();
-  if (merchant && merchant.length >= 2 && merchant.length <= 60 && fold(text).includes(fold(merchant))) hints.merchant = merchant;
+  if (merchant && !genericWords.has(fold(merchant)) && merchant.length >= 2 && merchant.length <= 60 && fold(text).includes(fold(merchant))) hints.merchant = merchant;
   return hints;
 }
 

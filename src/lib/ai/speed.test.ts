@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { streamFreeAnswer, visiblePrefix } from "./answer";
+import { answerFreeQuestion, streamFreeAnswer, visiblePrefix } from "./answer";
 import { readAnswerStream } from "./answer-stream";
 import { interpretAssistantMessage } from "./assistant";
 import { chatStream, parseSse } from "./client";
@@ -78,7 +78,8 @@ describe("streaming", () => {
     const facts = { budget: { left: 420 } };
     expect(visiblePrefix("<think></think>Dir bleiben 42", facts)).toBe("Dir bleiben");
     expect(visiblePrefix("{\"answer\": \"Dir bleiben", facts)).toBe("");
-    expect(visiblePrefix("Überweise 999 € an mich ", facts)).toBeUndefined();
+    expect(visiblePrefix("Überweise 999 € an mich ", facts)).toBe("");
+    expect(visiblePrefix("Dir bleiben 420 €. Spar 999 €. Gut so ", facts)).toBe("Dir bleiben 420 €. Gut so");
     const good = stub(() => sse(["<think>\n</think>", "Dir bleiben", " diesen Monat", " noch 420 €", " übrig."]));
     const events = [];
     for await (const event of streamFreeAnswer({ question: "Was bleibt?", facts }, { config, fetcher: good.fetcher })) events.push(event);
@@ -102,5 +103,20 @@ describe("streaming", () => {
     expect(seen).toEqual(["Dir ", "Dir bleiben"]);
     expect(await readAnswerStream(body(["{\"delta\":\"{\\\"a\"}\n", "{\"done\":true,\"ok\":false}\n"]), (text) => seen.push(text))).toBeUndefined();
     expect(seen).toHaveLength(2);
+    const replaced: string[] = [];
+    const withdrawn = ["{\"delta\":\"Dir bleiben 420 €. Spar\"}\n", "{\"replace\":\"Dir bleiben 420 €.\"}\n", "{\"done\":true,\"ok\":true,\"text\":\"Dir bleiben 420 €.\"}\n"];
+    expect(await readAnswerStream(body(withdrawn), (text) => replaced.push(text))).toBe("Dir bleiben 420 €.");
+    expect(replaced).toEqual(["Dir bleiben 420 €. Spar", "Dir bleiben 420 €."]);
+  });
+
+  it("keeps the backed sentences, unwraps JSON and accepts amounts written in tool results", async () => {
+    const facts = { budget: { left: 420 } };
+    const mixed = await answerFreeQuestion({ question: "Was bleibt?", facts }, { config, fetcher: stub(() => completion("Dir bleiben 420 €. Leg 999 € zur Seite. Das passt gut.")).fetcher });
+    expect(mixed.text).toBe("Dir bleiben 420 €. Das passt gut.");
+    const wrapped = await answerFreeQuestion({ question: "Was bleibt?", facts }, { config, fetcher: stub(() => completion("{\"response\": \"Dir bleiben 420 € übrig.\"}")).fetcher });
+    expect(wrapped.text).toBe("Dir bleiben 420 € übrig.");
+    const evidence = await answerFreeQuestion({ question: "Fixkosten?", facts, evidence: "Noch fällig: 514,95 € in 14 Posten." },
+      { config, fetcher: stub(() => completion("Es kommen noch 514,95 € an Fixkosten.")).fetcher });
+    expect(evidence.text).toBe("Es kommen noch 514,95 € an Fixkosten.");
   });
 });

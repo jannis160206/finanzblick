@@ -61,7 +61,7 @@ let streamed = false;
 try {
   for await (const event of streamFreeAnswer({ question: "Wie viel Geld habe ich insgesamt gespart?", facts: { totalSavings: 12345.67 } }, { config })) {
     if ("delta" in event) firstWord ??= Math.round(performance.now() - streamStart);
-    else streamed = event.ok;
+    else if ("done" in event) streamed = event.ok;
   }
 } catch {
   // Reported below as not streamed.

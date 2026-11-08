@@ -20,6 +20,7 @@ import { extractMemories } from "@/lib/assistant/memory";
 import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
+import { changingTools, conversationRoute, evidenceText } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
 import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
@@ -279,7 +280,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }, [ready, storageError]);
 
   // Anything no tool covers gets a short model answer built only from the computed facts.
-  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[]) {
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], evidence?: string) {
     try {
       const facts = assistantFacts(state, dashboard, state.settings.asOf);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
@@ -287,7 +288,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
       const response = await fetch("/api/ai/answer?stream=1", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ question, history, facts }),
+        body: JSON.stringify({ question, history, facts, ...(evidence ? { evidence } : {}) }),
       });
       if (!response.ok) return undefined;
       if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
@@ -438,7 +439,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         reply = { draft, question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
       }
     }
-    const tool: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
+    const picked: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
+    // Explanations, opinions and advice get a written answer; a question never silently opens an edit or a form.
+    const route = conversationRoute({ text: work, tool: picked, ruleTool: reply.source === "Regel" ? picked : detectTool(work, [...goals, ...planned]),
+      draftAction: reply.draft?.action, numbers: work.match(/\d+(?:[.,]\d+)?/g)?.map(Number) ?? [], pending: !!pending });
+    const tool = route.tool;
     // Only the model understood this phrasing; remember it so the rules answer it directly next time.
     if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
       !detectTool(work, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
@@ -455,7 +460,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       notes.push(`Gemerkt: Mit „${alias.from}“ meinst du „${alias.to}“.`);
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
-    const parsed = !tool && reply.draft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
+    const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
     const free = !tool && !parsed?.success ? await freeAnswer(work, history) : undefined;
     await settle();
     if (tool === "remember") {
@@ -471,6 +476,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         result = executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
+      }
+      // The tool computed the numbers; the model turns them into a direct answer to the actual question. The card stays.
+      if (route.converse && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
+        const said = await freeAnswer(work, history, evidenceText(result));
+        if (said) result = { ...result, text: said };
       }
       addResult(withNotes(result.suggestions || result.change || result.undoId || result.choices ? result : { ...result, suggestions: followUps[tool] }), reply.source,
         { tool, asked: work, clarify: work });

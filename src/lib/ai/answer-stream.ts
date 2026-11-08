@@ -12,14 +12,15 @@ export async function readAnswerStream(body: ReadableStream<Uint8Array>, onText:
       buffer = done ? "" : lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        let event: { delta?: unknown; done?: unknown; ok?: unknown; text?: unknown };
+        let event: { delta?: unknown; replace?: unknown; done?: unknown; ok?: unknown; text?: unknown };
         try {
           event = JSON.parse(line);
         } catch {
           continue;
         }
-        if (typeof event.delta === "string") {
-          shown += event.delta;
+        if (typeof event.delta === "string" || typeof event.replace === "string") {
+          // `replace` withdraws a sentence the server could not back after all.
+          shown = typeof event.replace === "string" ? event.replace : shown + event.delta;
           if (!shown.trimStart().startsWith("{")) onText(shown);
         }
         if (event.done) return event.ok === true && typeof event.text === "string" && event.text.trim() ? event.text.trim() : undefined;
