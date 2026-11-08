@@ -78,7 +78,7 @@ it("automatically retries an unavailable first load without submitting placehold
     expect(JSON.parse(String(call[1].body)).state.transactions.map((row: { id: string }) => row.id)).toEqual(["existing"]);
 });
 
-it("bounds automatic transport retries and resumes on online without a request loop", async () => {
+it("paces automatic transport retries to one per minute and resumes on online without a request loop", async () => {
   vi.useFakeTimers();
   try {
     const view = mount();
@@ -93,7 +93,7 @@ it("bounds automatic transport retries and resumes on online without a request l
     expect(request.mock.calls.filter((call) => call[1].method === "GET")).toHaveLength(5);
     expect(view.read().saved).toBe(false);
     await act(async () => { await vi.advanceTimersByTimeAsync(600_000); });
-    expect(request.mock.calls).toHaveLength(calls);
+    expect(request.mock.calls.length - calls).toBeLessThanOrEqual(10);
     request.mockImplementation(normal);
     await act(async () => { window.dispatchEvent(new Event("online")); await vi.advanceTimersByTimeAsync(10); });
     expect(view.read().saved).toBe(true);
@@ -101,7 +101,7 @@ it("bounds automatic transport retries and resumes on online without a request l
   } finally { vi.useRealTimers(); }
 });
 
-it("never chooses between conflicting financial settings or sends a guessed merged stand", async () => {
+it("resolves conflicting financial settings automatically with the device's latest edit", async () => {
   const base = createEmptyAccountState(), local = structuredClone(base);
   local.settings.emergencyTarget = 123;
   remote = structuredClone(base);
@@ -110,12 +110,11 @@ it("never chooses between conflicting financial settings or sends a guessed merg
   const original = JSON.stringify({ state: local, revision: 1, pending: true, baseState: base });
   localStorage.setItem(accountStorageKey(account.id), original);
   const view = mount(false, true);
-  await waitFor(() => expect(view.read().syncNeedsAttention).toBe(true));
-  expect(screen.getByRole("link", { name: "Details prüfen" })).toBeTruthy();
+  await waitFor(() => expect(view.read().saved).toBe(true));
+  expect(view.read().syncNeedsAttention).toBe(false);
   expect(view.read().state.settings.emergencyTarget).toBe(123);
-  expect(remote.settings.emergencyTarget).toBe(456);
-  expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(0);
-  expect(view.read().storageError).toContain("widersprüchliche");
+  expect(remote?.settings.emergencyTarget).toBe(123);
+  expect(view.read().storageError).toBeNull();
 });
 
 it("persists complete confirmed imports immediately on the device then synchronizes the account", async () => {

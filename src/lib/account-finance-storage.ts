@@ -78,6 +78,7 @@ export class AccountSessionError extends FinanceStorageError {}
 export class AccountRevisionConflictError extends FinanceStorageError {}
 export class AccountTransportError extends FinanceStorageError {}
 export class AccountWorkingChangeError extends FinanceStorageError {}
+export class AccountTabChangeError extends AccountWorkingChangeError {}
 export function canAutomaticallyReconcile(error: unknown): boolean {
   return error instanceof AccountRevisionConflictError || error instanceof AccountTransportError ||
     error instanceof AccountWorkingChangeError || (error instanceof AccountReconciliationError && error.retryable);
@@ -122,7 +123,7 @@ export class AccountFinanceStorage {
   private writeCache(cache: Cache) {
     const current = localStorage.getItem(this.key);
     if (this.baseline !== undefined && current !== this.baseline) {
-      throw new FinanceStorageError("Ein anderer Tab hat diesen Kontostand geändert. Bitte deinen Stand sichern und den Serverstand laden.");
+      throw new AccountTabChangeError("Ein anderer Tab hat diesen Kontostand geändert. Beide Stände werden automatisch zusammengeführt.");
     }
     let compact = cache.baseState === undefined || cache.baseState === null
       ? cache : { ...cache, baseState: baseStateSchema.parse(cache.baseState) };
@@ -391,10 +392,25 @@ export class AccountFinanceStorage {
     }
   }
 
+  /** Takes over a stand another tab wrote meanwhile, keeping both tabs' edits. */
+  private adoptOtherTab(state: AppState): AppState {
+    const raw = localStorage.getItem(this.key);
+    if (this.baseline === undefined || raw === this.baseline || raw === null) return state;
+    const other = parseCache(raw);
+    const base = this.confirmed?.revision === this.cache?.revision ? this.confirmed?.state : undefined;
+    const combined = mergeFinanceStates(state, other.state, base);
+    this.baseline = raw;
+    this.cache = other;
+    this.confirmed = !other.pending ? { revision: other.revision, state: other.state }
+      : other.baseState !== undefined ? { revision: other.revision, state: other.baseState } : undefined;
+    return combined;
+  }
+
   async reconcileServer(state: AppState, isCurrent: () => boolean = () => true): Promise<AppState> {
     if (this.busy) throw new FinanceStorageError("Bitte warten, bis die laufende Synchronisierung beendet ist.");
     if (!this.loaded || !this.cache) throw new FinanceStorageError("Der Gerätestand konnte nicht gelesen werden. Bitte zuerst das Original sichern.");
     this.paused = true;
+    state = this.adoptOtherTab(state);
     this.save(state);
     this.busy = true;
     let rebased = false;

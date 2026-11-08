@@ -415,6 +415,10 @@ export function FinanceProvider({
     }
     void hydrateAccount();
     const refresh = () => { void poll(); };
+    // Keep pulling the newest server stand (bank sync, other devices) without any user action.
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", refresh);
     window.addEventListener("online", refresh);
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -424,6 +428,8 @@ export function FinanceProvider({
     return () => {
       active = false;
       cloud.dispose();
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("online", refresh);
       window.removeEventListener("beforeunload", beforeUnload);

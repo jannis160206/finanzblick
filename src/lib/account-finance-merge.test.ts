@@ -40,7 +40,7 @@ it("uses a confirmed common baseline for independent settings and payroll edits 
   expect(result.settings.vacationTarget).toBe(456);
   expect(result.transactions[0].manualCategory).toBe(true);
   remote.settings.emergencyTarget = 789;
-  expect(() => mergeFinanceStates(local, remote, base)).toThrow(/widersprüchliche/);
+  expect(mergeFinanceStates(local, remote, base).settings.emergencyTarget).toBe(123);
 });
 
 it("retains all bookings even when one side deleted a baseline row", () => {
@@ -150,7 +150,7 @@ it.each(["local", "remote"] as const)(
   },
 );
 
-it("does not choose between two differing manual decisions", () => {
+it("resolves two differing manual decisions with the device's latest choice", () => {
   const local = state("shared"),
     remote = state("shared");
   local.transactions[0].manualCategory = true;
@@ -159,9 +159,7 @@ it("does not choose between two differing manual decisions", () => {
     manualCategory: true,
     category: "Geschenke & Spenden",
   };
-  expect(() => mergeFinanceStates(local, remote)).toThrow(
-    /widersprüchliche.*Buchungen/,
-  );
+  expect(mergeFinanceStates(local, remote).transactions[0].category).toBe("Shopping");
 });
 
 it("retains manual-category provenance when an identical device row only has a confirmed identity", () => {
@@ -186,7 +184,7 @@ it.each([
   "rawDetails",
   "sourceCategory",
 ] as const)(
-  "never guesses or overwrites conflicting original booking %s",
+  "takes the bank's newest original booking %s and keeps the device's decision",
   (field) => {
     const local = state("shared"),
       remote = state("shared");
@@ -198,25 +196,33 @@ it.each([
       rawDetails: ["Different original"],
       sourceCategory: "Different source",
     };
+    local.transactions[0] = { ...local.transactions[0], manualCategory: true, category: "Geschenke & Spenden", tags: ["Geburtstag"] };
     remote.transactions[0] = {
       ...remote.transactions[0],
       [field]: patch[field],
     };
-    expect(() => mergeFinanceStates(local, remote)).toThrow(
-      /widersprüchliche.*Buchungen/,
-    );
+    const result = mergeFinanceStates(local, remote).transactions[0];
+    expect(result[field]).toEqual(patch[field]);
+    expect(result.category).toBe("Geschenke & Spenden");
+    expect(result.tags).toEqual(["Geburtstag"]);
   },
 );
 
-it("refuses contradictory balances, settings and overlapping holidays without mutating either side", () => {
+it("resolves contradictory settings and invalid combinations automatically without mutating either side", () => {
   const local = state("local"),
     remote = state("remote");
   remote.settings.balances.Sparkonto = 42;
-  expect(() => mergeFinanceStates(local, remote)).toThrow(/Einstellungen/);
+  remote.trBalances = [{ date: "2026-10-01", balance: 100 }];
+  local.trBalances = [{ date: "2026-10-01", balance: 90 }];
+  const originals = structuredClone([local, remote]);
+  const merged = mergeFinanceStates(local, remote);
+  expect(merged.settings.balances.Sparkonto).toBe(local.settings.balances.Sparkonto);
+  expect(merged.trBalances).toEqual(remote.trBalances);
+  expect([local, remote]).toEqual(originals);
   remote.settings = structuredClone(local.settings);
   local.holidayRanges = [{ from: "2026-10-01", to: "2026-10-03" }];
   remote.holidayRanges = [{ from: "2026-10-02", to: "2026-10-04" }];
-  expect(() => mergeFinanceStates(local, remote)).toThrow(/nicht gültig/);
+  expect(mergeFinanceStates(local, remote).holidayRanges).toEqual(local.holidayRanges);
 });
 
 it("retains receipt-only facts and follows their protected booking's category", () => {

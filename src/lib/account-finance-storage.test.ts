@@ -226,20 +226,37 @@ describe("account finance persistence", () => {
       expect(cached().pending).toBe(true);
     });
 
-    it("does not PUT contradictory money values, and keeps both original local copies unchanged", async () => {
+    it("takes the bank's newest booking amount automatically and keeps an older conflict copy untouched", async () => {
       const local = changed("shared"), remote = changed("shared");
       remote.transactions[0].amount = -84;
-      const raw = JSON.stringify({ state: local, revision: 1, pending: true });
-      localStorage.setItem(accountStorageKey("alice"), raw);
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
       localStorage.setItem(accountConflictKey("alice"), "older preserved original");
-      const request = vi.fn().mockImplementation(async () => response(remote, 2));
+      const request = vi.fn().mockImplementation(async (_url: string, options: RequestInit) =>
+        options.method === "PUT" ? response(JSON.parse(String(options.body)).state, 3) : response(remote, 2));
       vi.stubGlobal("fetch", request);
       const { controller } = storage();
       await controller.load();
-      await expect(controller.reconcileServer(local)).rejects.toThrow(/widersprüchliche/);
-      expect(request.mock.calls.every((call) => call[1].method === "GET")).toBe(true);
-      expect(localStorage.getItem(accountStorageKey("alice"))).toBe(raw);
+      const result = await controller.reconcileServer(local);
+      expect(result.transactions[0].amount).toBe(-84);
+      expect(cached().pending).toBe(false);
       expect(localStorage.getItem(accountConflictKey("alice"))).toBe("older preserved original");
+    });
+
+    it("merges a stand another tab wrote meanwhile instead of stopping", async () => {
+      const request = vi.fn().mockImplementation(async (_url: string, options: RequestInit) =>
+        options.method === "PUT" ? response(JSON.parse(String(options.body)).state, 4) : response(changed("initial"), 2));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      const other = changed("initial");
+      other.transactions.push(changed("other tab").transactions[0]);
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: other, revision: 2, pending: true }));
+      const mine = changed("initial");
+      mine.transactions.push(changed("this tab").transactions[0]);
+      expect(() => controller.save(mine)).toThrow(/anderer Tab/);
+      const result = await controller.reconcileServer(mine);
+      expect(new Set(result.transactions.map((row) => row.id))).toEqual(new Set(["initial", "other tab", "this tab"]));
+      expect(cached().pending).toBe(false);
     });
 
     it.each(["device", "other tab"])("preserves new %s edits while a reconciliation read is pending", async (source) => {

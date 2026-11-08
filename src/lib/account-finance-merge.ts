@@ -1,5 +1,5 @@
 import { FinanceStorageError } from "@/lib/finance-storage";
-import { appStateSchema, transactionSchema, type AppState } from "@/lib/types";
+import { appStateSchema, transactionSchema, type AppState, type Transaction } from "@/lib/types";
 import { isAutomationLocked } from "@/lib/automation/locks";
 import { hasCategoryChoice } from "@/lib/manual-category";
 
@@ -77,24 +77,19 @@ const collections: Record<string, readonly string[]> = {
   interestRates: ["date"],
 };
 
+// Filled by the server's bank sync and imports, so the server copy is the newest truth there.
+const serverSections = new Set([
+  "accountSnapshots",
+  "amexBalanceSnapshots",
+  "pocketSnapshots",
+  "trBalances",
+  "importResults",
+  "interestRates",
+]);
+
 function without(value: Record<string, unknown>, fields: ReadonlySet<string>) {
   return Object.fromEntries(
     Object.entries(value).filter(([key]) => !fields.has(key)),
-  );
-}
-
-function conflict(section: string): never {
-  const labels: Record<string, string> = {
-    transactions: "Buchungen",
-    settings: "Einstellungen",
-    financeRows: "Finanzzeilen",
-    fixedReceipts: "Fixkostenbelege",
-    reviewQueue: "offene Prüfungen",
-    savingsGoals: "Sparziele",
-    months: "Monatsplanung",
-  };
-  throw new FinanceMergeConflictError(
-    `Die Datenstände enthalten widersprüchliche Angaben im Bereich „${labels[section] ?? section}“. Es wurde nichts überschrieben. Bitte beide Stände sichern und die Unterschiede prüfen.`,
   );
 }
 
@@ -106,9 +101,36 @@ function keyFor(value: unknown, section: string): string {
       : typeof value.key === "string"
         ? ["key"]
         : collections[section];
-  if (!fields || fields.some((key) => value[key] === undefined))
-    conflict(section);
+  // Rows without an identity are compared by their whole content.
+  if (!fields || fields.some((key) => value[key] === undefined)) return JSON.stringify(value);
   return JSON.stringify(fields.map((key) => value[key]));
+}
+
+/** Newest side for a value both copies changed: bank-fed sections trust the server, personal edits trust this device. */
+const preferred = (left: unknown, right: unknown, section: string) => serverSections.has(section) ? right : left;
+
+function mergeBooking(left: Record<string, unknown>, right: Record<string, unknown>, local: Transaction, remote: Transaction) {
+  const localChoice = hasCategoryChoice(local), remoteChoice = hasCategoryChoice(remote);
+  const localLocked = isAutomationLocked(local), remoteLocked = isAutomationLocked(remote);
+  // A category decision and a merchant confirmation are separate choices; the device decides when both made the same kind.
+  const chosen =
+    localChoice !== remoteChoice
+      ? localChoice ? local : remote
+      : localChoice || (localLocked && !remoteLocked) ? local : remote;
+  const other = chosen === local ? remote : local;
+  const named = local.merchantNameConfirmed === true ? local : remote.merchantNameConfirmed === true ? remote : undefined;
+  const identity = named && named !== chosen && chosen.merchantNameConfirmed !== true
+    ? Object.fromEntries(merchantFields.map((key) => [key, Reflect.get(named, key)]))
+    : other.merchantNameConfirmed === true && chosen.merchantNameConfirmed === true && local.merchantAlias !== remote.merchantAlias
+      ? Object.fromEntries(merchantFields.map((key) => [key, Reflect.get(local, key)]))
+      : {};
+  // Bank facts (amount, date, status, texts) come from the server's latest bank sync.
+  const facts = without(right, bookingMetadata);
+  const decisions = Object.fromEntries(Object.entries(chosen).filter(([key]) => assignments.has(key)));
+  const notes = Object.fromEntries([...annotations].map((key) => [key, left[key]]));
+  return transactionSchema.parse(Object.fromEntries(
+    Object.entries({ ...facts, ...decisions, ...identity, ...notes }).filter(([, value]) => value !== undefined),
+  ));
 }
 
 function merge(left: unknown, right: unknown, section: string, base?: unknown, knownBase = false): unknown {
@@ -125,65 +147,27 @@ function merge(left: unknown, right: unknown, section: string, base?: unknown, k
     if (Array.isArray(base))
       for (const value of base) originals.set(keyFor(value, section), value);
     for (const list of [left, right]) {
-      const seen = new Set<string>();
-      for (const value of list) {
-        const key = keyFor(value, section);
-        if (seen.has(key)) conflict(section);
-        seen.add(key);
+      const own = new Map<string, unknown>();
+      // A repeated row inside one copy keeps its latest entry.
+      for (const value of list) own.set(keyFor(value, section), value);
+      for (const [key, value] of own)
         values.set(
           key,
           values.has(key) ? merge(values.get(key), value, section, originals.get(key), knownBase) : value,
         );
-      }
     }
     return [...values.values()];
   }
-  if (!record(left) || !record(right)) conflict(section);
+  if (!record(left) || !record(right)) return preferred(left, right, section);
   const localBooking = transactionSchema.safeParse(left);
   const remoteBooking = transactionSchema.safeParse(right);
-  if (localBooking.success && remoteBooking.success) {
-    const local = localBooking.data,
-      remote = remoteBooking.data;
-    const localLocked = isAutomationLocked(local),
-      remoteLocked = isAutomationLocked(remote);
-    if (
-      !sameFinanceData(without(left, bookingMetadata), without(right, bookingMetadata))
-    )
-      conflict(section);
-    const notes = Object.fromEntries([...annotations].map((key) => [key, left[key]]));
-    // A category decision and a merchant confirmation are separate choices; only the same kind of choice can contradict.
-    const localChoice = hasCategoryChoice(local), remoteChoice = hasCategoryChoice(remote);
-    if (
-      localChoice &&
-      remoteChoice &&
-      !sameFinanceData(
-        [local.category, local.includeInPlan, local.fixedCost],
-        [remote.category, remote.includeInPlan, remote.fixedCost],
-      )
-    )
-      conflict(section);
-    const localNamed = local.merchantNameConfirmed === true, remoteNamed = remote.merchantNameConfirmed === true;
-    if (localNamed && remoteNamed && local.merchantAlias !== remote.merchantAlias) conflict(section);
-    const chosen =
-      localChoice !== remoteChoice
-        ? localChoice ? local : remote
-        : localLocked && !remoteLocked ? local : remote;
-    const other = chosen === local ? remote : local;
-    const identity = other.merchantNameConfirmed === true && chosen.merchantNameConfirmed !== true
-      ? Object.fromEntries(merchantFields.map((key) => [key, Reflect.get(other, key)]))
-      : {};
-    return transactionSchema.parse(Object.fromEntries(
-      Object.entries({ ...without(chosen, annotations), ...identity, ...notes }).filter(([, value]) => value !== undefined),
-    ));
-  }
+  if (localBooking.success && remoteBooking.success)
+    return mergeBooking(left, right, localBooking.data, remoteBooking.data);
   if (
     section === "fixedReceipts" &&
     record(left.booking) &&
     record(right.booking)
   ) {
-    const metadata = new Set(["booking", "category", "merchantKey"]);
-    if (!sameFinanceData(without(left, metadata), without(right, metadata)))
-      conflict(section);
     const booking = merge(left.booking, right.booking, section, record(base) ? base.booking : undefined, knownBase);
     const selected = sameFinanceData(booking, left.booking) ? left : right;
     return { ...selected, booking };
@@ -213,10 +197,16 @@ export function mergeFinanceStates(
   for (const key of new Set([...Object.keys(local), ...Object.keys(remote)]))
     combined.push([key, merge(left[key], right[key], key, baseline ? Reflect.get(baseline, key) : undefined,
       baseline !== undefined && (baseline === null || Object.hasOwn(baseline, key)))]);
-  const result = appStateSchema.safeParse(Object.fromEntries(combined));
-  if (!result.success)
-    throw new FinanceMergeConflictError(
-      "Der gemeinsame Datenstand ist nicht gültig. Beide Originalstände bleiben erhalten; bitte sichern und die Unterschiede prüfen.",
-    );
-  return result.data;
+  const merged = Object.fromEntries(combined);
+  // A combination that breaks a rule (e.g. overlapping holidays) falls back per area: device copy first, then server copy.
+  for (const source of [left, right, null]) {
+    const result = appStateSchema.safeParse(merged);
+    if (result.success) return result.data;
+    if (!source) break;
+    for (const key of new Set(result.error.issues.map((issue) => issue.path[0]).filter((key) => typeof key === "string")))
+      merged[key] = source[key];
+  }
+  throw new FinanceMergeConflictError(
+    "Der gemeinsame Datenstand ist nicht gültig. Beide Originalstände bleiben erhalten; der Abgleich wird erneut versucht.",
+  );
 }
