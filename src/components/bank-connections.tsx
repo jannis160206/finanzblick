@@ -309,13 +309,14 @@ function accountSyncedAt(entry: BankAccountEntry, connection: BankConnectionEntr
 }
 
 function syncState(entry: BankAccountEntry, connection: BankConnectionEntry): SyncState {
+  if (entry.syncError?.startsWith("Tageslimit")) return "warn";
   if (entry.syncError || connection.syncActive === false) return "error";
   if (!accountSyncedAt(entry, connection)) return "none";
   return entry.balanceOk === false ? "warn" : "ok";
 }
 
 const dotTone: Record<SyncState, string> = { ok: "bg-emerald-500", warn: "bg-amber-500", error: "bg-destructive", none: "bg-muted-foreground/50" };
-const stateText: Record<SyncState, string> = { ok: "Bank-API funktioniert", warn: "Umsätze ok, Kontostand fehlt", error: "Abruf fehlgeschlagen", none: "Noch nicht abgerufen" };
+const stateText: Record<SyncState, string> = { ok: "Bank-API funktioniert", warn: "Teilweise abgerufen", error: "Abruf fehlgeschlagen", none: "Noch nicht abgerufen" };
 
 function SyncDot({ state }: { state: SyncState }) {
   return <span aria-label={stateText[state]} role="img" className={`mr-2 inline-block size-2 shrink-0 rounded-full ${dotTone[state]}`} />;

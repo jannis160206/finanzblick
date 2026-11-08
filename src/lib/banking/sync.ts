@@ -485,8 +485,11 @@ async function collectXs2a(api: Xs2aClient, link: BankLink, range: { from: strin
   return { file, summaries, connections: connections.map(mapConnection), needsConsent };
 }
 
-const consentLost = (error: unknown) =>
+const rateLimited = (error: unknown) =>
+  error instanceof EnableBankingError && (error.status === 429 || /RATE_LIMIT|exceeded Frequency/i.test(`${error.code} ${error.message}`));
+const consentLost = (error: unknown) => !rateLimited(error) &&
   error instanceof EnableBankingError && (error.status === 401 || error.status === 403 || /expired|revoked|consent|session/i.test(`${error.code} ${error.message}`));
+const RATE_LIMIT_MESSAGE = "Tageslimit der Bank erreicht (PSD2 erlaubt nur wenige automatische Abrufe pro Tag). Nächster Versuch beim nächsten Abruf.";
 
 type AccountSnapshot = NonNullable<AppState["accountSnapshots"]>[number];
 
@@ -513,6 +516,7 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
     let message: string | null = null;
     let validUntil = connection.consentValidUntil;
     let sessionAccounts: string[] = [];
+    let limited = false;
     try {
       const session = await api.session(connection.id);
       sessionAccounts = session.accounts ?? [];
@@ -540,6 +544,11 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
         try {
           transactions = await api.transactions(account.id, from < range.from ? from : range.from, range.to);
         } catch (error) {
+          if (rateLimited(error)) {
+            limited = true;
+            message = RATE_LIMIT_MESSAGE;
+            break;
+          }
           if (!consentLost(error)) throw error;
           active = false;
           message = "Freigabe abgelaufen";
@@ -594,12 +603,12 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
         });
       }
     }
-    if (!active) {
-      needsConsent = true;
+    if (!active || limited) {
+      if (!active) needsConsent = true;
       summaries.push(...link.accounts.filter((account) => account.connectionId === connection.id && !summaries.some((entry) => entry.id === account.id))
         .map((account) => ({ ...account, syncError: message ?? "Abruf nicht möglich" })));
     }
-    connections.push({ ...connection, syncActive: active, message, consentValidUntil: validUntil, lastSynced: active ? new Date(now).toISOString() : connection.lastSynced });
+    connections.push({ ...connection, syncActive: active, message, consentValidUntil: validUntil, lastSynced: active && !limited ? new Date(now).toISOString() : connection.lastSynced });
   }
   const providerAccounts = [...link.providerAccounts, ...added].map((account) => assigned.has(account.id) ? { ...account, pocket: assigned.get(account.id)! } : account);
   return { file, summaries, connections, needsConsent, providerAccounts };

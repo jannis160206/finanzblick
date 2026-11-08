@@ -248,6 +248,17 @@ describe("enable banking sync service", () => {
     expect(snapshots.filter((item) => item.date === "2026-11-10")).toHaveLength(1);
   });
 
+  it("keeps the consent active when the bank's daily access limit is reached", async () => {
+    const api = fakeApi();
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    await syncBank(accounts, user(), { enableBanking: api, now });
+    vi.mocked(api.transactions).mockRejectedValueOnce(new EnableBankingError(429, "XS2A023E: access exceeded Frequency for consentId=x exceeded", "ASPSP_RATE_LIMIT_EXCEEDED"));
+    const limited = await syncBank(accounts, user(), { enableBanking: api, now: now + 7 * 3_600_000 });
+    expect(limited.connections[0]).toMatchObject({ syncActive: true, message: expect.stringMatching(/Tageslimit/), lastSynced: new Date(now).toISOString() });
+    expect(limited.accounts[0]).toMatchObject({ id: "uid-1", balance: 1234.56, syncedAt: now, syncError: expect.stringMatching(/Tageslimit/) });
+    expect(limited.lastError).toBeNull();
+  });
+
   it("reports a connection without shared accounts and adopts accounts released later", async () => {
     const api = fakeApi();
     vi.mocked(api.createSession).mockResolvedValueOnce({
