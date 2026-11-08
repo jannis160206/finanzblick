@@ -6,7 +6,8 @@ import type { AccountDatabase } from "@/lib/server/database";
 import { AccountError } from "@/lib/server/errors";
 import { AutomationStore } from "@/lib/automation/store";
 import { MAX_UPLOAD_BYTES } from "@/lib/automation/schema";
-import { bankAccountTarget, BANK_SYNC_FORMAT, coveredUntilByAccount, accountIdentity, type BankSyncFile } from "@/lib/import/bank-sync";
+import { bankAccountTarget, BANK_SYNC_FORMAT, coveredUntilByAccount, accountIdentity, isPaypalAccount, type BankSyncFile } from "@/lib/import/bank-sync";
+import { matchPaypalActivity, type PaypalActivity } from "@/lib/import/paypal-activity";
 import { readXs2aConfig, Xs2aClient, Xs2aError, type Xs2aConnection } from "./xs2a";
 import { EnableBankingClient, EnableBankingError, pickBalances, readEnableBankingConfig, toTurnover, type EbAccount } from "./enable-banking";
 import { matchPockets } from "./pocket-match";
@@ -435,7 +436,18 @@ const isoDay = (time: number) => new Date(time).toISOString().slice(0, 10);
 const NO_ACCOUNTS_MESSAGE = "Keine Konten freigegeben. Bei einer eingeschränkten Enable-Banking-App muss das Konto zuerst im Control Panel unter „Linked accounts“ verknüpft werden, danach „Freigabe erneuern“.";
 const CONSENT_MESSAGE = "Die Bank verlangt eine erneute Bestätigung. Bitte bei der Verbindung „Freigabe erneuern“ wählen.";
 
-type SyncResult = { file: BankSyncFile; summaries: BankLink["accounts"]; connections: BankLink["connections"]; needsConsent: boolean; providerAccounts?: BankLink["providerAccounts"] };
+type SyncResult = { file: BankSyncFile; summaries: BankLink["accounts"]; connections: BankLink["connections"]; needsConsent: boolean; providerAccounts?: BankLink["providerAccounts"]; paypal?: PaypalActivity[] };
+
+/** Booked PayPal payments as the activity that names anonymous "…/PAYPAL" bank and card bookings. */
+export function paypalActivityFrom(turnovers: ReturnType<typeof toTurnover>[]): PaypalActivity[] {
+  return turnovers.flatMap((turnover) => {
+    const date = turnover.booking_date;
+    const name = (turnover.counter_holder ?? "").replace(/\s+/g, " ").trim();
+    if (turnover.prebooked || turnover.canceled || !date || !name || !turnover.amount) return [];
+    if (turnover.currency_id && turnover.currency_id !== "EUR") return [];
+    return [{ date, name: name.slice(0, 90), amount: turnover.amount, ...(turnover.transaction_id ? { code: turnover.transaction_id.slice(0, 40) } : {}) }];
+  });
+}
 
 async function collectXs2a(api: Xs2aClient, link: BankLink, range: { from: string; to: string }, covered: Map<string, string>, refresh: boolean, now: number): Promise<SyncResult> {
   const token = link.token!.token;
@@ -510,6 +522,7 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
   const connections: BankLink["connections"] = [];
   const assigned = new Map<string, string>();
   const added: BankLink["providerAccounts"] = [];
+  const paypal: PaypalActivity[] = [];
   let needsConsent = false;
   for (const connection of link.connections) {
     let active = true;
@@ -538,8 +551,9 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
     if (active) {
       const fetched: { account: BankLink["providerAccounts"][number]; turnovers: ReturnType<typeof toTurnover>[]; balance: ReturnType<typeof pickBalances> }[] = [];
       for (const account of accounts) {
-        // Unassigned accounts look back further once, so their pocket can be matched reliably.
-        const from = account.pocket ? range.from : isoDay(now - FIRST_SYNC_DAYS * DAY);
+        // Unassigned accounts look back further once, so their pocket can be matched reliably. PayPal always
+        // looks back, because the bank booking it names usually arrives a few days after the PayPal payment.
+        const from = account.pocket && !isPaypalAccount(account) ? range.from : isoDay(now - FIRST_SYNC_DAYS * DAY);
         let transactions;
         try {
           transactions = await api.transactions(account.id, from < range.from ? from : range.from, range.to);
@@ -557,7 +571,7 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
         const balance = pickBalances(await api.balances(account.id).catch(() => []));
         fetched.push({ account, turnovers: transactions.map(toTurnover), balance });
       }
-      const open = fetched.filter((entry) => !entry.account.pocket);
+      const open = fetched.filter((entry) => !entry.account.pocket && !isPaypalAccount(entry.account));
       if (open.length) {
         const taken = new Set(link.providerAccounts.filter((account) => account.pocket).map((account) => `${bankAccountTarget(account).bank}|${account.pocket}`));
         const usable = existing.filter((row) => !taken.has(`${row.bank}|${row.pocket}`));
@@ -585,13 +599,14 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
       }
       for (const { account, turnovers, balance } of fetched) {
         const target = bankAccountTarget(account);
-        file.accounts.push({ ...account, coveredUntil: covered.get(accountIdentity(target)) ?? null, turnovers });
+        if (isPaypalAccount(account)) paypal.push(...paypalActivityFrom(turnovers));
+        else file.accounts.push({ ...account, coveredUntil: covered.get(accountIdentity(target)) ?? null, turnovers });
         summaries.push({
           id: account.id,
           connectionId: connection.id,
           bank: target.bank,
           pocket: target.pocket,
-          label: account.pocket || account.description || target.pocket || target.bank,
+          label: isPaypalAccount(account) ? target.pocket ?? target.bank : account.pocket || account.description || target.pocket || target.bank,
           iban: maskIban(account.iban),
           balance: balance.balance,
           available: balance.available,
@@ -611,7 +626,7 @@ async function collectEnableBanking(api: EnableBankingClient, link: BankLink, ra
     connections.push({ ...connection, syncActive: active, message, consentValidUntil: validUntil, lastSynced: active && !limited ? new Date(now).toISOString() : connection.lastSynced });
   }
   const providerAccounts = [...link.providerAccounts, ...added].map((account) => assigned.has(account.id) ? { ...account, pocket: assigned.get(account.id)! } : account);
-  return { file, summaries, connections, needsConsent, providerAccounts };
+  return { file, summaries, connections, needsConsent, providerAccounts, paypal };
 }
 
 /**
@@ -649,6 +664,7 @@ export async function syncBank(
         lastError: result.needsConsent ? CONSENT_MESSAGE : null };
       await writeLink(database, user.id, link);
       storeBalances(database, user.id, bankSnapshots(link, now));
+      if (result.paypal?.length) namePaypalBookings(database, user.id, result.paypal);
       return { ...(await bankStatus(database, user.id)), queued, rows: count };
     } catch (error) {
       const message = error instanceof Xs2aError || error instanceof EnableBankingError || error instanceof AccountError ? error.message : "Bankabruf fehlgeschlagen.";
@@ -696,6 +712,23 @@ function storeBalances(database: AccountDatabase, userId: string, items: Account
       // A concurrent save won; retry on the fresh revision. Balances are refreshed on the next sync anyway.
     }
   }
+}
+
+/** Gives anonymous "…/PAYPAL" bookings and review drafts the shop from the linked PayPal account. */
+export function namePaypalBookings(database: AccountDatabase, userId: string, activity: PaypalActivity[]): number {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { state, revision } = database.getFinance(userId);
+    if (!state) return 0;
+    const result = matchPaypalActivity(state, activity);
+    if (!result.matched.length) return 0;
+    try {
+      database.putFinance(userId, result.state, revision);
+      return result.matched.length;
+    } catch {
+      // A concurrent save won; retry on the fresh revision. Unnamed bookings are matched again on the next sync anyway.
+    }
+  }
+  return 0;
 }
 
 async function enqueue(database: AccountDatabase, userId: string, file: BankSyncFile, now: number): Promise<boolean> {

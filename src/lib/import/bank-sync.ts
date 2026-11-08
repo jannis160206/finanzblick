@@ -61,6 +61,14 @@ export function isBankSyncName(name: string): boolean {
 
 const compact = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
 
+/**
+ * PayPal only shows the shop behind payments that Raiffeisen, Revolut or the card already book as "…/PAYPAL",
+ * so its bookings name those payments instead of being imported a second time.
+ */
+export function isPaypalAccount(account: { bankName?: string | null; bic?: string | null }): boolean {
+  return /pay\s*pal/i.test(compact(account.bankName)) || /^PPLX/i.test(compact(account.bic));
+}
+
 /** Maps a bank account to the bank/pocket names the dashboard already uses for CSV imports. */
 export function bankAccountTarget(account: Pick<BankSyncAccount, "bankName" | "bic" | "description" | "iban"> & { pocket?: string | null }): { bank: string; pocket: string | null } {
   const assigned = compact(account.pocket);
@@ -73,6 +81,7 @@ export function bankAccountTarget(account: Pick<BankSyncAccount, "bankName" | "b
     return savings ? { bank: "Raiffeisen", pocket: description.slice(0, 100) } : { bank: "Raiffeisen", pocket: RAIFFEISEN_ACCOUNT };
   }
   if (/revolut/i.test(bankName) || /^REVO/.test(bic)) return { bank: "Revolut", pocket: "Persönliches Konto" };
+  if (isPaypalAccount(account)) return { bank: "PayPal", pocket: "PayPal" };
   const bank = (bankName || bic || "Bank").slice(0, 100);
   const ibanTail = compact(account.iban).replace(/\s/g, "").slice(-4);
   return { bank, pocket: (description || (ibanTail ? `Konto …${ibanTail}` : "Girokonto")).slice(0, 100) };

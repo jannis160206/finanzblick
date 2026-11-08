@@ -248,6 +248,30 @@ describe("enable banking sync service", () => {
     expect(snapshots.filter((item) => item.date === "2026-11-10")).toHaveLength(1);
   });
 
+  it("names anonymous PayPal bank bookings from a linked PayPal account instead of importing them twice", async () => {
+    const paypalDebit = { id: "rb-1", date: "2026-11-07", description: "1054114922583/PAYPAL", amount: -9.58, category: "Sonstiges",
+      bank: "Raiffeisen", pocket: RAIFFEISEN_ACCOUNT, source: "csv", includeInPlan: true };
+    accounts.putFinance(userId, { ...blankTestState(), transactions: [paypalDebit] } as unknown as ReturnType<typeof blankTestState>, 0);
+    const api = fakeApi();
+    vi.mocked(api.createSession).mockResolvedValueOnce({
+      session_id: "sess-p", aspsp: { name: "PayPal", country: "DE" }, access: { valid_until: "2027-05-07T00:00:00+00:00" },
+      accounts: [{ uid: "pp-1", name: "Jannis Brühl", cash_account_type: "CACC" }] });
+    vi.mocked(api.session).mockResolvedValue({ status: "AUTHORIZED", accounts: ["pp-1"], access: { valid_until: "2027-05-07T00:00:00+00:00" } });
+    vi.mocked(api.transactions).mockResolvedValue([
+      tx({ entry_reference: "P1", booking_date: "2026-11-08", transaction_amount: { currency: "EUR", amount: "9.58" }, creditor: { name: "netcup GmbH" } }),
+      tx({ entry_reference: "P2", booking_date: "2026-11-08", status: "RJCT", transaction_amount: { currency: "EUR", amount: "556.49" }, creditor: { name: "Shop" } }),
+    ]);
+    vi.mocked(api.balances).mockResolvedValue([{ balance_amount: { currency: "EUR", amount: "0.00" }, balance_type: "XPCD" }]);
+    await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
+    const result = await syncBank(accounts, user(), { enableBanking: api, now });
+    expect(result).toMatchObject({ queued: false, rows: 0 });
+    expect(result.accounts[0]).toMatchObject({ bank: "PayPal", pocket: "PayPal", label: "PayPal", fetchedRows: 2 });
+    expect(vi.mocked(api.transactions).mock.calls[0][1]).toBe("2026-08-12");
+    const named = accounts.getFinance(userId).state?.transactions[0];
+    expect(named).toMatchObject({ id: "rb-1", amount: -9.58, merchantAlias: "netcup GmbH" });
+    expect(accounts.getFinance(userId).state?.transactions).toHaveLength(1);
+  });
+
   it("keeps the consent active when the bank's daily access limit is reached", async () => {
     const api = fakeApi();
     await completeBankAuthorization(accounts, userId, { state: (await connect(api)).state, code: "c" }, { enableBanking: api, now });
