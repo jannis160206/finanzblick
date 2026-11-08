@@ -362,6 +362,90 @@ function CalculatedMonthRow({
   );
 }
 
+export function planValueInfo(
+  row: FinanceRow,
+  month: string,
+  value: number,
+  currentMonth: string,
+  actual?: RowMonthActual,
+  status?: FixedCostScheduleItem,
+) {
+  const fixed = row.kind === "fixed";
+  const state = fixed ? fixedCellState(value, actual, month, currentMonth, status) : undefined;
+  const booked = actual?.amount ?? 0;
+  const over = !fixed && booked > value && deviates(value, booked);
+  const description = fixed
+    ? state ? fixedStateText[state] : month > currentMonth ? "Geplant" : "Kein Ist"
+    : over ? "Über Budget" : month === currentMonth ? "Bisher ausgegeben" : month > currentMonth ? "Geplant" : "Im Budget";
+  return { fixed, state, booked, over, description };
+}
+
+export function PlanValueDetails({
+  row,
+  month,
+  value,
+  currentMonth,
+  actual,
+  status,
+  budget,
+}: {
+  row: FinanceRow;
+  month: string;
+  value: number;
+  currentMonth: string;
+  actual?: RowMonthActual;
+  status?: FixedCostScheduleItem;
+  budget?: MonthPlanActuals["budgets"][string];
+}) {
+  const { state, booked, over, description } = planValueInfo(row, month, value, currentMonth, actual, status);
+  return (
+    <FinancialData>
+          <p className="font-semibold">{row.label} · {monthLabel(month)}</p>
+          <p className={cn("mt-0.5", (state === "different" || state === "due" || over) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+            {description}
+          </p>
+          <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 tabular-nums">
+            <dt className="text-muted-foreground">Geplant</dt><dd className="text-right">{currency(value)}</dd>
+            <dt className="text-muted-foreground">{month === currentMonth ? "Bisher gebucht" : "Gebucht"}</dt><dd className="text-right">{currency(booked)}</dd>
+            {(actual || month < currentMonth) && (
+              <>
+                <dt className="text-muted-foreground">Differenz</dt>
+                <dd className={cn("text-right", booked > value && deviates(value, booked) && "text-destructive")}>
+                  {booked - value > 0 ? "+" : ""}{currency(round(booked - value))}
+                </dd>
+              </>
+            )}
+            {state === "open" && status?.expectedFrom && (
+              <>
+                <dt className="text-muted-foreground">Erwartet</dt>
+                <dd className="text-right">{status.expectedFrom === status.expectedTo ? dateLabel(status.expectedFrom) : `${dateLabel(status.expectedFrom)} – ${dateLabel(status.expectedTo!)}`}</dd>
+              </>
+            )}
+          </dl>
+          {!!actual?.bookings.length && (
+            <ul className="mt-3 space-y-1 border-t pt-2" aria-label="Buchungen">
+              {actual.bookings.slice(0, 8).map((booking) => (
+                <li key={booking.id} className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate">
+                    <span className="text-muted-foreground">{dateLabel(booking.date)}</span> {booking.name}
+                    {booking.account && <span className="text-muted-foreground"> · {booking.account}</span>}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{currency(booking.amount)}</span>
+                </li>
+              ))}
+              {actual.bookings.length > 8 && <li className="text-muted-foreground">+ {actual.bookings.length - 8} weitere</li>}
+            </ul>
+          )}
+          <Link
+            href={ledgerHref({ month, ...(budget ? { group: budget } : {}) })}
+            className="mt-3 inline-flex min-h-8 items-center gap-1 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            In Umsätzen ansehen <ArrowUpRight aria-hidden="true" className="size-3.5" />
+          </Link>
+        </FinancialData>
+  );
+}
+
 function PlanValueCell({
   row,
   month,
@@ -390,12 +474,8 @@ function PlanValueCell({
   );
   const tracked = (row.kind === "fixed" || (row.kind === "variable" && budget)) && month <= currentMonth && covered;
   if (!tracked) return plain;
-  const fixed = row.kind === "fixed";
-  const state = fixed ? fixedCellState(value, actual, month, currentMonth, status) : undefined;
+  const { fixed, state, booked, over, description } = planValueInfo(row, month, value, currentMonth, actual, status);
   if (fixed && !state) return plain;
-  const booked = actual?.amount ?? 0;
-  const over = !fixed && booked > value && deviates(value, booked);
-  const description = fixed ? fixedStateText[state!] : over ? "Über Budget" : month === currentMonth ? "Bisher ausgegeben" : "Im Budget";
   return (
     <>
     <span id={detailsId} className="sr-only">
@@ -422,50 +502,7 @@ function PlanValueCell({
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-80 text-xs">
-        <FinancialData>
-          <p className="font-semibold">{row.label} · {monthLabel(month)}</p>
-          <p className={cn("mt-0.5", (state === "different" || state === "due" || over) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
-            {description}
-          </p>
-          <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 tabular-nums">
-            <dt className="text-muted-foreground">Geplant</dt><dd className="text-right">{currency(value)}</dd>
-            <dt className="text-muted-foreground">{month === currentMonth ? "Bisher gebucht" : "Gebucht"}</dt><dd className="text-right">{currency(booked)}</dd>
-            {(actual || month < currentMonth) && (
-              <>
-                <dt className="text-muted-foreground">Differenz</dt>
-                <dd className={cn("text-right", booked > value && deviates(value, booked) && "text-destructive")}>
-                  {booked - value > 0 ? "+" : ""}{currency(round(booked - value))}
-                </dd>
-              </>
-            )}
-            {state === "open" && status?.expectedFrom && (
-              <>
-                <dt className="text-muted-foreground">Erwartet</dt>
-                <dd className="text-right">{status.expectedFrom === status.expectedTo ? dateLabel(status.expectedFrom) : `${dateLabel(status.expectedFrom)} – ${dateLabel(status.expectedTo!)}`}</dd>
-              </>
-            )}
-          </dl>
-          {!!actual?.bookings.length && (
-            <ul className="mt-3 space-y-1 border-t pt-2" aria-label="Buchungen">
-              {actual.bookings.slice(0, 8).map((booking) => (
-                <li key={booking.id} className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 truncate">
-                    <span className="text-muted-foreground">{dateLabel(booking.date)}</span> {booking.name}
-                    {booking.account && <span className="text-muted-foreground"> · {booking.account}</span>}
-                  </span>
-                  <span className="shrink-0 tabular-nums">{currency(booking.amount)}</span>
-                </li>
-              ))}
-              {actual.bookings.length > 8 && <li className="text-muted-foreground">+ {actual.bookings.length - 8} weitere</li>}
-            </ul>
-          )}
-          <Link
-            href={ledgerHref({ month, ...(budget ? { group: budget } : {}) })}
-            className="mt-3 inline-flex min-h-8 items-center gap-1 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-ring"
-          >
-            In Umsätzen ansehen <ArrowUpRight aria-hidden="true" className="size-3.5" />
-          </Link>
-        </FinancialData>
+        <PlanValueDetails row={row} month={month} value={value} currentMonth={currentMonth} actual={actual} status={status} budget={budget} />
       </PopoverContent>
     </Popover>
     </>

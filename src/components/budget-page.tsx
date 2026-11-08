@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Lightbulb, MessageSquareText } from "lucide-react";
 import { Months } from "@/components/months";
-import { Plan } from "@/components/plan";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { Button } from "@/components/ui/button";
@@ -47,7 +46,7 @@ export function BudgetPage() {
       title="Budget"
       eyebrow="PLAN · IST · REST"
       initialView={year ? "year" : "month"}
-      monthExtras={<><BudgetSuggestionsPanel /><Plan embedded /></>}
+      monthExtras={<BudgetSuggestionsPanel />}
     />
   );
 }

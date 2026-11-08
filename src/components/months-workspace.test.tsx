@@ -139,6 +139,8 @@ function cell(label: string, index = 0) {
 }
 function monthView(month?: string) {
   fireEvent.click(screen.getByRole("button", { name: "Monat" }));
+  const table = screen.queryByRole("button", { name: "Tabelle" });
+  if (table) fireEvent.click(table);
   if (month)
     fireEvent.change(screen.getByLabelText("Planungsmonat"), {
       target: { value: month },
@@ -182,6 +184,31 @@ it("keeps the complete annual comparison and reconciles one-offs, Amex and surpl
   expect(
     screen.queryByRole("button", { name: /Fixkosten.*Oktober/ }),
   ).toBeNull();
+  expect(view.read().state).toBe(initial);
+});
+
+it("shows a single month as a sectioned overview with status, budgets and booking details", async () => {
+  const view = mount();
+  const initial = view.read().state;
+  fireEvent.click(screen.getByRole("button", { name: "Monat" }));
+  const period = monthLabel("2026-10");
+  const overview = within(
+    screen.getByRole("group", { name: `Monatsübersicht ${period}` }),
+  );
+  expect(screen.queryByRole("table")).toBeNull();
+  expect(screen.queryByRole("textbox", { name: "Positionen suchen" })).toBeNull();
+  expect(screen.getByRole("group", { name: `Verteilung ${period}` })).toBeTruthy();
+  for (const title of ["Einnahmen", "Fixkosten", "Alltagsbudget", "Einmalig & Kreditkarte"])
+    expect(overview.getByRole("heading", { name: title })).toBeTruthy();
+  const other = overview.getByRole("region", { name: "Einmalig & Kreditkarte" });
+  expect(within(other).getByText("Amex noch zu überweisen")).toBeTruthy();
+  expect(other.textContent).toContain(currency(90));
+  expect(other.textContent).toContain(currency(980));
+  expect(overview.getByRole("progressbar", { name: "Fixkosten abgebucht" })).toBeTruthy();
+  fireEvent.click(overview.getByRole("button", { name: /^Miete: / }));
+  expect(await screen.findByText(`Miete · ${period}`)).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "Plan bearbeiten" }));
+  expect(screen.getByRole("group", { name: "Monatspositionen" })).toBeTruthy();
   expect(view.read().state).toBe(initial);
 });
 
@@ -246,6 +273,9 @@ it("defaults to one month on mobile and keeps an explicitly chosen view across b
   };
   vi.stubGlobal("matchMedia", () => media);
   mount();
+  expect(screen.getByRole("group", { name: /^Monatsübersicht / })).toBeTruthy();
+  expect(screen.queryByRole("table")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Tabelle" }));
   expect(screen.getByRole("table").getAttribute("data-view")).toBe("month");
   fireEvent.click(screen.getByRole("button", { name: "Jahr" }));
   expect(screen.getByRole("table").getAttribute("data-view")).toBe("year");

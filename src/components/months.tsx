@@ -11,15 +11,17 @@ import { FixedCostSchedule } from "@/components/fixed-cost-schedule";
 import {
   MonthPlanToolbar,
   type MonthPlanArea,
+  type MonthPlanDisplay,
   type MonthPlanView,
 } from "@/components/month-plan-toolbar";
 import { MonthPlanGrid } from "@/components/month-plan-grid";
+import { IncomeSplit, MonthOverview } from "@/components/month-overview";
 import {
   DeleteMonthPositionDialog,
   MonthPositionEditor,
 } from "@/components/month-position-dialogs";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
-import { monthsForYear, sum } from "@/lib/calc";
+import { monthsForYear, round, sum } from "@/lib/calc";
 import { monthPlanActuals } from "@/lib/month-actuals";
 import { currency, monthLabel } from "@/lib/format";
 import type { FinanceRow } from "@/lib/types";
@@ -48,6 +50,8 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
   const [query, setQuery] = useState("");
   const [area, setArea] = useState<MonthPlanArea>("all");
   const [editing, setEditing] = useState(false);
+  const [display, setDisplay] = useState<MonthPlanDisplay>("overview");
+  const showOverview = view === "month" && display === "overview" && !editing;
   const [editor, setEditor] = useState<FinanceRow | "new" | null>(null);
   const [deleting, setDeleting] = useState<FinanceRow | null>(null);
   const workspace = useRef<HTMLElement>(null);
@@ -56,7 +60,7 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
   const returnTarget = useRef<{ id: string; action: "edit" | "delete" } | null>(
     null,
   );
-  const filtered = !!query || area !== "all";
+  const filtered = !showOverview && (!!query || area !== "all");
   const rows = state.financeRows.filter(
     (row) =>
       (area === "all" || row.kind === area) &&
@@ -151,6 +155,13 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
             </article>
           ))}
         </div>
+        <IncomeSplit
+          label={`Verteilung ${periodLabel}`}
+          income={income}
+          fixed={sum(timeline.map((row) => (booked(row) ? row.fixedSpending : row.fixed)))}
+          everyday={sum(timeline.map((row) => (booked(row) ? round(row.actualSpending - row.fixedSpending) : round(row.variablePlan - row.amexOpen))))}
+          oneOff={sum(timeline.map((row) => (booked(row) ? 0 : round(row.plannedOneOffs + row.amexOpen))))}
+        />
       </section>
       <section
         ref={workspace}
@@ -171,6 +182,8 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
           onMonthChange={setMonth}
           onQueryChange={setQuery}
           onAreaChange={setArea}
+          display={display}
+          onDisplayChange={setDisplay}
           onEditingChange={() => setEditing((previous) => !previous)}
           onAdd={() => {
             returnTarget.current = null;
@@ -195,7 +208,16 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
             </Button>
           </div>
         )}
-        {filtered && !rows.length ? (
+        {showOverview ? (
+          <MonthOverview
+            month={month}
+            forecast={timeline[0]}
+            rows={state.financeRows}
+            dashboard={dashboard}
+            actuals={actuals}
+            holidayRanges={state.holidayRanges}
+          />
+        ) : filtered && !rows.length ? (
           <FinancialData>
             <EmptyState
               title="Keine Positionen gefunden"
@@ -239,7 +261,7 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
       {view === "month" && month === dashboard.currentMonth && monthExtras && (
         <div className="mt-5 space-y-5">{monthExtras}</div>
       )}
-      {months.includes(dashboard.currentMonth) && (
+      {!showOverview && months.includes(dashboard.currentMonth) && (
         <div className="mt-5">
           <FixedCostSchedule />
         </div>

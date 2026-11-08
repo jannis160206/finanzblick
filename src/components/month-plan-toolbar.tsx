@@ -1,7 +1,7 @@
 "use client";
 
 import type { Ref } from "react";
-import { ChevronLeft, ChevronRight, Pencil, Plus, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, LayoutList, Pencil, Plus, Search, Table2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputLegend } from "@/components/finance-ui";
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import type { FinanceRow } from "@/lib/types";
 
 export type MonthPlanView = "month" | "year";
+export type MonthPlanDisplay = "overview" | "table";
 export type MonthPlanArea = "all" | FinanceRow["kind"];
 export const monthPlanAreas = [
   { value: "all", label: "Alle Bereiche" },
@@ -36,7 +37,11 @@ export function MonthPlanToolbar({
   onAreaChange,
   onEditingChange,
   onAdd,
+  display = "table",
+  onDisplayChange,
 }: {
+  display?: MonthPlanDisplay;
+  onDisplayChange?: (display: MonthPlanDisplay) => void;
   view: MonthPlanView;
   month: string;
   currentMonth: string;
@@ -158,6 +163,23 @@ export function MonthPlanToolbar({
           )}
         </div>
         <div className="flex flex-wrap gap-2">
+          {view === "month" && onDisplayChange && !editing && (
+            <div role="group" aria-label="Monatsdarstellung" className="inline-flex rounded-xl bg-muted/50 p-1">
+              {(["overview", "table"] as const).map((value) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant="ghost"
+                  aria-pressed={display === value}
+                  onClick={() => onDisplayChange(value)}
+                  className={cn("min-h-9 rounded-lg", display === value ? "bg-background shadow-sm" : "text-muted-foreground")}
+                >
+                  {value === "overview" ? <LayoutList className="size-3.5" /> : <Table2 className="size-3.5" />}
+                  {value === "overview" ? "Übersicht" : "Tabelle"}
+                </Button>
+              ))}
+            </div>
+          )}
           <Button
             ref={editRef}
             size="sm"
@@ -177,7 +199,7 @@ export function MonthPlanToolbar({
           )}
         </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_14rem]">
+      {(view === "year" || display === "table" || editing) && <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_14rem]">
         <FinancialData className="relative min-w-0">
           <Search className="pointer-events-none absolute top-3 left-3 size-4 text-muted-foreground" />
           <Input
@@ -205,7 +227,7 @@ export function MonthPlanToolbar({
             </option>
           ))}
         </select>
-      </div>
+      </div>}
       {editing && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-muted/40 px-3 py-2">
           <span className="text-xs text-muted-foreground">
