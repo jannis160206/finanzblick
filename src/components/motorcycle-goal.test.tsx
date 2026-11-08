@@ -67,7 +67,7 @@ describe("motorcycle overview and existing goal editor", () => {
   it("shows the exact quiet line, bike-only target, saved balance and zero normal monthly rate", () => {
     mount();
     expect(screen.getByLabelText("Motorrad-Finanzierung").textContent)
-      .toBe("Motorrad 2.445 € · Dec +800 · Jän +2.576 · monatlich 0 €");
+      .toBe("Motorrad 2.445 € · Dez +800 · Jän +2.576 · monatlich 0 €");
     const bikeCard = screen.getByRole("progressbar", { name: "Motorradziel" }).closest("section")!;
     expect(bikeCard.textContent).toContain(`${currency(2445)} angespart`);
     expect(bikeCard.textContent).toContain(`Ziel ${currency(5400)}`);

@@ -70,7 +70,7 @@ export function Overview() {
   const bikeSaved = bikeBasis?.amount ?? null;
   const bikeUnknown = bikeBasis?.status === "conflict" ? "Zuordnung offen" : "Kontostand unbekannt";
   const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
-  const bikeExtraLabel = (month: string) => month.slice(5) === "12" ? "Dec" :
+  const bikeExtraLabel = (month: string) =>
     monthLabel(month, true).replace(/\s+\d{4}$/, "").replace(/\.$/, "");
   const kpis = [
     {
