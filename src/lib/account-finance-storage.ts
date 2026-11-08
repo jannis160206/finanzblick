@@ -65,6 +65,15 @@ export function discardAccountConflictBackup(accountId: string, expectedRaw: str
   window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
 }
 
+function isQuotaError(error: unknown) {
+  return error instanceof DOMException && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED");
+}
+function withoutBaseState(cache: Cache): Cache {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Drop only the baseline copy.
+  const { baseState, ...rest } = cache;
+  return rest;
+}
+
 export class AccountSessionError extends FinanceStorageError {}
 export class AccountRevisionConflictError extends FinanceStorageError {}
 export class AccountTransportError extends FinanceStorageError {}
@@ -115,10 +124,18 @@ export class AccountFinanceStorage {
     if (this.baseline !== undefined && current !== this.baseline) {
       throw new FinanceStorageError("Ein anderer Tab hat diesen Kontostand geändert. Bitte deinen Stand sichern und den Serverstand laden.");
     }
-    const compact = cache.baseState === undefined || cache.baseState === null
+    let compact = cache.baseState === undefined || cache.baseState === null
       ? cache : { ...cache, baseState: baseStateSchema.parse(cache.baseState) };
-    const raw = JSON.stringify(compact);
-    localStorage.setItem(this.key, raw);
+    let raw = JSON.stringify(compact);
+    try {
+      localStorage.setItem(this.key, raw);
+    } catch (error) {
+      if (!isQuotaError(error) || compact.baseState === undefined || compact.baseState === null) throw error;
+      // Large ledgers cannot hold a second copy; the merge baseline stays in memory instead.
+      compact = withoutBaseState(compact);
+      raw = JSON.stringify(compact);
+      localStorage.setItem(this.key, raw);
+    }
     this.baseline = raw;
     this.cache = compact;
   }
@@ -361,7 +378,8 @@ export class AccountFinanceStorage {
           this.confirmed?.revision === selected.revision ? this.confirmed.state : undefined) : selected.state;
         const conflictKey = accountConflictKey(this.userId);
         if (selectedRaw !== null && localStorage.getItem(conflictKey) === null) {
-          localStorage.setItem(conflictKey, selectedRaw);
+          localStorage.setItem(conflictKey, selected.baseState === undefined || selected.baseState === null
+            ? selectedRaw : JSON.stringify(withoutBaseState(selected)));
           window.dispatchEvent(new Event(ACCOUNT_CONFLICT_EVENT));
         }
         this.writeCache({ state: combined, revision: remote.revision, pending: true, reconcileRequired: true, baseState: remote.state });

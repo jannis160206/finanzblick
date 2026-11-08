@@ -268,6 +268,25 @@ describe("account finance persistence", () => {
       expect(request.mock.calls.filter((call) => call[1].method === "PUT")).toHaveLength(puts);
     });
 
+    it("falls back to a single local copy when a large ledger cannot also store its merge baseline", async () => {
+      const local = changed("local"), remote = changed("server");
+      localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 1, pending: true }));
+      const request = vi.fn().mockImplementation(async (_url: string, options: RequestInit) =>
+        options.method === "PUT" ? response(JSON.parse(String(options.body)).state, 3) : response(remote, 2));
+      vi.stubGlobal("fetch", request);
+      const { controller } = storage();
+      await controller.load();
+      const original = Storage.prototype.setItem;
+      vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (this: Storage, key, value) {
+        if (key === accountStorageKey("alice") && JSON.parse(value).baseState) throw new DOMException("full", "QuotaExceededError");
+        original.call(this, key, value);
+      });
+      const result = await controller.reconcileServer(local);
+      expect(result.transactions.map((row) => row.id)).toEqual(["local", "server"]);
+      expect(cached().pending).toBe(false);
+      expect(cached().revision).toBe(3);
+    });
+
     it("never sends a merged stand when its crash-safe local copy or backup cannot be written", async () => {
       const local = changed("local"), remote = changed("server");
       const raw = JSON.stringify({ state: local, revision: 1, pending: true });

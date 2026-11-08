@@ -230,7 +230,8 @@ it("automatically preserves newer working edits whose cache save failed during r
     });
     act(() => view.read().update((state) => ({ ...state, transactions: [{ ...remote!.transactions[0], id: "local" }] })));
     await waitFor(() => expect(finish).toBeDefined());
-    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => { throw new DOMException("quota", "QuotaExceededError"); });
+    const full = () => { throw new DOMException("quota", "QuotaExceededError"); };
+    vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(full).mockImplementationOnce(full);
     act(() => view.read().update((state) => ({ ...state, settings: { ...state.settings, emergencyTarget: 123 } })));
     await waitFor(() => expect(view.read().storageError).toContain("Browserspeicher"));
     await act(async () => finish());
@@ -271,9 +272,8 @@ it("automatically recovers a transient background-read error without a user retr
 it("retries the current working state after a cache-quota failure, never the older cached server data", async () => {
   const view = mount();
   await waitFor(() => expect(view.read().saved).toBe(true));
-  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(() => {
-    throw new DOMException("quota", "QuotaExceededError");
-  });
+  const full = () => { throw new DOMException("quota", "QuotaExceededError"); };
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementationOnce(full).mockImplementationOnce(full);
 
   act(() => view.read().update((state) => ({ ...state, holidayRanges: [{ from: "2026-10-20", to: "2026-10-22" }] })));
   await waitFor(() => expect(view.read().storageError).toBeTruthy());
