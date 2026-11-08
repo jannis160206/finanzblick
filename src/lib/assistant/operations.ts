@@ -1,4 +1,5 @@
 import { classify } from "@/lib/calc";
+import { planningEndMonth } from "@/lib/planning-range";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { corePocket, pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { assignTransactions } from "@/lib/transaction-tools";
@@ -135,7 +136,7 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       const months = Array.from({ length: operation.months }, (_, index) => addMonth(operation.start, index));
       if (months[0] < context.asOf.slice(0, 7)) throw new OperationError("Extra-Beträge gehen nur ab dem aktuellen Monat.");
       if (months.at(-1)! > goal.date.slice(0, 7)) throw new OperationError(`Das geht über das Zieldatum von „${goal.name}“ (${dateLabel(goal.date)}) hinaus.`);
-      if (months.at(-1)! > "2027-12") throw new OperationError("Der Monatsplan reicht nur bis Dezember 2027.");
+      if (months.at(-1)! > planningEndMonth(context.asOf)) throw new OperationError(`Der Monatsplan reicht nur bis ${monthLabel(planningEndMonth(context.asOf))}.`);
       snapshotGoal(undo, state, goal.id);
       const extras = { ...goal.funding.extras };
       const nextMonths = { ...state.months };

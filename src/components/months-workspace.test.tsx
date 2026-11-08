@@ -556,3 +556,35 @@ it("disables deletion if the position disappears during confirmation", () => {
     "inzwischen entfernt",
   );
 });
+
+it("compares plan with real bookings per fixed-cost cell and links to the ledger", () => {
+  const state = fixture();
+  state.transactions = [
+    ...state.transactions,
+    ...["2026-08", "2026-09"].map((month) => ({
+      id: `rent-${month}`,
+      bank: "Raiffeisen" as const,
+      pocket: "Giro" as const,
+      date: `${month}-03`,
+      description: "Miete Wohnung",
+      amount: month === "2026-09" ? -560 : -500,
+      category: "Miete" as const,
+      categoryOverride: true,
+      includeInPlan: false,
+      reviewed: true,
+      fixedCost: true,
+      fixedCostKey: "rent",
+    })),
+  ];
+  mount(state);
+  expect(screen.getByRole("row", { name: /^Fixkosten Ist / })).toBeTruthy();
+  const september = screen.getByRole("button", { name: "Miete September 2026" });
+  expect(september.getAttribute("data-state-kind")).toBe("booked");
+  const october = screen.getByRole("button", { name: "Miete Oktober 2026" });
+  expect(october.getAttribute("data-state-kind")).toBe("due");
+  expect(document.getElementById(october.getAttribute("aria-describedby")!)!.textContent).toContain("noch nicht gebucht");
+  fireEvent.click(september);
+  const bookings = screen.getByRole("list", { name: "Buchungen" });
+  expect(bookings.textContent).toContain(currency(560));
+  expect(screen.getByRole("link", { name: /In Umsätzen ansehen/ }).getAttribute("href")).toContain("2026-09");
+});

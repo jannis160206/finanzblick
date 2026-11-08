@@ -4,9 +4,9 @@ import {
   accountHolidayRanges,
   classifyStatementRows,
   bookingMonth,
-  monthsForYear,
   round,
 } from "@/lib/calc";
+import { planningMonths } from "@/lib/planning-range";
 import {
   fixedCategories,
   durableCategories,
@@ -770,7 +770,7 @@ export function applyFixedDecisions(
       values: {},
     };
     const values = { ...row.values };
-    for (const month of [...monthsForYear(2026), ...monthsForYear(2027)])
+    for (const month of planningMonths(state.settings.asOf))
       if (month >= change.month) values[month] = change.amount;
     const updated = { ...row, values };
     financeRows = existing

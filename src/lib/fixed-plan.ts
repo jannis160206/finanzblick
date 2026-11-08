@@ -1,12 +1,11 @@
-import { actualBookings, classify, monthsForYear, round } from "@/lib/calc";
+import { actualBookings, classify, round } from "@/lib/calc";
+import { planningMonths } from "@/lib/planning-range";
 import { isRevolutMainAccount, normalizeAccount } from "@/lib/accounts";
 import { amexCardholder } from "@/lib/import/identity";
 import { matchingFixedRow } from "@/lib/fixed";
 import { isSpecificMerchantKey, merchantAliasSourceKey, merchantRuleKey, rememberMerchants } from "@/lib/import/merchant-rules";
 import { personalAmount, type AccountedTransaction } from "@/lib/shared-holiday";
 import type { AppState, FinanceRow } from "@/lib/types";
-
-const months = [...monthsForYear(2026), ...monthsForYear(2027)];
 
 export class FixedPlanCapacityError extends Error {
   constructor() {
@@ -74,7 +73,7 @@ export function splitFixedSeries<T extends AccountedTransaction>(group: T[]): T[
   return result;
 }
 
-function restore(row: FinanceRow): FinanceRow[] {
+function restore(row: FinanceRow, months: string[]): FinanceRow[] {
   if (!row.fixedSource?.originalValues) return [];
   const { fixedSource, ...original } = row;
   const values = { ...original.values };
@@ -88,6 +87,7 @@ function restore(row: FinanceRow): FinanceRow[] {
 }
 
 export function synchronizeFixedPlan(state: AppState): AppState {
+  const months = planningMonths(state.settings.asOf);
   const linked = state.financeRows.filter((row) => row.fixedSource);
   if (!linked.length && !state.transactions.some((row) => row.fixedCost === true) &&
     !state.fixedReceipts?.some((item) => item.booking?.fixedCost === true)) return state;
@@ -183,7 +183,7 @@ export function synchronizeFixedPlan(state: AppState): AppState {
     else additions.push(row);
   }
   for (const row of linked)
-    if (!replacements.has(row.id)) replacements.set(row.id, restore(row));
+    if (!replacements.has(row.id)) replacements.set(row.id, restore(row, months));
   const financeRows = [...state.financeRows.flatMap((row) => replacements.get(row.id) ?? [row]), ...additions];
   if (financeRows.length > 200) throw new FixedPlanCapacityError();
   return { ...state, financeRows };

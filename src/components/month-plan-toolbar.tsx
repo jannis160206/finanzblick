@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputLegend } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
-import { monthsForYear } from "@/lib/calc";
+import { planningEndYear, planningMonths, planningStartYear } from "@/lib/planning-range";
 import { monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { FinanceRow } from "@/lib/types";
@@ -53,7 +53,7 @@ export function MonthPlanToolbar({
   onEditingChange: () => void;
   onAdd: () => void;
 }) {
-  const allMonths = [...monthsForYear(2026), ...monthsForYear(2027)];
+  const allMonths = planningMonths(currentMonth);
   const index = allMonths.indexOf(month);
   const year = Number(month.slice(0, 4));
   return (
@@ -90,7 +90,7 @@ export function MonthPlanToolbar({
                 variant="ghost"
                 className="size-10"
                 aria-label="Vorheriges Jahr"
-                disabled={year <= 2026}
+                disabled={year <= planningStartYear}
                 onClick={() => onMonthChange(`${year - 1}${month.slice(4)}`)}
               >
                 <ChevronLeft className="size-4" />
@@ -101,7 +101,7 @@ export function MonthPlanToolbar({
                 variant="ghost"
                 className="size-10"
                 aria-label="Nächstes Jahr"
-                disabled={year >= 2027}
+                disabled={year >= planningEndYear(currentMonth)}
                 onClick={() => onMonthChange(`${year + 1}${month.slice(4)}`)}
               >
                 <ChevronRight className="size-4" />

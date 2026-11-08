@@ -2,6 +2,7 @@ import { fixedCategories, type AppState, type Category, type FinanceRow, type Ho
 import { canonicalCategory, isTravelCategory } from "@/lib/categories";
 import { lunchBudget } from "@/lib/holidays-at-kaernten";
 import { isIncomeCategory } from "@/lib/fixed";
+import { planningMonths } from "@/lib/planning-range";
 
 const gifts = [50, 50, 0, 50, 100, 0, 50, 50, 0, 0, 100, 1000] as const;
 export type VariableBudgetId = "food" | "lunch" | "fuel" | "leisure" | "going-out" | "gifts" | "buffer";
@@ -52,6 +53,10 @@ export function monthlyVariableBudget(month: string, ranges: readonly HolidayRan
   return { currentMonth: month, rows, total: rows.reduce((total, row) => total + row.total, 0), lunch: lunchBudget(month, ranges) };
 }
 
+export function variableBudgetLineId(row: FinanceRow): VariableBudgetId | undefined {
+  return variableBudgetLines.find((line) => matches(row, line))?.id;
+}
+
 export function variableBudgetValue(row: FinanceRow, month: string, ranges: readonly HolidayRange[] = []): number {
   const line = variableBudgetLines.find((line) => matches(row, line));
   return line ? amountFor(line, month, ranges) : 0;
@@ -59,7 +64,7 @@ export function variableBudgetValue(row: FinanceRow, month: string, ranges: read
 
 export function applyVariableBudgets(state: AppState): AppState {
   const currentMonth = state.settings.asOf.slice(0, 7);
-  const months = [2026, 2027].flatMap((year) => Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, "0")}`))
+  const months = planningMonths(state.settings.asOf)
     .filter((month) => month >= currentMonth);
   const used = new Set<string>();
   const reservedIds = new Set(state.financeRows.map((row) => row.id));

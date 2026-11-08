@@ -1,15 +1,19 @@
 "use client";
 
 import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { ChevronRight, Info, Pencil, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowUpRight, Check, ChevronRight, CircleDashed, Clock, Info, Pencil, Trash2 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { MoneyInput } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
-import { financeRowValue, type Dashboard } from "@/lib/calc";
-import { currency, monthLabel, number } from "@/lib/format";
+import { financeRowValue, round, type Dashboard } from "@/lib/calc";
+import type { FixedCostScheduleItem } from "@/lib/fixed-cost-schedule";
+import { currency, dateLabel, monthLabel, number } from "@/lib/format";
+import { ledgerHref } from "@/lib/ledger-link";
+import type { MonthPlanActuals, RowMonthActual } from "@/lib/month-actuals";
 import type { AppState, FinanceRow } from "@/lib/types";
 import type { MonthPlanArea } from "@/components/month-plan-toolbar";
 import { cn } from "@/lib/utils";
@@ -21,12 +25,49 @@ const groups = [
   { kind: "variable", label: "Variable Ausgaben", total: "Variabel gesamt" },
 ] as const;
 
+// A booked amount counts as "as planned" within a few cents or two percent.
+export const deviates = (planned: number, actual: number) =>
+  Math.abs(actual - planned) > Math.max(1, Math.abs(planned) * 0.02);
+
+export type FixedCellState = "booked" | "different" | "missing" | "open" | "due";
+export function fixedCellState(
+  planned: number,
+  actual: RowMonthActual | undefined,
+  month: string,
+  currentMonth: string,
+  status?: FixedCostScheduleItem,
+): FixedCellState | undefined {
+  if (month > currentMonth) return;
+  if (month === currentMonth) {
+    if (!status) return actual ? (deviates(planned, actual.amount) ? "different" : "booked") : undefined;
+    if (status.status === "booked") return actual && deviates(planned, actual.amount) ? "different" : "booked";
+    return status.status === "open" ? "open" : "due";
+  }
+  if (!actual) return planned > 0 ? "missing" : undefined;
+  return deviates(planned, actual.amount) ? "different" : "booked";
+}
+const fixedStateText: Record<FixedCellState, string> = {
+  booked: "Wie geplant gebucht",
+  different: "Gebucht, aber anderer Betrag",
+  missing: "Keine Buchung gefunden",
+  open: "Noch offen",
+  due: "Fällig, aber noch nicht gebucht",
+};
+function FixedStateIcon({ state }: { state: FixedCellState }) {
+  const common = "size-3 shrink-0";
+  if (state === "booked") return <Check aria-hidden="true" className={cn(common, "text-emerald-600 dark:text-emerald-400")} />;
+  if (state === "different" || state === "due") return <AlertTriangle aria-hidden="true" className={cn(common, "text-amber-600 dark:text-amber-400")} />;
+  if (state === "open") return <Clock aria-hidden="true" className={cn(common, "text-muted-foreground")} />;
+  return <CircleDashed aria-hidden="true" className={cn(common, "text-muted-foreground/70")} />;
+}
+
 type MonthPlanGridProps = {
   months: string[];
   timeline: MonthForecast[];
   rows: FinanceRow[];
   area: MonthPlanArea;
   dashboard: Dashboard;
+  actuals: MonthPlanActuals;
   holidayRanges: AppState["holidayRanges"];
   focused: boolean;
   editing: boolean;
@@ -72,9 +113,25 @@ function MonthGroupRows({
               : row.variablePlan,
         )}
       />
+      {group.kind !== "income" && timeline.some((row) => hasActuals(row, dashboard.currentMonth)) && (
+        <CalculatedMonthRow
+          {...common}
+          label={group.kind === "fixed" ? "Fixkosten Ist" : "Übrige Ausgaben Ist"}
+          actual
+          title={group.kind === "fixed"
+            ? "Tatsächlich gebuchte Fixkosten bis heute. Grün = im Plan, rot = mehr als geplant."
+            : "Alle tatsächlichen Ausgaben außer Fixkosten – inklusive Einmalkäufen, Reisen und Shopping. Verglichen mit variablem Budget plus geplanten Einmalausgaben."}
+          values={timeline.map((row) => !hasActuals(row, dashboard.currentMonth) ? null :
+            group.kind === "fixed" ? row.fixedSpending : round(row.actualSpending - row.fixedSpending))}
+          plans={timeline.map((row) => group.kind === "fixed" ? row.fixed : round(row.variablePlan + row.plannedOneOffs))}
+        />
+      )}
     </>
   );
 }
+
+const hasActuals = (row: MonthForecast, currentMonth: string) =>
+  row.month <= currentMonth && row.actualCoverage !== "none";
 
 // Same-named fixed costs (e.g. six Amazon instalments) collapse into one expandable row.
 export function bundleRows(rows: FinanceRow[], enabled: boolean): FinanceRow[][] {
@@ -240,6 +297,8 @@ function CalculatedMonthRow({
   strong = false,
   title,
   surplus = false,
+  actual = false,
+  plans,
 }: {
   label: string;
   values: (number | null)[];
@@ -248,12 +307,15 @@ function CalculatedMonthRow({
   strong?: boolean;
   title?: string;
   surplus?: boolean;
+  /** Booked spending, coloured against `plans`: red above plan, green for finished months within it. */
+  actual?: boolean;
+  plans?: number[];
 }) {
   return (
-    <tr className={cn(strong && "summary-row", surplus && "surplus-row")}>
+    <tr className={cn(strong && "summary-row", surplus && "surplus-row", actual && "text-muted-foreground")}>
       <th
         scope="row"
-        className={cn("sticky-label", strong ? "font-semibold" : "font-normal")}
+        className={cn("sticky-label", strong ? "font-semibold" : "font-normal", actual && "text-xs")}
       >
         {label}
         {title && (
@@ -273,20 +335,140 @@ function CalculatedMonthRow({
           </FinancialData>
         )}
       </th>
-      {values.map((value, index) => (
-        <td
-          key={months[index]}
-          data-current={months[index] === currentMonth}
-          className={cn(
-            "text-right tabular-nums",
-            strong && "font-semibold",
-            value !== null && value < 0 && "text-destructive",
-          )}
-        >
-          {value === null ? "—" : number(value)}
-        </td>
-      ))}
+      {values.map((value, index) => {
+        const plan = plans?.[index];
+        const over = actual && value !== null && plan !== undefined && value > plan && deviates(plan, value);
+        const within = actual && value !== null && plan !== undefined && !over && months[index] < currentMonth;
+        return (
+          <td
+            key={months[index]}
+            data-current={months[index] === currentMonth}
+            data-tone={over ? "over" : within ? "within" : undefined}
+            title={actual && value !== null && plan !== undefined ? `Plan ${currency(plan)} · Ist ${currency(value)}${months[index] === currentMonth ? " (bisher)" : ""}` : undefined}
+            className={cn(
+              "text-right tabular-nums",
+              strong && "font-semibold",
+              actual && "text-xs",
+              !actual && value !== null && value < 0 && "text-destructive",
+              over && "text-destructive",
+              within && "text-emerald-700 dark:text-emerald-400",
+            )}
+          >
+            {value === null ? "—" : number(value)}
+          </td>
+        );
+      })}
     </tr>
+  );
+}
+
+function PlanValueCell({
+  row,
+  month,
+  value,
+  currentMonth,
+  actual,
+  status,
+  budget,
+  covered,
+}: {
+  row: FinanceRow;
+  month: string;
+  value: number;
+  currentMonth: string;
+  actual?: RowMonthActual;
+  status?: FixedCostScheduleItem;
+  budget?: MonthPlanActuals["budgets"][string];
+  covered: boolean;
+}) {
+  const label = `${row.label} ${monthLabel(month)}`;
+  const detailsId = useId();
+  const plain = (
+    <span className="block text-right text-xs whitespace-nowrap tabular-nums" aria-label={label}>
+      {number(value)}
+    </span>
+  );
+  const tracked = (row.kind === "fixed" || (row.kind === "variable" && budget)) && month <= currentMonth && covered;
+  if (!tracked) return plain;
+  const fixed = row.kind === "fixed";
+  const state = fixed ? fixedCellState(value, actual, month, currentMonth, status) : undefined;
+  if (fixed && !state) return plain;
+  const booked = actual?.amount ?? 0;
+  const over = !fixed && booked > value && deviates(value, booked);
+  const description = fixed ? fixedStateText[state!] : over ? "Über Budget" : month === currentMonth ? "Bisher ausgegeben" : "Im Budget";
+  return (
+    <>
+    <span id={detailsId} className="sr-only">
+      {`Plan ${currency(value)}, ${fixed ? description : `Ist ${currency(booked)}`}. Details anzeigen`}
+    </span>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-state-kind={state}
+          aria-label={label}
+          aria-describedby={detailsId}
+          className="ml-auto flex min-h-8 w-full flex-col items-end justify-center rounded-md px-1 text-right text-xs tabular-nums transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring"
+        >
+          <span className="inline-flex items-center gap-1 whitespace-nowrap">
+            {state && <FixedStateIcon state={state} />}
+            {number(value)}
+          </span>
+          {!fixed && (
+            <span className={cn("text-2xs whitespace-nowrap", over ? "text-destructive" : "text-muted-foreground")}>
+              Ist {number(booked)}
+            </span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 text-xs">
+        <FinancialData>
+          <p className="font-semibold">{row.label} · {monthLabel(month)}</p>
+          <p className={cn("mt-0.5", (state === "different" || state === "due" || over) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+            {description}
+          </p>
+          <dl className="mt-3 grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 tabular-nums">
+            <dt className="text-muted-foreground">Geplant</dt><dd className="text-right">{currency(value)}</dd>
+            <dt className="text-muted-foreground">{month === currentMonth ? "Bisher gebucht" : "Gebucht"}</dt><dd className="text-right">{currency(booked)}</dd>
+            {(actual || month < currentMonth) && (
+              <>
+                <dt className="text-muted-foreground">Differenz</dt>
+                <dd className={cn("text-right", booked > value && deviates(value, booked) && "text-destructive")}>
+                  {booked - value > 0 ? "+" : ""}{currency(round(booked - value))}
+                </dd>
+              </>
+            )}
+            {state === "open" && status?.expectedFrom && (
+              <>
+                <dt className="text-muted-foreground">Erwartet</dt>
+                <dd className="text-right">{status.expectedFrom === status.expectedTo ? dateLabel(status.expectedFrom) : `${dateLabel(status.expectedFrom)} – ${dateLabel(status.expectedTo!)}`}</dd>
+              </>
+            )}
+          </dl>
+          {!!actual?.bookings.length && (
+            <ul className="mt-3 space-y-1 border-t pt-2" aria-label="Buchungen">
+              {actual.bookings.slice(0, 8).map((booking) => (
+                <li key={booking.id} className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate">
+                    <span className="text-muted-foreground">{dateLabel(booking.date)}</span> {booking.name}
+                    {booking.account && <span className="text-muted-foreground"> · {booking.account}</span>}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{currency(booking.amount)}</span>
+                </li>
+              ))}
+              {actual.bookings.length > 8 && <li className="text-muted-foreground">+ {actual.bookings.length - 8} weitere</li>}
+            </ul>
+          )}
+          <Link
+            href={ledgerHref({ month, ...(budget ? { group: budget } : {}) })}
+            className="mt-3 inline-flex min-h-8 items-center gap-1 font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+          >
+            In Umsätzen ansehen <ArrowUpRight aria-hidden="true" className="size-3.5" />
+          </Link>
+        </FinancialData>
+      </PopoverContent>
+    </Popover>
+    </>
   );
 }
 
@@ -294,6 +476,8 @@ function MonthPositionRow({
   row,
   months,
   dashboard,
+  actuals,
+  timeline,
   holidayRanges,
   focused,
   editing,
@@ -309,6 +493,8 @@ function MonthPositionRow({
   rowId?: string;
   months: string[];
   dashboard: Dashboard;
+  actuals: MonthPlanActuals;
+  timeline: MonthForecast[];
   holidayRanges: AppState["holidayRanges"];
   focused: boolean;
   editing: boolean;
@@ -317,6 +503,7 @@ function MonthPositionRow({
   onDelete: (row: FinanceRow) => void;
   onCommit: (row: FinanceRow, month: string, value: number | null) => void;
 }) {
+  const duplicate = row.kind === "fixed" ? actuals.duplicates[row.id] : undefined;
   return (
     <tr id={rowId} className={cn(nested && "bg-muted/20")}>
       <th scope="row" className={cn("sticky-label", nested && "pl-8")}>
@@ -333,6 +520,16 @@ function MonthPositionRow({
             title={row.label}
           >
             {row.label}
+            {duplicate && (
+              <span
+                role="img"
+                aria-label={`${duplicate.count}× ${currency(duplicate.amount)} in den Fixkosten – vermutlich doppelt`}
+                title={`${duplicate.count}× ${currency(duplicate.amount)} in den Fixkosten – vermutlich doppelt. Bitte eine Zeile löschen.`}
+                className="ml-1 inline-flex align-middle text-amber-600 dark:text-amber-400"
+              >
+                <AlertTriangle aria-hidden="true" className="size-3.5" />
+              </span>
+            )}
           </span>
           {editing && row.kind !== "variable" && (
             <span className="flex shrink-0 gap-1">
@@ -394,12 +591,16 @@ function MonthPositionRow({
                 )}
               </fieldset>
             ) : (
-              <span
-                className="block text-right text-xs whitespace-nowrap tabular-nums"
-                aria-label={`${row.label} ${monthLabel(month)}`}
-              >
-                {number(automatic)}
-              </span>
+              <PlanValueCell
+                row={row}
+                month={month}
+                value={automatic}
+                currentMonth={dashboard.currentMonth}
+                actual={actuals.rows[row.id]?.[month]}
+                status={month === dashboard.currentMonth ? actuals.status[row.id] : undefined}
+                budget={actuals.budgets[row.id]}
+                covered={timeline.find((item) => item.month === month)?.actualCoverage !== "none"}
+              />
             )}
           </td>
         );

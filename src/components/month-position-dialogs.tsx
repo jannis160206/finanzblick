@@ -242,7 +242,7 @@ export function DeleteMonthPositionDialog({
         </DialogHeader>
         <DialogBody className="space-y-3">
           <p className="text-sm">
-            „{row.label}“ mit allen Werten für 2026 und 2027 entfernen.
+            „{row.label}“ mit allen geplanten Monatswerten entfernen.
           </p>
           {row.fixedSource && (
             <p className="text-sm">

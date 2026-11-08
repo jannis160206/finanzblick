@@ -1,4 +1,6 @@
 import { addMonths, calculateMonthTotals, round, sum, type Dashboard } from "@/lib/calc";
+import { planningEndMonth } from "@/lib/planning-range";
+import { monthLabel } from "@/lib/format";
 import { allocateGoals, bankPocketBalance, corePocket, goalExtraIncome, pocketKey, SAVINGS_FLOOR, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { plannedOneOffSchema, savingsGoalSchema, type AppState, type AssistantDraft, type AssistantOperation, type PlannedOneOff, type Pocket, type SavingsGoal } from "@/lib/types";
@@ -116,8 +118,8 @@ export function planSavingsGoal(state: AppState, dashboard: Dashboard, draft: As
     if (months > 600) return { ...base, error: "Mit dieser Rate würde das Ziel über 50 Jahre dauern." };
     date = monthEnd(addMonths(current, months - 1));
   }
-  if (extra && addMonths(current, Math.min(extra.months, months) - 1) > "2027-12")
-    return { ...base, error: "Extra-Beträge kann ich nur bis Dezember 2027 einplanen." };
+  if (extra && addMonths(current, Math.min(extra.months, months) - 1) > planningEndMonth(state.settings.asOf))
+    return { ...base, error: `Extra-Beträge kann ich nur bis ${monthLabel(planningEndMonth(state.settings.asOf))} einplanen.` };
   const goal = buildSavingsGoal(state, { ...draft, date, monthly }, monthly, "preview", current);
   const simulation = simulateGoal(state, dashboard, goal);
   const warnings: string[] = [];
@@ -175,7 +177,7 @@ export function buildSavingsGoal(state: AppState, draft: AssistantDraft, monthly
   const name = (draft.name ?? "Sparziel").trim().slice(0, 80);
   // Extras are only embedded for previews; a real goal gets them through the goal_extras operation (with pocket withdrawal).
   const extras = draft.extra && extrasFrom ? Object.fromEntries(Array.from({ length: draft.extra.months }, (_, index) => addMonths(extrasFrom, index))
-    .filter((month) => month <= (draft.date ?? "").slice(0, 7) && month <= "2027-12").map((month) => [month, draft.extra!.amount])) : {};
+    .filter((month) => month <= (draft.date ?? "").slice(0, 7) && month <= planningEndMonth(state.settings.asOf)).map((month) => [month, draft.extra!.amount])) : {};
   return savingsGoalSchema.parse({
     id, name, pocket: name, target: draft.amount, date: draft.date,
     // A documented start keeps the balance known, so the plan can keep funding all goals.

@@ -246,7 +246,7 @@ export const reviewItemSchema = z.discriminatedUnion("kind", [
 export type ReviewItem = z.infer<typeof reviewItemSchema>;
 export type FixedChange = z.infer<typeof fixedChangeSchema>;
 const financeValuesSchema = z.record(
-  z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
+  z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/),
   moneySchema.nonnegative().nullable(),
 );
 export const financeRowSchema = z.object({
@@ -256,7 +256,7 @@ export const financeRowSchema = z.object({
   planCategory: categorySchema.optional(),
   overrides: z
     .record(
-      z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
+      z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/),
       moneySchema.nonnegative().nullable(),
     )
     .optional(),
@@ -340,9 +340,9 @@ export const savingsGoalSchema = z.object({
   }).optional(),
   funding: z.object({
     monthly: moneySchema.nonnegative(),
-    extras: z.record(z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/), moneySchema.nonnegative()),
+    extras: z.record(z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/), moneySchema.nonnegative()),
     // Months without the regular rate (extras still count), e.g. set via the finance assistant.
-    paused: z.array(z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/)).max(24).optional(),
+    paused: z.array(z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/)).max(24).optional(),
   }).optional(),
 });
 export type SavingsGoal = z.infer<typeof savingsGoalSchema>;
@@ -634,7 +634,7 @@ export const assistantUndoSchema = z.object({
     before: z.union([moneySchema, dateSchema]),
   }).strict()).max(5).optional(),
   memory: z.array(z.object({ id: agentIdSchema, before: assistantMemorySchema.nullable() }).strict()).max(50).optional(),
-  months: z.array(z.object({ month: z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/), before: monthInputSchema.nullable() }).strict()).max(24).optional(),
+  months: z.array(z.object({ month: z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/), before: monthInputSchema.nullable() }).strict()).max(24).optional(),
   transactions: z.array(undoTransactionSchema).max(2000).optional(),
   merchantRules: z.array(z.object({ key: z.string().min(1).max(1200), before: merchantRuleSchema.nullable() }).strict()).max(2000).optional(),
   fixedReceipts: z.array(z.object({ key: z.string().max(2000), before: fixedReceiptSchema }).strict()).max(2000).optional(),
@@ -769,7 +769,7 @@ export const appStateSchema = z.object({
     });
   }),
   months: z.record(
-    z.string().regex(/^202[67]-(0[1-9]|1[0-2])$/),
+    z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/),
     monthInputSchema,
   ),
 });

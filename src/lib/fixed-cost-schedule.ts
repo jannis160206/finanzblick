@@ -37,10 +37,9 @@ function expectedDates(history: AccountedTransaction[], month: string) {
   };
 }
 
-export function fixedCostSchedule(state: AppState) {
+/** Fixed-cost bookings up to the as-of date, grouped by the plan row they pay. */
+export function fixedBookingHistory(state: AppState, bookings: AccountedTransaction[] = actualBookings(state)) {
   const asOf = state.settings.asOf;
-  const month = monthKey(asOf);
-  const plans = state.financeRows.filter((row) => row.kind === "fixed" && (row.values[month] ?? 0) > 0);
   const receiptLinks = new Map<string, Set<string>>();
   for (const receipt of state.fixedReceipts ?? []) {
     if (!receipt.rowId) continue;
@@ -53,7 +52,7 @@ export function fixedCostSchedule(state: AppState) {
     }
   }
   const history = new Map<string, AccountedTransaction[]>();
-  for (const booking of actualBookings(state)) {
+  for (const booking of bookings) {
     if (booking.date > asOf || booking.amount >= 0 || booking.fixedCost === false) continue;
     const result = classify(booking);
     if (result.isTransfer || !result.isFixedCost) continue;
@@ -74,10 +73,17 @@ export function fixedCostSchedule(state: AppState) {
       if (named.length === 1) plan = named[0];
     }
     if (!plan) continue;
-    const bookings = history.get(plan.id) ?? [];
-    bookings.push(booking);
-    history.set(plan.id, bookings);
+    const rowBookings = history.get(plan.id) ?? [];
+    rowBookings.push(booking);
+    history.set(plan.id, rowBookings);
   }
+  return history;
+}
+
+export function fixedCostSchedule(state: AppState, history = fixedBookingHistory(state)) {
+  const asOf = state.settings.asOf;
+  const month = monthKey(asOf);
+  const plans = state.financeRows.filter((row) => row.kind === "fixed" && (row.values[month] ?? 0) > 0);
   const items = plans.map((plan): FixedCostScheduleItem => {
     const bookings = history.get(plan.id) ?? [];
     const current = bookings.filter((row) => monthKey(row.date) === month);

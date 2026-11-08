@@ -20,6 +20,7 @@ import {
 } from "@/components/month-position-dialogs";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import { monthsForYear, sum } from "@/lib/calc";
+import { monthPlanActuals } from "@/lib/month-actuals";
 import { currency, monthLabel } from "@/lib/format";
 import type { FinanceRow } from "@/lib/types";
 import { normalizeSearch } from "@/lib/transaction-tools";
@@ -62,24 +63,22 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
       normalizeSearch(row.label).includes(normalizeSearch(query)),
   );
   const periodLabel = view === "year" ? String(year) : monthLabel(month);
+  const actuals = useMemo(() => monthPlanActuals(state), [state]);
+  // Finished months with complete bookings count with what really happened.
+  const booked = (row: (typeof timeline)[number]) =>
+    row.month < dashboard.currentMonth && row.actualCoverage === "full";
+  const plannedSpending = (row: (typeof timeline)[number]) => row.fixed + row.variablePlan + row.plannedOneOffs;
+  const bookedMonths = timeline.filter(booked).length;
+  const basis = !bookedMonths ? "Planwerte" : bookedMonths === timeline.length ? "Istwerte" : "Ist + Plan";
+  const income = sum(timeline.map((row) => (booked(row) ? row.received : row.income)));
+  const spending = sum(timeline.map((row) => (booked(row) ? row.actualSpending : plannedSpending(row))));
   const summaries = [
-    {
-      label: "Einnahmen",
-      value: sum(timeline.map((row) => row.income)),
-      strong: false,
-    },
-    {
-      label: "Ausgaben",
-      value: sum(
-        timeline.map(
-          (row) => row.fixed + row.variablePlan + row.plannedOneOffs,
-        ),
-      ),
-      strong: false,
-    },
+    { label: "Einnahmen", value: income, plan: sum(timeline.map((row) => row.income)), strong: false },
+    { label: "Ausgaben", value: spending, plan: sum(timeline.map(plannedSpending)), strong: false },
     {
       label: "Überschuss",
-      value: sum(timeline.map((row) => row.surplus)),
+      value: sum([income, -spending]),
+      plan: sum(timeline.map((row) => row.surplus)),
       strong: true,
     },
   ];
@@ -121,7 +120,7 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
       >
         <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-3 sm:px-5">
           <h2 className="text-sm font-medium">{periodLabel}</h2>
-          <span className="text-xs text-muted-foreground">Planwerte</span>
+          <span className="text-xs text-muted-foreground" title={basis === "Ist + Plan" ? "Abgeschlossene Monate mit echten Buchungen, laufende und künftige Monate mit Planwerten" : undefined}>{basis}</span>
         </div>
         <div className="grid divide-y divide-border/60 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           {summaries.map((item) => (
@@ -144,6 +143,11 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
               >
                 {currency(item.value)}
               </FinancialData>
+              {basis !== "Planwerte" && (
+                <FinancialData as="p" className="text-2xs text-muted-foreground tabular-nums sm:mt-1">
+                  Plan {currency(item.plan)}
+                </FinancialData>
+              )}
             </article>
           ))}
         </div>
@@ -205,6 +209,7 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
             rows={rows}
             area={area}
             dashboard={dashboard}
+            actuals={actuals}
             holidayRanges={state.holidayRanges}
             focused={view === "month"}
             editing={editing}

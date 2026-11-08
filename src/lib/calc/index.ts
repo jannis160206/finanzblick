@@ -34,6 +34,7 @@ import { amexFunding } from "@/lib/amex-balance";
 import { isDutyFreePurchase } from "@/lib/booking-purpose";
 import { applyNamedTransfer, isNamedTransfer, revolutSavingsTransferAmount } from "@/lib/transfers";
 import { bankOperation, bankTransferPurpose } from "@/lib/bank-operation";
+import { planningMonths } from "@/lib/planning-range";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -765,28 +766,57 @@ export function financeRowValue(
   return row.values[month] ?? 0;
 }
 
-type MonthlyActuals = { actualSpending: number; received: number; salaryReceived: number };
+/** none: no bookings; spending: the month itself is imported; full: the previous month too, so payroll paid at its end is included. */
+export type ActualCoverage = "none" | "spending" | "full";
+type MonthlyActuals = { actualSpending: number; fixedSpending: number; received: number; salaryReceived: number; actualCoverage: ActualCoverage };
+const emptyActuals = (): MonthlyActuals => ({ actualSpending: 0, fixedSpending: 0, received: 0, salaryReceived: 0, actualCoverage: "none" });
 // Per-calculation index, never a persistent cache: edits, imports, sharing and
 // the as-of date must immediately affect the next dashboard calculation.
 function indexMonthlyActuals(bookings: AccountedTransaction[], asOf: string) {
   const months = new Map<string, MonthlyActuals>();
+  const imported = new Set<string>();
   for (const row of bookings) {
     if (row.date > asOf) continue;
+    imported.add(monthKey(row.date));
     const result = classify(row);
     if (result.isTransfer) continue;
     const month = bookingMonth(row);
-    const totals = months.get(month) ?? { actualSpending: 0, received: 0, salaryReceived: 0 };
+    const totals = months.get(month) ?? emptyActuals();
     if (["Einkommen", "Gehalt", "Rufbereitschaft"].includes(result.category))
       totals.received += personalAmount(row);
-    else totals.actualSpending -= personalAmount(row);
+    else {
+      totals.actualSpending -= personalAmount(row);
+      if (result.isFixedCost && row.fixedCost !== false) totals.fixedSpending -= personalAmount(row);
+    }
     if (row.amount > 0 && result.category === "Gehalt" && isTTSPayroll(row))
       totals.salaryReceived += row.amount;
     months.set(month, totals);
   }
-  for (const totals of months.values()) {
+  for (const month of imported) if (!months.has(month)) months.set(month, emptyActuals());
+  for (const [month, totals] of months) {
     totals.actualSpending = round(totals.actualSpending);
+    totals.fixedSpending = round(totals.fixedSpending);
     totals.received = round(totals.received);
     totals.salaryReceived = round(totals.salaryReceived);
+    totals.actualCoverage = !imported.has(month) ? "none" : imported.has(addMonths(month, -1)) ? "full" : "spending";
+  }
+  return months;
+}
+
+/** Variable-budget spending per month and budget line, split receipts included; the dashboard's budget cards use the same rule. */
+export function budgetSpendingByMonth(bookings: AccountedTransaction[], asOf: string) {
+  const months = new Map<string, Map<VariableBudgetId, number>>();
+  for (const transaction of bookings) {
+    if (transaction.date > asOf) continue;
+    const result = classify(transaction);
+    if (outsideSpending(result)) continue;
+    const month = monthKey(transaction.date);
+    const spending = months.get(month) ?? new Map<VariableBudgetId, number>();
+    for (const part of categoryParts(transaction, result.category)) {
+      const budgetId = budgetGroupFor(transaction, { ...result, category: part.category });
+      if (budgetId) spending.set(budgetId, (spending.get(budgetId) ?? 0) - personalAmount(transaction) * part.share);
+    }
+    months.set(month, spending);
   }
   return months;
 }
@@ -824,8 +854,7 @@ export function calculateMonthTotals(
     : state.months[month]?.variableOverride ?? sum(variableRows.map((row) => financeRowValue(row, month, plan, state.holidayRanges)));
   const amexOpen = month === monthKey(state.settings.asOf) ? amex.additional : 0;
   const variablePlan = round(variableBudget + amexOpen);
-  const { actualSpending, received, salaryReceived } = actuals.get(month) ??
-    { actualSpending: 0, received: 0, salaryReceived: 0 };
+  const { actualSpending, fixedSpending, received, salaryReceived, actualCoverage } = actuals.get(month) ?? emptyActuals();
   const plannedIds = new Set(occurrences.filter((item) => item.bookingId).map((item) => item.bookingId));
   const plannedOneOffs = round(sum(occurrences.filter((item) => monthKey(item.date) === month).map((item) => item.ownAmount)) -
     sum(bookings.filter((row) => row.date <= state.settings.asOf && monthKey(row.date) === month &&
@@ -840,6 +869,8 @@ export function calculateMonthTotals(
     amexOpen,
     variablePlan,
     actualSpending,
+    fixedSpending,
+    actualCoverage,
     plannedOneOffs,
     surplus: round(income - fixed - variablePlan - plannedOneOffs),
   };
@@ -919,7 +950,7 @@ export function calculateDashboard(state: AppState) {
   const physical = physicalPocketBalances(state, actual);
   let projectedPhysical: Record<string, number | null> = {};
   const projectedCompletions = new Map<string, string>();
-  const timeline = [...monthsForYear(2026), ...monthsForYear(2027)].map((month) => {
+  const timeline = planningMonths(state.settings.asOf).map((month) => {
     const totals = totalsForMonth(month);
     const input = state.months[month] ?? emptyMonth();
     const historical = month < baselineMonth;
@@ -1028,7 +1059,7 @@ export function calculateDashboard(state: AppState) {
     return { month, ...totals, bikeTransfer: 0, remaining: totals.surplus };
   });
   const categorySpending = new Map<string, number>();
-  const budgetSpending = new Map<VariableBudgetId, number>();
+  const budgetSpending = budgetSpendingByMonth(bookings, state.settings.asOf).get(currentMonth) ?? new Map<VariableBudgetId, number>();
   for (const transaction of bookings) {
     if (monthKey(transaction.date) !== currentMonth || transaction.date > state.settings.asOf) continue;
     const result = classify(transaction);
@@ -1037,8 +1068,6 @@ export function calculateDashboard(state: AppState) {
     for (const part of categoryParts(transaction, result.category)) {
       const amount = personalAmount(transaction) * part.share;
       categorySpending.set(part.category, (categorySpending.get(part.category) ?? 0) - amount);
-      const budgetId = budgetGroupFor(transaction, { ...result, category: part.category });
-      if (budgetId) budgetSpending.set(budgetId, (budgetSpending.get(budgetId) ?? 0) - amount);
     }
   }
   const currentRow = timeline.find((row) => row.month === currentMonth);
