@@ -285,8 +285,8 @@ export function TransactionFilters({
       }
       filters={
         <>
-          <label className="min-w-0 space-y-1.5">
-            <span className="text-xs font-medium text-muted-foreground">
+          <label className="min-w-0">
+            <span className="sr-only">
               Monat
             </span>
             <select
@@ -312,10 +312,10 @@ export function TransactionFilters({
                 ))}
             </select>
           </label>
-          <div className="min-w-0 space-y-1.5">
+          <div className="min-w-0">
             <label
               htmlFor="ledger-category"
-              className="text-xs font-medium text-muted-foreground"
+              className="sr-only"
             >
               Kategorie
             </label>
@@ -328,8 +328,8 @@ export function TransactionFilters({
               onValueChange={(value) => change("category", value)}
             />
           </div>
-          <label className="min-w-0 space-y-1.5 sm:col-span-2 xl:col-span-1">
-            <span className="text-xs font-medium text-muted-foreground">
+          <label className="min-w-0 sm:col-span-2 xl:col-span-1">
+            <span className="sr-only">
               Konto / Pocket
             </span>
             <FinancialData>

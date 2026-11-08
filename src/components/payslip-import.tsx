@@ -230,7 +230,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
             <Input type="password" autoComplete="off" value={password} disabled={busy} maxLength={200}
               onChange={(event) => setPassword(event.target.value)} />
           </label>
-          <p className="text-xs leading-relaxed text-muted-foreground">PDF und Passwort: nur lokal für diesen Seitenbesuch, nicht gespeichert oder versendet.</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Wird nicht gespeichert.</p>
           {filesToRetry.length > 0 && <Button variant="outline" disabled={busy || !password || !!storageError} onClick={() => { void readFiles(filesToRetry); }}>Mit Passwort erneut lesen</Button>}
           </div>
         </details>
@@ -264,7 +264,7 @@ export function PayslipImportPanel({ year, employer, onImported }: {
         </details>
       </div>}
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">Vollständiger Jahresstand: Abrechnungen seit Jänner nötig. Das Netto wird im Folgemonat der Abrechnung im Budget eingetragen (Oktober-Abrechnung → November; Gehalt, Rufbereitschaft, Sonderzahlungen). Kontoumsätze bleiben unverändert.</p>
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">Das Netto landet im Folgemonat automatisch im Budget.</p>
         {(state.payslips?.length ?? 0) > 0 && <Button variant="outline" size="sm" disabled={busy || !!storageError} onClick={syncStoredPayslips}>Gespeicherte ins Budget übertragen</Button>}
       </div>
       <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />

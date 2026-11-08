@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowUpRight } from "lucide-react";
-import { netWorthHistory } from "@/lib/net-worth";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
@@ -26,7 +25,6 @@ export function Pockets() {
   const balances = pocketNames.map((pocket) => bankPocketBalance(state, pocket, dashboard.actual));
   const total = sum(balances.map((amount) => amount ?? 0));
   const incomplete = balances.some((amount) => amount === null);
-  const netWorth = useMemo(() => netWorthHistory(state, dashboard).at(-1)?.total, [state, dashboard]);
   return (
     <>
       <PageHeading
@@ -45,16 +43,9 @@ export function Pockets() {
             {incomplete ? "Unvollständig · unbekannte Kontostände nicht enthalten" : pocketNames.join(" · ")}
           </p>
         </div>
-        <FinancialData as="dl" className="grid grid-cols-2 divide-x divide-border/60 border-t border-border/60">
-          {[
-            { label: "Guthaben gesamt", hint: "inkl. Alltagskonten", value: dashboard.totalAssets },
-            { label: "Nettovermögen", hint: "inkl. Depot, minus Amex", value: netWorth },
-          ].map((item) => item.value !== undefined && (
-            <div key={item.label} className="min-w-0 px-5 py-3 sm:px-6">
-              <dt className="text-2xs text-muted-foreground">{item.label} <span className="hidden sm:inline">· {item.hint}</span></dt>
-              <dd className="mt-0.5 truncate text-base font-semibold tabular-nums">{currency(item.value)}</dd>
-            </div>
-          ))}
+        <FinancialData as="dl" className="flex items-center justify-between gap-3 border-t border-border/60 px-5 py-3 sm:px-6">
+          <dt className="text-xs text-muted-foreground">Guthaben gesamt <span className="hidden sm:inline">· inkl. Alltagskonten</span></dt>
+          <dd className="truncate text-base font-semibold tabular-nums">{currency(dashboard.totalAssets)}</dd>
         </FinancialData>
       </div>
       <section aria-label="Sparen und Reserven" className="mb-5">

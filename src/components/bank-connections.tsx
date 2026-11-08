@@ -193,7 +193,7 @@ export function BankConnections() {
   const bicValid = !normalizedBic || /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(normalizedBic);
   const aspspValid = !enableBanking || (banks ?? []).some((bank) => bank.name === aspsp);
   return <SettingsSection id="bankverbindung" title="Bankverbindung" icon={Building2}
-    description={`Konten direkt über die PSD2-Bankschnittstelle${status?.provider ? ` (${enableBanking ? "Enable Banking" : "FinTecSystems XS2A / Tink"})` : ""} verbinden. Neue Umsätze kommen automatisch alle 6 Stunden.`}
+    description="Neue Umsätze kommen automatisch."
     action={configured && status?.connections.length ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void sync()}>
       {busy === "sync" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}Jetzt abrufen
     </Button> : undefined}>

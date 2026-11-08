@@ -82,9 +82,6 @@ it("highlights only modelled special-payment months and keeps the forecast colla
     .closest("details");
   expect(disclosure?.open).toBe(false);
   expect(
-    screen.getByText(/Schätzungen, keine bestätigten Zahlungen/),
-  ).toBeTruthy();
-  expect(
     screen.queryByText("Berechnungsdetails, Annahmen & Quellen"),
   ).toBeNull();
   expect(screen.queryByRole("link")).toBeNull();

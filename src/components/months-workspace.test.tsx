@@ -197,7 +197,7 @@ it("shows a single month as a sectioned overview with status, budgets and bookin
   );
   expect(screen.queryByRole("table")).toBeNull();
   expect(screen.queryByRole("textbox", { name: "Positionen suchen" })).toBeNull();
-  expect(screen.getByRole("group", { name: `Verteilung ${period}` })).toBeTruthy();
+  expect(screen.queryByRole("group", { name: `Verteilung ${period}` })).toBeNull();
   for (const title of ["Einnahmen", "Fixkosten", "Alltagsbudget", "Einmalig & Kreditkarte"])
     expect(overview.getByRole("heading", { name: title })).toBeTruthy();
   const other = overview.getByRole("region", { name: "Einmalig & Kreditkarte" });

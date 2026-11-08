@@ -18,10 +18,6 @@ export function PayrollDetails({ view }: { view: PayrollPresentation }) {
       label="Monatliche Prognose"
     >
       <section aria-label="Monatliche Gehaltsprognose">
-        <p className="mb-4 text-xs text-muted-foreground">
-          {projectedMonths.length} Monatswerte · Schätzungen, keine bestätigten
-          Zahlungen
-        </p>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {projectedMonths.map((month) => {
             const forecast = analysis.forecast.months.find(

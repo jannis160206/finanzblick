@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Overview } from "@/components/overview";
+import { MonthlyFunding } from "@/components/monthly-funding";
 import { SavingsGoals } from "@/components/savings-goals";
 import { useFinance } from "@/components/finance-provider";
 import { actualPockets, calculateDashboard, monthsForYear } from "@/lib/calc";
@@ -41,7 +41,7 @@ function mount(initial = fixture(), settings = false) {
       openReviewCount: 0, ready: true, saved: true, storageError: null,
       retrySave: vi.fn(), appendStatements: vi.fn(), statementImport: undefined,
     });
-    return settings ? <SavingsGoals /> : <Overview />;
+    return settings ? <SavingsGoals /> : <MonthlyFunding />;
   }
   render(<Harness />);
   return () => current;
@@ -64,26 +64,21 @@ describe("motorcycle overview and existing goal editor", () => {
     expect(!!split.querySelector('[data-funding-pot="Motorrad"]')).toBe(bikeAmount > 0);
     if (bikeAmount) expect(split.querySelector('[data-funding-pot="Motorrad"]')?.textContent).toContain(currency(bikeAmount));
   });
-  it("shows the exact quiet line, bike-only target, saved balance and zero normal monthly rate", () => {
+  it("keeps the bike-only target, saved balance and zero normal monthly rate in the model", () => {
+    const dashboard = calculateDashboard(fixture());
+    const bike = fixture().savingsGoals![0];
+    expect(bike.target).toBe(5400);
+    expect(bike.date).toBe("2027-04-01");
+    expect(bike.funding?.monthly).toBe(0);
+    expect(dashboard.countdown.onTrack).toBe(true);
+    expect(dashboard.nextTransfer).toBe(0);
     mount();
-    expect(screen.getByLabelText("Motorrad-Finanzierung").textContent)
-      .toBe("Motorrad 2.445 € · Dez +800 · Jän +2.576 · monatlich 0 €");
-    const bikeCard = screen.getByRole("progressbar", { name: "Motorradziel" }).closest("section")!;
-    expect(bikeCard.textContent).toContain(`${currency(2445)} angespart`);
-    expect(bikeCard.textContent).toContain(`Ziel ${currency(5400)}`);
-    expect(bikeCard.textContent).toContain("1.4.2027");
-    expect(within(bikeCard).getByText("Benötigt / Monat").nextElementSibling?.textContent).toBe(currency(0));
-    expect(within(bikeCard).getByText(/Geplant ·/).nextElementSibling?.textContent).toBe(currency(0));
-    expect(within(bikeCard).getByText("Im Plan")).toBeTruthy();
     expect(screen.getByLabelText("Pocket-Verteilung diesen Monat").textContent).not.toContain("Motorrad");
   });
   it.each([["2026-12-05", 800], ["2027-01-05", 2576], ["2027-02-05", 0], ["2027-05-05", 0]] as const)(
-    "shows only scheduled motorcycle funding on %s", (asOf, amount) => {
+    "plans only scheduled motorcycle funding on %s", (asOf, amount) => {
       const state = fixture(); state.settings.asOf = asOf;
-      mount(state);
-      const bikeCard = screen.getByRole("progressbar", { name: "Motorradziel" }).closest("section")!;
-      expect(within(bikeCard).getByText(/Geplant ·/).nextElementSibling?.textContent).toBe(currency(amount));
-      if (asOf > "2027-04-30") expect(screen.queryByLabelText("Motorrad-Finanzierung")).toBeNull();
+      expect(calculateDashboard(state).nextTransfer).toBe(amount);
     },
   );
   it("keeps the same goal and its opening and extras when saved in the existing editor", () => {

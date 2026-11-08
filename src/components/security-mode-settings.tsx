@@ -17,7 +17,7 @@ export function SecurityModeSettings() {
   const { preference, setPreference, ready, error, retry } = useSecurityMode();
   const id = useId();
   return <SettingsSection id="sichtschutz" title="Sicherheitsmodus" icon={Shield}
-    description="Unscharfe Finanzdaten schützen vor neugierigen Blicken – keine Passwortsperre.">
+    description="Beträge unscharf anzeigen.">
     <fieldset disabled={!ready} aria-describedby={`${id}-local`} className="space-y-3">
       <legend className="mb-3 text-sm font-medium">Sichtschutz aktivieren</legend>
       <div className="grid gap-3 lg:grid-cols-3">
@@ -33,7 +33,7 @@ export function SecurityModeSettings() {
         </label>)}
       </div>
     </fieldset>
-    <p id={`${id}-local`} className="mt-4 text-xs leading-relaxed text-muted-foreground">Sofort wirksam · nur in diesem Browser. Deine Finanzdaten bleiben unverändert.</p>
+    <p id={`${id}-local`} className="mt-4 text-xs leading-relaxed text-muted-foreground">Nur in diesem Browser.</p>
     {error && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4">
       <p role="alert" className="max-w-xl text-xs leading-relaxed">{error}</p>
       <Button type="button" variant="outline" size="lg" onClick={retry}>Erneut versuchen</Button>

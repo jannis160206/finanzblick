@@ -87,8 +87,6 @@ it("shows additional gross bonus room with the isolated tariff example collapsed
   expect(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }).closest("details")?.open).toBe(true);
   expect(example.getByText("40 %")).toBeTruthy();
   for (const value of [170.7, 331.72, 502.42, 497.58]) expect(example.getByText(moneyText(value))).toBeTruthy();
-  expect(bonus.getByText(/nicht für die ganze Prämie/)).toBeTruthy();
-  expect(bonus.getByText(/keine verbindliche Abrechnung/)).toBeTruthy();
   expectNoManualInputs();
 });
 
@@ -446,7 +444,6 @@ it("shows the existing net special-payment model and never infers it from bank r
   const net = view.next?.tax?.netSpecial;
   if (net === undefined) throw new Error("Synthetic payroll fixture must have a projected net payment.");
   expect(special.getByText("Geschätzter Auszahlungsanteil netto").nextElementSibling?.textContent).toBe(currency(net));
-  expect(special.getByText(/kein bestätigter Auszahlungsbetrag/)).toBeTruthy();
   expect(latest).toBe(initial);
 });
 

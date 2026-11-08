@@ -72,8 +72,7 @@ const responseEnvelopeSchema = z
     bookingMarks: z.unknown().optional(),
   })
   .strict();
-const ERROR_MESSAGE =
-  "Einige Händlerlogos konnten nicht geladen werden. Verfügbare Logos bleiben sichtbar; für fehlende Bilder werden Initialen angezeigt.";
+const ERROR_MESSAGE = "Einige Logos fehlen.";
 
 function markBatches(keys: string[]) {
   const encoder = new TextEncoder();

@@ -175,7 +175,7 @@ export function NotificationSettings() {
   const unsupported = state === "unsupported";
   const active = preferences.enabled && state === "granted";
   return <SettingsSection id="benachrichtigungen" title="Benachrichtigungen" icon={Bell}
-    description="Lokale Hinweise bei Budgetüberschreitung, großen Abbuchungen und Gehaltseingang.">
+    description="Budget, große Abbuchungen, Gehalt.">
     <div className="space-y-5">
       <label className="flex min-h-11 cursor-pointer items-start justify-between gap-4 rounded-2xl border border-border/70 bg-muted/15 p-4">
         <span>

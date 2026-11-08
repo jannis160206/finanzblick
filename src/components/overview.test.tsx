@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import type { ComponentProps, ReactNode } from "react";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Overview } from "./overview";
 import { useFinance } from "./finance-provider";
 import { calculateDashboard, monthsForYear, round } from "@/lib/calc";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { initializeMotorcycleGoal } from "@/lib/goals";
-import { currency, monthLabel } from "@/lib/format";
+import { currency } from "@/lib/format";
 import { plannedOneOffSchema } from "@/lib/types";
 import { monthlyVariableBudget } from "@/lib/variable-budgets";
 
@@ -65,66 +65,23 @@ it("prioritizes the surplus, keeps model values and plan/actual distinctions, an
   expect(screen.getByText(`Erhalten: ${moneyText(dashboard.current.received)}`)).toBeTruthy();
   expect(dashboard.monthlyFunding.find((row) => row.id === "savings")?.amount).toBe(dashboard.current.surplus);
   expect(screen.queryByText(/DEIN FINANZCOCKPIT|Ist · alle vier Pockets|Ohne Umbuchungen|NOCH BIS ZUM KAUF/)).toBeNull();
-  expect(screen.getByRole("link", { name: "Kontoauszüge importieren" }).getAttribute("href")).toBe("/umsaetze");
+  expect(screen.queryByRole("link", { name: "Kontoauszüge importieren" })).toBeNull();
+  for (const removed of ["Monatsprognose", "Deine Pockets", "Pocket-Verteilung diesen Monat"]) expect(screen.queryByRole("region", { name: removed })).toBeNull();
+  expect(screen.queryByText(/Vermögensentwicklung|Einnahmen & Ausgaben|Werte als Tabelle/)).toBeNull();
   expect(within(screen.getByRole("list", { name: "Geplant Oktober 2026" })).getByRole("listitem").textContent).toBe("Schrank 200 €");
   expect(JSON.stringify(state)).toBe(before);
   expect(update).not.toHaveBeenCalled();
 });
 
-it("keeps every 90-day forecast figure and labels rates for all goals, not only the motorcycle", () => {
+it("keeps the 90-day model consistent even though the overview no longer repeats it", () => {
   const state = fixture();
   state.savingsGoals!.push({ id: "camera", name: "Kamera", pocket: "Kamera", target: 300, date: "2026-10-20" });
   state.accountSnapshots = [{ bank: "Revolut", name: "Kamera", date: state.settings.asOf, balance: 0 }];
   const { dashboard } = mount(state);
-  const forecast = within(screen.getByRole("region", { name: "Monatsprognose" }));
-  expect(forecast.getAllByRole("article")).toHaveLength(3);
   for (const row of dashboard.ninetyDays) {
-    const card = within(forecast.getByRole("article", { name: `Prognose ${monthLabel(row.month)}` }));
-    expect(card.getByText("Rest nach Zielraten").previousElementSibling?.textContent).toBe(currency(row.remaining));
-    for (const [label, value] of [["Einnahmen", row.income], ["Fixkosten", row.fixed], ["Alltagsbudget", row.variablePlan], ["Zielraten", row.surplus - row.remaining]] as const) {
-      expect(card.getByText(label).nextElementSibling?.textContent).toBe(currency(value));
-    }
-    if (row.plannedOneOffs) expect(card.getByText("Einmalig geplant").nextElementSibling?.textContent).toBe(currency(row.plannedOneOffs));
     expect(round(row.income - row.fixed - row.variablePlan - row.plannedOneOffs - (row.surplus - row.remaining))).toBe(row.remaining);
   }
   expect(dashboard.ninetyDays[0].surplus - dashboard.ninetyDays[0].remaining).toBeGreaterThan(dashboard.ninetyDays[0].bikeTransfer);
-});
-
-it("does not display zero round-ups, but retains actual nonzero round-ups and pocket balances", () => {
-  const { dashboard, unmount } = mount(fixture(), { currentRoundUp: 0 });
-  expect(screen.queryByText(/Round-up/)).toBeNull();
-  const pockets = within(screen.getByRole("region", { name: "Deine Pockets" }));
-  expect(pockets.getAllByRole("link")).toHaveLength(5);
-  expect(pockets.getByText(moneyText(dashboard.actual.Sparkonto))).toBeTruthy();
-  unmount();
-  mount(fixture(), { currentRoundUp: 12.34 });
-  expect(screen.getByText(`Round-up +${moneyText(12.34)}`)).toBeTruthy();
-});
-
-it("expands the six-month cashflow on demand without changing the saved state", () => {
-  const state = fixture();
-  const before = JSON.stringify(state);
-  const { dashboard, update, rerender } = mount(state);
-  expect(screen.queryByTestId("cashflow-chart")).toBeNull();
-  const details = screen.getByText("Einnahmen & Ausgaben").closest("details")!;
-  details.open = true;
-  fireEvent(details, new Event("toggle"));
-  const rows = JSON.parse(screen.getByTestId("cashflow-chart").getAttribute("data-rows")!);
-  expect(rows).toHaveLength(6);
-  expect(rows[0].income).toBe(dashboard.current.income);
-  privacy.locked = true;
-  rerender(<Overview />);
-  const maskedChart = screen.getByTestId("cashflow-chart").closest("[data-financial-data]");
-  expect(maskedChart?.getAttribute("aria-hidden")).toBe("true");
-  expect(maskedChart?.hasAttribute("inert")).toBe(true);
-  privacy.locked = false;
-  rerender(<Overview />);
-  expect(screen.getByTestId("cashflow-chart")).toBeTruthy();
-  details.open = false;
-  fireEvent(details, new Event("toggle"));
-  expect(screen.queryByTestId("cashflow-chart")).toBeNull();
-  expect(update).not.toHaveBeenCalled();
-  expect(JSON.stringify(state)).toBe(before);
 });
 
 it("keeps negative surplus visible as a warning rather than presenting success", () => {
@@ -136,23 +93,10 @@ it("keeps negative surplus visible as a warning rather than presenting success",
   expect(within(surplus).getByText(moneyText(calculateDashboard(state).current.surplus)).className).toContain("text-destructive");
 });
 
-it("supports an empty account and non-motorcycle goals without inventing funding", () => {
-  const state = createEmptyAccountState();
-  const { unmount } = mount(state);
+it("supports an empty account without inventing data", () => {
+  mount(createEmptyAccountState());
   expect(screen.getByText("Noch keine Ausgaben")).toBeTruthy();
-  expect(screen.getByText("Noch kein Sparziel")).toBeTruthy();
   expect(screen.queryByLabelText("Motorrad-Finanzierung")).toBeNull();
-  const distribution = screen.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
-  expect(within(distribution).getByText(moneyText(0))).toBeTruthy();
-  expect(within(distribution).queryByLabelText("Sparkonto überwiesen")).toBeNull();
-  expect(screen.getByRole("link", { name: "Monatsplan ergänzen" })).toBeTruthy();
-  unmount();
-  state.savingsGoals = [{ id: "camera", name: "Kamera", pocket: "Kamera", target: 1200, date: "2027-04-01" }];
-  mount(state);
-  expect(screen.getByRole("article", { name: "Sparziel Kamera" })).toBeTruthy();
-  const progress = screen.getByRole("progressbar", { name: "Kamera Fortschritt" });
-  expect(progress.hasAttribute("aria-valuenow")).toBe(false);
-  expect(progress.getAttribute("aria-valuetext")).toBe("Kontostand unbekannt");
 });
 
 it.each([false, true])("shows the savings recommendation or the actual explicitly transferred amount (executed: %s)", (executed) => {
@@ -171,18 +115,14 @@ it.each([false, true])("shows the savings recommendation or the actual explicitl
   if (executed) state.transactions.push({
     ...base, id: "main", pocket: "Persönliches Konto", amount: -300, description: "Um EUR Sparen von EUR einzustecken",
   });
-  const { container, dashboard } = mount(state);
-  const savings = container.querySelector<HTMLElement>('[data-funding-pot="Sparkonto"]')!;
-  expect(within(savings).getByText(executed ? "Überwiesen" : "Sparempfehlung")).toBeTruthy();
-  expect(within(savings).getByText(moneyText(executed ? 300 : 301.4))).toBeTruthy();
-  expect(within(savings).getByText("Sparkonto").className).not.toContain("text-muted-foreground");
-  expect(within(savings).getByText(executed ? "Überwiesen" : "Sparempfehlung").className).toContain("col-start-2");
+  const { dashboard } = mount(state);
+  const savings = dashboard.monthlyFunding.find((row) => row.id === "savings");
+  expect(savings?.done ?? false).toBe(executed);
+  if (executed) expect(savings?.transferred).toBe(300);
   expect(dashboard.timeline.find((row) => row.month === dashboard.currentMonth)?.rates.Sparkonto).toBe(301.4);
-  if (executed) expect(within(savings).getByLabelText("Sparkonto überwiesen")).toBeTruthy();
-  else expect(within(savings).queryByLabelText("Sparkonto überwiesen")).toBeNull();
 });
 
-it.each([0, -478.6])("keeps the savings card visible at zero for surplus %s without changing the funding model", (surplus) => {
+it.each([0, -478.6])("keeps the funding model unchanged for surplus %s", (surplus) => {
   const state = createEmptyAccountState();
   state.settings.asOf = "2026-10-07";
   state.settings.baselineDate = "2026-10-01";
@@ -194,10 +134,6 @@ it.each([0, -478.6])("keeps the savings card visible at zero for surplus %s with
   })];
   const before = JSON.stringify(state);
   const { dashboard, update } = mount(state);
-  const distribution = screen.getByRole("region", { name: "Pocket-Verteilung diesen Monat" });
-  expect(within(distribution).getByText("Sparempfehlung")).toBeTruthy();
-  expect(within(distribution).getByText(moneyText(0))).toBeTruthy();
-  expect(within(distribution).queryByLabelText("Sparkonto überwiesen")).toBeNull();
   expect(dashboard.monthlyFunding).toEqual([]);
   expect(dashboard.current.surplus).toBe(surplus);
   expect(screen.getByRole("region", { name: "Geplante Ausgaben" })).toBeTruthy();

@@ -96,10 +96,6 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
                 },
               ]}
             />
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-              Netto-Modell nach SV und Lohnsteuer, kein bestätigter
-              Auszahlungsbetrag.
-            </p>
             {!next?.tax && (
               <p className="mt-2 text-xs text-muted-foreground">
                 {missing
@@ -119,7 +115,7 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
         )}
       </section>
       <PayrollDisclosure
-        title="Details · Jahressechstel, Prämien-Spielraum und Steuerbeispiel"
+        title="Mehr Details"
         label="Gehaltsdetails"
       >
         <div className="space-y-4 px-5 pb-5">
@@ -180,8 +176,8 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
             {analysis.contextIssues.length
               ? "Nur belegte Abrechnungswerte; für diesen Kontext keine Fortschreibung."
               : rough
-              ? "Lücken nur geschätzt, nicht als Abrechnungen gespeichert."
-              : "Prognose aktualisiert sich mit neuen Abrechnungen."}
+              ? "Lücken nur geschätzt."
+              : "Aktualisiert sich mit jeder Abrechnung."}
           </p>
         </section>
       </div>
@@ -215,11 +211,6 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
               " Offene Prämienzuordnung: vorsichtig am unteren Wert orientieren."}
           </p>
         )}
-        <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-          Bei begünstigungsfähigen Sonderzahlungen gilt der Tarif nur für den
-          Überhang, nicht für die ganze Prämie. Innerhalb des Sechstels:
-          begünstigte Sätze, oft 6 % nach SV, nicht pauschal steuerfrei.
-        </p>
         <PayrollDisclosure
           title="Steuerbeispiel für 1.000 €"
           label="Steuerbeispiel"
@@ -228,10 +219,6 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
           <div role="group" aria-label="Steuerbeispiel Zusatzprämie">
             <p className="text-sm font-medium">
               Wenn 1.000 € brutto vollständig tarifpflichtig sind
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Isoliertes Beispiel für diesen Monat, keine verbindliche
-              Abrechnung.
             </p>
             {bonusExample ? (
               <>

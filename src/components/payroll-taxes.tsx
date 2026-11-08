@@ -44,7 +44,6 @@ function PayrollWorkspace() {
       <PageHeading
         eyebrow="Österreich · Lohnabrechnung"
         title="Gehalt & Steuern"
-        description="Abrechnungsstand und Schätzungen klar getrennt."
       >
         <Button asChild size="sm">
           <a href="#payroll-import">
@@ -108,10 +107,8 @@ function PayrollWorkspace() {
               <h2 className="font-semibold">
                 Noch keine Lohnabrechnungen für {year}
               </h2>
-              <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                Lade deine PDF-Abrechnungen hoch. Belegte Werte und Schätzungen
-                erscheinen automatisch; Nettoumsätze werden nicht in Brutto
-                umgerechnet.
+              <p className="mt-2 text-sm text-muted-foreground">
+                Lade deine PDF-Abrechnungen hoch.
               </p>
             </section>
           )}
@@ -125,13 +122,7 @@ function PayrollWorkspace() {
           />
         </div>
         {view.latest && (
-          <>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              Schätzungen sind keine bestätigte Lohnabrechnung oder individuelle
-              Steuerberatung.
-            </p>
-            <PayrollDetails view={view} />
-          </>
+          <PayrollDetails view={view} />
         )}
         <TaxFolderPanel year={year} />
       </div>

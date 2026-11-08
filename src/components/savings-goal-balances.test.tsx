@@ -2,7 +2,7 @@
 import { useState, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Overview } from "@/components/overview";
+import { MonthlyFunding } from "@/components/monthly-funding";
 import { SavingsGoals } from "@/components/savings-goals";
 import { useFinance } from "@/components/finance-provider";
 import { PocketBalanceCards } from "@/components/pocket-balance-cards";
@@ -48,14 +48,14 @@ function mount(initial: AppState, overview = false) {
       openReviewCount: 0, ready: true, saved: true, storageError: null,
       retrySave: vi.fn(), appendStatements: vi.fn(), statementImport: undefined,
     });
-    return overview ? <Overview /> : <SavingsGoals />;
+    return overview ? <><MonthlyFunding /><SavingsGoals /></> : <SavingsGoals />;
   }
   render(<Harness />);
   return () => current;
 }
 
 describe("observed and unknown goal UI", () => {
-  it.each([false, true])("uses core balance1000 instead of goal zero (overview=%s)", (overview) => {
+  it.each([false, true])("uses core balance1000 instead of goal zero (with funding=%s)", (overview) => {
     const state = fixture();
     state.settings.balances.Sparkonto = 1000;
     state.savingsGoals = [goal("Kamera", "Sparkonto")];
@@ -65,7 +65,7 @@ describe("observed and unknown goal UI", () => {
     expect(within(card).getByRole("progressbar").getAttribute("aria-valuenow")).toBe("100");
   });
 
-  it.each([false, true])("does not render an unobserved opening as knownzero (overview=%s)", (overview) => {
+  it.each([false, true])("does not render an unobserved opening as knownzero (with funding=%s)", (overview) => {
     const state = fixture();
     state.settings.balances.Sparkonto = 1000;
     state.savingsGoals = [goal("Kamera")];
@@ -78,9 +78,6 @@ describe("observed and unknown goal UI", () => {
     expect(screen.getByRole("status").textContent).toContain("Automatische Sparempfehlung pausiert");
     if (overview) {
       expect(screen.getByLabelText("Pocket-Verteilung diesen Monat").textContent).toContain("Empfehlung pausiert");
-      expect(screen.getByLabelText("Guthaben gesamt").textContent).toContain("Unvollständig");
-      expect(screen.getByLabelText("Prognose bekannter Pocket-Guthaben")).toBeTruthy();
-      expect(screen.queryByLabelText("Prognose des gesamten Pocket-Vermögens")).toBeNull();
     }
   });
 
@@ -130,7 +127,7 @@ describe("observed and unknown goal UI", () => {
     expect(!!within(distribution).queryByLabelText("Sparkonto + Kamera überwiesen")).toBe(amount === 1000);
   });
 
-  it.each([false, true])("does not promise two fully funded goals from one1000 pocket (overview=%s)", (overview) => {
+  it.each([false, true])("does not promise two fully funded goals from one1000 pocket (with funding=%s)", (overview) => {
     const state = fixture();
     state.savingsGoals = [goal("Kamera", "Extra"), goal("Reise", " extra ")];
     state.accountSnapshots = [{ bank: "Revolut", name: "Extra", date: state.settings.asOf, balance: 1000 }];
@@ -148,13 +145,10 @@ describe("observed and unknown goal UI", () => {
     state.settings.balances.Motorrad = 1000;
     state.savingsGoals = [goal("Motorrad"), goal("Ausrüstung", "Motorrad")];
     mount(state, true);
-    const progress = screen.getByRole("progressbar", { name: "Motorradziel" });
-    const card = progress.closest("section")!;
-    expect(progress.hasAttribute("aria-valuenow")).toBe(false);
+    const card = screen.getByRole("article", { name: "Sparziel Motorrad" });
+    expect(within(card).getByRole("progressbar").hasAttribute("aria-valuenow")).toBe(false);
     expect(card.textContent).toContain("Zuordnung offen");
     expect(card.textContent).not.toContain("Ziel erreicht");
-    expect(within(card).getByText("Benötigt / Monat").nextElementSibling?.textContent).toBe("—");
-    expect(within(card).getByText(/Geplant ·/).nextElementSibling?.textContent).toBe("—");
   });
 
   it("removes a goal without losing its independent physical opening", () => {

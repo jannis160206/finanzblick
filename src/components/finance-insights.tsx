@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CopyX, Repeat, Sparkles, TrendingUp, Wand2 } from "lucide-react";
+import { CopyX, Sparkles, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
@@ -49,8 +49,7 @@ export function FinanceInsightsPanel() {
   const [error, setError] = useState<string>();
   const key = JSON.stringify(facts);
   const text = written?.key === key ? written.text : shortSummary(facts);
-  const monthlySubscriptions = insights.subscriptions.reduce((sum, item) => sum + item.monthlyCost, 0);
-  const { forecast, learning } = insights;
+  const { forecast } = insights;
 
   const write = async () => {
     setBusy(true);
@@ -86,7 +85,7 @@ export function FinanceInsightsPanel() {
   const high = forecast.averageSpending !== undefined && forecast.projectedSpending > forecast.averageSpending * 1.1;
 
   return <section className="panel mb-5 p-5 sm:p-6" aria-label="Einblicke">
-    <SectionHeading title="Einblicke" subtitle="Dein Monat auf einen Blick">
+    <SectionHeading title="Einblicke">
       <Sparkles aria-hidden="true" className="size-4 text-primary" />
     </SectionHeading>
     <FinancialData className="grid gap-3">
@@ -98,14 +97,13 @@ export function FinanceInsightsPanel() {
         </Button>
       </div>
       {error && <p className="text-2xs text-destructive">{error}</p>}
-      <div className="grid gap-3 sm:grid-cols-3">
-        <Tile icon={TrendingUp} label={`Prognose ${monthLabel(forecast.month)}`} value={currency(forecast.projectedSpending)}
-          tone={high ? "text-destructive" : "text-primary"}
-          note={forecast.averageSpending !== undefined ? `sonst ca. ${currency(forecast.averageSpending)}` : `bisher ${currency(forecast.spentSoFar)}`} />
-        <Tile icon={Repeat} label="Abos" value={`${currency(monthlySubscriptions)} / Monat`}
-          note={insights.subscriptions.length ? insights.subscriptions.slice(0, 3).map((item) => item.merchant).join(", ") : "keine erkannt"} />
-        <Tile icon={Wand2} label="Automatisch sortiert" value={learning.share !== undefined ? `${learning.share} %` : "–"}
-          note="deiner importierten Buchungen" />
+      <div className="flex items-center gap-3 rounded-2xl border border-border/70 bg-background/40 px-4 py-3" aria-label={`Prognose ${monthLabel(forecast.month)}`}>
+        <TrendingUp aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">Ausgaben-Prognose {monthLabel(forecast.month).split(" ")[0]}</span>
+          <span className="block text-xs text-muted-foreground">{forecast.averageSpending !== undefined ? `sonst ca. ${currency(forecast.averageSpending)}` : `bisher ${currency(forecast.spentSoFar)}`}</span>
+        </span>
+        <span className={cn("shrink-0 text-base font-semibold tabular-nums", high ? "text-destructive" : "text-foreground")}>{currency(forecast.projectedSpending)}</span>
       </div>
       {hints.length > 0 && <div className="rounded-2xl border border-destructive/30 bg-destructive/5 p-4" aria-label="Bitte prüfen">
         <h3 className="flex items-center gap-2 text-sm font-medium"><CopyX aria-hidden="true" className="size-4 text-destructive" />Bitte prüfen</h3>
@@ -118,14 +116,4 @@ export function FinanceInsightsPanel() {
       </div>}
     </FinancialData>
   </section>;
-}
-
-function Tile({ icon: Icon, label, value, note, tone }: {
-  icon: typeof Repeat; label: string; value: string; note: string; tone?: string;
-}) {
-  return <article className="min-w-0 rounded-2xl border border-border/70 bg-background/40 p-4" aria-label={label}>
-    <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Icon aria-hidden="true" className="size-3.5" />{label}</p>
-    <p className={cn("mt-1.5 text-xl font-semibold tabular-nums", tone)}>{value}</p>
-    <p className="mt-1 truncate text-xs text-muted-foreground">{note}</p>
-  </article>;
 }

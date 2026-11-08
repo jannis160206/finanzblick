@@ -8,7 +8,7 @@ import { SavingsGoals } from "@/components/savings-goals";
 import { TradeRepublicSettings } from "@/components/settings";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
-import { ChartDataTable } from "@/components/chart-data-table";
+import { MonthlyFunding } from "@/components/monthly-funding";
 import { SectionHeading } from "@/components/finance-ui";
 import { netWorthHistory } from "@/lib/net-worth";
 import { currency, monthLabel, shortCurrency } from "@/lib/format";
@@ -35,7 +35,7 @@ export function NetWorthPanel() {
   const change = latest.total - first.total;
   return (
     <section className="panel mt-5 min-w-0 p-5 sm:p-6" aria-label="Nettovermögen">
-      <SectionHeading title="Nettovermögen" subtitle="Alle bekannten Konten inkl. Depot, abzüglich offener Amex">
+      <SectionHeading title="Nettovermögen">
         <TrendingUp aria-hidden="true" className="size-4 text-primary" />
       </SectionHeading>
       <FinancialData className="mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -55,8 +55,6 @@ export function NetWorthPanel() {
           </AreaChart>
         </ResponsiveContainer>
       </FinancialData>}
-      <ChartDataTable caption="Nettovermögen pro Monat" columns={["Monat", "Nettovermögen"]}
-        rows={points.map((point) => ({ key: point.month, cells: [point.label, currency(point.total)] }))} />
       {Object.values(latest.parts).some((value) => Math.abs(value) >= 0.005) && <FinancialData as="dl" className="mt-4 grid gap-x-6 gap-y-2 border-t border-border/60 pt-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
         {Object.entries(latest.parts).filter(([, value]) => Math.abs(value) >= 0.005).sort(([, a], [, b]) => b - a).map(([name, value]) => <div key={name} className="flex justify-between gap-2">
           <dt className="text-muted-foreground">{partLabel(name)}</dt><dd className={value < 0 ? "tabular-nums text-destructive" : "tabular-nums"}>{currency(value)}</dd>
@@ -71,6 +69,7 @@ export function SavingsPage() {
   return (
     <>
       <Pockets />
+      <MonthlyFunding />
       <NetWorthPanel />
       <div className="mt-5 space-y-5">
         <SavingsGoals />

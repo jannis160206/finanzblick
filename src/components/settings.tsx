@@ -42,7 +42,7 @@ export function TradeRepublicSettings() {
   const valid = value.balance !== "" && value.rate !== "" && trBalanceSchema.safeParse({ balance: Number(value.balance), date: value.date }).success &&
     value.date <= state.settings.asOf && Number.isFinite(Number(value.rate)) && Number(value.rate) >= 0 && Number(value.rate) <= 100;
   const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(initial);
-  return <SettingsSection id="tr-zinsen" title="Trade Republic" description="Dein Notgroschen und der dazugehörige Jahreszins." icon={Landmark}>
+  return <SettingsSection id="tr-zinsen" title="Trade Republic" description="Notgroschen und Jahreszins." icon={Landmark}>
     <FinancialData as="dl" className="mb-6 grid gap-4 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:grid-cols-3 sm:p-5">
       <div><dt className="text-xs text-muted-foreground">Gespeicherter Kontostand</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{currency(savedBalance)}</dd></div>
       <div><dt className="text-xs text-muted-foreground">Zinssatz p.a.</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{percent(savedRate)}</dd></div>
@@ -137,7 +137,7 @@ export function Settings() {
     profil: <AccountProfileSettings />,
     bankverbindung: <BankConnections />,
     email: <MailConnection />,
-    jahreszeit: <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Thema, Akzentfarbe und Bewegung. So fühlt sich Finanzblick nach dir an." icon={Palette}>
+    jahreszeit: <SettingsSection id="jahreszeit" title="Erscheinungsbild" description="Thema und Farbe." icon={Palette}>
       <ThemePicker preference={saved} suggested={suggestedTheme} onChoose={chooseTheme} />
       <form className="mt-6 border-t border-border/70 pt-6" onSubmit={(event) => {
         event.preventDefault(); const parsed = seasonalPreferenceSchema.safeParse(value); if (!parsed.success) return;
@@ -146,7 +146,7 @@ export function Settings() {
       }}>
         <AppearanceControls value={value} inputRef={null} onBlur={() => {}} onChange={(next) => { setDraft(next); setPreview(next); }} />
         {dirty && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 p-3">
-          <p className="text-xs text-muted-foreground">Vorschau aktiv · noch nicht gespeichert.</p>
+          <p className="text-xs text-muted-foreground">Noch nicht gespeichert.</p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => { setDraft(null); setPreview(null); }}>Verwerfen</Button>
             <Button type="submit" size="sm"><Save aria-hidden="true" className="size-4" />Einstellungen speichern</Button>
@@ -154,22 +154,22 @@ export function Settings() {
         </div>}
       </form>
     </SettingsSection>,
-    klaenge: <SettingsSection id="klaenge" title="Klänge" description="Dezentes Feedback beim Klicken und Speichern." icon={Volume2}>
+    klaenge: <SettingsSection id="klaenge" title="Klänge" description="Töne beim Klicken." icon={Volume2}>
       <InteractionSoundsSetting />
     </SettingsSection>,
     benachrichtigungen: <NotificationSettings />,
     sichtschutz: <SecurityModeSettings />,
-    sicherung: <SettingsSection id="sicherung" title="Sicherung" description="Eine Kopie deiner Daten. Jederzeit in deiner Hand." icon={DatabaseBackup}>
+    sicherung: <SettingsSection id="sicherung" title="Sicherung" description="Kopie deiner Daten." icon={DatabaseBackup}>
       <div className="flex flex-wrap items-center justify-between gap-5 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:p-5">
         <div className="flex max-w-md items-start gap-3">
           <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-primary" />
-          <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Umsätze, Planung und Einstellungen in einer Datei. Vor dem Wiederherstellen prüfst du die Vorschau.</p><BackupAge /></div>
+          <div><h3 className="text-sm font-medium">Dein Excel-Backup</h3><p className="mt-1 text-xs text-muted-foreground">Alle Daten in einer Datei.</p><BackupAge /></div>
         </div>
         <FinancialData><ExcelActions compact /></FinancialData>
       </div>
       <AccountSyncTools manual />
     </SettingsSection>,
-    gefahrenzone: <SettingsSection id="gefahrenzone" title="Gefahrenzone" description="Endgültige Aktionen. Vorher am besten ein Excel-Backup erstellen." icon={TriangleAlert}>
+    gefahrenzone: <SettingsSection id="gefahrenzone" title="Gefahrenzone" description="Nicht rückgängig zu machen." icon={TriangleAlert}>
       <FinancialData className="[&>*:first-child]:mt-0"><ClearBookings /></FinancialData>
     </SettingsSection>,
   };

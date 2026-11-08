@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { ChartDataTable } from "@/components/chart-data-table";
 import { FinancialData } from "@/components/financial-data";
 import { currency } from "@/lib/format";
 import { groupSpending, shareLabel } from "@/lib/spending-groups";
@@ -27,10 +26,6 @@ export function CategoryDonut({
     ...groups.top.map((slice, index) => ({ ...slice, color: sliceColors[index] })),
     ...(groups.rest.length ? [{ name: "Sonstige", value: groups.restValue, share: groups.restShare, color: restColor }] : []),
   ];
-  const tableRows = [...groups.top, ...groups.rest].map((slice) => ({
-    key: slice.name,
-    cells: [slice.name, currency(slice.value), shareLabel(slice.share)],
-  }));
   return (
     <>
       <FinancialData className="flex min-h-64 flex-col items-center gap-3 sm:flex-row">
@@ -81,7 +76,6 @@ export function CategoryDonut({
           </ul>
         </FinancialData>
       )}
-      <ChartDataTable caption="Ausgaben nach Kategorie" columns={["Kategorie", "Betrag", "Anteil"]} rows={tableRows} />
     </>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Sparkles } from "lucide-react";
+import { Check } from "lucide-react";
 import type { Ref } from "react";
 import { Label } from "@/components/ui/label";
 import {
@@ -27,7 +27,6 @@ export function AppearanceControls({
     <div className="grid items-start gap-6 lg:grid-cols-[1.1fr_1fr]">
       <fieldset className="min-w-0">
         <legend className="text-sm font-medium">Akzentfarbe</legend>
-        <p className="mt-1 text-xs text-muted-foreground">Ein Farbton für Navigation, Buttons und Diagramme.</p>
         <div
           className="my-4 grid grid-cols-3 gap-2"
           role="radiogroup"
@@ -90,25 +89,10 @@ export function AppearanceControls({
         </div>
       </fieldset>
       <div className="space-y-4">
-        <div aria-label="Akzentvorschau" className="overflow-hidden rounded-2xl border border-border/70 bg-background/40">
-          <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
-            <p className="text-xs font-medium">Dein Stil</p>
-            <span className="rounded-full bg-muted px-2 py-1 text-2xs text-muted-foreground">Vorschau</span>
-          </div>
-          <div className="flex items-end justify-between gap-4 p-4">
-            <div>
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-medium text-primary"><Sparkles aria-hidden="true" className="size-3.5" />Deine Akzentfarbe</span>
-              <p className="mt-3 text-xs text-muted-foreground">Dezent. Persönlich. Durchgängig.</p>
-            </div>
-            <div aria-hidden="true" className="flex h-16 shrink-0 items-end gap-1.5">
-              {[35, 60, 45, 85, 100].map((height, index) => <span key={index} className="w-3 rounded-t bg-primary" style={{ height: `${height}%`, opacity: 0.3 + index * 0.15 }} />)}
-            </div>
-          </div>
-        </div>
         <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-border/70 bg-muted/15 p-4">
           <span className="flex-1">
             <span className="block text-sm font-medium">Bewegung reduzieren</span>
-            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">Weniger Animationen, gleiche Funktionen.</span>
+            <span className="mt-1 block text-xs text-muted-foreground">Weniger Animationen</span>
           </span>
           <span className="relative shrink-0">
             <input
@@ -124,9 +108,6 @@ export function AppearanceControls({
             </span>
           </span>
         </label>
-        <p className="px-1 text-xs leading-relaxed text-muted-foreground">
-          Bei „Bewegung reduzieren“ entfallen Szene, Flackern und Übergänge. Schrift und Farben bleiben.
-        </p>
       </div>
     </div>
   );

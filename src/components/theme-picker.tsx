@@ -43,9 +43,6 @@ export function ThemePicker({
   return (
     <fieldset className="min-w-0">
       <legend className="text-sm font-medium">Thema</legend>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Schrift, Szene und Farben der Oberfläche. Deine Akzentfarbe bleibt. Die Wahl gilt sofort und bleibt, bis du sie zurücksetzt.
-      </p>
       <div className="my-4 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4" role="radiogroup" aria-label="Thema">
         {seasonalThemes.map((theme) => (
           <label key={theme} className="relative min-w-0 cursor-pointer">

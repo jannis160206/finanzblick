@@ -40,7 +40,7 @@ describe("groupSpending", () => {
 });
 
 describe("CategoryDonut", () => {
-  it("shows five categories plus an expandable 'Sonstige' and a value table", () => {
+  it("shows five categories plus an expandable 'Sonstige'", () => {
     render(<CategoryDonut spending={rows} tooltipStyle={{}} />);
     const legend = screen.getByRole("list", { name: "Kategorien mit Anteil" });
     expect(within(legend).getAllByRole("listitem")).toHaveLength(6);
@@ -50,9 +50,8 @@ describe("CategoryDonut", () => {
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.getAllByText("Kaffee")).toHaveLength(2);
-    const table = screen.getByRole("table", { name: "Ausgaben nach Kategorie" });
-    expect(within(table).getAllByRole("row")).toHaveLength(rows.length + 1);
+    expect(screen.getByText("Kaffee")).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
   });
   it("omits the disclosure when everything fits", () => {
     render(<CategoryDonut spending={rows.slice(0, 3)} tooltipStyle={{}} />);

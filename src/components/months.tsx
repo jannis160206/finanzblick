@@ -155,13 +155,13 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
             </article>
           ))}
         </div>
-        <IncomeSplit
+        {!showOverview && <IncomeSplit
           label={`Verteilung ${periodLabel}`}
           income={income}
           fixed={sum(timeline.map((row) => (booked(row) ? row.fixedSpending : row.fixed)))}
           everyday={sum(timeline.map((row) => (booked(row) ? round(row.actualSpending - row.fixedSpending) : round(row.variablePlan - row.amexOpen))))}
           oneOff={sum(timeline.map((row) => (booked(row) ? 0 : round(row.plannedOneOffs + row.amexOpen))))}
-        />
+        />}
       </section>
       <section
         ref={workspace}
@@ -247,8 +247,7 @@ export function Months({ title = "Monate", eyebrow = "JAHRESPLANUNG", initialVie
             onCommit={changeValue}
           />
         )}
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
-          <span>{view === "year" ? "12 Monate" : "1 Monat"} · EUR</span>
+        <footer className="flex flex-wrap items-center justify-end gap-2 border-t px-4 py-2.5 text-xs text-muted-foreground sm:px-5">
           <Link
             href="/umsaetze"
             className="inline-flex min-h-9 items-center gap-1 rounded-md px-1 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"

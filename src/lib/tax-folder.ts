@@ -11,7 +11,7 @@ export type TaxGroupDefinition = {
   detail: string; hint: string; test: (text: string, category: Category) => boolean;
 };
 
-export const TAX_FOLDER_NOTE = "Ohne Gewähr, keine Steuerberatung. Kennzahlen laut Formular L1 – bitte in FinanzOnline prüfen. Belege 7 Jahre aufheben.";
+export const TAX_FOLDER_NOTE = "Ohne Gewähr, keine Steuerberatung. Belege 7 Jahre aufheben.";
 
 export const taxGroupDefinitions: TaxGroupDefinition[] = [
   { id: "donation", kz: undefined, verified: true, label: "Spenden", section: "Sonderausgaben",

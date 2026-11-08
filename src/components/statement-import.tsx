@@ -719,7 +719,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
       <section
         aria-label="Kontoauszüge importieren"
         className={cn(
-          "mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-border/70 bg-card px-4 py-4 shadow-sm transition-colors motion-reduce:transition-none sm:px-5",
+          "mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dashed border-border/70 px-4 py-2 transition-colors motion-reduce:transition-none sm:px-5",
           ui.dragging && "border-primary bg-primary/5",
         )}
         onDragEnter={(event) => {
@@ -742,15 +742,11 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           void selectFiles(Array.from(event.dataTransfer.files));
         }}
       >
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/5"><FileUp className="size-5 text-muted-foreground" /></span>
-          <div className="min-w-0">
-            <p className="text-sm font-medium">Kontoauszüge hier ablegen</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              CSV, Excel, PDF oder Amex-Screenshot · max. 20 MB
-            </p>
-          </div>
-        </div>
+        <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+          <FileUp aria-hidden="true" className="size-4 shrink-0" />
+          <span>Auszüge hierher ziehen</span>
+          <span className="hidden text-2xs lg:inline">CSV, Excel, PDF oder Amex-Screenshot · max. 20 MB</span>
+        </p>
         <input
           ref={fileInput}
           type="file"

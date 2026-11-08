@@ -41,8 +41,8 @@ it("offers a labelled native radio group with keyboard-focusable 44px targets an
     radio.focus();
     expect(document.activeElement).toBe(radio);
   }
-  expect(within(section).getByText(/keine Passwortsperre/)).toBeTruthy();
-  expect(within(section).getByText(/nur in diesem Browser/)).toBeTruthy();
+  expect(within(section).getByText(/Beträge unscharf/)).toBeTruthy();
+  expect(within(section).getByText(/in diesem Browser/)).toBeTruthy();
 });
 
 it("changes the immediately persisted preference without altering financial data", async () => {

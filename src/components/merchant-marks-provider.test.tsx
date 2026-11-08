@@ -937,7 +937,7 @@ it.each([
     vi.stubGlobal("fetch", fetch);
     const { container, rerender } = render(tree(["muller", "muller"]));
     await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
-    expect(screen.getByRole("status").textContent).toContain("Initialen");
+    expect(screen.getByRole("status").textContent).toContain("Logos fehlen");
     expect(container.querySelector("img")).toBeNull();
     rerender(tree(["muller"]));
     await act(async () => {});

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight, Cloud, Palette, Settings2, ShieldCheck, UserRound } from "lucide-react";
+import { ChevronRight, Palette, Settings2, ShieldCheck } from "lucide-react";
 import { useAccountWorkspace } from "@/components/account-context";
 import { AccountLogout } from "@/components/account-tools";
 import { cn } from "@/lib/utils";
@@ -55,16 +55,6 @@ export function AccountProfileSettings() {
       <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/15 bg-primary/5 px-3 py-1.5 text-2xs font-medium text-primary">
         <ShieldCheck aria-hidden="true" className="size-3.5" />Angemeldet
       </span>
-    </div>
-    <div className="grid gap-5 p-5 text-sm sm:grid-cols-2 sm:p-6">
-      <div className="flex items-start gap-3">
-        <UserRound aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div className="min-w-0"><p className="text-xs text-muted-foreground">Benutzername</p><p className="mt-1 break-all font-medium">{username}</p></div>
-      </div>
-      <div className="flex items-start gap-3">
-        <Cloud aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div><p className="text-xs text-muted-foreground">Deine Daten</p><p className="mt-1 font-medium">In deinem Konto gespeichert</p></div>
-      </div>
     </div>
     <div className="flex flex-wrap gap-2 border-t border-border/70 px-5 py-3 sm:px-6">
       <Link href="#jahreszeit" className="inline-flex min-h-9 items-center gap-2 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">

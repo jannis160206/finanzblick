@@ -25,7 +25,7 @@ export function TaxFolderPanel({ year }: { year: number }) {
         )}
       </div>
       <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-        Mögliche absetzbare Ausgaben für die Arbeitnehmerveranlagung, automatisch aus deinen Umsätzen gesammelt.
+        Mögliche absetzbare Ausgaben aus deinen Umsätzen.
       </p>
       {folder.groups.length ? (
         <ul className="mt-3 divide-y divide-border/60 text-sm">
@@ -44,7 +44,7 @@ export function TaxFolderPanel({ year }: { year: number }) {
           ))}
         </ul>
       ) : (
-        <p className="mt-3 text-sm text-muted-foreground">Für {year} habe ich keine typischerweise absetzbaren Buchungen gefunden.</p>
+        <p className="mt-3 text-sm text-muted-foreground">Für {year} nichts gefunden.</p>
       )}
       {folder.count > 0 && <TaxFolderDownload state={state} year={year} />}
       <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{folder.note}</p>

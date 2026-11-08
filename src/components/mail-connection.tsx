@@ -88,7 +88,7 @@ export function MailConnection() {
   if (!workspace) return null;
   const open = status?.orders.filter((order) => order.status === "open") ?? [];
   return <SettingsSection id="email" title="E-Mail-Bestellungen" icon={Mail}
-    description="Bestellbestätigungen aus Gmail erkennen und als kommende Zahlung vormerken – inklusive Klarna, PayPal und Rechnung. Abruf alle 6 Stunden."
+    description="Bestellungen aus Gmail werden automatisch als Zahlung vorgemerkt."
     action={status?.connected ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void run("sync")}>
       {busy === "sync" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}Jetzt prüfen
     </Button> : undefined}>
@@ -101,7 +101,7 @@ export function MailConnection() {
             <li>Unter <a className="text-primary underline" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer">App-Passwörter</a> ein Passwort „Finanzblick“ erstellen (16 Zeichen).</li>
             <li>In Gmail → Einstellungen → Weiterleitung und POP/IMAP prüfen, dass <strong>IMAP aktiviert</strong> ist.</li>
           </ol>
-          <p className="mt-2">Finanzblick liest nur lesend Bestell- und Zahlungsmails auf diesem Rechner. Nichts wird markiert, gelöscht oder weitergegeben.</p>
+          <p className="mt-2">Nur lesend, nichts wird weitergegeben.</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="space-y-1 text-sm"><span className="font-medium">Gmail-Adresse</span>
@@ -120,14 +120,16 @@ export function MailConnection() {
             <p className="flex items-center gap-2 text-sm font-medium"><Mail aria-hidden="true" className="size-4 text-primary" />{status.email}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               {status.lastSync ? `Zuletzt geprüft ${new Date(status.lastSync).toLocaleString("de-AT", { dateStyle: "short", timeStyle: "short" })}` : "Noch nicht geprüft"}
-              {` · ${open.length} offene Bestellung${open.length === 1 ? "" : "en"} in der Planung`}
+              
             </p>
             {status.lastError && <p role="alert" className="mt-2 text-xs font-medium text-destructive">{status.lastError}</p>}
           </div>
           <Button size="sm" variant="ghost" disabled={busy !== null} aria-label="Gmail trennen" onClick={() => void remove()}><Trash2 aria-hidden="true" className="size-4" /></Button>
         </div>
-        {status.orders.length > 0 ? <ul className="divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
-          {status.orders.map((order) => <li key={order.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+        {(() => {
+          const rest = status.orders.filter((order) => order.status !== "open");
+          const list = (items: typeof status.orders) => <ul className="divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
+          {items.map((order) => <li key={order.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
             <div className="min-w-0">
               <p className="flex items-center gap-2 truncate font-medium"><ShoppingBag aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />{order.shop}{order.product ? ` · ${order.product}` : ""}</p>
               <p className="text-xs text-muted-foreground">
@@ -140,8 +142,15 @@ export function MailConnection() {
               <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusTone[order.status]}`}>{statusLabel[order.status]}</span>
             </div>
           </li>)}
-        </ul> : <p className="text-sm text-muted-foreground">Noch keine Bestellungen erkannt. Neue Bestellbestätigungen erscheinen hier und als geplante Zahlung.</p>}
-        <p className="text-xs text-muted-foreground">Bezahlte Bestellungen werden automatisch mit dem Bankumsatz abgeglichen, Stornos entfernt. Vorgemerkte Zahlungen kannst du in der Planung löschen – sie kommen dann nicht wieder.</p>
+          </ul>;
+          return <>
+            {open.length ? list(open) : <p className="text-sm text-muted-foreground">Keine offenen Bestellungen.</p>}
+            {rest.length > 0 && <details className="group">
+              <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">Erledigte anzeigen ({rest.length})</summary>
+              <div className="mt-2">{list(rest)}</div>
+            </details>}
+          </>;
+        })()}
       </div>
     </FinancialData>}
   </SettingsSection>;
