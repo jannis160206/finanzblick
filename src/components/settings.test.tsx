@@ -56,6 +56,25 @@ it("keeps each redesigned setting grouped under its accessible heading and prese
   expect(screen.getByRole("button", { name: "Wiederherstellen" })).toBeTruthy();
 });
 
+it("groups the settings in a navigation and filters them by search without unmounting", async () => {
+  mount();
+  const nav = within(screen.getByRole("navigation", { name: "Einstellungsbereiche" }));
+  expect(nav.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
+    ["#jahreszeit", "#klaenge", "#benachrichtigungen", "#sichtschutz", "#sicherung", "#gefahrenzone"],
+  );
+  expect(screen.getByRole("region", { name: "Gefahrenzone" }).textContent).toContain("Alle Buchungen entfernen");
+  expect(screen.getByRole("region", { name: "Klänge" })).toBeTruthy();
+  const search = screen.getByRole("searchbox", { name: "Einstellungen durchsuchen" });
+  fireEvent.change(search, { target: { value: "backup" } });
+  await vi.waitFor(() => expect(nav.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(["#sicherung", "#gefahrenzone"]));
+  expect(screen.queryByRole("region", { name: "Erscheinungsbild" })).toBeNull();
+  expect(document.getElementById("jahreszeit")).not.toBeNull();
+  fireEvent.change(search, { target: { value: "xyzunbekannt" } });
+  await vi.waitFor(() => expect(screen.getByRole("status").textContent).toContain("xyzunbekannt"));
+  fireEvent.click(screen.getByRole("button", { name: "Suche leeren" }));
+  await vi.waitFor(() => expect(screen.getByRole("region", { name: "Erscheinungsbild" })).toBeTruthy());
+});
+
 it("previews and discards appearance changes without changing the saved financial state", () => {
   const read = mount();
   const before = structuredClone(read());
