@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useDeferredValue, useMemo } from "react";
 import Link from "next/link";
 import {
   ArrowDownLeft,
@@ -13,7 +13,8 @@ import {
 } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
-import { CategoryDonut } from "@/components/category-donut";
+import dynamic from "next/dynamic";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SeasonalIcon } from "@/components/seasonal-icons";
 import { ledgerHref } from "@/lib/ledger-link";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
@@ -31,11 +32,22 @@ import { BudgetProgressCard } from "@/components/dashboard/budget-progress-card"
 import { NetWorthCard } from "@/components/dashboard/net-worth-card";
 import { GoalsCard } from "@/components/dashboard/goals-card";
 
+const CategoryDonut = dynamic(() => import("@/components/category-donut").then((module) => module.CategoryDonut), {
+  ssr: false,
+  loading: () => <Skeleton className="h-64 w-full" />,
+});
+
 export function Overview() {
   const { state, dashboard: d } = useFinance();
   const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
   const reserves = sum(pocketNames.map((pocket) => bankPocketBalance(state, pocket, d.actual) ?? 0));
-  const netWorth = useMemo(() => netWorthHistory(state, d), [state, d]);
+  // Net worth history is CPU-heavy; computing it after the first paint keeps the key figures fast.
+  const deferredState = useDeferredValue<typeof state | null>(state, null);
+  const deferredDashboard = useDeferredValue<typeof d | null>(d, null);
+  const netWorth = useMemo(
+    () => (deferredState && deferredDashboard ? netWorthHistory(deferredState, deferredDashboard) : null),
+    [deferredState, deferredDashboard],
+  );
   const positive = d.current.surplus >= 0;
   const surplusKpi = {
     label: "Überschuss · Plan",
@@ -139,7 +151,9 @@ export function Overview() {
       <div className="mb-4 empty:hidden"><PlannedOneOffLines /></div>
       <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-12">
         <BudgetProgressCard className="xl:col-span-7" />
-        <NetWorthCard points={netWorth} className="xl:col-span-5" />
+        {netWorth
+          ? <NetWorthCard points={netWorth} className="xl:col-span-5" />
+          : <Skeleton className="min-h-80 rounded-2xl border border-border/60 xl:col-span-5" />}
         <GoalsCard className="md:col-span-2 xl:col-span-12" />
       </div>
       <FinanceInsightsPanel />

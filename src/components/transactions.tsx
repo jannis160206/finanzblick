@@ -15,7 +15,7 @@ import {
   type RowSelectionState,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowDownUp, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, Inbox, SearchX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -712,6 +712,7 @@ const TransactionLedger = memo(function TransactionLedger({
         </MerchantMarksProvider>
         {!data.length && (
           <EmptyState
+            icon={ledger.length ? SearchX : Inbox}
             title="Keine Umsätze gefunden"
             description={
               ledger.length

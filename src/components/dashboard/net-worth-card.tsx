@@ -2,16 +2,21 @@
 
 import Link from "next/link";
 import { ArrowRight, Landmark, TrendingDown, TrendingUp } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer, Tooltip } from "recharts";
+import dynamic from "next/dynamic";
 import { FinancialData } from "@/components/financial-data";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ChartTooltip, chartCursor } from "@/components/charts/chart-theme";
+import { Skeleton } from "@/components/ui/skeleton";
 import { netWorthPartIcon, netWorthPartLabel, visibleNetWorthParts } from "@/components/net-worth-parts";
 import type { NetWorthPoint } from "@/lib/net-worth";
 import { currency, monthLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+const NetWorthSparkline = dynamic(() => import("@/components/charts/net-worth-sparkline"), {
+  ssr: false,
+  loading: () => <Skeleton className="size-full" />,
+});
 
 export function NetWorthCard({ points, className }: { points: readonly NetWorthPoint[]; className?: string }) {
   const latest = points.at(-1);
@@ -47,18 +52,7 @@ export function NetWorthCard({ points, className }: { points: readonly NetWorthP
                 role="img"
                 aria-label={`Nettovermögen von ${currency(first.total)} (${monthLabel(first.month)}) auf ${currency(latest.total)} (${monthLabel(latest.month)})`}
               >
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
-                    <defs>
-                      <linearGradient id="overview-net-worth-fill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.28} />
-                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <Tooltip content={<ChartTooltip />} cursor={chartCursor} />
-                    <Area type="monotone" dataKey="total" name="Nettovermögen" stroke="var(--chart-1)" strokeWidth={2} fill="url(#overview-net-worth-fill)" isAnimationActive={false} />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <NetWorthSparkline data={series} />
               </FinancialData>
             )}
             {parts.length > 0 && (

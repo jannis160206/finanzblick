@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
+import dynamic from "next/dynamic";
 import { TrendingDown, TrendingUp } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Pockets } from "@/components/pockets";
 import { SavingsGoals } from "@/components/savings-goals";
 import { TradeRepublicSettings } from "@/components/settings";
@@ -12,9 +13,13 @@ import { FinancialData } from "@/components/financial-data";
 import { MonthlyFunding } from "@/components/monthly-funding";
 import { SectionHeading } from "@/components/finance-ui";
 import { netWorthHistory } from "@/lib/net-worth";
-import { currency, monthLabel, shortCurrency } from "@/lib/format";
-import { ChartTooltip, chartAxisProps, chartCursor, chartGridProps } from "@/components/charts/chart-theme";
+import { currency, monthLabel } from "@/lib/format";
 import { netWorthPartIcon, netWorthPartLabel as partLabel, visibleNetWorthParts } from "@/components/net-worth-parts";
+
+const NetWorthHistoryChart = dynamic(() => import("@/components/charts/net-worth-history-chart"), {
+  ssr: false,
+  loading: () => <Skeleton className="size-full" />,
+});
 
 export function NetWorthPanel() {
   const { state, dashboard } = useFinance();
@@ -37,21 +42,7 @@ export function NetWorthPanel() {
         </Badge>}
       </FinancialData>
       {points.length > 1 && <FinancialData className="h-56" role="img" aria-label="Verlauf des Nettovermögens">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={points} margin={{ left: -15, right: 8, top: 10 }}>
-            <defs>
-              <linearGradient id="net-worth-fill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.22} />
-                <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid {...chartGridProps} />
-            <XAxis dataKey="label" {...chartAxisProps} minTickGap={25} />
-            <YAxis tickFormatter={shortCurrency} {...chartAxisProps} width={64} />
-            <Tooltip content={<ChartTooltip />} cursor={chartCursor} />
-            <Area type="monotone" dataKey="total" name="Nettovermögen" stroke="var(--chart-1)" fill="url(#net-worth-fill)" strokeWidth={2} isAnimationActive={false} />
-          </AreaChart>
-        </ResponsiveContainer>
+        <NetWorthHistoryChart data={points} />
       </FinancialData>}
       {visibleNetWorthParts(latest.parts).length > 0 && <FinancialData as="dl" className="mt-5 grid gap-2 border-t border-border/60 pt-5 sm:grid-cols-2 lg:grid-cols-3">
         {visibleNetWorthParts(latest.parts).map(([name, value]) => {

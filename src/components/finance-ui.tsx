@@ -3,9 +3,9 @@
 import { useId, useState, type ReactNode } from "react";
 import {
   Bike,
-  CircleHelp,
   Palmtree,
   PiggyBank,
+  SearchX,
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
@@ -77,16 +77,20 @@ export function SectionHeading({
 export function EmptyState({
   title,
   description,
+  icon: Icon = SearchX,
   children,
 }: {
   title: string;
   description: string;
+  icon?: LucideIcon;
   children?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-5 py-10 text-center">
-      <CircleHelp className="size-7 text-muted-foreground" />
-      <p className="text-sm font-medium">{title}</p>
+    <div className="flex min-h-56 flex-col items-center justify-center gap-2 px-5 py-12 text-center">
+      <span className="mb-1 flex size-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+        <Icon aria-hidden="true" className="size-6" />
+      </span>
+      <p className="text-sm font-semibold">{title}</p>
       <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
         {description}
       </p>

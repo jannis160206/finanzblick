@@ -20,6 +20,7 @@
     "merchants:import": "tsx --env-file-if-exists=.env.local scripts/merchant-import.ts",
     "merchants:authorized-logos": "tsx scripts/merchant-authorized-logos.ts",
     "merchants:complete": "tsx scripts/merchant-complete.ts",
+    "pwa:icons": "tsx scripts/pwa-icons.ts",
     "benchmark:calculation": "tsx scripts/benchmark-calculation.ts",
     "benchmark:recognition": "tsx --env-file-if-exists=.env.local scripts/statement-recognition-benchmark.ts",
     "lint": "eslint",

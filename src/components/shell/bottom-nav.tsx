@@ -9,7 +9,7 @@ import { navigation, isActivePath } from "@/components/shell/navigation";
 import { cn } from "@/lib/utils";
 
 const itemClass =
-  "group flex h-full min-w-0 flex-col items-center justify-center gap-0.5 text-2xs font-medium transition-colors duration-150 focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ring";
+  "group flex h-full min-w-0 flex-col items-center justify-center gap-0.5 text-2xs font-medium transition-[color,scale] duration-150 active:scale-95 motion-reduce:active:scale-100 focus-visible:outline-2 focus-visible:-outline-offset-4 focus-visible:outline-ring";
 
 function Pill({ active, children }: { active: boolean; children: ReactNode }) {
   return (

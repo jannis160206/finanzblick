@@ -14,6 +14,16 @@ describe("web app manifest", () => {
   it("only references icons that exist as app routes", async () => {
     const { existsSync } = await import("node:fs");
     for (const icon of data.icons ?? []) expect(existsSync(`src/app${icon.src}`)).toBe(true);
+    for (const shortcut of data.shortcuts ?? [])
+      for (const icon of shortcut.icons ?? []) expect(existsSync(`src/app${icon.src}`)).toBe(true);
+  });
+  it("provides raster and maskable icons plus shortcuts to the main areas", () => {
+    expect(data.id).toBe("/");
+    expect(data.icons).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sizes: "192x192", type: "image/png" }),
+      expect.objectContaining({ sizes: "512x512", purpose: "maskable" }),
+    ]));
+    expect(data.shortcuts?.map((shortcut) => shortcut.url)).toEqual(["/umsaetze", "/budget", "/sparen"]);
   });
   it("offers colors for light and dark themes", () => {
     expect(viewport.themeColor).toEqual([

@@ -4,9 +4,22 @@ import { useEffect, useState } from "react";
 import { MessageSquareText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FinanceAssistant } from "@/components/finance-assistant";
+import dynamic from "next/dynamic";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { ASK_ASSISTANT_EVENT } from "@/lib/assistant-bus";
+
+const FinanceAssistant = dynamic(() => import("@/components/finance-assistant").then((module) => module.FinanceAssistant), {
+  ssr: false,
+  loading: () => (
+    <div role="status" className="space-y-3 px-6 py-4">
+      <span className="sr-only">Assistent wird geladen …</span>
+      <Skeleton className="h-10 w-3/4" />
+      <Skeleton className="h-24 w-full" />
+      <Skeleton className="h-10 w-2/3" />
+    </div>
+  ),
+});
 
 // The assistant is no separate page: a button on every page opens it as a side panel.
 export function AssistantLauncher() {

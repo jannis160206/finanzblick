@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AppShell } from "@/components/app-shell";
-import FinancePage from "@/app/(dashboard)/[view]/page";
+import PayrollRoute from "@/app/(dashboard)/gehalt-steuern/page";
+import MovedPage from "@/app/(dashboard)/[view]/page";
 import { PayrollTaxes } from "@/components/payroll-taxes";
 import { FinancialWorkspace } from "@/components/financial-data";
 import { Overview } from "@/components/overview";
@@ -14,6 +15,7 @@ import { calculateDashboard } from "@/lib/calc";
 vi.mock("next/navigation", () => ({
   usePathname: () => "/gehalt-steuern", useSearchParams: () => new URLSearchParams(), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   notFound: () => { throw new Error("Not found"); },
+  redirect: (target: string) => { throw new Error(`redirect:${target}`); },
 }));
 vi.mock("next/link", () => ({
   default: ({ children, href, ...props }: { children: ReactNode; href: string }) => <a href={href} {...props}>{children}</a>,
@@ -33,10 +35,16 @@ function finance() {
   });
 }
 
-it("routes Gehalt & Steuern to its dedicated page", async () => {
-  const page = await FinancePage({ params: Promise.resolve({ view: "gehalt-steuern" }) });
+it("routes Gehalt & Steuern to its dedicated page", () => {
+  const page = PayrollRoute();
   expect(page.props.children.type).toBe(FinancialWorkspace);
   expect(page.props.children.props.children.type).toBe(PayrollTaxes);
+});
+
+it("keeps old bookmarks as redirects and rejects unknown areas", async () => {
+  await expect(MovedPage({ params: Promise.resolve({ view: "monate" }) })).rejects.toThrow("redirect:/budget?ansicht=jahr");
+  await expect(MovedPage({ params: Promise.resolve({ view: "pockets" }) })).rejects.toThrow("redirect:/sparen");
+  await expect(MovedPage({ params: Promise.resolve({ view: "unbekannt" }) })).rejects.toThrow("Not found");
 });
 
 it("exposes the new navigation link and keeps settings last", () => {

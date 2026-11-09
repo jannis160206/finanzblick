@@ -17,13 +17,17 @@ function EmptyState({
     <div
       data-slot="empty-state"
       className={cn(
-        "flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed bg-muted/10 p-5 text-center",
+        "flex min-h-32 flex-col items-center justify-center rounded-2xl border border-dashed border-border bg-surface-sunken/60 p-6 text-center",
         className,
       )}
     >
-      {Icon && <Icon aria-hidden="true" className="mb-3 size-7 text-muted-foreground" />}
-      <p className="text-sm font-medium">{title}</p>
-      {children && <div className="mt-1 text-xs text-muted-foreground">{children}</div>}
+      {Icon && (
+        <span className="mb-3 flex size-11 items-center justify-center rounded-2xl bg-card text-muted-foreground shadow-xs">
+          <Icon aria-hidden="true" className="size-5" />
+        </span>
+      )}
+      <p className="text-sm font-semibold">{title}</p>
+      {children && <div className="mt-1 max-w-sm text-xs leading-relaxed text-muted-foreground">{children}</div>}
     </div>
   );
 }

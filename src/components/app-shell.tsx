@@ -20,7 +20,7 @@ import { useSecurityMode } from "@/components/security-mode-provider";
 import { useAccountWorkspace } from "@/components/account-context";
 import { AccountSyncTools } from "@/components/account-tools";
 import { AccountSidebarProfile } from "@/components/account-profile";
-import { Skeleton } from "@/components/ui/skeleton";
+import { PageSkeleton } from "@/components/page-skeleton";
 import { AssistantLauncher } from "@/components/assistant-launcher";
 import { PwaNotifications } from "@/components/pwa-notifications";
 import { AppSidebar, NavLinks } from "@/components/shell/sidebar";
@@ -100,20 +100,7 @@ export function AppShell({
             {ready ? (
               <PageTransition>{children}</PageTransition>
             ) : (
-              <div role="status" aria-live="polite" className="space-y-6">
-                <p className="text-sm text-muted-foreground">
-                  Finanzdaten werden geladen …
-                </p>
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  {[0, 1, 2, 3].map((index) => (
-                    <Skeleton
-                      key={index}
-                      className="panel h-36"
-                    />
-                  ))}
-                </div>
-                <Skeleton className="panel h-80" />
-              </div>
+              <PageSkeleton label="Finanzdaten werden geladen …" />
             )}
           </div>
           <footer className="mt-12 flex flex-wrap justify-between gap-2 border-t border-border/70 pt-4 text-2xs text-muted-foreground">
