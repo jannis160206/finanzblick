@@ -15,7 +15,7 @@ import {
   type RowSelectionState,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowDownUp } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -533,7 +533,7 @@ const TransactionLedger = memo(function TransactionLedger({
       }} />
       <section
         aria-label="Umsatzliste"
-        className="min-w-0 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
+        className="min-w-0 overflow-clip rounded-2xl border border-border/80 bg-card shadow-card"
       >
         <TransactionFilters
           filters={filters}
@@ -555,15 +555,15 @@ const TransactionLedger = memo(function TransactionLedger({
           const income = sum(counted.map(personalAmount).filter((value) => value > 0));
           const spending = sum(counted.map(personalAmount).filter((value) => value < 0));
           return (
-            <FinancialData as="dl" aria-label="Summe der gefilterten Umsätze" className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60 bg-muted/20">
+            <FinancialData as="dl" aria-label="Summe der gefilterten Umsätze" className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60 bg-surface-sunken">
               {[
-                { label: "Einnahmen", value: income, tone: "text-emerald-700 dark:text-emerald-400" },
+                { label: "Einnahmen", value: income, tone: "text-money-in" },
                 { label: "Ausgaben", value: spending, tone: "" },
-                { label: "Saldo", value: income + spending, tone: income + spending < 0 ? "text-destructive" : "text-primary" },
+                { label: "Saldo", value: income + spending, tone: income + spending < 0 ? "text-destructive" : "text-money-in" },
               ].map((item) => (
-                <div key={item.label} className="min-w-0 px-4 py-2.5 sm:px-5">
+                <div key={item.label} className="min-w-0 px-4 py-3 sm:px-5">
                   <dt className="text-2xs text-muted-foreground">{item.label}</dt>
-                  <dd className={cn("truncate text-sm font-semibold tabular-nums", item.tone)}>{currency(item.value)}</dd>
+                  <dd className={cn("amount truncate text-sm sm:text-base", item.tone)}>{currency(item.value)}</dd>
                 </div>
               ))}
             </FinancialData>
@@ -573,9 +573,9 @@ const TransactionLedger = memo(function TransactionLedger({
           <FinancialData
             role="group"
             aria-label="Ausgewählte Buchungen"
-            className="flex flex-wrap items-center gap-2 border-b border-primary/15 bg-primary/5 px-4 py-3 sm:px-5"
+            className="sticky top-[calc(var(--shell-header)+0.5rem)] z-10 mx-3 my-3 flex flex-wrap items-center gap-2 rounded-2xl border border-primary/20 bg-card/95 px-3 py-2.5 shadow-raised backdrop-blur-md animate-in fade-in-0 slide-in-from-top-2 duration-200 motion-reduce:animate-none sm:mx-4 sm:px-4"
           >
-            <span role="status" className="mr-auto text-sm font-medium">
+            <span role="status" className="mr-auto pl-1 text-sm font-medium tabular-nums">
               {selected.length} ausgewählt
             </span>
             <Button
@@ -660,14 +660,13 @@ const TransactionLedger = memo(function TransactionLedger({
                                 header.column.columnDef.header,
                                 header.getContext(),
                               )}
-                              <ArrowDownUp
-                                className={cn(
-                                  "size-3",
-                                  header.column.getIsSorted()
-                                    ? "text-primary"
-                                    : "opacity-40",
-                                )}
-                              />
+                              {header.column.getIsSorted() === "asc" ? (
+                                <ArrowUp aria-hidden="true" className="size-3 text-primary" />
+                              ) : header.column.getIsSorted() === "desc" ? (
+                                <ArrowDown aria-hidden="true" className="size-3 text-primary" />
+                              ) : (
+                                <ArrowDownUp aria-hidden="true" className="size-3 opacity-40" />
+                              )}
                             </button>
                           ) : (
                             flexRender(
@@ -685,7 +684,7 @@ const TransactionLedger = memo(function TransactionLedger({
                     <tr
                       key={row.id}
                       className={cn(
-                        row.getIsSelected() && "bg-primary/5",
+                        row.getIsSelected() && "[&>td]:bg-accent-muted",
                         row.original.ignored && "opacity-55",
                       )}
                     >

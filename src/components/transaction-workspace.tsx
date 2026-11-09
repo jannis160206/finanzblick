@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { flexRender, type Row, type Table } from "@tanstack/react-table";
 import {
   Check,
@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleHelp,
   EyeOff,
+  ListFilter,
   Repeat,
   X,
 } from "lucide-react";
@@ -33,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { hasManualCategory } from "@/lib/manual-category";
+import { categoryTone } from "@/components/category-tone";
 
 export type FilterChip = { id: string; label: string; remove: () => void };
 
@@ -49,17 +51,37 @@ export function TransactionToolbar({
   actions: ReactNode;
   chips: FilterChip[];
 }) {
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersId = useId();
   return (
     <div
       role="group"
       aria-label="Umsatz-Werkzeugleiste"
-      className="space-y-4 border-b border-border/70 p-4 sm:p-5"
+      className="space-y-3 border-b border-border/70 p-4 sm:p-5"
     >
       <div className="grid items-center gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0">{search}</div>
-        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant={filtersOpen ? "secondary" : "outline"}
+            className="h-11 gap-2 md:hidden"
+            aria-expanded={filtersOpen}
+            aria-controls={filtersId}
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            <ListFilter className="size-4" aria-hidden="true" />
+            Filter
+            {chips.length > 0 && (
+              <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-2xs leading-5 font-semibold text-primary-foreground tabular-nums">
+                {chips.length}
+              </span>
+            )}
+          </Button>
+          {actions}
+        </div>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{filters}</div>
+      <div id={filtersId} className={cn("grid gap-3 sm:grid-cols-2 xl:grid-cols-3", !filtersOpen && "max-md:hidden")}>{filters}</div>
       {chips.length > 0 && (
         <FinancialData
           role="group"
@@ -71,13 +93,13 @@ export function TransactionToolbar({
               key={chip.id}
               type="button"
               size="sm"
-              variant="outline"
-              className="h-auto min-h-9 max-w-full rounded-full py-1.5 text-xs"
+              variant="soft"
+              className="h-auto min-h-8 max-w-full rounded-full py-1 pr-2 pl-3 text-xs hover:translate-y-0 hover:shadow-none"
               aria-label={`Filter entfernen: ${chip.label}`}
               onClick={chip.remove}
             >
               <span className="min-w-0 truncate">{chip.label}</span>
-              <X className="size-3.5" aria-hidden="true" />
+              <X className="size-3.5 opacity-70" aria-hidden="true" />
             </Button>
           ))}
         </FinancialData>
@@ -169,8 +191,9 @@ export function TransactionCategoryCell({
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
-          {category}
+        <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground/85">
+          <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", categoryTone(category))} />
+          <span className="min-w-0 truncate">{category}</span>
         </span>
         {fixed && (
           <span
@@ -276,8 +299,8 @@ export function TransactionAmountCell({
     <div className="ml-auto max-w-64 text-right">
       <span
         className={cn(
-          "block text-sm font-semibold whitespace-nowrap tabular-nums",
-          amount > 0 && "text-primary",
+          "amount block text-sm whitespace-nowrap",
+          amount > 0 && "text-money-in",
         )}
       >
         {currency(amount)}
@@ -314,26 +337,37 @@ export function MobileTransactionList({
   groupByDay?: boolean;
 }) {
   const { locked } = useSecurityMode();
+  const daySums = new Map<string, number>();
+  if (groupByDay)
+    for (const row of rows)
+      if (!row.original.ignored)
+        daySums.set(row.original.date, (daySums.get(row.original.date) ?? 0) + Number(row.getValue("amount") ?? 0));
   return (
     <ol
       data-financial-data=""
       aria-hidden={locked || undefined}
       inert={locked || undefined}
       aria-label="Mobile Buchungen"
-      className="divide-y divide-border/70 md:hidden"
+      className="md:hidden"
     >
       {rows.map((row, index) => {
         const showDay = groupByDay && rows[index - 1]?.original.date !== row.original.date;
+        const daySum = daySums.get(row.original.date) ?? 0;
         return [
           showDay && (
-            <li key={`day-${row.original.date}-${index}`} role="presentation" className="bg-muted/40 px-4 py-1.5 text-2xs font-semibold tracking-wide text-muted-foreground uppercase">
-              {dayHeading(row.original.date)}
+            <li key={`day-${row.original.date}-${index}`} role="presentation" className="sticky top-[var(--shell-header)] z-[1] flex items-center justify-between gap-3 border-y border-border/60 bg-surface-sunken/95 px-4 py-2 text-xs backdrop-blur-sm first:border-t-0">
+              <span className="font-medium text-muted-foreground">{dayHeading(row.original.date)}</span>
+              <span className={cn("font-medium tabular-nums", daySum > 0 ? "text-money-in" : "text-muted-foreground")}>{currency(Math.round(daySum * 100) / 100)}</span>
             </li>
           ),
           <li
             key={row.id}
             aria-label={`Buchung: ${row.original.merchantAlias ?? row.original.description}`}
-            className={cn("space-y-2 px-4 py-3", row.original.ignored && "opacity-55")}
+            className={cn(
+              "space-y-2 border-b border-border/60 px-4 py-3 transition-colors last:border-b-0",
+              row.getIsSelected() && "bg-accent-muted",
+              row.original.ignored && "opacity-55",
+            )}
           >
             <div className="flex items-start gap-2">
               <div className="-mt-2 -ml-2 shrink-0">
@@ -349,7 +383,7 @@ export function MobileTransactionList({
                 {mobileCell(row, "amount")}
               </div>
             </div>
-            <div className="flex items-end justify-between gap-3">
+            <div className="flex items-end justify-between gap-3 pl-9">
               <div className="min-w-0">{mobileCell(row, "category")}</div>
               <div className="flex min-w-0 flex-col items-end gap-1">
                 <div className="max-w-full text-right text-xs text-muted-foreground">
@@ -368,7 +402,8 @@ export function MobileTransactionList({
 function dayHeading(date: string) {
   const parsed = new Date(`${date}T12:00:00`);
   if (Number.isNaN(parsed.getTime())) return date;
-  return parsed.toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const year = parsed.getFullYear() !== new Date().getFullYear() ? "numeric" : undefined;
+  return parsed.toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long", year });
 }
 
 export function MobileLedgerControls({
