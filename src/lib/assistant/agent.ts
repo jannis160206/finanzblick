@@ -25,6 +25,7 @@ import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
 import { whatIfAnswer } from "./whatif-answer";
 import { parseBudgetPlan } from "./budget-plan";
+import { monthReview, netWorthAnswer, refundAnswer, securityCheck, sharedAnswer } from "./essentials";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[] };
@@ -425,6 +426,11 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "orders": return ordersAnswer(state, asOf);
     case "funds": return fundsAnswer(state, dashboard, text, asOf);
     case "account_rule": return rulesResult(state, dashboard, asOf);
+    case "security": return securityCheck(state, asOf);
+    case "month_review": return monthReview(state, text, asOf);
+    case "shared": return sharedAnswer(state, asOf);
+    case "networth": return netWorthAnswer(state, dashboard);
+    case "refunds": return refundAnswer(state, text, asOf);
     case "budget_plan": {
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;

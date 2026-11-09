@@ -1,59 +1,25 @@
 import { createHash } from "node:crypto";
-import { classify, daysInMonth, round, type Dashboard } from "@/lib/calc";
+import { daysInMonth, round, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { detectDuplicateCharges, detectDuplicateFixedCosts, detectSubscriptions } from "@/lib/insights";
-import type { AppState, Transaction } from "@/lib/types";
+import type { AppState } from "@/lib/types";
 import { memoryValue } from "./agent";
 import { reminders } from "./extras";
+import { unusualBookings, type WatchAlert, type WatchAlertKind } from "./essentials";
 import { budgetPace } from "./pulse";
 
 // Nightly background check: only things worth a Windows notification, each reported once.
 
-export type WatchAlertKind = "reminder" | "duplicate" | "buffer" | "amex" | "budget" | "booking" | "price" | "renewal";
-export type WatchAlert = { key: string; kind: WatchAlertKind; title: string; detail: string; tone: "info" | "warn" | "bad" };
+export type { WatchAlert, WatchAlertKind } from "./essentials";
 // Keys are hashed so the state file holds no merchant names; transaction ids tell which bookings are new.
 export type WatchSeen = { version: 1; keys: Record<string, string>; transactionIds?: string[]; lastRun?: string };
 
 const DAY_MS = 86_400_000;
 const shiftDate = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
 const order: WatchAlertKind[] = ["reminder", "duplicate", "buffer", "amex", "budget", "booking", "price", "renewal"];
-const merchantKey = (row: Transaction) => (row.merchantAlias ?? row.description).trim().toLocaleLowerCase("de-AT");
-const merchantLabel = (row: Transaction) => (row.merchantAlias?.trim() || row.description.trim()).slice(0, 40);
-const median = (values: number[]) => {
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length ? sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2 : 0;
-};
 
 export const emptySeen = (): WatchSeen => ({ version: 1, keys: {} });
 export const alertHash = (key: string) => createHash("sha256").update(key).digest("hex").slice(0, 16);
-
-// New spending that stands out: large, or far above what this category usually costs, and not a known recurring amount.
-function unusualBookings(state: AppState, today: string, known: Set<string>): WatchAlert[] {
-  // Bookings still waiting for review count too: new imports usually land there first.
-  const rows = state.transactions.flatMap((row) => {
-    try {
-      const result = classify(row);
-      return result.isTransfer ? [] : [{ row, category: result.category }];
-    } catch { return []; }
-  });
-  const fresh = rows.filter(({ row }) => !known.has(row.id) && row.amount < 0 && row.date >= shiftDate(today, -21) && row.date <= today);
-  const freshIds = new Set(fresh.map(({ row }) => row.id));
-  const alerts: WatchAlert[] = [];
-  for (const { row, category } of fresh) {
-    const amount = Math.abs(row.amount);
-    const since = shiftDate(row.date, -365);
-    const history = rows.filter((entry) => !freshIds.has(entry.row.id) && entry.row.amount < 0 && entry.row.date >= since && entry.row.date < row.date);
-    const expected = history.some((entry) => merchantKey(entry.row) === merchantKey(row) && Math.abs(Math.abs(entry.row.amount) - amount) <= amount * 0.15);
-    if (expected) continue;
-    const usual = median(history.filter((entry) => entry.category === category).map((entry) => Math.abs(entry.row.amount)));
-    if (amount < 400 && !(amount >= 100 && usual > 0 && amount >= usual * 3)) continue;
-    alerts.push({ key: `booking:${row.id}`, kind: "booking", tone: "warn",
-      title: `Große Ausgabe: ${merchantLabel(row)}`,
-      detail: `${currency(-amount)} am ${dateLabel(row.date)}${usual > 0 && amount >= usual * 3 ? ` · sonst ca. ${currency(-round(usual))}` : ""}` });
-  }
-  return alerts;
-}
 
 // Every important alert for today that was not reported before.
 export function findAlerts(state: AppState, dashboard: Dashboard, today: string, seen: WatchSeen = emptySeen()): WatchAlert[] {

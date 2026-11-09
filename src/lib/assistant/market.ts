@@ -43,6 +43,8 @@ const fxWords = /wechselkurs|umrechn|\bkurs (?:des|vom|von|für|fuer)\b|devisen|
 
 export function marketQuestion(lower: string): boolean {
   if (/zinseszins|\betfs?\b|\bdepot\b|aktien|\bfonds\b|\brendite\b/.test(lower)) return false;
+  // Interest already received is a question about the own bookings, not about market rates.
+  if (/\bzinsen\b/.test(lower) && /\b(?:hab|habe|hat|wurden?|sind)\b.*\b(?:bekommen|erhalten|gutgeschrieben|kassiert|eingegangen)\b/.test(lower)) return false;
   if (/marktdaten|wirtschaftslage|zinsen und inflation|inflation und zinsen/.test(lower)) return true;
   if (inflationWords.test(lower) || rateWords.test(lower)) return true;
   return fxWords.test(lower) && (currenciesIn(lower).length > 0 || unitWords.test(lower)) || /\d/.test(lower) && unitWords.test(lower) && /\b(?:in|auf)\s+euro\b/.test(lower);

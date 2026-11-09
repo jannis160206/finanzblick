@@ -15,12 +15,14 @@ import { ordersQuestion } from "./orders";
 import { accountRuleRequest, fundsQuestion } from "./funds";
 import { whatIfQuestion } from "./whatif";
 import { whyQuestion } from "./why";
+import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
+  "security", "month_review", "shared", "networth", "refunds",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -66,6 +68,11 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   funds: "Konten-Check: ob sich eine Ausgabe oder ein Kauf mit den Konten ausgeht, die man dafür verwenden darf, mit OK / nicht OK und von welchem Konto zahlen – legt nichts an (z. B. „Kann ich mir eine Kaffeemaschine um 850 € leisten?“, „Geht sich ein Ölwechsel um 120 € aus?“, „Reifen 600 € ok?“, „Welche Konten darf ich wofür verwenden?“)",
   account_rule: "Kontoregel festlegen, wofür ein Konto verwendet werden darf (z. B. „Sparkonto ist für alle Ausgaben“, „Trade Republic nur für Autowerkstatt und Ölwechsel“, „Notgroschen nicht angreifen“)",
   budget_plan: "monatliches Budget einer Ausgabenkategorie (Lebensmittel & Haushalt, Mittagessen, Tanken, Freizeit, Restaurants & Lieferdienste, Geschenke, Giro Puffer) erhöhen, senken, auf einen Betrag setzen, zurücksetzen oder Geld zwischen zwei Budgets umschichten (z. B. „Plan für Lebensmittel um 50 € erhöhen“, „Tankbudget auf 200 €“, „50 € von Freizeit zu Restaurants umschichten“)",
+  security: "Sicherheits-Check: verdächtige oder doppelte Abbuchungen, ungewöhnlich hohe Beträge, Kleinst-Testabbuchungen, teurer gewordene und neue Abos (z. B. „Gibt es verdächtige Buchungen?“, „Wurde ich doppelt abgebucht?“, „Welche Abos sind teurer geworden?“)",
+  month_review: "Monatsbericht für einen Monat: Einnahmen, Ausgaben, Übrig, Top-Kategorien mit Vergleich zum Vormonat, größte Ausgaben (z. B. „Wie war mein Oktober?“, „Monatsbericht“, „Fass meinen Monat zusammen“)",
+  shared: "geteilte Kosten mit Raphael: was er noch schuldet und was erledigt ist (z. B. „Was schuldet mir Raphael?“)",
+  networth: "Vermögen und Nettovermögen über alle Konten und dessen Entwicklung über die Monate (z. B. „Wie hat sich mein Vermögen entwickelt?“)",
+  refunds: "Rückerstattungen und Gutschriften von Händlern, z. B. nach Retoure (z. B. „Ist die Rückerstattung von Amazon schon da?“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
@@ -118,7 +125,8 @@ const looseRule = /\bgehör(?:t|en)\s+(?:immer\s+)?(?:zu|in|unter)\b|\bzählt\s+
 const upcomingQuestion = (lower: string) => !/ausgegeben|bezahlt hab|gezahlt hab|letzte|vorige|gestern/.test(lower) &&
   (/\b(?:was|welche\w*)\b.*\b(?:kommt|kommen|wird|werden|steht|stehen|ist|sind|geht|gehen)\b.*\b(?:zahlungen|abbuchungen|lastschriften|rechnungen|fixkosten|abgänge|abgaenge)\b/.test(lower) ||
     /\bwelche\w* (?:\S+ )?(?:zahlungen|abbuchungen|lastschriften|rechnungen|fixkosten)\b.*\b(?:kommen|stehen|werden|sind|gehen)\b/.test(lower) ||
-    /\bwas (?:wird|geht) (?:\S+ ){0,3}(?:noch )?(?:abgebucht|weg|abgezogen)\b/.test(lower) || /\b(?:anstehende|kommende|offene|fällige)\s+(?:zahlungen|abbuchungen|lastschriften)\b/.test(lower));
+    /\bwas (?:wird|geht) (?:\S+ ){0,3}(?:noch )?(?:abgebucht|weg|abgezogen)\b/.test(lower) || /\b(?:anstehende|kommende|offene|fällige)\s+(?:zahlungen|abbuchungen|lastschriften)\b/.test(lower) ||
+    /\bnächste\w* (?:\S+ )?(?:abbuchung|zahlung|lastschrift)(?:en)?\b/.test(lower));
 
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
 export function detectTool(input: string, names: string[] = []): AssistantTool | undefined {
@@ -162,9 +170,14 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:\S+ ){0,2}(?:geändert|gemacht|umgestellt)|protokoll/.test(lower)) return "changes";
   if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
+  if (monthReviewQuestion(lower)) return "month_review";
   if (reviewQuestion(lower)) return "review";
   if (accountRuleRequest(lower)) return "account_rule";
   if (budgetPlanRequest(lower, known)) return "budget_plan";
+  if (securityQuestion(lower)) return "security";
+  if (sharedQuestion(lower) && !known) return "shared";
+  if (refundQuestion(lower)) return "refunds";
+  if (netWorthQuestion(lower)) return "networth";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir (?:\S+ ){0,3}gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
