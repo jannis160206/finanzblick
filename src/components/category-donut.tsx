@@ -26,27 +26,36 @@ export function CategoryDonut({
   ];
   return (
     <>
-      <FinancialData className="flex min-h-64 flex-col items-center gap-3 sm:flex-row">
-        <div className="h-52 w-full sm:w-1/2" role="img" aria-label={`Aktuelle Ausgaben nach Kategorie: ${slices.map((slice) => `${slice.name} ${shareLabel(slice.share)}`).join(", ")}`}>
+      <FinancialData className="flex min-h-64 flex-col items-center gap-6 sm:flex-row">
+        <div className="relative h-56 w-full sm:w-1/2" role="img" aria-label={`Aktuelle Ausgaben nach Kategorie: ${slices.map((slice) => `${slice.name} ${shareLabel(slice.share)}`).join(", ")}`}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
-              <Pie data={slices} dataKey="value" nameKey="name" innerRadius="64%" outerRadius="88%" paddingAngle={3} stroke="none" isAnimationActive={false}>
+              <Pie data={slices} dataKey="value" nameKey="name" innerRadius="68%" outerRadius="92%" paddingAngle={2} cornerRadius={6} stroke="none" isAnimationActive={false}>
                 {slices.map((slice) => <Cell key={slice.name} fill={slice.color} />)}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
             </PieChart>
           </ResponsiveContainer>
+          <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+            <span className="text-2xs text-muted-foreground">Gesamt</span>
+            <span className="amount text-lg">{currency(groups.total)}</span>
+          </div>
         </div>
         <ul className="w-full space-y-3 sm:w-1/2" aria-label="Kategorien mit Anteil">
           {slices.map((slice) => (
-            <li key={slice.name} className="flex items-center justify-between gap-3 text-xs">
-              <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
-                <span className="size-2 shrink-0 rounded-full" style={{ background: slice.color }} aria-hidden="true" />
-                <span className="break-words">{slice.name}</span>
-              </span>
-              <span className="shrink-0 text-right tabular-nums">
-                <span className="font-medium">{currency(slice.value)}</span>
-                <span className="ml-2 text-muted-foreground">{shareLabel(slice.share)}</span>
+            <li key={slice.name} className="text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex min-w-0 items-center gap-2 text-muted-foreground">
+                  <span className="size-2.5 shrink-0 rounded-full" style={{ background: slice.color }} aria-hidden="true" />
+                  <span className="break-words text-foreground">{slice.name}</span>
+                </span>
+                <span className="shrink-0 text-right tabular-nums">
+                  <span className="font-medium">{currency(slice.value)}</span>
+                  <span className="ml-2 inline-block w-10 text-muted-foreground">{shareLabel(slice.share)}</span>
+                </span>
+              </div>
+              <span aria-hidden="true" className="mt-1.5 block h-1 overflow-hidden rounded-full bg-muted">
+                <span className="block h-full rounded-full" style={{ width: `${Math.max(slice.share * 100, 1)}%`, background: slice.color }} />
               </span>
             </li>
           ))}

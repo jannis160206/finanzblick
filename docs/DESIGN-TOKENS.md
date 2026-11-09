@@ -128,7 +128,9 @@ Grundsätze: bestehende Token-Namen bleiben erhalten (shadcn-Konvention; `global
 | `--money-in` | `= --success` | `= --success` | `text-money-in` | Einnahmen, positive Salden |
 | `--money-out` | `= --foreground` | `= --foreground` | `text-money-out` | Ausgaben (neutral) |
 
-Unverändert: `--primary`/`--accent-ink` (Benutzer-Akzent), `--chart-1 … 7`, `--editable-*`, saisonale Overrides, `--background` (`#f5f7f6` / `#101313`, passend zu `accentTokens()` und PWA-Theme-Farbe).
+Unverändert: `--primary`/`--accent-ink` (Benutzer-Akzent), `--chart-1/2/4/6/7`, `--editable-*`, saisonale Overrides, `--background` (`#f5f7f6` / `#101313`, passend zu `accentTokens()` und PWA-Theme-Farbe).
+
+Geändert in M3: `--chart-3` Violett (`#7c3aed` / dunkel `#a78bfa`) statt Amber und `--chart-5` Pink (`#db2777` / `#f472b6`) statt Grau, damit benachbarte Diagrammsegmente (Amber neben Orange, Grau neben „Sonstige“) unterscheidbar sind. Saisonale Paletten bleiben unverändert.
 
 ### 3.2 Typografie
 

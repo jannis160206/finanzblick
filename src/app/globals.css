@@ -113,9 +113,9 @@
   --ring: var(--accent-ink);
   --chart-1: var(--accent-ink);
   --chart-2: #0284c7;
-  --chart-3: #b45309;
+  --chart-3: #7c3aed;
   --chart-4: #c2410c;
-  --chart-5: #737373;
+  --chart-5: #db2777;
   --chart-6: #dc2626;
   --chart-7: #475569;
   --accent-muted: color-mix(in srgb, var(--primary) 8%, var(--card));
@@ -176,9 +176,9 @@
   --border: #29312e;
   --input: #36403c;
   --chart-2: #38bdf8;
-  --chart-3: #fbbf24;
+  --chart-3: #a78bfa;
   --chart-4: #fb923c;
-  --chart-5: #a3a3a3;
+  --chart-5: #f472b6;
   --chart-6: #f87171;
   --chart-7: #94a3b8;
   --editable-bg: #332b18;

@@ -13,10 +13,7 @@ import { SectionHeading } from "@/components/finance-ui";
 import { netWorthHistory } from "@/lib/net-worth";
 import { currency, monthLabel, shortCurrency } from "@/lib/format";
 import { ChartTooltip, chartAxisProps, chartCursor, chartGridProps } from "@/components/charts/chart-theme";
-
-const partNames: Record<string, string> = { girokonto: "Girokonto", amex: "Amex offen", tr: "Trade Republic", "trade republic": "Trade Republic", pro: "Pro" };
-const partLabel = (key: string) =>
-  partNames[key] ?? key.replace(/(^|[\s&/-])(\p{L})/gu, (_, sep: string, letter: string) => sep + letter.toLocaleUpperCase("de"));
+import { netWorthPartLabel as partLabel, visibleNetWorthParts } from "@/components/net-worth-parts";
 
 export function NetWorthPanel() {
   const { state, dashboard } = useFinance();
@@ -54,8 +51,8 @@ export function NetWorthPanel() {
           </AreaChart>
         </ResponsiveContainer>
       </FinancialData>}
-      {Object.values(latest.parts).some((value) => Math.abs(value) >= 0.005) && <FinancialData as="dl" className="mt-4 grid gap-x-6 gap-y-2 border-t border-border/60 pt-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
-        {Object.entries(latest.parts).filter(([, value]) => Math.abs(value) >= 0.005).sort(([, a], [, b]) => b - a).map(([name, value]) => <div key={name} className="flex justify-between gap-2">
+      {visibleNetWorthParts(latest.parts).length > 0 && <FinancialData as="dl" className="mt-4 grid gap-x-6 gap-y-2 border-t border-border/60 pt-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        {visibleNetWorthParts(latest.parts).map(([name, value]) => <div key={name} className="flex justify-between gap-2">
           <dt className="text-muted-foreground">{partLabel(name)}</dt><dd className={value < 0 ? "tabular-nums text-destructive" : "tabular-nums"}>{currency(value)}</dd>
         </div>)}
       </FinancialData>}

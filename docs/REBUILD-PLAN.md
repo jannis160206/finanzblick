@@ -158,7 +158,7 @@ Umfang:
 
 | Paket | Zweck | Begründung |
 | --- | --- | --- |
-| `motion` (^12) | Karten- und Fortschrittsanimationen (M3, M5) | Vorgabe „Framer Motion“; `motion` ist der offizielle Nachfolger-Paketname von `framer-motion` (gleiche Bibliothek, `motion/react`). Nur in Client-Inseln, reduzierte Bewegung wird respektiert. |
+| `motion` (^12, installiert 12.43.0) | Karten- und Fortschrittsanimationen (M3, M5) | Vorgabe „Framer Motion“; `motion` ist der offizielle Nachfolger-Paketname von `framer-motion` (gleiche Bibliothek, `motion/react`). Nur in Client-Inseln, über `LazyMotion` mit `domAnimation` (kleineres Bundle); reduzierte Bewegung wird respektiert. Bewusst Major 12 (stabile, React-19-kompatible API); ein Wechsel auf die neuere Major-Version 14 ist ein separates Upgrade. |
 
 Bewusst **nicht** hinzugefügt:
 

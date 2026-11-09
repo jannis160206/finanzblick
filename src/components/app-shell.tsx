@@ -27,6 +27,8 @@ import { AppSidebar, NavLinks } from "@/components/shell/sidebar";
 import { AppHeader } from "@/components/shell/app-header";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { GlobalSearch } from "@/components/shell/global-search";
+import { MotionProvider } from "@/components/motion/motion-provider";
+import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 
 export function AppShell({
   children,
@@ -44,7 +46,9 @@ export function AppShell({
   const workspace = useAccountWorkspace();
   const reviewCount = ready ? openReviewCount : 0;
   const closeMenu = useCallback(() => setMenuOpen(false), []);
+  const { motionReduced } = useSeasonalTheme();
   return (
+    <MotionProvider reduced={motionReduced === true}>
     <div className="app-shell min-h-screen">
       <SeasonalScene />
       <a
@@ -146,5 +150,6 @@ export function AppShell({
         </DialogContent>
       </Dialog>
     </div>
+    </MotionProvider>
   );
 }
