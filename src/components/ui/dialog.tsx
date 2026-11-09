@@ -74,15 +74,17 @@ function DialogContent({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
-  variant?: "default" | "confirmation" | "work" | "navigation" | "panel"
+  variant?: "default" | "confirmation" | "work" | "navigation" | "panel" | "command"
 }) {
   useNativeSelectBoundary()
   const { locked } = useSecurityMode()
+  // Navigation and search stay usable in privacy mode; they render no financial data while locked.
+  const privacySafe = variant === "navigation" || variant === "command"
   // Release modal focus/aria locks even when a background tab suspends exit animations.
-  if (locked && variant !== "navigation") return null
+  if (locked && !privacySafe) return null
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay financial={variant !== "navigation"} />
+      <DialogOverlay financial={!privacySafe} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         data-variant={variant}
@@ -92,6 +94,8 @@ function DialogContent({
             ? "inset-y-0 left-0 h-dvh w-[min(320px,calc(100vw-3rem))] rounded-r-2xl data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left"
             : variant === "panel"
             ? "inset-y-0 right-0 h-dvh w-[min(560px,100vw)] rounded-l-2xl data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right"
+            : variant === "command"
+            ? "top-3 left-1/2 max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-2xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:top-[12dvh]"
             : "top-1/2 left-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
           variant === "default" && "max-w-xl",
           variant === "confirmation" && "max-w-md",

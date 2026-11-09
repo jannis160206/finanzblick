@@ -69,7 +69,7 @@ it("preserves the original settings navigation for an unsigned local browser wor
 
 it("shows the same profile actions in the mobile drawer and closes it when opening settings", async () => {
   shell();
-  fireEvent.click(screen.getByRole("button", { name: "Navigation öffnen" }));
+  fireEvent.click(within(screen.getByRole("navigation", { name: "Schnellnavigation" })).getByRole("button", { name: "Mehr" }));
   const dialog = screen.getByRole("dialog");
   const profile = within(dialog).getByRole("region", { name: "Benutzerprofil" });
   expect(within(profile).getByText("admin")).toBeTruthy();

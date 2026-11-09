@@ -36,7 +36,7 @@ export function AssistantLauncher() {
   return <>
     {!open && <Button type="button" onClick={() => setOpen(true)} disabled={!security.ready || security.locked}
       aria-label="Finanz-Assistent öffnen" title="Finanz-Assistent"
-      className="assistant-launcher fixed right-4 bottom-4 z-40 h-12 gap-2 rounded-full px-4 shadow-lg sm:right-6 sm:bottom-6">
+      className="assistant-launcher fixed right-4 bottom-[calc(var(--shell-bottom-bar)+var(--safe-bottom)+0.75rem)] z-40 h-12 gap-2 rounded-full px-4 shadow-overlay md:right-6 md:bottom-6">
       <MessageSquareText aria-hidden="true" className="size-5" /><span className="hidden sm:inline">Assistent</span>
     </Button>}
     <Dialog open={open} onOpenChange={setOpen}>

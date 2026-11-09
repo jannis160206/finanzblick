@@ -13,25 +13,29 @@ function ProfileAvatar({ username, large = false }: { username: string; large?: 
   )}>{username.slice(0, 2).toUpperCase()}</span>;
 }
 
-export function AccountSidebarProfile({ active, onNavigate }: { active: boolean; onNavigate: () => void }) {
+export function AccountSidebarProfile({ active, onNavigate, rail = false }: { active: boolean; onNavigate: () => void; rail?: boolean }) {
   const workspace = useAccountWorkspace();
   if (!workspace) return null;
   const { username, role } = workspace.user;
-  return <section aria-label="Benutzerprofil" className="shrink-0 rounded-2xl border border-border/70 bg-background/50 p-2">
+  return <section aria-label="Benutzerprofil" className={cn("shrink-0 rounded-2xl border border-border/70 bg-background/50 p-2",
+    rail && "md:max-lg:border-0 md:max-lg:bg-transparent md:max-lg:p-0")}>
     <Link href="/einstellungen#profil" onClick={onNavigate} aria-label={`Profil von ${username} öffnen`}
-      className="group flex min-h-16 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      className={cn("group flex min-h-16 items-center gap-3 rounded-xl p-2 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        rail && "md:max-lg:min-h-0 md:max-lg:justify-center md:max-lg:p-1")}>
       <ProfileAvatar username={username} />
-      <span className="min-w-0 flex-1">
+      <span className={cn("min-w-0 flex-1", rail && "md:max-lg:hidden")}>
         <span className="block truncate text-sm font-semibold">{username}</span>
         <span className="mt-0.5 block text-2xs text-muted-foreground">{role === "admin" ? "Administrator" : "Persönliches Konto"}</span>
       </span>
-      <ChevronRight aria-hidden="true" className="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+      <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground", rail && "md:max-lg:hidden")} />
     </Link>
-    <div className="mt-1 grid grid-cols-[1fr_auto] items-start gap-1 border-t border-border/70 pt-2">
+    <div className={cn("mt-1 grid grid-cols-[1fr_auto] items-start gap-1 border-t border-border/70 pt-2",
+      rail && "md:max-lg:grid-cols-1 md:max-lg:justify-items-center md:max-lg:border-0 md:max-lg:[&_p]:sr-only")}>
       <Link href="/einstellungen" onClick={onNavigate} aria-current={active ? "page" : undefined}
         className={cn("flex min-h-11 items-center gap-2 rounded-xl px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          rail && "md:max-lg:size-11 md:max-lg:justify-center md:max-lg:px-0",
           active ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground")}>
-        <Settings2 aria-hidden="true" className="size-4" />Einstellungen
+        <Settings2 aria-hidden="true" className="size-4 shrink-0" /><span className={cn(rail && "md:max-lg:sr-only")}>Einstellungen</span>
       </Link>
       <AccountLogout compact />
     </div>

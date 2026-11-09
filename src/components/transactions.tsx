@@ -68,6 +68,7 @@ import {
   variableBudgetGroup,
 } from "@/lib/calc";
 import { ledgerHref, parseLedgerLink } from "@/lib/ledger-link";
+import { LEDGER_SEARCH_EVENT, takeLedgerSearch } from "@/lib/ledger-search-bus";
 import {
   personalAmount,
   reconcileSharedHoliday,
@@ -266,6 +267,20 @@ const TransactionLedger = memo(function TransactionLedger({
     setSeenUrlKey(urlKey);
     setFiltersState((previous) => ({ ...previous, month: parsedLink.month ?? null, group: parsedLink.group ?? null }));
   }
+  // Searches from the global search arrive in memory, never through the URL.
+  useEffect(() => {
+    const apply = () => {
+      const request = takeLedgerSearch();
+      if (!request) return;
+      setFiltersState((previous) => ({ ...previous, query: request.query ?? "", category: request.category ?? "", month: "" }));
+    };
+    const timer = window.setTimeout(apply, 0);
+    window.addEventListener(LEDGER_SEARCH_EVENT, apply);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener(LEDGER_SEARCH_EVENT, apply);
+    };
+  }, []);
   function setFilters(updater: SetStateAction<LedgerFilters>) {
     const next = typeof updater === "function" ? updater(filters) : updater;
     setFiltersState(next);

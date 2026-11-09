@@ -454,6 +454,11 @@
 .dark {
   color-scheme: dark;
 }
+@media (max-width: 47.99rem) {
+  :root {
+    --toast-offset-mobile: calc(var(--shell-bottom-bar) + 0.75rem);
+  }
+}
 body {
   font-feature-settings: "cv11", "ss01";
 }

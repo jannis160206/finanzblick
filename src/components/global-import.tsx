@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FileUp, LoaderCircle, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, Dia
 import { useFinance } from "@/components/finance-provider";
 import { deliverImport, guessImportKind, type ImportKind } from "@/lib/import-inbox";
 import { cn } from "@/lib/utils";
+import { OPEN_IMPORT_EVENT } from "@/lib/shell-events";
 
 async function classify(file: File): Promise<ImportKind> {
   const guess = guessImportKind(file);
@@ -33,6 +34,11 @@ export function GlobalImport() {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const show = () => setOpen(true);
+    window.addEventListener(OPEN_IMPORT_EVENT, show);
+    return () => window.removeEventListener(OPEN_IMPORT_EVENT, show);
+  }, []);
 
   async function route(files: File[]) {
     if (!files.length || busy) return;
