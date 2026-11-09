@@ -9,7 +9,7 @@ type Line = AssistantCard["lines"][number];
 type Tone = "good" | "warn" | "bad";
 
 export const checkQuestion = (lower: string) =>
-  /finanz-?check|gesundheits-?check|wie (?:steh|steh'?|geht'?s|gehts|läuft'?s|laeufts)\w* (?:es )?(?:um )?(?:mir|ich|meine finanzen|meinen finanzen|finanziell)|wie gut (?:wirtschafte|haushalte|spare) ich|bin ich (?:eher |zu |ziemlich |sehr )?(?:sparsam|verschwenderisch|ein sparfuchs|gut aufgestellt|auf (?:einem )?gutem? weg)|geb(?:e)? ich (?:eher |zu |ziemlich )?viel (?:geld )?aus|mach(?:e)? ich (?:das|es) gut|sparquote|wie viel spar(?:e)? ich(?: (?:eigentlich|so|im schnitt|durchschnittlich|aktuell|gerade))*(?: (?:im|pro|jeden) monat| monatlich)?\s*\??$|wie viel prozent spar|wie (?:sind|stehen|sehen) meine finanzen|bewert\w* meine finanzen|zeugnis/.test(lower);
+  /finanz-?check|gesundheits-?check|wie (?:steh|steh'?|geht'?s|gehts|läuft'?s|laeufts)\w* (?:es )?(?:um )?(?:mir|ich|meine finanzen|meinen finanzen|finanziell)|wie gut (?:wirtschafte|haushalte|spare) ich|bin ich (?:eher |zu |ziemlich |sehr )?(?:sparsam|verschwenderisch|ein sparfuchs|gut aufgestellt|auf (?:einem )?gutem? weg)|geb(?:e)? ich (?:eher |zu |ziemlich )?viel (?:geld )?aus|mach(?:e)? ich (?:das|es) gut|sparquote|wie viel spar(?:e)? ich(?: (?:eigentlich|so|im schnitt|durchschnittlich|aktuell|gerade))*(?: (?:im|pro|jeden) monat| monatlich)?\s*\??$|wie viel prozent spar|wie (?:sind|stehen|sehen) meine finanzen|bewert\w* meine finanzen|zeugnis|hab(?:e)? ich (?:genug|ausreichend|zu wenig) (?:notgroschen|reserven?|rücklagen|ruecklagen|erspartes)/.test(lower);
 
 const percent = (value: number) => `${Math.round(value * 100)} %`;
 

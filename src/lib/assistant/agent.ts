@@ -24,6 +24,7 @@ import { pulseAnswer } from "./pulse";
 import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
 import { whatIfAnswer } from "./whatif-answer";
+import { parseBudgetPlan } from "./budget-plan";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[] };
@@ -424,6 +425,10 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "orders": return ordersAnswer(state, asOf);
     case "funds": return fundsAnswer(state, dashboard, text, asOf);
     case "account_rule": return rulesResult(state, dashboard, asOf);
+    case "budget_plan": {
+      const parsed = parseBudgetPlan(state, text, asOf);
+      return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;
+    }
     default: return help();
   }
 }

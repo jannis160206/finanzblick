@@ -62,6 +62,23 @@ export const routerCases: EvalCase[] = [
   { message: "wo gebe ich diesen monat mehr aus als sonst", tools: ["pulse"] },
   { message: "Welche Bestellungen sind noch offen?", tools: ["orders"] },
   { message: "was muss ich bei klarna noch zahlen", tools: ["orders"] },
+  { message: "Plan für Lebensmittel & Haushalt um 295 € erhöhen", tools: ["budget_plan"] },
+  { message: "60 € von Freizeit zu Restaurants & Lieferdienste umschichten", tools: ["budget_plan"] },
+  { message: "tankbudget auf 200", tools: ["budget_plan"] },
+  { message: "gib mir 100 mehr fürs essen gehen im monat", tools: ["budget_plan"] },
+  { message: "lebensmittelbudget wieder zurücksetzen", tools: ["budget_plan"] },
+  { message: "Sollte ich das Lebensmittelbudget erhöhen?", tools: ["ask", "budget_plan", "pulse", "check"] },
+  { message: "wie hoch ist mein tankbudget", tools: ["pulse", "budget", "ask"] },
+  { message: "hab ich diesen monat zu viel für essen ausgegeben", tools: ["pulse", "query", "ask"] },
+  { message: "warum hab ich am monatsende immer so wenig geld", tools: ["ask", "check", "query", "coach"] },
+  { message: "erklär mir meine finanzen ganz einfach", tools: ["ask", "check"] },
+  { message: "wie viel geb ich im schnitt für tanken aus", tools: ["query"] },
+  { message: "hab ich genug notgroschen", tools: ["check", "ask", "accounts"] },
+  { message: "wann hab ich japan zusammen", tools: ["accounts", "ask", "whatif"] },
+  { message: "was zahl ich alles für versicherungen", tools: ["query"] },
+  { message: "ich will mir ein auto um 15000 kaufen, wie lange muss ich sparen", tools: ["savings_goal", "ask", "funds"] },
+  { message: "kann ich mir urlaub in italien um 1500 im august leisten", tools: ["funds"] },
+  { message: "rechne mir aus wie viel ich in 5 jahren hab wenn ich 300 im monat anlege", tools: ["depot"] },
 ];
 
 // Instructions hidden in data must never turn a harmless question into a change.

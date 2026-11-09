@@ -1,6 +1,7 @@
 import { amexQuestion, balanceQuestion, budgetQuestion, goalsQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
 import { bookingRequest } from "./bookings";
+import { budgetPlanRequest } from "./budget-plan";
 import { cancelQuestion } from "./cancel";
 import { checkQuestion } from "./check";
 import { forecastQuestion } from "./forecast";
@@ -19,7 +20,7 @@ import { whyQuestion } from "./why";
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
-  "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule",
+  "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -64,6 +65,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   orders: "Offene Online-Bestellungen aus Gmail (Bestellbestätigungen, Klarna, PayPal, Kauf auf Rechnung) mit Betrag und Fälligkeit, die noch nicht abgebucht wurden (z. B. „Welche Bestellungen sind noch offen?“, „Was muss ich bei Klarna noch zahlen?“)",
   funds: "Konten-Check: ob sich eine Ausgabe oder ein Kauf mit den Konten ausgeht, die man dafür verwenden darf, mit OK / nicht OK und von welchem Konto zahlen – legt nichts an (z. B. „Kann ich mir eine Kaffeemaschine um 850 € leisten?“, „Geht sich ein Ölwechsel um 120 € aus?“, „Reifen 600 € ok?“, „Welche Konten darf ich wofür verwenden?“)",
   account_rule: "Kontoregel festlegen, wofür ein Konto verwendet werden darf (z. B. „Sparkonto ist für alle Ausgaben“, „Trade Republic nur für Autowerkstatt und Ölwechsel“, „Notgroschen nicht angreifen“)",
+  budget_plan: "monatliches Budget einer Ausgabenkategorie (Lebensmittel & Haushalt, Mittagessen, Tanken, Freizeit, Restaurants & Lieferdienste, Geschenke, Giro Puffer) erhöhen, senken, auf einen Betrag setzen, zurücksetzen oder Geld zwischen zwei Budgets umschichten (z. B. „Plan für Lebensmittel um 50 € erhöhen“, „Tankbudget auf 200 €“, „50 € von Freizeit zu Restaurants umschichten“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
@@ -125,7 +127,7 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   return detectSingle(text, names);
 }
 
-const batchTools: readonly AssistantTool[] = ["edit", "booking", "rule", "remember", "forget", "reminder"];
+const batchTools: readonly AssistantTool[] = ["edit", "booking", "rule", "remember", "forget", "reminder", "budget_plan"];
 // "Erhöhe Japan auf 4.000 € und schieb es auf Juli": every part must be a change on its own;
 // a part without a name inherits the name of the part before ("es" → Japan).
 export function splitCommands(input: string, names: string[] = []): string[] | undefined {
@@ -162,6 +164,7 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
   if (reviewQuestion(lower)) return "review";
   if (accountRuleRequest(lower)) return "account_rule";
+  if (budgetPlanRequest(lower, known)) return "budget_plan";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir (?:\S+ ){0,3}gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
@@ -206,6 +209,10 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (balanceQuestion(lower) && !/leisten|leistbar|reicht (?:das|es) für/.test(lower)) return "accounts";
   if (budgetQuestion(lower) && !/leisten|leistbar|\d+\s*(?:€|euro)/.test(lower)) return "budget";
   if (!detectAction(text) && spendingQuestion(lower) || pastSpending.test(lower)) return "query";
+  // "Was zahl ich alles für Versicherungen?" asks about past payments, never for a new expense.
+  if (/^(?:und )?(?:was|wie ?viel|wofür|wofuer)\s+(?:zahl|bezahl|überweis|ueberweis)e?\s+ich\b/.test(lower) && !/\b(?:soll|sollte|muss|müsste)\b/.test(lower)) return "query";
+  // "Erklär mir meine Finanzen" is about the user's money, not about how the app works.
+  if (/erklär|erklaer|versteh/.test(lower) && /\bmeine?[nrs]?\s+(?:finanzen|geld|ausgaben|lage|situation|konten|monat)\b/.test(lower)) return "check";
   if (explainPattern.test(lower)) return "explain";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
   if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";

@@ -4,6 +4,7 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { corePocket, pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { assignTransactions } from "@/lib/transaction-tools";
 import { addMonth } from "./intent";
+import { defaultBudgetAmount, variableBudgetLines } from "@/lib/variable-budgets";
 import {
   assistantMemorySchema, emptyMonth, MAX_ASSISTANT_CHANGES, MAX_ASSISTANT_MEMORY, plannedOneOffSchema, savingsGoalSchema,
   type AppState, type AssistantChangeLog, type AssistantOperation, type AssistantUndo, type PlannedOneOff, type SavingsGoal, type Transaction,
@@ -306,6 +307,21 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       diffs.push({ label: "Gedächtnis", before: entry.text, after: "vergessen" });
       return { ...state, assistantMemory: memory.filter((item) => item.id !== entry.id) };
     }
+    case "budget_plan": {
+      const line = variableBudgetLines.find((item) => item.id === operation.line)!;
+      const month = context.asOf.slice(0, 7);
+      const base = defaultBudgetAmount(line, month, state.holidayRanges ?? []);
+      const current = state.budgetAdjustments ?? {};
+      const before = current[line.id] ?? 0;
+      const adjustment = Math.round(Math.max(-base, operation.adjustment) * 100) / 100;
+      if (adjustment === before) throw new OperationError(`${line.label} ist schon ${currency(Math.max(0, base + before))} im Monat.`);
+      undo.budget ??= [];
+      if (!undo.budget.some((entry) => entry.line === line.id)) undo.budget.push({ line: line.id, before: current[line.id] ?? null });
+      diffs.push({ label: `Budget ${line.label} (pro Monat ab ${monthLabel(month)})`, before: currency(Math.max(0, base + before)), after: currency(Math.max(0, base + adjustment)) });
+      const next = { ...current, [line.id]: adjustment };
+      if (!adjustment) delete next[line.id];
+      return { ...state, budgetAdjustments: next };
+    }
   }
 }
 
@@ -411,6 +427,13 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
   if (undo.fixedReceipts?.length && next.fixedReceipts) {
     const receipts = new Map(undo.fixedReceipts.map((entry) => [entry.key, entry.before]));
     next.fixedReceipts = next.fixedReceipts.map((receipt) => receipts.get(receipt.key) ?? receipt);
+  }
+  if (undo.budget?.length) {
+    const adjustments = { ...next.budgetAdjustments };
+    for (const { line, before } of [...undo.budget].reverse()) {
+      if (before === null) delete adjustments[line]; else adjustments[line] = before;
+    }
+    next.budgetAdjustments = adjustments;
   }
   next = { ...next, assistantChanges: (next.assistantChanges ?? []).map((entry) => entry.id === logId ? { ...entry, undoneAt: now } : entry) };
   return next;

@@ -249,6 +249,11 @@ const financeValuesSchema = z.record(
   z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/),
   moneySchema.nonnegative().nullable(),
 );
+// Variable budget lines (see variable-budgets.ts); the user's own adjustment is added to each line's default from now on.
+export const budgetLineIds = ["food", "lunch", "fuel", "leisure", "going-out", "gifts", "buffer"] as const;
+export const budgetLineIdSchema = z.enum(budgetLineIds);
+export const budgetAdjustmentsSchema = z.partialRecord(budgetLineIdSchema, z.number().min(-100_000).max(100_000));
+export type BudgetAdjustments = z.infer<typeof budgetAdjustmentsSchema>;
 export const financeRowSchema = z.object({
   id: z.string().min(1).refine((id) => id.trim().length > 0, "Finanzzeilen-ID darf nicht leer sein."),
   label: z.string().trim().min(1).max(100),
@@ -455,6 +460,8 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     due: dateSchema.optional(),
   }).strict(),
   z.object({ op: z.literal("memory_delete"), memoryId: agentIdSchema }).strict(),
+  // New monthly adjustment of a variable budget line (added to its default, 0 = back to default).
+  z.object({ op: z.literal("budget_plan"), line: budgetLineIdSchema, adjustment: z.number().min(-100_000).max(100_000) }).strict(),
 ]);
 export type AssistantOperation = z.infer<typeof assistantOperationSchema>;
 const assistantLineSchema = z.object({
@@ -638,6 +645,7 @@ export const assistantUndoSchema = z.object({
   transactions: z.array(undoTransactionSchema).max(2000).optional(),
   merchantRules: z.array(z.object({ key: z.string().min(1).max(1200), before: merchantRuleSchema.nullable() }).strict()).max(2000).optional(),
   fixedReceipts: z.array(z.object({ key: z.string().max(2000), before: fixedReceiptSchema }).strict()).max(2000).optional(),
+  budget: z.array(z.object({ line: budgetLineIdSchema, before: z.number().min(-100_000).max(100_000).nullable() }).strict()).max(20).optional(),
 }).strict();
 export type AssistantUndo = z.infer<typeof assistantUndoSchema>;
 export const assistantChangeLogSchema = z.object({
@@ -664,6 +672,7 @@ export const appStateSchema = z.object({
     (entries) => new Set(entries.map((entry) => entry.year)).size === entries.length,
     "Für jedes Jahr darf nur eine Jahressechstel-Abrechnung gespeichert sein.",
   ).optional(),
+  budgetAdjustments: budgetAdjustmentsSchema.optional(),
   holidayRanges: z.array(holidayRangeSchema).max(100).refine(
     (ranges) => {
       const sorted = [...ranges].sort((a, b) => a.from.localeCompare(b.from));

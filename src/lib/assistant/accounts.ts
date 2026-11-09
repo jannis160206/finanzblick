@@ -28,7 +28,8 @@ export const budgetQuestion = (lower: string) =>
   /wie viel (?:kann|darf) ich (?:diesen monat |im \w+ |heuer |noch |jetzt )*(?:noch )?(?:ausgeben|verbrauchen|verballern|verprassen)\b/.test(lower) ||
   /was bleibt (?:mir )?(?:diesen monat |im \w+ |noch |am ende )*(?:noch )?(?:übrig|über)\b|was bleibt (?:mir )?(?:noch )?(?:diesen|im|nächsten|kommenden) (?:monat|\w+)\b(?! für)|wie viel bleibt (?:mir )?(?:diesen monat |im \w+ |noch |am monatsende )*(?:übrig|über)|\büberschuss\b(?! erklär)/.test(lower) ||
   /^(?:mein |der )?(?:monatsplan|monatsbudget|budget)(?: (?:für |im )?(?:diesen monat|\w+))?\??$/.test(lower) ||
-  /wie (?:sieht|schaut) (?:mein |der )?(?:monat|monatsplan|budget)\b/.test(lower);
+  /wie (?:sieht|schaut) (?:mein |der )?(?:monat|monatsplan|budget)\b/.test(lower) ||
+  /wie (?:hoch|viel|groß|gross) (?:ist|sind) (?:mein |das |der |meine )?\w*budgets?\b/.test(lower);
 
 export function balances(state: AppState, dashboard: Dashboard) {
   const names = new Map<string, string>();

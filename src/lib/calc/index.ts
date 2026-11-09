@@ -759,10 +759,10 @@ export function bikeCountdown(
 export function financeRowValue(
   row: AppState["financeRows"][number],
   month: string,
-  plan: { currentMonth: string },
+  plan: { currentMonth: string; adjustments?: AppState["budgetAdjustments"] },
   holidayRanges: HolidayRange[] = [],
 ) {
-  if (row.kind === "variable" && month >= plan.currentMonth) return variableBudgetValue(row, month, holidayRanges);
+  if (row.kind === "variable" && month >= plan.currentMonth) return variableBudgetValue(row, month, holidayRanges, plan.adjustments);
   return row.values[month] ?? 0;
 }
 
@@ -850,7 +850,7 @@ export function calculateMonthTotals(
     (row) => row.kind === "variable",
   );
   const variableBudget = month >= monthKey(state.settings.asOf)
-    ? monthlyVariableBudget(month, state.holidayRanges).total
+    ? monthlyVariableBudget(month, state.holidayRanges, state.budgetAdjustments).total
     : state.months[month]?.variableOverride ?? sum(variableRows.map((row) => financeRowValue(row, month, plan, state.holidayRanges)));
   const amexOpen = month === monthKey(state.settings.asOf) ? amex.additional : 0;
   const variablePlan = round(variableBudget + amexOpen);
@@ -930,7 +930,7 @@ export function synchronizeGoals(state: AppState): AppState {
   }) };
 }
 export function calculateDashboard(state: AppState) {
-  const plan = monthlyVariableBudget(monthKey(state.settings.asOf), state.holidayRanges);
+  const plan = monthlyVariableBudget(monthKey(state.settings.asOf), state.holidayRanges, state.budgetAdjustments);
   // Reconcile receipt fingerprints once, not twice for each forecast month.
   const bookings = actualBookings(state);
   const actuals = indexMonthlyActuals(bookings, state.settings.asOf);

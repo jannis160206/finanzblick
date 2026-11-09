@@ -1,4 +1,4 @@
-import { fixedCategories, type AppState, type Category, type FinanceRow, type HolidayRange } from "@/lib/types";
+import { fixedCategories, type AppState, type BudgetAdjustments, type Category, type FinanceRow, type HolidayRange } from "@/lib/types";
 import { canonicalCategory, isTravelCategory } from "@/lib/categories";
 import { lunchBudget } from "@/lib/holidays-at-kaernten";
 import { isIncomeCategory } from "@/lib/fixed";
@@ -6,6 +6,7 @@ import { planningMonths } from "@/lib/planning-range";
 
 const gifts = [50, 50, 0, 50, 100, 0, 50, 50, 0, 0, 100, 1000] as const;
 export type VariableBudgetId = "food" | "lunch" | "fuel" | "leisure" | "going-out" | "gifts" | "buffer";
+type Adjustments = BudgetAdjustments | undefined;
 export const variableBudgetLines: { id: VariableBudgetId; label: string; category?: Category; pattern: RegExp; amount: number | "lunch" | "gifts" }[] = [
   { id: "food", label: "Lebensmittel & Haushalt", category: "Lebensmittel", pattern: /lebensmittel/i, amount: 250 },
   { id: "lunch", label: "Mittagessen", category: "Mittagessen", pattern: /mittag/i, amount: "lunch" },
@@ -45,21 +46,28 @@ export function variableBudgetId(category: Category, fixedCost?: boolean): Varia
 const matches = (row: FinanceRow, line: typeof variableBudgetLines[number]) => row.kind === "variable" &&
   (row.id === `budget-${line.id}` || (line.category !== undefined && row.planCategory !== undefined &&
     canonicalCategory(row.planCategory) === line.category) || line.pattern.test(row.label));
-const amountFor = (line: typeof variableBudgetLines[number], month: string, ranges: readonly HolidayRange[]) =>
+/** The line's built-in amount for a month, without the user's adjustment. */
+export const defaultBudgetAmount = (line: typeof variableBudgetLines[number], month: string, ranges: readonly HolidayRange[] = []) =>
   line.amount === "lunch" ? lunchBudget(month, ranges).total : line.amount === "gifts" ? gifts[Number(month.slice(5, 7)) - 1] : line.amount;
+const amountFor = (line: typeof variableBudgetLines[number], month: string, ranges: readonly HolidayRange[], adjustments?: Adjustments) => {
+  const base = defaultBudgetAmount(line, month, ranges);
+  const adjustment = adjustments?.[line.id] ?? 0;
+  return adjustment ? Math.max(0, Math.round((base + adjustment) * 100) / 100) : base;
+};
 
-export function monthlyVariableBudget(month: string, ranges: readonly HolidayRange[] = []) {
-  const rows = variableBudgetLines.map((line) => ({ id: line.id, label: line.label, category: line.category, total: amountFor(line, month, ranges) }));
-  return { currentMonth: month, rows, total: rows.reduce((total, row) => total + row.total, 0), lunch: lunchBudget(month, ranges) };
+export function monthlyVariableBudget(month: string, ranges: readonly HolidayRange[] = [], adjustments?: Adjustments) {
+  const rows = variableBudgetLines.map((line) => ({ id: line.id, label: line.label, category: line.category, total: amountFor(line, month, ranges, adjustments) }));
+  return { currentMonth: month, rows, total: rows.reduce((total, row) => total + row.total, 0), lunch: lunchBudget(month, ranges),
+    ...(adjustments && Object.keys(adjustments).length ? { adjustments } : {}) };
 }
 
 export function variableBudgetLineId(row: FinanceRow): VariableBudgetId | undefined {
   return variableBudgetLines.find((line) => matches(row, line))?.id;
 }
 
-export function variableBudgetValue(row: FinanceRow, month: string, ranges: readonly HolidayRange[] = []): number {
+export function variableBudgetValue(row: FinanceRow, month: string, ranges: readonly HolidayRange[] = [], adjustments?: Adjustments): number {
   const line = variableBudgetLines.find((line) => matches(row, line));
-  return line ? amountFor(line, month, ranges) : 0;
+  return line ? amountFor(line, month, ranges, adjustments) : 0;
 }
 
 export function applyVariableBudgets(state: AppState): AppState {
@@ -73,7 +81,7 @@ export function applyVariableBudgets(state: AppState): AppState {
     if (old) used.add(old.id);
     const values = { ...old?.values };
     const overrides = Object.fromEntries(Object.entries(old?.overrides ?? {}).filter(([month]) => month < currentMonth));
-    for (const month of months) values[month] = amountFor(line, month, state.holidayRanges ?? []);
+    for (const month of months) values[month] = amountFor(line, month, state.holidayRanges ?? [], state.budgetAdjustments);
     let id = old?.id ?? `budget-${line.id}`;
     if (!old) {
       let suffix = 1;

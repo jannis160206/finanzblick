@@ -27,7 +27,7 @@ function plannedFor(state: AppState, line: (typeof variableBudgetLines)[number],
   const row = lineRow(state, line);
   if (row && row.values[month] !== undefined && row.values[month] !== null)
     return financeRowValue(row, month, { currentMonth }, state.holidayRanges);
-  return monthlyVariableBudget(month, state.holidayRanges).rows.find((item) => item.id === line.id)?.total ?? 0;
+  return monthlyVariableBudget(month, state.holidayRanges, month >= currentMonth ? state.budgetAdjustments : undefined).rows.find((item) => item.id === line.id)?.total ?? 0;
 }
 
 /**
@@ -78,7 +78,10 @@ export function budgetSuggestions(state: AppState, asOf: string): BudgetSuggesti
   const strip = ({ label, budgetId, average, plan }: (typeof stats)[number]): BudgetLineStat => ({ label, budgetId, average, plan });
   const donors = stats.filter((line) => line.under).map((line) => ({ line, headroom: -line.delta }));
   const suggestions: Omit<BudgetSuggestion, "detail">[] = [];
-  for (const over of stats.filter((line) => line.over).sort((a, b) => b.delta - a.delta)) {
+  // Once the current plan already covers the usual spending (e.g. after "Plan um 295 € erhöhen"), the hint is done.
+  const nowPlan = monthlyVariableBudget(currentMonth, state.holidayRanges, state.budgetAdjustments).rows;
+  const covered = (id: VariableBudgetId, average: number) => (nowPlan.find((row) => row.id === id)?.total ?? 0) >= average - STEP;
+  for (const over of stats.filter((line) => line.over && !covered(line.budgetId, line.average)).sort((a, b) => b.delta - a.delta)) {
     const donor = donors.filter((item) => roundTo5(Math.min(over.delta, item.headroom)) >= STEP)
       .sort((a, b) => b.headroom - a.headroom)[0];
     const head = `${over.label} lag ${MONTHS} Monate über Plan (Ø +${euro(over.delta)})`;

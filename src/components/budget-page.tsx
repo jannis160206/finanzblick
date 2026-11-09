@@ -27,8 +27,8 @@ export function BudgetSuggestionsPanel() {
               <span className="mt-0.5 block break-words text-2xs text-muted-foreground">{suggestion.detail}</span>
             </span>
             <Button type="button" variant="outline" size="sm" className="min-h-9"
-              onClick={() => askAssistant(`${suggestion.title} – soll ich das Budget so anpassen?`)}>
-              <MessageSquareText aria-hidden="true" className="size-3.5" />Assistent fragen
+              onClick={() => askAssistant(suggestion.title)}>
+              <MessageSquareText aria-hidden="true" className="size-3.5" />Anpassen
             </Button>
           </li>
         ))}

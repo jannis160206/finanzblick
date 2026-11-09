@@ -67,7 +67,7 @@ const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du w
   "Nachrichten sind oft locker, kurz oder ohne Satzbau geschrieben. Erkenne die Absicht trotzdem, z. B.: " +
   "\"essen oktober wie viel\" = query; \"wo geht mein geld hin\" = query; \"Japan Reise 3000 bis Juli 2027, 500 hab ich schon\" = savings_goal; " +
   "\"ist ein 900 € Fernseher im Mai drin?\" = affordability; \"mach Japan 4000\" = edit; \"Pickerl erst im April\" = edit; " +
-  "\"lieferando gehört zu lieferdienste\" = rule; \"lass immer 500 € reserve\" = remember; \"wo kann ich 200 € sparen\" = coach; " +
+  "\"lieferando gehört zu lieferdienste\" = rule; \"plan für lebensmittel um 50 erhöhen\" = budget_plan; \"tankbudget auf 200\" = budget_plan; \"50 von freizeit zu restaurants umschichten\" = budget_plan; \"sollte ich das lebensmittelbudget erhöhen\" = ask; \"was zahl ich alles für versicherungen\" = query; \"wann hab ich japan zusammen\" = ask; \"erklär mir meine finanzen\" = check; \"lass immer 500 € reserve\" = remember; \"wo kann ich 200 € sparen\" = coach; " +
   "\"100 im monat anlegen 10 jahre\" = depot; \"wie hoch ist die teuerung\" = market; \"was kriegt man fürs tagesgeld\" = market; \"3000 euro in yen\" = market; \"etf was is des eigentlich\" = knowledge; \"kest bedeutung\" = knowledge; \"was hast du dazugelernt\" = knowledge; \"wie läuft das mit den sparzielen\" = explain; \"nimm das zurück\" = undo; " +
   "\"wie viel muss ich noch auf amex rückzahlung überweisen\" = amex; \"was hab ich seit 11.10. mit amex bezahlt\" = query; " +
   "\"wie viel ist am sparkonto\" = accounts; \"meine kontostände\" = accounts; \"was bleibt mir diesen monat\" = budget; " +
