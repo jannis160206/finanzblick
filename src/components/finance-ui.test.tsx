@@ -6,13 +6,13 @@ import { MoneyInput, PageHeading } from "./finance-ui";
 afterEach(() => { cleanup(); delete document.documentElement.dataset.securityMode; });
 
 it("omits unnecessary page descriptions without leaving an empty paragraph", () => {
-  const { container } = render(<PageHeading eyebrow="KONFIGURATION" title="Einstellungen" />);
+  const { container } = render(<PageHeading title="Einstellungen" />);
   expect(screen.getByRole("heading", { name: "Einstellungen" })).toBeTruthy();
-  expect(container.querySelectorAll("p")).toHaveLength(1);
+  expect(container.querySelectorAll("p")).toHaveLength(0);
 });
 
 it("keeps useful context and page actions when provided", () => {
-  render(<PageHeading eyebrow="BUCHUNGEN" title="Umsätze" description="12 Buchungen">
+  render(<PageHeading title="Umsätze" description="12 Buchungen">
     <button>Importieren</button>
   </PageHeading>);
   expect(screen.getByText("12 Buchungen")).toBeTruthy();

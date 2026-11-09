@@ -44,7 +44,6 @@ export function BudgetPage() {
     <Months
       key={year ? "jahr" : "monat"}
       title="Budget"
-      eyebrow="PLAN · IST · REST"
       initialView={year ? "year" : "month"}
       monthExtras={<BudgetSuggestionsPanel />}
     />

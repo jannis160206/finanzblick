@@ -29,30 +29,27 @@ export const pocketColors: Record<Pocket, string> = {
   Motorrad: "var(--chart-4)",
 };
 export function PageHeading({
-  eyebrow,
   title,
   description,
   sensitiveDescription = false,
   children,
 }: {
-  eyebrow: string;
   title: string;
   description?: string;
   sensitiveDescription?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <div data-page-heading className="mb-7 flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <p className="eyebrow mb-2">{eyebrow}</p>
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-[34px]">
+    <div data-page-heading className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3 sm:mb-8">
+      <div className="min-w-0">
+        <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-title">
           {title}
         </h1>
         {description && (sensitiveDescription
-          ? <FinancialData as="p" className="mt-2 text-sm text-muted-foreground">{description}</FinancialData>
-          : <p className="mt-2 text-sm text-muted-foreground">{description}</p>)}
+          ? <FinancialData as="p" className="mt-1.5 text-sm text-muted-foreground">{description}</FinancialData>
+          : <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>)}
       </div>
-      <div className="flex flex-wrap items-center gap-2">{children}</div>
+      <div className="flex flex-wrap items-center gap-2 empty:hidden">{children}</div>
     </div>
   );
 }

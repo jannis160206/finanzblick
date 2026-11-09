@@ -37,7 +37,7 @@ export function DropdownMenuContent({ className, ...props }: ComponentProps<type
         sideOffset={6}
         collisionPadding={16}
         align="end"
-        className={cn("z-[60] max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] min-w-48 max-w-[calc(100dvw-2rem)] overflow-y-auto overscroll-contain rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-lg outline-none duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0", className)}
+        className={cn("z-[60] max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] min-w-48 max-w-[calc(100dvw-2rem)] overflow-y-auto overscroll-contain rounded-xl border bg-popover p-1.5 text-popover-foreground shadow-overlay outline-none duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0", className)}
         {...props}
       />
     </MenuPrimitive.Portal>

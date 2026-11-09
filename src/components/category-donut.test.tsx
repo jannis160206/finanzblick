@@ -41,7 +41,7 @@ describe("groupSpending", () => {
 
 describe("CategoryDonut", () => {
   it("shows five categories plus an expandable 'Sonstige'", () => {
-    render(<CategoryDonut spending={rows} tooltipStyle={{}} />);
+    render(<CategoryDonut spending={rows} />);
     const legend = screen.getByRole("list", { name: "Kategorien mit Anteil" });
     expect(within(legend).getAllByRole("listitem")).toHaveLength(6);
     expect(within(legend).getByText("Sonstige")).toBeTruthy();
@@ -54,7 +54,7 @@ describe("CategoryDonut", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
   it("omits the disclosure when everything fits", () => {
-    render(<CategoryDonut spending={rows.slice(0, 3)} tooltipStyle={{}} />);
+    render(<CategoryDonut spending={rows.slice(0, 3)} />);
     expect(screen.queryByRole("button", { name: /Sonstige/ })).toBeNull();
   });
 });

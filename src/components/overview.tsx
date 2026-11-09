@@ -26,14 +26,6 @@ import { bankPocketBalance, physicalPocketBalances } from "@/lib/goals";
 import { round, sum } from "@/lib/calc";
 import { StackedBar } from "@/components/stacked-bar";
 
-const chartTooltip = {
-  background: "var(--popover)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  color: "var(--foreground)",
-  fontSize: 12,
-};
-
 export function Overview() {
   const { state, dashboard: d } = useFinance();
   const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
@@ -136,7 +128,7 @@ export function Overview() {
       <section className="panel min-w-0 p-5 sm:p-6">
         <SectionHeading title="Ausgaben nach Kategorie" />
         {d.spending.length ? (
-          <CategoryDonut spending={d.spending} tooltipStyle={chartTooltip} />
+          <CategoryDonut spending={d.spending} />
         ) : (
           <EmptyState icon={ReceiptText} title="Noch keine Ausgaben" className="min-h-48" />
         )}

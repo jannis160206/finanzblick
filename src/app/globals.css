@@ -3,6 +3,11 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@theme {
+  --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-snappy: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -28,6 +33,19 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-soft: var(--warning-soft);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-soft: var(--info-soft);
+  --color-money-in: var(--money-in);
+  --color-money-out: var(--money-out);
+  --color-surface-sunken: var(--surface-sunken);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -42,6 +60,12 @@
   --color-card: var(--card);
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
+  --text-title: 1.75rem;
+  --text-title--line-height: 2.125rem;
+  --text-title--letter-spacing: -0.02em;
+  --text-display: 2.25rem;
+  --text-display--line-height: 2.5rem;
+  --text-display--letter-spacing: -0.03em;
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,27 +73,43 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --shadow-card: var(--elevation-card);
+  --shadow-raised: var(--elevation-raised);
+  --shadow-overlay: var(--elevation-overlay);
 }
 
 :root {
   --background: #f5f7f6;
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
+  --foreground: oklch(0.2 0.012 165);
+  --card: #ffffff;
+  --card-foreground: oklch(0.2 0.012 165);
+  --popover: #ffffff;
+  --popover-foreground: oklch(0.2 0.012 165);
   --primary: var(--user-accent, #5bddad);
   --primary-foreground: var(--user-accent-foreground, #000000);
   --accent-ink: var(--user-accent-light, #087c58);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: #66736d;
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.955 0.005 165);
+  --secondary-foreground: oklch(0.24 0.012 165);
+  --muted: oklch(0.955 0.005 165);
+  --muted-foreground: #5d6b64;
+  --accent: oklch(0.948 0.008 165);
+  --accent-foreground: oklch(0.24 0.012 165);
+  --surface-sunken: oklch(0.968 0.004 165);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  --destructive-soft: color-mix(in oklab, var(--destructive) 9%, var(--card));
+  --success: #0a7f58;
+  --success-foreground: #ffffff;
+  --success-soft: color-mix(in oklab, var(--success) 10%, var(--card));
+  --warning: #a35207;
+  --warning-foreground: #ffffff;
+  --warning-soft: color-mix(in oklab, #f59e0b 14%, var(--card));
+  --info: #0369a1;
+  --info-foreground: #ffffff;
+  --info-soft: color-mix(in oklab, var(--info) 9%, var(--card));
+  --money-in: var(--success);
+  --money-out: var(--foreground);
+  --border: oklch(0.912 0.006 165);
+  --input: oklch(0.88 0.008 165);
   --ring: var(--accent-ink);
   --chart-1: var(--accent-ink);
   --chart-2: #0284c7;
@@ -86,34 +126,55 @@
   --editable-focus: #e8ae25;
   --season-tint: transparent;
   --season-decoration: var(--accent-ink);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
+  --radius: 0.75rem;
+  --elevation-card: 0 1px 2px 0 rgb(16 24 20 / 0.04), 0 4px 16px -8px rgb(16 24 20 / 0.08);
+  --elevation-raised: 0 2px 4px 0 rgb(16 24 20 / 0.04), 0 16px 32px -14px rgb(16 24 20 / 0.2);
+  --elevation-overlay: 0 24px 64px -16px rgb(16 24 20 / 0.28);
+  --duration-fast: 150ms;
+  --duration-base: 220ms;
+  --duration-slow: 420ms;
+  --shell-sidebar: 15.5rem;
+  --shell-rail: 4.75rem;
+  --shell-header: 4rem;
+  --shell-bottom-bar: 4rem;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --sidebar: #fbfcfb;
+  --sidebar-foreground: oklch(0.2 0.012 165);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-accent: oklch(0.955 0.006 165);
+  --sidebar-accent-foreground: oklch(0.24 0.012 165);
+  --sidebar-border: oklch(0.922 0.005 165);
   --sidebar-ring: var(--ring);
 }
 
 .dark {
   --background: #101313;
   --foreground: #edf2ef;
-  --card: #181c1b;
-  --card-foreground: oklch(0.985 0 0);
-  --popover: #1d2320;
-  --popover-foreground: oklch(0.985 0 0);
+  --card: #171c1a;
+  --card-foreground: #f3f6f4;
+  --popover: #1c2220;
+  --popover-foreground: #f3f6f4;
   --accent-ink: var(--user-accent-dark, #5bddad);
-  --secondary: #272e2b;
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: #252b28;
-  --muted-foreground: #94a19a;
+  --secondary: #252c29;
+  --secondary-foreground: #f3f6f4;
+  --muted: #222927;
+  --muted-foreground: #9aa8a1;
   --accent: #232b27;
-  --accent-foreground: oklch(0.985 0 0);
+  --accent-foreground: #f3f6f4;
+  --surface-sunken: #131716;
   --destructive: oklch(0.704 0.191 22.216);
-  --border: #2a322e;
-  --input: #38423c;
+  --success: #3fd49b;
+  --success-foreground: #04261a;
+  --success-soft: color-mix(in oklab, var(--success) 12%, var(--card));
+  --warning: #f5b544;
+  --warning-foreground: #2b1a02;
+  --warning-soft: color-mix(in oklab, var(--warning) 12%, var(--card));
+  --info: #4cc2f5;
+  --info-foreground: #032234;
+  --info-soft: color-mix(in oklab, var(--info) 12%, var(--card));
+  --border: #29312e;
+  --input: #36403c;
   --chart-2: #38bdf8;
   --chart-3: #fbbf24;
   --chart-4: #fb923c;
@@ -125,11 +186,14 @@
   --editable-foreground: #f3d282;
   --editable-placeholder: #c9a85a;
   --editable-focus: #e8ae25;
-  --sidebar: #141817;
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
+  --elevation-card: inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 8px 24px -14px rgb(0 0 0 / 0.7);
+  --elevation-raised: inset 0 1px 0 0 rgb(255 255 255 / 0.04), 0 18px 40px -16px rgb(0 0 0 / 0.8);
+  --elevation-overlay: 0 28px 72px -16px rgb(0 0 0 / 0.75);
+  --sidebar: #131817;
+  --sidebar-foreground: #edf2ef;
+  --sidebar-accent: #212926;
+  --sidebar-accent-foreground: #f3f6f4;
+  --sidebar-border: oklch(1 0 0 / 8%);
 }
 
 /* A season swaps shell tint, radius, shadow and chart colours. The user's accent (--chart-1, --primary) is never touched. */
@@ -393,8 +457,13 @@
 body {
   font-feature-settings: "cv11", "ss01";
 }
+@utility amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
 .panel {
-  @apply rounded-xl border bg-card shadow-sm;
+  @apply rounded-2xl border border-border/80 bg-card shadow-card;
 }
 .eyebrow {
   @apply text-2xs font-semibold tracking-[0.14em] text-muted-foreground;
@@ -403,7 +472,7 @@ body {
   @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-2xs font-medium;
 }
 .select-input {
-  @apply h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none transition-[border-color,box-shadow] duration-150;
+  @apply h-10 rounded-xl border border-input bg-card px-3 text-sm outline-none transition-[border-color,box-shadow] duration-150;
 }
 .select-input:focus-visible {
   border-color: var(--ring);
@@ -526,9 +595,10 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .data-table thead th {
-  background: color-mix(in srgb, var(--muted) 40%, var(--card));
+  background: var(--surface-sunken);
   font-size: 11px;
   font-weight: 500;
+  letter-spacing: 0.01em;
   color: var(--muted-foreground);
   text-align: left;
 }

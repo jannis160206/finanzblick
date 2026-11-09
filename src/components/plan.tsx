@@ -34,7 +34,6 @@ export function Plan({ embedded = false }: { embedded?: boolean } = {}) {
   return (
     <>
       {!embedded && <PageHeading
-        eyebrow="BUDGETDETAILS"
         title="Alltagsbudget"
         description={`${monthLabel(plan.currentMonth)} · Ist bis ${dateLabel(state.settings.asOf)}`}
         sensitiveDescription

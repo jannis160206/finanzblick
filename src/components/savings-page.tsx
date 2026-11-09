@@ -12,18 +12,11 @@ import { MonthlyFunding } from "@/components/monthly-funding";
 import { SectionHeading } from "@/components/finance-ui";
 import { netWorthHistory } from "@/lib/net-worth";
 import { currency, monthLabel, shortCurrency } from "@/lib/format";
+import { ChartTooltip, chartAxisProps, chartCursor, chartGridProps } from "@/components/charts/chart-theme";
 
 const partNames: Record<string, string> = { girokonto: "Girokonto", amex: "Amex offen", tr: "Trade Republic", "trade republic": "Trade Republic", pro: "Pro" };
 const partLabel = (key: string) =>
   partNames[key] ?? key.replace(/(^|[\s&/-])(\p{L})/gu, (_, sep: string, letter: string) => sep + letter.toLocaleUpperCase("de"));
-
-const tooltipStyle = {
-  background: "var(--popover)",
-  border: "1px solid var(--border)",
-  borderRadius: 10,
-  color: "var(--foreground)",
-  fontSize: 12,
-};
 
 export function NetWorthPanel() {
   const { state, dashboard } = useFinance();
@@ -47,11 +40,17 @@ export function NetWorthPanel() {
       {points.length > 1 && <FinancialData className="h-56" role="img" aria-label="Verlauf des Nettovermögens">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart data={points} margin={{ left: -15, right: 8, top: 10 }}>
-            <CartesianGrid stroke="var(--border)" vertical={false} strokeDasharray="3 4" />
-            <XAxis dataKey="label" tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} minTickGap={25} />
-            <YAxis tickFormatter={shortCurrency} tick={{ fontSize: 10, fill: "var(--muted-foreground)" }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={tooltipStyle} formatter={(value: unknown) => currency(Number(value))} />
-            <Area type="monotone" dataKey="total" name="Nettovermögen" stroke="var(--chart-1)" fill="var(--chart-1)" fillOpacity={0.08} strokeWidth={2} isAnimationActive={false} />
+            <defs>
+              <linearGradient id="net-worth-fill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.22} />
+                <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid {...chartGridProps} />
+            <XAxis dataKey="label" {...chartAxisProps} minTickGap={25} />
+            <YAxis tickFormatter={shortCurrency} {...chartAxisProps} width={64} />
+            <Tooltip content={<ChartTooltip />} cursor={chartCursor} />
+            <Area type="monotone" dataKey="total" name="Nettovermögen" stroke="var(--chart-1)" fill="url(#net-worth-fill)" strokeWidth={2} isAnimationActive={false} />
           </AreaChart>
         </ResponsiveContainer>
       </FinancialData>}

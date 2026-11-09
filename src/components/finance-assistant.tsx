@@ -578,7 +578,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   </>;
   return <div className={panelMode ? "flex h-full min-h-0 flex-col" : "mx-auto flex max-w-4xl flex-col"}>
     {panelMode ? <div className="flex shrink-0 flex-wrap gap-2 px-4 pb-3 sm:px-6">{actions}</div>
-      : <PageHeading eyebrow="KI-Assistent · lokal auf der NPU" title="Finanz-Assistent"
+      : <PageHeading title="Finanz-Assistent"
       description="Fragen zu deinen Ausgaben, Sparziele und Ausgaben planen, Bestehendes ändern, Regeln, Spar-Coach, Depot-Rechner und Arbeitnehmerveranlagung.">
       {actions}
     </PageHeading>}

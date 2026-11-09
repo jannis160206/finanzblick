@@ -42,7 +42,6 @@ function PayrollWorkspace() {
   return (
     <>
       <PageHeading
-        eyebrow="Österreich · Lohnabrechnung"
         title="Gehalt & Steuern"
       >
         <Button asChild size="sm">

@@ -12,8 +12,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ThemeProvider } from "next-themes";
 import { toast, Toaster } from "sonner";
+import { useDocumentTheme } from "@/components/ui/use-document-theme";
 import { actualPockets, calculateDashboard, synchronizeGoals, type Dashboard } from "@/lib/calc";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import {
@@ -44,7 +44,16 @@ import { automationEventSchema, type AutomationEvent } from "@/lib/automation/sc
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
-  return locked ? null : <Toaster richColors position="bottom-right" closeButton />;
+  const theme = useDocumentTheme();
+  return locked ? null : <Toaster
+    richColors
+    position="bottom-right"
+    closeButton
+    theme={theme}
+    offset={{ bottom: "calc(var(--toast-offset, 24px) + var(--safe-bottom, 0px))" }}
+    mobileOffset={{ bottom: "calc(var(--toast-offset-mobile, 16px) + var(--safe-bottom, 0px))" }}
+    toastOptions={{ className: "rounded-2xl! border-border! shadow-overlay! font-sans!" }}
+  />;
 }
 
 type Store = {
@@ -616,23 +625,16 @@ export function FinanceProvider({
     },
   } : null;
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="dark"
-      enableSystem={false}
-      disableTransitionOnChange
-    >
-      <FinanceContext.Provider value={value}>
-        <FinanceRestorationContext.Provider value={restore}>
-        <AccountWorkspaceContext.Provider value={workspace}>
-        <AutomationContext.Provider value={{ jobs: automation.jobs, error: automationError, catalogue: automation.catalogue, worker: automation.worker }}>
-        {children}
-        <FinanceNotifications />
-        </AutomationContext.Provider>
-        </AccountWorkspaceContext.Provider>
-        </FinanceRestorationContext.Provider>
-      </FinanceContext.Provider>
-    </ThemeProvider>
+    <FinanceContext.Provider value={value}>
+      <FinanceRestorationContext.Provider value={restore}>
+      <AccountWorkspaceContext.Provider value={workspace}>
+      <AutomationContext.Provider value={{ jobs: automation.jobs, error: automationError, catalogue: automation.catalogue, worker: automation.worker }}>
+      {children}
+      <FinanceNotifications />
+      </AutomationContext.Provider>
+      </AccountWorkspaceContext.Provider>
+      </FinanceRestorationContext.Provider>
+    </FinanceContext.Provider>
   );
 }
 export function useFinance() {

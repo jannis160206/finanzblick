@@ -506,7 +506,6 @@ const TransactionLedger = memo(function TransactionLedger({
   return (
     <>
       <PageHeading
-        eyebrow="BUCHUNGEN"
         title="Umsätze"
         description={`${ledger.length.toLocaleString("de-AT")} Buchungen`}
         sensitiveDescription

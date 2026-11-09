@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { appViewport } from "@/lib/viewport";
+import { ThemeProvider } from "@/components/theme-provider";
 import "./globals.css";
 import "./security-mode.css";
 
@@ -35,7 +36,7 @@ export default async function RootLayout({
         <meta name="darkreader-lock" content="true" />
       </head>
       <body className="min-h-full">
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

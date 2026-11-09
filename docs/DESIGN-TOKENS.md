@@ -106,38 +106,73 @@ Direkt verwendete Tailwind-Palettenfarben (außerhalb der Tokens, Zählung in `s
 5. Recharts-Tooltips werden pro Datei als Inline-Objekt gestylt (`chartTooltip`, `tooltipStyle`).
 6. Neutrale Grautöne in `oklch(… 0 0)` (achromatisch) stehen neben grünlich getönten Hex-Werten.
 
-## 3. Zielwerte (Umbau, Meilenstein M1)
+## 3. Umgesetzt im Umbau (M1)
 
-Grundsätze: bestehende Token-Namen bleiben erhalten (shadcn-Konvention, Tests prüfen `:root`, `.dark`, `.panel`), die Benutzer-Akzentfarbe und saisonale Themes funktionieren unverändert, neue Tokens ergänzen statt ersetzen.
+Grundsätze: bestehende Token-Namen bleiben erhalten (shadcn-Konvention; `globals.test.ts` prüft `:root`, `.dark`, `body`, `.panel`), Benutzer-Akzentfarbe und saisonale Themes funktionieren unverändert, neue Tokens ergänzen statt ersetzen.
 
 ### 3.1 Farben
 
-- **Neutrale Skala** einheitlich leicht kühl-grün getönt (Farbton ≈ 165 in OKLCH), damit Hintergrund, Karten, Rahmen und Sekundärtext zusammenpassen; Kontrast `muted-foreground` auf `background` ≥ 4,5 : 1 in Hell und Dunkel.
-- **Flächenstufen**: `--background` (Seite) < `--card` (Karte) < `--popover` (schwebend); zusätzlich `--surface-sunken` für eingelassene Bereiche (Tabellenkopf, Filterleisten).
-- **Statusfarben** als Tokens mit Vorder- und weicher Hintergrundvariante: `--success`, `--warning`, `--info` (+ `-foreground`, `-soft`), `--destructive-soft`.
-- **Geldfarben**: `--money-in` (Einnahmen, an Erfolg gekoppelt) und `--money-out` (Ausgaben, neutral = `--foreground`), negative Salden `--destructive`. Utility-Klassen `text-money-in`, `text-money-out`.
-- **Charts**: `--chart-1` bleibt Akzent; `--chart-2 … --chart-8` als harmonische, im Dunkelmodus aufgehellte Reihe; saisonale Overrides bleiben.
+| Token | Hell | Dunkel | Tailwind-Klasse | Verwendung |
+| --- | --- | --- | --- | --- |
+| `--foreground` | `oklch(0.2 0.012 165)` | `#edf2ef` | `text-foreground` | Text, leicht grün getönt wie die Flächen |
+| `--card` / `--popover` | `#ffffff` | `#171c1a` / `#1c2220` | `bg-card`, `bg-popover` | Karten / schwebende Flächen |
+| `--muted`, `--secondary` | `oklch(0.955 0.005 165)` | `#222927`, `#252c29` | `bg-muted` | Flächen, Segment-Hintergrund |
+| `--accent` | `oklch(0.948 0.008 165)` | `#232b27` | `bg-accent` | Hover |
+| `--surface-sunken` | `oklch(0.968 0.004 165)` | `#131716` | `bg-surface-sunken` | Tabellenkopf, eingelassene Bereiche |
+| `--muted-foreground` | `#5d6b64` (≈ 5 : 1 auf Hintergrund) | `#9aa8a1` | `text-muted-foreground` | Sekundärtext |
+| `--border` / `--input` | `oklch(0.912 0.006 165)` / `oklch(0.88 0.008 165)` | `#29312e` / `#36403c` | `border-border` | Rahmen |
+| `--success` (+ `-foreground`, `-soft`) | `#0a7f58` | `#3fd49b` | `text-success`, `bg-success-soft` | Erfolg, im Rahmen |
+| `--warning` (+ `-foreground`, `-soft`) | `#a35207` | `#f5b544` | `text-warning`, `bg-warning-soft` | Hinweis, knapp |
+| `--info` (+ `-foreground`, `-soft`) | `#0369a1` | `#4cc2f5` | `text-info`, `bg-info-soft` | Information |
+| `--destructive-soft` | 9 % Destructive auf Karte | 9 % | `bg-destructive-soft` | Fehlerflächen |
+| `--money-in` | `= --success` | `= --success` | `text-money-in` | Einnahmen, positive Salden |
+| `--money-out` | `= --foreground` | `= --foreground` | `text-money-out` | Ausgaben (neutral) |
+
+Unverändert: `--primary`/`--accent-ink` (Benutzer-Akzent), `--chart-1 … 7`, `--editable-*`, saisonale Overrides, `--background` (`#f5f7f6` / `#101313`, passend zu `accentTokens()` und PWA-Theme-Farbe).
 
 ### 3.2 Typografie
 
-- Geist Sans/Mono bleiben (keine neue Schrift, kein externer Request).
-- Neue Stufen in `@theme`: `--text-display` (2.25 rem / 2.5 rem, Kennzahl-Hero), `--text-title` (1.75 rem / 2.125 rem, Seitentitel mobil 1.5 rem), `--text-2xs` bleibt.
-- Kennzahlen: `font-semibold tracking-tight tabular-nums` als Utility `.amount`.
+- Geist Sans/Mono bleiben (lokal ausgeliefert, kein externer Request).
+- Neue Stufen: `text-title` (1.75 rem / 2.125 rem, −0.02 em) für Seitentitel ab `sm` (mobil `text-2xl`), `text-display` (2.25 rem / 2.5 rem, −0.03 em) für die zentrale Kennzahl; `text-2xs` bleibt.
+- Utility `amount`: `tabular-nums`, `font-weight: 600`, `letter-spacing: -0.02em` für Beträge.
+- Seitentitel ohne Kicker/Eyebrow: `PageHeading` rendert nur Titel, optionale Beschreibung und Aktionen.
 
 ### 3.3 Radien
 
-- `--radius: 0.75rem` (12 px) als neue Basis → Karten `rounded-2xl` (≈ 21 px), Buttons/Inputs `rounded-xl` (≈ 17 px), Chips `rounded-full`. Saisonale Themes setzen weiterhin eigene Basiswerte.
+- `--radius: 0.75rem` (12 px) → `rounded-lg` 12 px, `rounded-xl` ≈ 17 px (Buttons, Inputs), `rounded-2xl` ≈ 22 px (Karten, Dialoge, `.panel`), `rounded-full` für Pills und Chips. Saisonale Themes setzen weiterhin eigene Basiswerte.
 
 ### 3.4 Schatten
 
-- `--shadow-card` (hell: 1 px Kontur + weicher 8 px-Schatten; dunkel: nur Kontur), `--shadow-raised` (Hover von Karten), `--shadow-overlay` (Popover, Dialog). `.panel` und `Card` nutzen `--shadow-card`; saisonales `--card-inner` bleibt kombinierbar.
+| Klasse | Quelle | Hell | Dunkel |
+| --- | --- | --- | --- |
+| `shadow-card` | `--elevation-card` | 1 px Kontur + weicher 16 px-Schatten | Innenkante + tiefer, weicher Schatten |
+| `shadow-raised` | `--elevation-raised` | Hover von Karten und Buttons, Tooltips | stärker |
+| `shadow-overlay` | `--elevation-overlay` | Dialoge, Popover, Menüs, Toasts, Chart-Tooltips | stärker |
+
+`.panel` und `Card` nutzen `shadow-card`; das saisonale `--card-inner`/`--card-shadow` überschreibt beide weiterhin.
 
 ### 3.5 Layout-Tokens
 
-- `--shell-sidebar: 15.5rem` (248 px, ab `lg`), `--shell-rail: 4.75rem` (76 px, `md`–`lg`), `--shell-header: 4rem` (64 px), `--shell-bottom-bar: 4rem` + `env(safe-area-inset-bottom)` (unter `md`).
-- Seitenränder: `px-4` (mobil) → `md:px-6` → `xl:px-10`, maximale Inhaltsbreite `1440px`.
+`--shell-sidebar: 15.5rem`, `--shell-rail: 4.75rem`, `--shell-header: 4rem`, `--shell-bottom-bar: 4rem`, `--safe-bottom: env(safe-area-inset-bottom)` – verwendet ab M2 von der App-Shell.
 
 ### 3.6 Bewegung
 
-- `--ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1)`, Dauern `--duration-fast: 150ms`, `--duration-base: 220ms`, `--duration-slow: 420ms`.
-- Framer Motion (`motion`) nur in Client-Inseln für Karten-Einblendungen und Fortschrittsbalken; alle Animationen respektieren `prefers-reduced-motion` und `data-reduce-motion`.
+- Easing-Klassen `ease-soft` (`cubic-bezier(0.22, 1, 0.36, 1)`) und `ease-snappy` (`cubic-bezier(0.32, 0.72, 0, 1)`); Dauern `--duration-fast` 150 ms, `--duration-base` 220 ms, `--duration-slow` 420 ms.
+- Bewegung transportiert Zustand (Fortschritt, Auswahl, Wertänderung), keine orchestrierten Seiteneinblendungen. `prefers-reduced-motion` und `data-reduce-motion` schalten alles ab.
+
+### 3.7 Neue Primitive
+
+| Komponente | Datei | Zweck |
+| --- | --- | --- |
+| `Card` (+ `CardHeader`, `CardTitle`, `CardDescription`, `CardAction`, `CardContent`, `CardFooter`) | `ui/card.tsx` | Einheitlicher Kartencontainer, optional `interactive` (Hover-Anhebung), `as="section"` |
+| `Badge` | `ui/badge.tsx` | Status-Chips `default`, `secondary`, `outline`, `success`, `warning`, `info`, `destructive` |
+| `Progress` | `ui/progress.tsx` | Zugänglicher Fortschrittsbalken (`role="progressbar"`, Töne wie Badge) |
+| `Separator` | `ui/separator.tsx` | Trennlinie |
+| `Kbd` | `ui/kbd.tsx` | Tastenkürzel |
+| `SegmentedControl` | `ui/segmented-control.tsx` | Umschalter mit `role="group"` + `aria-pressed` (gleiches Muster wie bestehende Umschalter) |
+| `Stat` | `ui/stat.tsx` | Kennzahl mit Label, Betrag (im Sichtschutz) und Hinweis |
+| `ChartTooltip`, `chartAxisProps`, `chartGridProps`, `chartCursor`, `chartColors` | `charts/chart-theme.tsx` | Gemeinsames Recharts-Theme statt Inline-Stilobjekten |
+| `ThemeProvider` | `theme-provider.tsx` | Hell/Dunkel/System app-weit inkl. Login und Registrierung |
+| `useDocumentTheme` | `ui/use-document-theme.ts` | Aktuelles Farbschema für Toasts ohne `next-themes`-Kontext |
+
+Button: neue Variante `soft` (Akzentfläche), Hover-Schatten `shadow-raised`, Outline auf `bg-card`. Dialog, Popover, Dropdown und Tooltip nutzen die Schatten-Tokens. Toasts (`sonner`) folgen dem Farbschema und liegen über der Safe-Area.

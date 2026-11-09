@@ -28,7 +28,6 @@ export function Pockets() {
   return (
     <>
       <PageHeading
-        eyebrow="POCKETS · ZIELE · ZINSEN"
         title="Sparen"
         description={`Stand ${dateLabel(state.settings.asOf)}`}
         sensitiveDescription

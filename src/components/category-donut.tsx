@@ -6,18 +6,16 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
 import { FinancialData } from "@/components/financial-data";
 import { currency } from "@/lib/format";
 import { groupSpending, shareLabel } from "@/lib/spending-groups";
+import { ChartTooltip } from "@/components/charts/chart-theme";
 
 const sliceColors = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 const restColor = "var(--muted-foreground)";
-const tooltipCurrency = (value: unknown) => currency(Number(value));
 
 export function CategoryDonut({
   spending,
-  tooltipStyle,
   limit = 5,
 }: {
   spending: readonly { name: string; value: number }[];
-  tooltipStyle: React.CSSProperties;
   limit?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -35,7 +33,7 @@ export function CategoryDonut({
               <Pie data={slices} dataKey="value" nameKey="name" innerRadius="64%" outerRadius="88%" paddingAngle={3} stroke="none" isAnimationActive={false}>
                 {slices.map((slice) => <Cell key={slice.name} fill={slice.color} />)}
               </Pie>
-              <Tooltip contentStyle={tooltipStyle} formatter={tooltipCurrency} />
+              <Tooltip content={<ChartTooltip />} />
             </PieChart>
           </ResponsiveContainer>
         </div>

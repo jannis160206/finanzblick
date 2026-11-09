@@ -176,7 +176,7 @@ export function Settings() {
   const nothing = matches !== null && matches.size === 0;
 
   return <>
-    <PageHeading eyebrow={workspace ? "DEIN WORKSPACE" : "KONFIGURATION"} title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
+    <PageHeading title={workspace ? "Profil & Einstellungen" : "Einstellungen"} />
     <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start">
       <aside className="min-w-0 space-y-3 lg:sticky lg:top-6">
         <label className="relative block">

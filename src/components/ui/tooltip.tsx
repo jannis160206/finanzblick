@@ -20,7 +20,7 @@ export function Tooltip({
           <Primitive.Content
             sideOffset={6}
             collisionPadding={12}
-            className={`z-[70] ${className} rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-sm`}
+            className={`z-[70] ${className} rounded-lg border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-raised`}
           >
             {label}
           </Primitive.Content>
