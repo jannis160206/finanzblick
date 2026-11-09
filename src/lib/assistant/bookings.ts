@@ -105,13 +105,15 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
   const merchant = (hint && state.transactions.some((row) => matchesTransactionSearch(row, hint)) ? hint : undefined) ??
     findTarget(state.transactions, rename ? rename.target : text.replace(/\b(?:vom|am|den)\s+\d{1,2}\.\s?\d{1,2}\.?(?:\s?\d{2,4})?/g, " "));
   const period = !date && /\b(?:im|in|seit|letzten|diesen|heuer|20\d\d)\b/.test(lower) ? findPeriod(scope, asOf) : undefined;
-  if (!merchant && !date && amount === undefined)
+  // "Hak alle Buchungen ab": every booking that is still unchecked, optionally limited to a period.
+  const everything = !merchant && !date && amount === undefined && update.reviewed !== undefined && /\balle\b|\balles\b/.test(lower);
+  if (!merchant && !date && amount === undefined && !everything)
     return rename ? `Ich finde keine Buchungen mit „${rename.target}“. Wie steht der Händler in den Umsätzen?` : "Welche Buchungen meinst du? Nenne den Händler, ein Datum (z. B. „vom 3.11.“) oder einen Betrag.";
   const rows = state.transactions.filter((row) => (!merchant || matchesTransactionSearch(row, merchant)) &&
     (!date || row.date === date) && (amount === undefined || Math.abs(Math.abs(row.amount) - amount) < 0.005) &&
-    (!period || row.date >= period.from && row.date <= period.to))
+    (!period || row.date >= period.from && row.date <= period.to) && (!everything || !row.ignored && !!row.reviewed !== update.reviewed))
     .sort((a, b) => b.date.localeCompare(a.date));
-  const what = [merchant && `„${merchant}“`, date && `vom ${dateLabel(date)}`, amount !== undefined && `über ${amount.toLocaleString("de-AT", { minimumFractionDigits: 2 })} €`]
+  const what = [everything && (update.reviewed ? "ungeprüft" : "geprüft"), merchant && `„${merchant}“`, date && `vom ${dateLabel(date)}`, amount !== undefined && `über ${amount.toLocaleString("de-AT", { minimumFractionDigits: 2 })} €`]
     .filter(Boolean).join(" ");
   if (!rows.length) return `Ich finde keine Buchung ${what}.`;
   update.ids = rows.slice(0, 2000).map((row) => row.id);
@@ -119,13 +121,16 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
     : update.ignored === false ? "wieder berücksichtigen" : update.includeInPlan === false ? "aus dem Monatsplan nehmen"
     : update.includeInPlan ? "wieder in den Monatsplan nehmen" : update.fixedCost === true ? "als Fixkosten markieren" : update.fixedCost === false ? "nicht mehr als Fixkosten zählen"
     : update.reviewed === false ? "als ungeprüft markieren" : "als geprüft markieren";
-  const count = rows.length;
+  // One step handles at most 2000 bookings (the newest); saying it again settles the rest.
+  const count = update.ids.length;
+  const rest = rows.length - count;
   const card: AssistantCard = { kind: "answer", title: `${count === 1 ? "1 Buchung" : `${count} Buchungen`} ${what}`.slice(0, 200), total: Math.round(rows.reduce((sum, row) => sum + row.amount, 0) * 100) / 100,
     lines: rows.slice(0, 12).map((row) => ({ label: `${dateLabel(row.date)} · ${row.merchantAlias || row.description.slice(0, 60)}`.slice(0, 200), value: row.amount,
       detail: [canonicalCategory(classify(row).category), row.includeInPlan ? "im Plan" : "nicht im Plan", row.fixedCost ? "Fixkosten" : "", row.reviewed ? "geprüft" : "", row.ignored ? "ignoriert" : ""]
         .filter(Boolean).join(" · "), transactionIds: [row.id] })),
     transactionIds: update.ids.slice(0, 50),
     note: update.alias ? "Nur der Anzeigename ändert sich, Beschreibung und Kategorie bleiben gleich."
-      : update.ignored ? "Die Buchungen bleiben in den Umsätzen und im Kontostand, zählen aber in keiner Statistik, keinem Budget und keiner Auswertung mehr." : undefined };
+      : update.ignored ? "Die Buchungen bleiben in den Umsätzen und im Kontostand, zählen aber in keiner Statistik, keinem Budget und keiner Auswertung mehr."
+      : rest > 0 ? `Die neuesten ${count.toLocaleString("de-AT")} zuerst – für die restlichen ${rest.toLocaleString("de-AT")} einfach nochmal sagen.` : undefined };
   return { operations: [update], title: `${count === 1 ? "Buchung" : `${count} Buchungen`} ${action}`.slice(0, 120), card, count };
 }

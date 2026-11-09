@@ -239,6 +239,9 @@ function addChoice(choices: Map<string, MerchantChoice | null>, key: string, cho
   choices.set(key, mergeConfirmedMerchantChoices(previous ? { key, ...previous } : undefined, { key, ...choice }));
 }
 
+// The user explicitly filed this merchant as an internal transfer ("Trade Republic ist immer Transfer intern").
+const chosenTransfer = (row: Transaction) =>
+  hasManualCategory(row) && ["Transfer intern", "Transfer"].includes(canonicalCategory(row.category));
 function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking = classify) {
   const choices = new Map<string, MerchantChoice | null>();
   for (const row of rows) {
@@ -258,7 +261,7 @@ function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking =
     if (
       isSpecificMerchantKey(key) &&
       (row.merchantAlias || (!ambiguousMerchant(row) && !unresolvedTerminal(row.description))) &&
-      !classifyBooking(row).isTransfer
+      (!classifyBooking(row).isTransfer || chosenTransfer(row))
     ) {
       const choice = {
         category: canonicalCategory(row.category),

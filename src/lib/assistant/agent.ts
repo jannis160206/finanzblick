@@ -2,7 +2,6 @@ import { classify, type Dashboard } from "@/lib/calc";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { currency, dateLabel } from "@/lib/format";
 import { savingsGoals } from "@/lib/goals";
-import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { financialCheck } from "./check";
 import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing, goalsStatus } from "./answers";
@@ -25,6 +24,7 @@ import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
 import { whatIfAnswer } from "./whatif-answer";
 import { parseBudgetPlan } from "./budget-plan";
+import { bookingFilter, cleanupPlan, filterLabel, hasFilter, matchesFilter, merchantRows, resolveMerchants } from "./cleanup";
 import { monthReview, netWorthAnswer, refundAnswer, securityCheck, sharedAnswer } from "./essentials";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
@@ -229,15 +229,22 @@ function rule({ state, asOf, hints }: Context, text: string): AgentResult {
   const parsed = parseRule(text);
   const categoryText = [parsed.category, hints?.category].filter(Boolean).join(" ");
   const found = findCategories(categoryText || text);
-  const merchant = [parsed.merchant, hints?.merchant].find((name) => name && name.length >= 2 &&
-    state.transactions.some((row) => matchesTransactionSearch(row, name)));
-  if (!merchant) return { text: parsed.merchant ? `Ich finde keine Buchungen von „${parsed.merchant}“. Wie heißt der Händler in den Umsätzen?`
+  const filter = bookingFilter(text, asOf);
+  const specific = hasFilter(filter);
+  const names = (parsed.merchant ? resolveMerchants(state, parsed.merchant) : undefined) ??
+    (hints?.merchant && merchantRows(state, hints.merchant).rows.length ? [hints.merchant] : undefined);
+  if (!names && !specific) return { text: parsed.merchant ? `Ich finde keine Buchungen von „${parsed.merchant}“. Wie heißt der Händler in den Umsätzen?`
     : "Welcher Händler soll in welche Kategorie? Zum Beispiel „Lieferando ist immer Lieferdienste“." };
-  if (!found) return { text: `In welche Kategorie soll ${merchant}? Zum Beispiel Lebensmittel, Restaurants oder Shopping.` };
+  const merchant = names ? names.join(" & ") : `Buchung ${filterLabel(filter)}`;
+  if (!found) return { text: `In welche Kategorie soll ${merchant}? Zum Beispiel Lebensmittel, Restaurants oder Transfer intern.` };
   const lower = text.toLowerCase();
-  const period = /\b(?:im|in|seit|letzten|diesen|dieses|heuer|20\d\d)\b/.test(lower) && !/\bimmer\b/.test(lower) ? parsePeriod(text, asOf) : undefined;
-  const rows = state.transactions.filter((row) => matchesTransactionSearch(row, merchant) && !classify(row).isTransfer &&
-    (!period || (row.date >= period.from && row.date <= period.to)));
+  const period = !filter.date && /\b(?:im|in|seit|letzten|diesen|dieses|heuer|20\d\d)\b/.test(lower) && !/\bimmer\b/.test(lower) ? parsePeriod(text, asOf) : undefined;
+  const pools = names ? names.map((name) => merchantRows(state, name)) : [{ rows: state.transactions, strict: true }];
+  const seen = new Set<string>();
+  // A loose match (bank or account name) must not pull in transfers; a named merchant may be moved out of them.
+  const rows = pools.flatMap((pool) => pool.rows.filter((row) => (pool.strict || !classify(row).isTransfer))).filter((row) =>
+    !seen.has(row.id) && seen.add(row.id) && matchesFilter(row, filter) && (!period || (row.date >= period.from && row.date <= period.to)));
+  if (!rows.length) return { text: `Ich finde keine Buchung ${[names && `von ${merchant}`, filterLabel(filter)].filter(Boolean).join(" ")}.` };
   // A group like "Essen" becomes the category these bookings mostly have already, otherwise its first entry.
   let category: Category = found.categories[0];
   if (found.categories.length > 1) {
@@ -249,17 +256,18 @@ function rule({ state, asOf, hints }: Context, text: string): AgentResult {
     category = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? category;
   }
   const changing = rows.filter((row) => canonicalCategory(classify(row).category) !== category);
-  const learn = !period || /\bimmer\b|künftig|ab jetzt|in zukunft/.test(lower);
+  // A rule remembers the merchant, not a date or an amount, so filtered picks change only these bookings.
+  const learn = !specific && !!names && (!period || /\bimmer\b|künftig|ab jetzt|in zukunft/.test(lower));
   const card: AssistantCard = { kind: "rule", title: `${merchant} → ${category}`, total: rows.length,
     lines: rows.slice().sort((a, b) => b.date.localeCompare(a.date)).slice(0, 12).map((row) => ({
       label: `${dateLabel(row.date)} · ${row.merchantAlias || row.description.slice(0, 60)}`, value: row.amount,
       detail: `${canonicalCategory(classify(row).category)}${canonicalCategory(classify(row).category) === category ? "" : ` → ${category}`}`, transactionIds: [row.id] })),
     transactionIds: changing.slice(0, 50).map((row) => row.id),
     note: learn ? "Künftige Buchungen dieses Händlers werden automatisch so zugeordnet." : "Gilt nur für diese Buchungen, keine Regel für später." };
-  if (!changing.length) return { text: `Alle ${plural(rows.length, "Buchung", "Buchungen")} von ${merchant} sind schon ${category}.`, card };
+  if (!changing.length) return { text: `${rows.length === 1 ? "Die Buchung" : `Alle ${rows.length} Buchungen`} ${[names && `von ${merchant}`, filterLabel(filter)].filter(Boolean).join(" ")} ${rows.length === 1 ? "ist" : "sind"} schon ${category}.`, card };
   const preview = previewChange(state, [{ op: "categorize", ids: changing.map((row) => row.id).slice(0, 2000), category, learn }],
     `${merchant} als ${category} zuordnen`, asOf);
-  return { ...preview, card, text: preview.change ? `${plural(changing.length, "Buchung", "Buchungen")} von ${merchant} würden zu ${category}. Bitte bestätigen:` : preview.text };
+  return { ...preview, card, text: preview.change ? `${plural(changing.length, "Buchung", "Buchungen")} ${[names && `von ${merchant}`, names && specific ? filterLabel(filter) : !names && filterLabel(filter)].filter(Boolean).join(" ")} ${changing.length === 1 ? "würde" : "würden"} zu ${category}${learn ? " – und ich merke mir das für künftige Buchungen" : ""}. Bitte bestätigen:` : preview.text };
 }
 
 export function parseMemory(input: string): Extract<AssistantOperation, { op: "memory_add" }> | undefined {
@@ -427,6 +435,12 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "funds": return fundsAnswer(state, dashboard, text, asOf);
     case "account_rule": return rulesResult(state, dashboard, asOf);
     case "security": return securityCheck(state, asOf);
+    case "cleanup": {
+      const plan = cleanupPlan(state);
+      if (typeof plan === "string") return { text: plan };
+      const preview = previewChange(state, plan.operations, plan.title, asOf);
+      return { ...preview, card: plan.card, text: preview.change ? `${plan.count === 1 ? "1 offene Buchung" : `${plan.count} offene Buchungen`} kann ich zuordnen${plan.open ? `, ${plan.open} bleiben offen` : ""}. Bitte kurz prüfen und bestätigen:` : preview.text };
+    }
     case "month_review": return monthReview(state, text, asOf);
     case "shared": return sharedAnswer(state, asOf);
     case "networth": return netWorthAnswer(state, dashboard);

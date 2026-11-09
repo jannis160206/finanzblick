@@ -450,6 +450,11 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     op: z.literal("categorize"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
     category: categorySchema, learn: z.boolean(),
   }).strict(),
+  // Open entries of the review list, settled like a click in the review dialog.
+  z.object({
+    op: z.literal("review_resolve"),
+    decisions: z.array(z.object({ reviewId: z.string().min(1).max(500), category: categorySchema, merchantAlias: z.string().trim().min(1).max(100).optional() }).strict()).min(1).max(500),
+  }).strict(),
   z.object({
     op: z.literal("setting"), key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget"]),
     value: moneySchema.nonnegative().max(10_000_000),
@@ -646,6 +651,8 @@ export const assistantUndoSchema = z.object({
   merchantRules: z.array(z.object({ key: z.string().min(1).max(1200), before: merchantRuleSchema.nullable() }).strict()).max(2000).optional(),
   fixedReceipts: z.array(z.object({ key: z.string().max(2000), before: fixedReceiptSchema }).strict()).max(2000).optional(),
   budget: z.array(z.object({ line: budgetLineIdSchema, before: z.number().min(-100_000).max(100_000).nullable() }).strict()).max(20).optional(),
+  // Settled review entries: put back into the list, the bookings they became are removed again.
+  reviews: z.array(z.object({ item: reviewItemSchema, transactionIds: z.array(z.string().min(1).max(500)).max(20) }).strict()).max(500).optional(),
 }).strict();
 export type AssistantUndo = z.infer<typeof assistantUndoSchema>;
 export const assistantChangeLogSchema = z.object({

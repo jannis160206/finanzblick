@@ -15,6 +15,8 @@ import { ordersQuestion } from "./orders";
 import { accountRuleRequest, fundsQuestion } from "./funds";
 import { whatIfQuestion } from "./whatif";
 import { whyQuestion } from "./why";
+import { allCategories } from "@/lib/categories";
+import { cleanupQuestion } from "./cleanup";
 import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
 
 // Everything the assistant can do. The model may only pick one of these names.
@@ -22,7 +24,7 @@ export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
-  "security", "month_review", "shared", "networth", "refunds",
+  "security", "month_review", "shared", "networth", "refunds", "cleanup",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -68,6 +70,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   funds: "Konten-Check: ob sich eine Ausgabe oder ein Kauf mit den Konten ausgeht, die man dafür verwenden darf, mit OK / nicht OK und von welchem Konto zahlen – legt nichts an (z. B. „Kann ich mir eine Kaffeemaschine um 850 € leisten?“, „Geht sich ein Ölwechsel um 120 € aus?“, „Reifen 600 € ok?“, „Welche Konten darf ich wofür verwenden?“)",
   account_rule: "Kontoregel festlegen, wofür ein Konto verwendet werden darf (z. B. „Sparkonto ist für alle Ausgaben“, „Trade Republic nur für Autowerkstatt und Ölwechsel“, „Notgroschen nicht angreifen“)",
   budget_plan: "monatliches Budget einer Ausgabenkategorie (Lebensmittel & Haushalt, Mittagessen, Tanken, Freizeit, Restaurants & Lieferdienste, Geschenke, Giro Puffer) erhöhen, senken, auf einen Betrag setzen, zurücksetzen oder Geld zwischen zwei Budgets umschichten (z. B. „Plan für Lebensmittel um 50 € erhöhen“, „Tankbudget auf 200 €“, „50 € von Freizeit zu Restaurants umschichten“)",
+  cleanup: "alle offenen Buchungen (Prüfliste, Kategorie Prüfen) auf einmal zuordnen (z. B. „Arbeite alle Prüfen-Buchungen ab“, „Ordne alle offenen Buchungen zu“)",
   security: "Sicherheits-Check: verdächtige oder doppelte Abbuchungen, ungewöhnlich hohe Beträge, Kleinst-Testabbuchungen, teurer gewordene und neue Abos (z. B. „Gibt es verdächtige Buchungen?“, „Wurde ich doppelt abgebucht?“, „Welche Abos sind teurer geworden?“)",
   month_review: "Monatsbericht für einen Monat: Einnahmen, Ausgaben, Übrig, Top-Kategorien mit Vergleich zum Vormonat, größte Ausgaben (z. B. „Wie war mein Oktober?“, „Monatsbericht“, „Fass meinen Monat zusammen“)",
   shared: "geteilte Kosten mit Raphael: was er noch schuldet und was erledigt ist (z. B. „Was schuldet mir Raphael?“)",
@@ -128,6 +131,13 @@ const upcomingQuestion = (lower: string) => !/ausgegeben|bezahlt hab|gezahlt hab
     /\bwas (?:wird|geht) (?:\S+ ){0,3}(?:noch )?(?:abgebucht|weg|abgezogen)\b/.test(lower) || /\b(?:anstehende|kommende|offene|fällige)\s+(?:zahlungen|abbuchungen|lastschriften)\b/.test(lower) ||
     /\bnächste\w* (?:\S+ )?(?:abbuchung|zahlung|lastschrift)(?:en)?\b/.test(lower));
 
+// "Die Buchung vom 3.11. über 200 € ist Transfer intern", "alle Amazon Buchungen über 100 € sind Shopping".
+const categoryNames = [...new Set(allCategories.map((name) => name.toLowerCase()))].sort((a, b) => b.length - a.length)
+  .map((name) => name.replace(/[.*+?^${}()|[\]\\&]/g, "\\$&")).join("|");
+const categoryAssignment = new RegExp(`\\b(?:ist|sind|als|zu|in|nach)\\s+(?:immer\\s+|jetzt\\s+|eigentlich\\s+|die\\s+|der\\s+|kategorie\\s+)*(?:${categoryNames})\\s*(?:(?:kategorisieren|zuordnen|verbuchen|buchen|einordnen|umbuchen|machen|setzen)\\s*)?[.!]?$`);
+const bookingAssignment = (lower: string) => categoryAssignment.test(lower) &&
+  /\bbuchung|\bzahlung|überweisung|ueberweisung|abbuchung|\d+(?:[.,]\d+)?\s*(?:€|euro)|\b\d{1,2}\.\s?\d{1,2}\./.test(lower) && !/\bwie ?viel\b|^(?:was|wie|wo|warum|wieso)\b|\?$/.test(lower);
+
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
 export function detectTool(input: string, names: string[] = []): AssistantTool | undefined {
   const text = normalizeMessage(input);
@@ -175,6 +185,7 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (accountRuleRequest(lower)) return "account_rule";
   if (budgetPlanRequest(lower, known)) return "budget_plan";
   if (securityQuestion(lower)) return "security";
+  if (cleanupQuestion(lower)) return "cleanup";
   if (sharedQuestion(lower) && !known) return "shared";
   if (refundQuestion(lower)) return "refunds";
   if (netWorthQuestion(lower)) return "networth";
@@ -184,6 +195,7 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/\bvergiss\b|vergessen/.test(lower) && !/vergiss nicht/.test(lower)) return "forget";
   if (/merk dir|merke dir|vergiss nicht|denk dran|denk daran|notier|\bpuffer\b.*\bimmer\b|\bimmer\b.*\bpuffer\b|\bpuffer\b.*\d|\d.*\bpuffer\b|\breserve\b.*\d|\d.*\breserve\b|nie unter \d|(?:gehalt|lohn)\b.*\bam\s+\d{1,2}\b|\bam\s+\d{1,2}\.?\s+(?:kommt|gibt'?s)\s+(?:mein|das)\s+(?:gehalt|lohn)|gehalt geht/.test(lower) &&
     !/\bbis\b.*\b(?:sparen|zurücklegen)\b|leisten|leistbar|reicht|geht sich/.test(lower)) return "remember";
+  if (bookingAssignment(lower)) return "rule";
   if (bookingRequest(text, known)) return "booking";
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";

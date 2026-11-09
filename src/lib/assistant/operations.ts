@@ -1,4 +1,6 @@
+import { applyAiReviewDecisions } from "@/lib/ai/apply-review-decisions";
 import { classify } from "@/lib/calc";
+import { canonicalCategory } from "@/lib/categories";
 import { planningEndMonth } from "@/lib/planning-range";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { corePocket, pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
@@ -307,6 +309,36 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       diffs.push({ label: "Gedächtnis", before: entry.text, after: "vergessen" });
       return { ...state, assistantMemory: memory.filter((item) => item.id !== entry.id) };
     }
+    case "review_resolve": {
+      const queue = state.reviewQueue ?? [];
+      const decisions = operation.decisions.filter((decision) => queue.some((item) => item.id === decision.reviewId));
+      if (!decisions.length) throw new OperationError("Diese Einträge sind schon erledigt.");
+      const result = applyAiReviewDecisions(state, decisions);
+      if (!result.applied.length) throw new OperationError("Diese Einträge lassen sich so nicht automatisch erledigen.");
+      const before = new Map(state.transactions.map((row) => [row.id, row]));
+      const added = result.state.transactions.filter((row) => !before.has(row.id));
+      // AMEX entries reconcile into an existing booking instead of adding one.
+      snapshotTransactions(undo, result.state.transactions.flatMap((row) => {
+        const previous = before.get(row.id);
+        return previous && previous !== row && JSON.stringify(previous) !== JSON.stringify(row) ? [previous] : [];
+      }));
+      const done = new Set(result.applied);
+      const rulesBefore = new Map((state.merchantRules ?? []).map((rule) => [rule.key, rule]));
+      undo.merchantRules ??= [];
+      for (const rule of result.state.merchantRules ?? []) {
+        const previous = rulesBefore.get(rule.key);
+        if (previous !== rule && !undo.merchantRules.some((entry) => entry.key === rule.key)) undo.merchantRules.push({ key: rule.key, before: previous ?? null });
+      }
+      undo.reviews ??= [];
+      for (const item of queue.filter((entry) => done.has(entry.id))) {
+        const draft = item.kind === "booking" ? item.draft : undefined;
+        const ids = draft ? added.filter((row) => row.date === draft.date && row.amount === draft.amount && row.description === draft.description).map((row) => row.id) : [];
+        undo.reviews.push({ item, transactionIds: ids.slice(0, 20) });
+        const decision = decisions.find((entry) => entry.reviewId === item.id)!;
+        diffs.push({ label: `${draft ? `${dateLabel(draft.date ?? "")} · ${draft.description}` : "Prüf-Eintrag"}`.slice(0, 200), before: "Prüfen", after: canonicalCategory(decision.category) });
+      }
+      return result.state;
+    }
     case "budget_plan": {
       const line = variableBudgetLines.find((item) => item.id === operation.line)!;
       const month = context.asOf.slice(0, 7);
@@ -427,6 +459,12 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
   if (undo.fixedReceipts?.length && next.fixedReceipts) {
     const receipts = new Map(undo.fixedReceipts.map((entry) => [entry.key, entry.before]));
     next.fixedReceipts = next.fixedReceipts.map((receipt) => receipts.get(receipt.key) ?? receipt);
+  }
+  if (undo.reviews?.length) {
+    const remove = new Set(undo.reviews.flatMap((entry) => entry.transactionIds));
+    const open = new Set((next.reviewQueue ?? []).map((item) => item.id));
+    next.transactions = next.transactions.filter((row) => !remove.has(row.id));
+    next.reviewQueue = [...(next.reviewQueue ?? []), ...undo.reviews.map((entry) => entry.item).filter((item) => !open.has(item.id))];
   }
   if (undo.budget?.length) {
     const adjustments = { ...next.budgetAdjustments };
