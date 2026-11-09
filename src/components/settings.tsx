@@ -191,7 +191,7 @@ export function Settings() {
         </label>
         <nav aria-label="Einstellungsbereiche" className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 [scrollbar-width:none] lg:mx-0 lg:block lg:space-y-4 lg:overflow-visible lg:px-0 lg:pb-0">
           {groups.map((group) => <div key={group.id} className="contents lg:block">
-            <p className="hidden px-2.5 pb-1 text-2xs font-medium uppercase tracking-[0.16em] text-muted-foreground lg:block">{group.label}</p>
+            <p className="hidden px-2.5 pb-1 text-xs font-medium text-muted-foreground lg:block">{group.label}</p>
             {group.items.filter((item) => shown(item.id)).map((item) => <a key={item.id} href={`#${item.id}`} onClick={() => jump(item.id)}
               aria-current={active === item.id ? "location" : undefined}
               className={cn("flex min-h-9 shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:w-full",
@@ -208,7 +208,7 @@ export function Settings() {
         {groups.map((group) => {
           const items = group.items.filter((item) => shown(item.id));
           return <div key={group.id} hidden={!items.length} className="space-y-4">
-            <p className="px-1 text-2xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{group.label}</p>
+            <p className="px-1 text-sm font-semibold text-muted-foreground">{group.label}</p>
             {group.items.map((item) => <div key={item.id} hidden={!shown(item.id)}>{sections[item.id]}</div>)}
           </div>;
         })}

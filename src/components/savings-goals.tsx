@@ -49,7 +49,7 @@ export function SavingsGoals() {
       {allocationBlocked && <FinancialData as="p" role="status" className="mb-4 text-xs text-muted-foreground">
         Automatische Sparempfehlung pausiert: Kontostand oder Pocket-Zuordnung eines Ziels klären.
       </FinancialData>}
-      <FinancialData className="grid gap-3 sm:grid-cols-2">
+      <FinancialData className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {goals.map((goal) => {
           const basis = goalBalanceStatus(state, goal, dashboard.actual);
           const balance = basis.amount;
@@ -78,7 +78,7 @@ export function SavingsGoals() {
             <p className="mt-5 text-xs text-muted-foreground"><span className="text-xl font-semibold tracking-tight text-foreground tabular-nums">{balance === null ? unavailable : currency(balance)}</span> von {currency(goal.target)}</p>
             <div className="mb-2 mt-4 flex items-center justify-between text-2xs text-muted-foreground"><span>Pocket-Guthaben</span><span className="font-medium tabular-nums text-primary">{progress === null ? "—" : `${Math.round(progress)} %`}</span></div>
             <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label={`${goal.name} Fortschritt`} aria-valuenow={progress ?? undefined} aria-valuetext={progress === null ? unavailable : undefined} aria-valuemin={0} aria-valuemax={100}>
-              <div className="h-full rounded-full bg-primary" style={{ width: `${progress ?? 0}%` }} />
+              <div className="h-full rounded-full bg-primary transition-[width] duration-700 ease-soft motion-reduce:transition-none" style={{ width: `${progress ?? 0}%` }} />
             </div>
             {basis.status === "conflict" && <p className="mt-3 text-xs text-muted-foreground">Pocket-Zuordnung oder widersprüchliche Salden klären. Das Guthaben ist nicht mehrfach verfügbar.</p>}
             {basis.status === "unknown" && <p className="mt-3 text-xs text-muted-foreground">Ohne belegten Startstand oder Auszugssaldo ist der Fortschritt nicht bekannt.</p>}

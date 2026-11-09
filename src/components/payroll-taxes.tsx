@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileUp } from "lucide-react";
+import { FileUp, ReceiptText } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipImportPanel } from "@/components/payslip-import";
 import { PageHeading } from "@/components/finance-ui";
@@ -44,16 +44,8 @@ function PayrollWorkspace() {
       <PageHeading
         title="Gehalt & Steuern"
       >
-        <Button asChild size="sm">
-          <a href="#payroll-import">
-            <FileUp className="size-4" aria-hidden="true" />
-            Abrechnung hinzufügen
-          </a>
-        </Button>
-      </PageHeading>
-      <div className="space-y-5">
         <div
-          className="panel flex flex-wrap items-end gap-4 rounded-2xl p-4 shadow-sm"
+          className="flex flex-wrap items-end gap-3"
           aria-label="Abrechnungsauswahl"
           role="group"
         >
@@ -74,7 +66,7 @@ function PayrollWorkspace() {
             </select>
           </div>
           {employers.length > 0 && (
-            <div className="min-w-0 flex-1 text-xs text-muted-foreground sm:max-w-sm">
+            <div className="min-w-0 max-w-full text-xs text-muted-foreground sm:w-64">
               <label className="block" htmlFor="payroll-employer">
                 Dienstverhältnis
               </label>
@@ -93,7 +85,15 @@ function PayrollWorkspace() {
               </select>
             </div>
           )}
+          <Button asChild className="min-h-10">
+            <a href="#payroll-import">
+              <FileUp className="size-4" aria-hidden="true" />
+              Abrechnung hinzufügen
+            </a>
+          </Button>
         </div>
+      </PageHeading>
+      <div className="space-y-5">
         <PayrollCoverage view={view} />
         <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
           {view.latest ? (
@@ -101,14 +101,20 @@ function PayrollWorkspace() {
           ) : (
             <section
               aria-label="Abrechnungsstand"
-              className="panel rounded-2xl p-6 shadow-sm"
+              className="panel flex flex-col items-start gap-3 p-6 sm:p-8"
             >
+              <span aria-hidden="true" className="flex size-11 items-center justify-center rounded-2xl bg-accent-muted text-primary">
+                <ReceiptText className="size-5" />
+              </span>
               <h2 className="font-semibold">
                 Noch keine Lohnabrechnungen für {year}
               </h2>
-              <p className="mt-2 text-sm text-muted-foreground">
-                Lade deine PDF-Abrechnungen hoch.
+              <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+                Lade deine PDF-Abrechnungen hoch. Erkannte Werte erscheinen dann hier.
               </p>
+              <Button asChild variant="soft" size="sm" className="mt-1">
+                <a href="#payroll-import"><FileUp aria-hidden="true" />PDF hochladen</a>
+              </Button>
             </section>
           )}
           <PayslipImportPanel

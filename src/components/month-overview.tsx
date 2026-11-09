@@ -2,7 +2,10 @@
 
 import { useId, type ReactNode } from "react";
 import Link from "next/link";
-import { CalendarClock, ChevronRight, PiggyBank, Receipt, ShoppingBasket, Wallet } from "lucide-react";
+import { CalendarClock, ChevronRight, Fuel, Gift, PiggyBank, Receipt, Sandwich, ShoppingBasket, Ticket, UtensilsCrossed, Wallet, type LucideIcon } from "lucide-react";
+import { AnimatedProgress, type ProgressTone } from "@/components/motion/animated-progress";
+import { budgetTone } from "@/components/dashboard/budget-progress-card";
+import type { VariableBudgetId } from "@/lib/variable-budgets";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { FinancialData } from "@/components/financial-data";
 import { PlanValueDetails, bundleRows, planValueInfo } from "@/components/month-plan-grid";
@@ -32,21 +35,19 @@ function Avatar({ label }: { label: string }) {
   );
 }
 
-function Progress({ value, total, tone = "bg-primary", label }: { value: number; total: number; tone?: string; label: string }) {
-  const percent = total > 0 ? Math.min(100, Math.max(0, (value / total) * 100)) : value > 0 ? 100 : 0;
-  return (
-    <div
-      role="progressbar"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(percent)}
-      className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-    >
-      <div className={cn("h-full rounded-full transition-[width] motion-reduce:transition-none", tone)} style={{ width: `${percent}%` }} />
-    </div>
-  );
+function Progress({ value, total, tone = "default", label }: { value: number; total: number; tone?: ProgressTone; label: string }) {
+  return <AnimatedProgress value={total > 0 ? value : value > 0 ? 1 : 0} max={total > 0 ? total : 1} label={label} tone={tone} className="h-1.5" />;
 }
+
+const budgetIcons: Record<VariableBudgetId, LucideIcon> = {
+  food: ShoppingBasket,
+  lunch: Sandwich,
+  fuel: Fuel,
+  leisure: Ticket,
+  "going-out": UtensilsCrossed,
+  gifts: Gift,
+  buffer: Wallet,
+};
 
 function Section({ title, icon, total, meta, children }: {
   title: string;
@@ -95,9 +96,9 @@ function RowBody({ label, sub, amount, amountTone, subTone, chevron }: {
 }
 
 const stateTone: Record<string, string> = {
-  booked: "text-emerald-700 dark:text-emerald-400",
-  different: "text-amber-700 dark:text-amber-400",
-  due: "text-amber-700 dark:text-amber-400",
+  booked: "text-success",
+  different: "text-warning",
+  due: "text-warning",
   missing: "text-muted-foreground",
   open: "text-muted-foreground",
 };
@@ -176,9 +177,12 @@ function BudgetRow({ row, props }: { row: FinanceRow; props: OverviewProps }) {
   const tracked = month <= dashboard.currentMonth && props.forecast.actualCoverage !== "none";
   const spent = tracked ? actuals.rows[row.id]?.[month]?.amount ?? 0 : 0;
   const rest = round(plan - spent);
+  const BudgetIcon = budget ? budgetIcons[budget] : undefined;
   const body = (
     <>
-      <Avatar label={row.label} />
+      {BudgetIcon
+        ? <span aria-hidden="true" className="grid size-9 shrink-0 place-items-center rounded-full bg-accent-muted text-primary"><BudgetIcon className="size-4" /></span>
+        : <Avatar label={row.label} />}
       <span className="min-w-0 flex-1 space-y-1.5">
         <span className="flex items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{row.label}</span>
@@ -188,7 +192,7 @@ function BudgetRow({ row, props }: { row: FinanceRow; props: OverviewProps }) {
         </span>
         {tracked && (
           <>
-            <Progress value={spent} total={plan} label={`${row.label} ausgeschöpft`} tone={rest < 0 ? "bg-destructive" : spent / (plan || 1) > 0.85 ? "bg-amber-500" : "bg-primary"} />
+            <Progress value={spent} total={plan} label={`${row.label} ausgeschöpft`} tone={budgetTone(spent, plan)} />
             <span className={cn("block text-xs", rest < 0 ? "text-destructive" : "text-muted-foreground")}>
               {rest < 0 ? `${currency(-rest)} über Budget` : `${currency(rest)} übrig`}
             </span>
@@ -242,7 +246,7 @@ export function MonthOverview(props: OverviewProps) {
         <Section title="Einnahmen" icon={<Wallet className="size-4" />} total={forecast.income}>
           {income.map((row) => (
             <li key={row.id} className={rowClass.replace("hover:bg-muted/50", "")}>
-              <RowBody label={row.label} sub={month > currentMonth ? "Erwartet" : "Geplant"} amount={value(row)} amountTone="text-emerald-700 dark:text-emerald-400" />
+              <RowBody label={row.label} sub={month > currentMonth ? "Erwartet" : "Geplant"} amount={value(row)} amountTone="text-money-in" />
             </li>
           ))}
         </Section>
@@ -254,7 +258,7 @@ export function MonthOverview(props: OverviewProps) {
           total={forecast.fixed}
           meta={month <= currentMonth && (
             <div className="space-y-1.5">
-              <Progress value={bookedFixed.length} total={fixedRows.length} label="Fixkosten abgebucht" tone="bg-emerald-500" />
+              <Progress value={bookedFixed.length} total={fixedRows.length} label="Fixkosten abgebucht" tone="success" />
               <FinancialData as="p" className="text-xs text-muted-foreground">
                 {bookedFixed.length} von {fixedRows.length} abgebucht
                 {isCurrent && (openFixed > 0 ? ` · ${currency(openFixed)} offen` : " · alles erledigt")}
@@ -272,7 +276,7 @@ export function MonthOverview(props: OverviewProps) {
           total={budgetTotal}
           meta={tracked && (
             <div className="space-y-1.5">
-              <Progress value={budgetSpent} total={budgetTotal} label="Alltagsbudget ausgeschöpft" tone={budgetSpent > budgetTotal ? "bg-destructive" : "bg-primary"} />
+              <Progress value={budgetSpent} total={budgetTotal} label="Alltagsbudget ausgeschöpft" tone={budgetTone(budgetSpent, budgetTotal)} />
               <FinancialData as="p" className={cn("text-xs", budgetSpent > budgetTotal ? "text-destructive" : "text-muted-foreground")}>
                 {currency(budgetSpent)} ausgegeben · {budgetSpent > budgetTotal ? `${currency(round(budgetSpent - budgetTotal))} drüber` : `${currency(round(budgetTotal - budgetSpent))} übrig`}
               </FinancialData>
@@ -314,7 +318,7 @@ export function IncomeSplit({ income, fixed, everyday, oneOff, label }: {
     { key: "Fixkosten", value: fixed, tone: "bg-sky-500" },
     { key: "Alltag", value: everyday, tone: "bg-violet-500" },
     { key: "Einmalig & Karte", value: oneOff, tone: "bg-amber-500" },
-    { key: free < 0 ? "Fehlbetrag" : "Frei", value: Math.abs(free), tone: free < 0 ? "bg-destructive" : "bg-emerald-500" },
+    { key: free < 0 ? "Fehlbetrag" : "Frei", value: Math.abs(free), tone: free < 0 ? "bg-destructive" : "bg-success" },
   ].filter((part) => part.value > 0);
   if (!parts.length) return null;
   return (

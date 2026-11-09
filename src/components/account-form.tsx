@@ -139,24 +139,17 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
   const linkClasses = "inline-flex min-h-11 items-center rounded-lg font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
   return (
-    <main className="dark relative isolate flex min-h-screen min-h-svh flex-col overflow-hidden bg-background px-5 py-6 text-foreground sm:px-8 sm:py-8">
-      <div aria-hidden="true" className="pointer-events-none absolute -left-40 -top-64 -z-10 size-[44rem] rounded-full bg-primary/[0.06] blur-[100px]" />
-      <div aria-hidden="true" className="pointer-events-none absolute -bottom-80 -right-72 -z-10 size-[48rem] rounded-full bg-primary/[0.04] blur-[100px]" />
-
-      <header className="mx-auto flex w-full max-w-6xl items-center gap-3">
-        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-          <Landmark aria-hidden="true" className="size-6" strokeWidth={1.75} />
+    <main className="relative isolate flex min-h-screen min-h-svh flex-col bg-background px-5 py-6 text-foreground sm:px-8 sm:py-8">
+      <header className="mx-auto flex w-full max-w-6xl items-center gap-2.5">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+          <Landmark aria-hidden="true" className="size-5" strokeWidth={1.75} />
         </div>
-        <span className="text-xl font-semibold tracking-tight">Finanzblick<span className="text-primary">.</span></span>
+        <span className="text-lg font-semibold tracking-tight">Finanz<span className="font-normal text-muted-foreground">blick</span></span>
       </header>
 
       <div className="mx-auto grid w-full max-w-6xl flex-1 items-center gap-10 py-12 sm:py-16 lg:grid-cols-[1.1fr_1fr] lg:gap-20">
         <section aria-labelledby={`${id}-intro`} className="mx-auto w-full max-w-md lg:mx-0 lg:max-w-lg">
-          <p className="mb-5 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-            <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-            Dein persönlicher Finanzüberblick
-          </p>
-          <h2 id={`${id}-intro`} className="text-4xl font-semibold leading-[1.12] tracking-tight sm:text-5xl lg:text-6xl">
+          <h2 id={`${id}-intro`} className="text-4xl font-semibold leading-[1.1] tracking-tight text-balance sm:text-5xl">
             Deine Finanzen.<br />
             <span className="text-primary">Dein klarer Blick.</span>
           </h2>
@@ -165,7 +158,7 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
           </p>
           <div className="mt-9 hidden gap-5 sm:grid">
             <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-xl border border-border bg-card text-primary">
+              <div className="flex size-10 items-center justify-center rounded-xl border border-border bg-card text-primary shadow-xs">
                 <UserRound aria-hidden="true" className="size-5" strokeWidth={1.75} />
               </div>
               <div>
@@ -174,7 +167,7 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-xl border border-border bg-card text-primary">
+              <div className="flex size-10 items-center justify-center rounded-xl border border-border bg-card text-primary shadow-xs">
                 <MonitorSmartphone aria-hidden="true" className="size-5" strokeWidth={1.75} />
               </div>
               <div>
@@ -185,7 +178,7 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
           </div>
         </section>
 
-        <section aria-labelledby={`${id}-title`} className="mx-auto w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-[0_24px_80px_-28px_rgba(0,0,0,0.65)] sm:p-9">
+        <section aria-labelledby={`${id}-title`} className="mx-auto w-full max-w-md rounded-3xl border border-border/80 bg-card p-6 shadow-overlay sm:p-9">
           <div className="mb-7">
             <div className="mb-5 flex size-11 items-center justify-center rounded-2xl bg-primary/10 text-primary">
               <LockKeyhole aria-hidden="true" className="size-5" strokeWidth={1.75} />

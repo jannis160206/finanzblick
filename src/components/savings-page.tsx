@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo } from "react";
-import { TrendingUp } from "lucide-react";
+import { TrendingDown, TrendingUp } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Pockets } from "@/components/pockets";
 import { SavingsGoals } from "@/components/savings-goals";
@@ -13,7 +14,7 @@ import { SectionHeading } from "@/components/finance-ui";
 import { netWorthHistory } from "@/lib/net-worth";
 import { currency, monthLabel, shortCurrency } from "@/lib/format";
 import { ChartTooltip, chartAxisProps, chartCursor, chartGridProps } from "@/components/charts/chart-theme";
-import { netWorthPartLabel as partLabel, visibleNetWorthParts } from "@/components/net-worth-parts";
+import { netWorthPartIcon, netWorthPartLabel as partLabel, visibleNetWorthParts } from "@/components/net-worth-parts";
 
 export function NetWorthPanel() {
   const { state, dashboard } = useFinance();
@@ -28,11 +29,12 @@ export function NetWorthPanel() {
       <SectionHeading title="Nettovermögen">
         <TrendingUp aria-hidden="true" className="size-4 text-primary" />
       </SectionHeading>
-      <FinancialData className="mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <p className="text-3xl font-semibold tracking-tight tabular-nums">{currency(latest.total)}</p>
-        {points.length > 1 && <p className={change >= 0 ? "text-sm text-primary" : "text-sm text-destructive"}>
+      <FinancialData className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="amount text-3xl">{currency(latest.total)}</p>
+        {points.length > 1 && <Badge variant={change >= 0 ? "success" : "destructive"}>
+          {change >= 0 ? <TrendingUp aria-hidden="true" /> : <TrendingDown aria-hidden="true" />}
           {change >= 0 ? "+" : ""}{currency(change)} seit {monthLabel(first.month, true)}
-        </p>}
+        </Badge>}
       </FinancialData>
       {points.length > 1 && <FinancialData className="h-56" role="img" aria-label="Verlauf des Nettovermögens">
         <ResponsiveContainer width="100%" height="100%">
@@ -51,10 +53,15 @@ export function NetWorthPanel() {
           </AreaChart>
         </ResponsiveContainer>
       </FinancialData>}
-      {visibleNetWorthParts(latest.parts).length > 0 && <FinancialData as="dl" className="mt-4 grid gap-x-6 gap-y-2 border-t border-border/60 pt-4 text-xs sm:grid-cols-2 lg:grid-cols-3">
-        {visibleNetWorthParts(latest.parts).map(([name, value]) => <div key={name} className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">{partLabel(name)}</dt><dd className={value < 0 ? "tabular-nums text-destructive" : "tabular-nums"}>{currency(value)}</dd>
-        </div>)}
+      {visibleNetWorthParts(latest.parts).length > 0 && <FinancialData as="dl" className="mt-5 grid gap-2 border-t border-border/60 pt-5 sm:grid-cols-2 lg:grid-cols-3">
+        {visibleNetWorthParts(latest.parts).map(([name, value]) => {
+          const Icon = netWorthPartIcon(name);
+          return <div key={name} className="flex min-w-0 items-center gap-3 rounded-xl bg-surface-sunken px-3 py-2.5">
+            <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-card text-muted-foreground shadow-xs"><Icon className="size-4" /></span>
+            <dt className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{partLabel(name)}</dt>
+            <dd className={value < 0 ? "shrink-0 text-sm font-medium tabular-nums text-destructive" : "shrink-0 text-sm font-medium tabular-nums"}>{currency(value)}</dd>
+          </div>;
+        })}
       </FinancialData>}
     </section>
   );

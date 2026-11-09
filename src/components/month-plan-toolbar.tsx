@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { InputLegend } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { planningEndYear, planningMonths, planningStartYear } from "@/lib/planning-range";
 import { monthLabel } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import type { FinanceRow } from "@/lib/types";
 
 export type MonthPlanView = "month" | "year";
@@ -65,29 +65,12 @@ export function MonthPlanToolbar({
     <div className="space-y-4 border-b border-border/70 p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div
-            role="group"
-            aria-label="Zeitraumansicht"
-            className="inline-flex rounded-xl bg-muted/50 p-1"
-          >
-            {(["month", "year"] as const).map((value) => (
-              <Button
-                key={value}
-                size="sm"
-                variant="ghost"
-                aria-pressed={view === value}
-                onClick={() => onViewChange(value)}
-                className={cn(
-                  "min-h-10 rounded-lg",
-                  view === value
-                    ? "bg-background shadow-sm"
-                    : "text-muted-foreground",
-                )}
-              >
-                {value === "month" ? "Monat" : "Jahr"}
-              </Button>
-            ))}
-          </div>
+          <SegmentedControl
+            label="Zeitraumansicht"
+            value={view}
+            onChange={onViewChange}
+            options={[{ value: "month", label: "Monat" }, { value: "year", label: "Jahr" }]}
+          />
           {view === "year" ? (
             <div role="group" aria-label="Planungsjahr" className="flex items-center gap-1">
               <Button
@@ -164,21 +147,15 @@ export function MonthPlanToolbar({
         </div>
         <div className="flex flex-wrap gap-2">
           {view === "month" && onDisplayChange && !editing && (
-            <div role="group" aria-label="Monatsdarstellung" className="inline-flex rounded-xl bg-muted/50 p-1">
-              {(["overview", "table"] as const).map((value) => (
-                <Button
-                  key={value}
-                  size="sm"
-                  variant="ghost"
-                  aria-pressed={display === value}
-                  onClick={() => onDisplayChange(value)}
-                  className={cn("min-h-9 rounded-lg", display === value ? "bg-background shadow-sm" : "text-muted-foreground")}
-                >
-                  {value === "overview" ? <LayoutList className="size-3.5" /> : <Table2 className="size-3.5" />}
-                  {value === "overview" ? "Übersicht" : "Tabelle"}
-                </Button>
-              ))}
-            </div>
+            <SegmentedControl
+              label="Monatsdarstellung"
+              value={display}
+              onChange={onDisplayChange}
+              options={[
+                { value: "overview", label: "Übersicht", icon: LayoutList },
+                { value: "table", label: "Tabelle", icon: Table2 },
+              ]}
+            />
           )}
           <Button
             ref={editRef}
