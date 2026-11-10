@@ -15,6 +15,14 @@ export type PlanSource = {
   /** Surplus: total over the planning months; pocket: what can be moved once. */
   available: number;
   perMonth?: number;
+  /** Bank behind the account, for its logo (e.g. "Trade Republic"). */
+  bank?: string;
+  /** Blocked by its account rule but may be included for one goal as a deliberate exception. */
+  exception?: boolean;
+  /** Interest rate p.a. the balance earns (Trade Republic). */
+  rate?: number;
+  /** Suggested minimum to keep on the account when it is used as an exception. */
+  keep?: number;
   balance?: number;
   use: AccountRule["use"];
   purposes: string[];
@@ -39,8 +47,8 @@ export type PlanInput = {
   goalMonth?: string;
   capacity: Record<string, number>;
   continuation: number;
-  /** Selected pockets in order of preference. */
-  accounts: { id: string; available: number }[];
+  /** Selected pockets in order of preference; `late` ones are used last and as late as possible (interest keeps running). */
+  accounts: { id: string; available: number; late?: boolean }[];
   surplus: boolean;
   locked: GoalPlanRow[];
   excludedMonths: string[];
@@ -66,6 +74,7 @@ const byMonth = (a: GoalPlanRow, b: GoalPlanRow) =>
  * Distributes what is still missing over the months and accounts. With a due month the surplus rate is kept as even as
  * possible (months with less room get less, the rest is spread evenly); pockets only fill a remaining gap, as one
  * transfer in the first month. As fast as possible uses the selected pockets first and then the full surplus.
+ * Late accounts (Trade Republic) only cover what is still missing after that, in the last month needed.
  * Locked rows stay as they are and are never topped up.
  */
 export function planGoal(input: PlanInput): PlanResult {
@@ -80,7 +89,10 @@ export function planGoal(input: PlanInput): PlanResult {
   const lockedAccounts = new Set(locked.filter((row) => row.account !== GOAL_SURPLUS).map((row) => row.account));
   const surplusCap = (month: string) => input.surplus && !lockedSurplus.has(month) ? euroFloor(input.capacity[month] ?? 0) : 0;
   const accounts = input.accounts.filter((account) => !lockedAccounts.has(account.id))
-    .map((account) => ({ id: account.id, cap: euroFloor(account.available) }));
+    .map((account) => ({ id: account.id, cap: euroFloor(account.available), late: !!account.late }));
+  const early = accounts.filter((account) => !account.late);
+  const late = accounts.filter((account) => account.late);
+  const lateRoom = () => late.reduce((sum, account) => sum + account.cap, 0);
   const rows: GoalPlanRow[] = [...locked];
   const add = (month: string, account: string, amount: number) => {
     if (amount > 0) rows.push({ month, account, amount: amount / 100 });
@@ -88,9 +100,18 @@ export function planGoal(input: PlanInput): PlanResult {
   const first = months[0];
   const fromAccounts = () => {
     if (!first) return;
-    for (const account of accounts) {
+    for (const account of early) {
       const take = Math.min(account.cap, need);
       add(first, account.id, take);
+      need -= take;
+    }
+  };
+  const fromLate = (month: string | undefined) => {
+    if (!month) return;
+    for (const account of late) {
+      const take = Math.min(account.cap, need);
+      add(month, account.id, take);
+      account.cap -= take;
       need -= take;
     }
   };
@@ -103,7 +124,9 @@ export function planGoal(input: PlanInput): PlanResult {
       const take = Math.min(surplusCap(month), need);
       add(month, GOAL_SURPLUS, take);
       need -= take;
+      if (need > 0 && need <= lateRoom()) { fromLate(month); break; }
     }
+    if (need > 0) fromLate(months.at(-1));
     if (need > 0 && continuationCap > 0 && last) {
       const count = Math.ceil(need / continuationCap);
       continuation = { monthly: continuationCap / 100, from: addMonths(last, 1), to: addMonths(last, count) };
@@ -143,6 +166,7 @@ export function planGoal(input: PlanInput): PlanResult {
       continuation = { monthly: Math.max(...later.map((slot) => slot.amount)) / 100, from: addMonths(last, 1), to: input.goalMonth };
     }
     if (need > 0) fromAccounts();
+    if (need > 0) fromLate(months.at(-1));
   }
 
   rows.sort(byMonth);
@@ -207,13 +231,27 @@ export function goalPlanningContext(state: AppState, dashboard: Dashboard, today
     const pocket = corePocket(account.name);
     if (!pocket || sources.some((source) => source.id === pocket)) continue;
     const available = Math.max(0, Math.floor(account.available - (reserved.get(pocket) ?? 0) + (own.get(pocket) ?? 0)));
+    // The Notgroschen is the Trade Republic account once its balance comes from there.
+    const tradeRepublic = pocket === "Notgroschen" && !!state.trBalances?.length;
     sources.push({
-      id: pocket, label: pocket, kind: "pocket", available, balance: account.balance, use: account.use, purposes: account.purposes,
+      id: pocket, label: tradeRepublic ? "Trade Republic · Notgroschen" : pocket, kind: "pocket", available, balance: account.balance,
+      use: account.use, purposes: account.purposes,
       ...(account.detail ? { detail: account.detail } : {}),
+      ...(tradeRepublic ? { bank: "Trade Republic", exception: true, rate: interestRate(state, today), keep: state.settings.emergencyTarget } : {}),
     });
   }
   const balance = existing ? goalBalanceStatus(state, existing, dashboard.actual).amount : null;
   return { months, capacity, continuation: capacity[horizon] ?? 0, sources, balance };
+}
+
+const interestRate = (state: AppState, today: string) =>
+  state.settings.interestRates?.filter((entry) => entry.date <= today).sort((a, b) => b.date.localeCompare(a.date))[0]?.rate
+    ?? (today < state.settings.rateChangeDate ? state.settings.oldRate : state.settings.newRate);
+
+/** Interest the money would still earn on the account between the transfer month and the goal month (after 27,5 % KESt). */
+export function forgoneInterest(amount: number, rate: number | undefined, transferMonth: string, goalMonth: string) {
+  if (!rate || amount <= 0 || transferMonth >= goalMonth) return 0;
+  return Math.round(amount * rate * monthDiff(transferMonth, goalMonth) / 12 * (1 - 0.275) * 100) / 100;
 }
 
 /** Whether the user's account rules allow using the source for this goal. */

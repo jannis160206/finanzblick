@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Ban, Check, Lock, RotateCcw, TriangleAlert } from "lucide-react";
+import { BankLogo } from "@/components/bank-logo";
 import { FinancialData } from "@/components/financial-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +11,8 @@ import {
   moneyText, moneyValue, type ChoiceOption,
 } from "@/components/ui/premium-dialog";
 import { daysInMonth, round, type Dashboard } from "@/lib/calc";
-import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { GOAL_SURPLUS, goalPlanningContext, planGoal, sourceAllowed, type PlanResult, type PlanSource } from "@/lib/goal-planner";
+import { currency, dateLabel, monthLabel, percent } from "@/lib/format";
+import { forgoneInterest, GOAL_SURPLUS, goalPlanningContext, planGoal, sourceAllowed, type PlanResult, type PlanSource } from "@/lib/goal-planner";
 import { pocketKey } from "@/lib/goals";
 import type { AppState, GoalPlanRow, SavingsGoal } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,9 @@ type Form = {
   monthly: string;
   locked: GoalPlanRow[];
   excludedMonths: string[];
+  /** Trade Republic (Notgroschen) included for this goal despite its account rule. */
+  exception: boolean;
+  keep: string;
 };
 
 type ErrorKey = "name" | "target" | "date" | "startAmount" | "sources" | "monthly";
@@ -53,7 +57,6 @@ type Errors = Partial<Record<ErrorKey, string>>;
 const ON_POCKET = "pocket";
 const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 const monthEnd = (month: string) => `${month}-${String(daysInMonth(month)).padStart(2, "0")}`;
-const sourceLabel = (id: string) => id === GOAL_SURPLUS ? "Girokonto" : id;
 const reservedNames = ["sparkonto", "urlaub", "notgroschen", "giro", "girokonto"];
 
 const stepFields: Record<string, ErrorKey[]> = {
@@ -79,6 +82,8 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
     const plan = goal.funding?.plan;
     const start = goal.start;
     const excludedAccounts = new Set(goal.funding?.excluded?.accounts ?? []);
+    const exceptional = context.sources.find((source) => source.exception);
+    const saved = goal.funding?.exceptions?.find((entry) => entry.account === exceptional?.id);
     return {
       name: goal.name,
       target: goal.target ? moneyText(goal.target) : "",
@@ -87,12 +92,15 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
       startAmount: start ? moneyText(start.amount) : "",
       startSource: start?.account ?? (context.balance === null ? ON_POCKET : GOAL_SURPLUS),
       sources: plan
-        ? context.sources.filter((source) => !excludedAccounts.has(source.id) && sourceAllowed(source, goal.name, goal.pocket || goal.name)).map((source) => source.id)
+        ? context.sources.filter((source) => !excludedAccounts.has(source.id) &&
+          (sourceAllowed(source, goal.name, goal.pocket || goal.name) || (!!source.exception && !!saved))).map((source) => source.id)
         : [GOAL_SURPLUS],
       auto: isNew || !!goal.funding?.auto,
       monthly: goal.funding ? moneyText(goal.funding.monthly) : "",
       locked: plan?.filter((row) => row.locked && !(start && row.account === start.account && row.amount === start.amount && row.month === start.date.slice(0, 7))) ?? [],
       excludedMonths: goal.funding?.excluded?.months ?? [],
+      exception: !!saved,
+      keep: moneyText(saved?.keep ?? exceptional?.keep ?? 0),
     };
   });
   const [form, setForm] = useState(initial);
@@ -107,7 +115,13 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
   const need = round(Math.max(0, (target ?? 0) - balance - startOnPocket));
   const goalMonth = form.asap || !isDate(form.date) ? undefined : form.date.slice(0, 7);
   const ruleName = name || goal.name;
-  const sources = useMemo(() => context.sources.map((source) => ({ ...source, allowed: sourceAllowed(source, ruleName, pocket) })), [context.sources, ruleName, pocket]);
+  const keep = Math.max(0, moneyValue(form.keep) ?? 0);
+  const sources = useMemo(() => context.sources.map((source) => ({
+    ...source, allowed: sourceAllowed(source, ruleName, pocket) || (!!source.exception && form.exception),
+  })), [context.sources, ruleName, pocket, form.exception]);
+  // What a source can give: an exception account keeps its minimum.
+  const room = (source: PlanSource) => source.kind === "surplus" ? context.capacity[context.months[0]] ?? 0
+    : Math.max(0, source.available - (source.exception ? keep : 0));
   const selected = useMemo(() => sources.filter((source) => source.allowed && form.sources.includes(source.id)), [sources, form.sources]);
   const firstMonth = context.months[0];
   const startRow = useMemo<GoalPlanRow | undefined>(() => startAmount > 0 && form.startSource !== ON_POCKET && firstMonth
@@ -116,16 +130,24 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
     need, months: context.months, goalMonth, capacity: context.capacity, continuation: context.continuation,
     accounts: selected.filter((source) => source.kind === "pocket")
       .sort((a, b) => Number(a.id === "Notgroschen") - Number(b.id === "Notgroschen") || b.available - a.available)
-      .map((source) => ({ id: source.id, available: source.available - (startRow?.account === source.id ? startRow.amount : 0) })),
+      .map((source) => ({
+        id: source.id, late: !!source.exception,
+        available: Math.max(0, source.available - (source.exception ? keep : 0) - (startRow?.account === source.id ? startRow.amount : 0)),
+      })),
     surplus: selected.some((source) => source.id === GOAL_SURPLUS),
-    locked: [...startRow ? [startRow] : [], ...form.locked],
+    // An edited start-capital row replaces the one from the start step.
+    locked: [...startRow && !form.locked.some((row) => row.month === startRow.month && row.account === startRow.account) ? [startRow] : [], ...form.locked],
     excludedMonths: form.excludedMonths,
-  }), [need, context, goalMonth, selected, startRow, form.locked, form.excludedMonths]);
+  }), [need, context, goalMonth, selected, startRow, form.locked, form.excludedMonths, keep]);
   const fastest = useMemo(() => goalMonth && plan.missing > 0 ? planGoal({
     need, months: context.months, capacity: context.capacity, continuation: context.continuation,
-    accounts: selected.filter((source) => source.kind === "pocket").map((source) => ({ id: source.id, available: source.available })),
+    accounts: selected.filter((source) => source.kind === "pocket")
+      .map((source) => ({ id: source.id, late: !!source.exception, available: Math.max(0, source.available - (source.exception ? keep : 0)) })),
     surplus: selected.some((source) => source.id === GOAL_SURPLUS), locked: startRow ? [startRow] : [], excludedMonths: form.excludedMonths,
-  }).reached : undefined, [goalMonth, plan.missing, need, context, selected, startRow, form.excludedMonths]);
+  }).reached : undefined, [goalMonth, plan.missing, need, context, selected, startRow, form.excludedMonths, keep]);
+  const labels = useMemo(() => Object.fromEntries(context.sources.map((source) => [source.id, {
+    label: source.kind === "surplus" ? "Girokonto" : source.bank === "Trade Republic" ? "Trade Republic" : source.label, bank: source.bank,
+  }])), [context.sources]);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   function patch(update: Partial<Form>, cleared: ErrorKey[] = []) {
@@ -151,8 +173,8 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
     else if (start && target && start >= target) found.startAmount = "Das Startkapital deckt das Ziel schon – dafür braucht es kein Sparziel.";
     else if (start && form.startSource !== ON_POCKET) {
       const source = sources.find((item) => item.id === form.startSource);
-      const room = source ? source.kind === "surplus" ? context.capacity[context.months[0]] ?? 0 : source.available : 0;
-      if (start > room + 0.005) found.startAmount = `Vom ${sourceLabel(form.startSource)} sind jetzt nur ${currency(room)} frei.`;
+      const free = source ? room(source) : 0;
+      if (start > free + 0.005) found.startAmount = `Vom ${labels[form.startSource]?.label ?? form.startSource} sind jetzt nur ${currency(free)} frei.`;
     }
     if (form.auto && !selected.length) found.sources = "Bitte mindestens ein Konto auswählen.";
     if (!form.auto && form.monthly.trim() && (moneyValue(form.monthly) === null || moneyValue(form.monthly)! < 0)) found.monthly = "Bitte eine gültige Monatsrate eingeben.";
@@ -177,7 +199,8 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
       const until = (form.asap ? plan.reached ?? horizon : goalMonth ?? horizon);
       const surplusRows = plan.rows.filter((row) => row.account === GOAL_SURPLUS && row.amount > 0);
       const monthly = plan.continuation?.monthly ?? (surplusRows.length ? Math.round(surplusRows.reduce((sum, row) => sum + row.amount, 0) / surplusRows.length) : 0);
-      const excludedAccounts = sources.filter((source) => source.allowed && !form.sources.includes(source.id)).map((source) => source.id);
+      const exception = form.exception ? sources.find((source) => source.exception) : undefined;
+      const excludedAccounts = sources.filter((source) => source.allowed && !source.exception && !form.sources.includes(source.id)).map((source) => source.id);
       value.funding = {
         monthly, extras: { ...goal.funding?.extras ?? {} },
         ...(goal.funding?.paused ? { paused: goal.funding.paused } : {}),
@@ -188,6 +211,7 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
           ...(excludedAccounts.length ? { accounts: excludedAccounts } : {}),
         } } : {}),
         auto: true,
+        ...(exception && form.sources.includes(exception.id) ? { exceptions: [{ account: exception.id, keep }] } : {}),
       };
       if (startRow && startRow.account !== GOAL_SURPLUS) value.start = { amount: startRow.amount, account: startRow.account, date: today };
       else delete value.start;
@@ -205,12 +229,12 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
   const startOptions: ChoiceOption<string>[] = [
     ...(context.balance === null ? [{ value: ON_POCKET, label: "Liegt schon bereit", description: `auf dem Pocket ${pocket || "des Ziels"}` }] : []),
     ...sources.filter((source) => source.allowed).map((source) => {
-      const room = source.kind === "surplus" ? context.capacity[context.months[0]] ?? 0 : source.available;
+      const free = room(source);
       return {
-        value: source.id, label: source.kind === "surplus" ? "Vom Girokonto" : `Vom ${source.label}`,
-        description: source.kind === "surplus" ? "aus dem Überschuss dieses Monats" : "Umbuchung diesen Monat",
-        meta: <FinancialData as="span">{room > 0 ? `${currency(room)} frei` : "diesen Monat nichts frei"}</FinancialData>,
-        disabled: room <= 0 && form.startSource !== source.id,
+        value: source.id, label: source.kind === "surplus" ? "Vom Girokonto" : `Vom ${labels[source.id]?.label ?? source.label}`,
+        description: source.kind === "surplus" ? "aus dem Überschuss dieses Monats" : source.exception ? "Ausnahme · Umbuchung diesen Monat" : "Umbuchung diesen Monat",
+        meta: <FinancialData as="span">{free > 0 ? `${currency(free)} frei` : "diesen Monat nichts frei"}</FinancialData>,
+        disabled: free <= 0 && form.startSource !== source.id,
       };
     }),
   ];
@@ -255,6 +279,9 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
         </DialogStep>
         <DialogStep id="sources" title="Konten" validate={() => check("sources")}>
           <SourcePicker sources={sources} selected={form.sources} error={errors.sources} months={context.months.length}
+            exception={form.exception} keep={form.keep} onKeep={(value) => patch({ keep: value })}
+            onException={(id, on) => patch({ exception: on, sources: on ? [...new Set([...form.sources, id])] : form.sources.filter((item) => item !== id),
+              ...(!on && form.startSource === id ? { startSource: initial.startSource === id ? GOAL_SURPLUS : initial.startSource } : {}) }, ["sources", "startAmount"])}
             onToggle={(id, on) => patch({ sources: on ? [...new Set([...form.sources, id])] : form.sources.filter((item) => item !== id) }, ["sources"])} />
         </DialogStep>
         <DialogStep id="plan" title="Verteilung" validate={() => check("plan")}>
@@ -262,6 +289,10 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
             label="Automatisch planen" description="Verteilt den Rest auf Monate und Konten – mit Fixkosten, Verträgen, Einnahmen und der aktuellen Prognose." />
           {form.auto ? (
             <PlanEditor plan={plan} need={need} goalMonth={goalMonth} asap={form.asap} fastest={fastest} excludedMonths={form.excludedMonths}
+              labels={labels} months={context.months.filter((month) => month <= (goalMonth ?? plan.reached ?? context.months.at(-1)!))}
+              startKey={startRow ? `${startRow.month}-${startRow.account}` : undefined}
+              rate={sources.find((source) => source.exception)?.rate} endMonth={goalMonth ?? plan.reached}
+              onMove={(row, month) => patch({ locked: [...form.locked.filter((item) => item.month !== row.month || item.account !== row.account), { month, account: row.account, amount: row.amount, locked: true }] })}
               onAmount={(row, amount) => patch({ locked: [...form.locked.filter((item) => item.month !== row.month || item.account !== row.account), { month: row.month, account: row.account, amount, locked: true }] })}
               onReset={(row) => patch({ locked: form.locked.filter((item) => item.month !== row.month || item.account !== row.account) })}
               onExclude={(month) => patch({ excludedMonths: [...new Set([...form.excludedMonths, month])], locked: form.locked.filter((item) => item.month !== month) })}
@@ -289,18 +320,22 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
           <GoalOverview name={name || "Neues Ziel"} target={target ?? 0} saved={round(balance + startOnPocket)} plan={form.auto ? plan : null}
             date={form.asap ? plan.reached && monthEnd(plan.reached) : isDate(form.date) ? form.date : undefined} asap={form.asap}
             monthly={moneyValue(form.monthly)} months={context.months.filter((month) => month <= (goalMonth ?? plan.reached ?? context.months.at(-1)!))}
-            excludedMonths={form.excludedMonths} />
+            excludedMonths={form.excludedMonths} exceptionAccount={form.exception ? sources.find((source) => source.exception)?.id : undefined} />
         </DialogStep>
       </DialogSteps>
     </PremiumDialogContent>
   );
 }
 
-function SourcePicker({ sources, selected, error, months, onToggle }: {
+function SourcePicker({ sources, selected, error, months, exception, keep, onKeep, onException, onToggle }: {
   sources: (PlanSource & { allowed: boolean })[];
   selected: string[];
   error?: string;
   months: number;
+  exception: boolean;
+  keep: string;
+  onKeep: (value: string) => void;
+  onException: (id: string, on: boolean) => void;
   onToggle: (id: string, on: boolean) => void;
 }) {
   return (
@@ -309,6 +344,7 @@ function SourcePicker({ sources, selected, error, months, onToggle }: {
       {error && <p role="alert" className="text-xs font-medium text-destructive">{error}</p>}
       <ul className="space-y-2">
         {sources.map((source) => {
+          if (source.exception) return <ExceptionSource key={source.id} source={source} on={exception} keep={keep} onKeep={onKeep} onChange={(on) => onException(source.id, on)} />;
           const checked = source.allowed && selected.includes(source.id);
           return (
             <li key={source.id}>
@@ -327,7 +363,7 @@ function SourcePicker({ sources, selected, error, months, onToggle }: {
                     {source.allowed
                       ? source.kind === "surplus" ? `frei in den nächsten ${months} Monaten`
                         : source.detail && /vorgemerkt/.test(source.detail) ? source.detail : "einmalige Umbuchung"
-                      : source.use === "never" ? "Kontoregel: nie angreifen" : `Kontoregel: nur für ${source.purposes.join(", ") || source.label}`}
+                      : ruleNote(source)}
                   </span>
                 </span>
                 <FinancialData as="span" className="text-right">
@@ -343,8 +379,61 @@ function SourcePicker({ sources, selected, error, months, onToggle }: {
   );
 }
 
-function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, onAmount, onReset, onExclude, onInclude, onMoveDate }: {
+const ruleNote = (source: PlanSource) =>
+  source.use === "never" ? "Kontoregel: nie angreifen" : `Kontoregel: nur für ${source.purposes.join(", ") || source.label}`;
+
+/** Trade Republic: blocked by the Notgroschen rule, usable for this goal only as a deliberate exception. */
+function ExceptionSource({ source, on, keep, onKeep, onChange }: {
+  source: PlanSource; on: boolean; keep: string; onKeep: (value: string) => void; onChange: (on: boolean) => void;
+}) {
+  const kept = Math.max(0, moneyValue(keep) ?? 0);
+  const usable = Math.max(0, source.available - kept);
+  return (
+    <li className={cn("rounded-2xl border transition-colors", on ? "border-primary/60 bg-accent-muted/40" : "border-border/70")}>
+      <div className="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3">
+        <BankLogo bank={source.bank} size="md" />
+        <span className="min-w-0">
+          <span className="block text-sm font-medium">{source.label}</span>
+          <span className="block text-xs text-muted-foreground">
+            {on ? "Ausnahme · wird zuletzt und so spät wie möglich genutzt" : ruleNote(source)}
+            {source.rate ? ` · ${percent(source.rate)} Zinsen` : ""}
+          </span>
+        </span>
+        <FinancialData as="span" className="text-right">
+          <span className="block text-sm font-semibold tabular-nums">{currency(on ? usable : source.available)}</span>
+          <span className="block text-2xs text-muted-foreground">{on ? "verplanbar" : "Guthaben"}</span>
+        </FinancialData>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-t border-border/60 px-4 py-3">
+        <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
+          className="group inline-flex min-h-11 items-center gap-3 rounded-lg text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <span aria-hidden="true" className={cn("relative inline-flex h-6 w-10 shrink-0 rounded-full transition-colors", on ? "bg-primary" : "bg-muted-foreground/30")}>
+            <span className={cn("absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform duration-200", on && "translate-x-4")} />
+          </span>
+          Als Ausnahme einbeziehen
+        </button>
+        {on && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            Mindestens behalten
+            <MoneyField aria-label="Mindestens behalten" className="h-9 w-32" value={keep} onValueChange={onKeep} />
+          </label>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, labels, months, startKey, rate, endMonth, onAmount, onMove, onReset, onExclude, onInclude, onMoveDate }: {
   plan: PlanResult;
+  labels: Record<string, { label: string; bank?: string }>;
+  /** Months a transfer may be moved to. */
+  months: string[];
+  /** The start-capital row stays in the first month. */
+  startKey?: string;
+  /** Interest rate of the exception account, for the hint on earlier transfers. */
+  rate?: number;
+  endMonth?: string;
+  onMove: (row: GoalPlanRow, month: string) => void;
   need: number;
   goalMonth?: string;
   asap: boolean;
@@ -378,22 +467,37 @@ function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, onAm
           <caption className="sr-only">Geplante Einzahlungen je Monat und Konto</caption>
           <thead className="bg-muted/40 text-left text-2xs text-muted-foreground">
             <tr>
-              <th scope="col" className="w-[27%] px-3 py-2 font-medium">Monat</th>
-              <th scope="col" className="w-[30%] px-2 py-2 font-medium">Konto</th>
-              <th scope="col" className="px-2 py-2 text-right font-medium">Betrag</th>
+              <th scope="col" className="px-3 py-2 font-medium sm:w-[27%]"><span className="sm:hidden">Monat · Konto</span><span className="hidden sm:inline">Monat</span></th>
+              <th scope="col" className="hidden px-2 py-2 font-medium sm:table-cell sm:w-[30%]">Konto</th>
+              <th scope="col" className="w-28 px-2 py-2 text-right font-medium sm:w-auto">Betrag</th>
               <th scope="col" className="w-11"><span className="sr-only">Anpassen</span></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border/50">
             {visible.map((row, index) => {
               const first = visible[index - 1]?.month !== row.month;
-              const label = `${monthLabel(row.month)}, ${sourceLabel(row.account)}`;
+              const account = labels[row.account] ?? { label: row.account };
+              const label = `${monthLabel(row.month)}, ${account.label}`;
+              const movable = row.account !== GOAL_SURPLUS && `${row.month}-${row.account}` !== startKey && months.length > 1;
               return (
                 <tr key={`${row.month}-${row.account}`} className={cn(row.locked && "bg-accent-muted/30")}>
-                  <td className="px-3 py-1.5 text-xs tabular-nums">{first ? monthLabel(row.month, true) : ""}</td>
-                  <td className="truncate px-2 py-1.5 text-xs">
-                    <span className="inline-flex max-w-full items-center gap-1">
-                      <span className="truncate">{sourceLabel(row.account)}</span>
+                  <td className="px-3 py-1.5 text-xs tabular-nums">
+                    {movable
+                      ? <select aria-label={`Monat ${account.label}`} value={row.month} onChange={(event) => onMove(row, event.target.value)}
+                        className="select-input h-9 w-full min-w-0 px-2 text-xs whitespace-nowrap">
+                        {[...new Set([...months, row.month])].sort().map((month) => <option key={month} value={month}>{monthLabel(month, true)}</option>)}
+                      </select>
+                      : first ? monthLabel(row.month, true) : ""}
+                    <span className="mt-1 flex max-w-full items-center gap-1.5 text-2xs text-muted-foreground sm:hidden">
+                      {account.bank && <BankLogo bank={account.bank} size="xs" />}
+                      <span className="truncate">{account.label}</span>
+                      {row.locked && <Lock aria-label="fixiert" className="size-3 shrink-0 text-primary" />}
+                    </span>
+                  </td>
+                  <td className="hidden truncate px-2 py-1.5 text-xs sm:table-cell">
+                    <span className="inline-flex max-w-full items-center gap-1.5">
+                      {account.bank && <BankLogo bank={account.bank} size="xs" />}
+                      <span className="truncate">{account.label}</span>
                       {row.locked && <Lock aria-label="fixiert" className="size-3 shrink-0 text-primary" />}
                     </span>
                   </td>
@@ -414,7 +518,8 @@ function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, onAm
           </tbody>
           <tfoot className="border-t border-border/70 bg-muted/20">
             <tr>
-              <th scope="row" colSpan={2} className="px-3 py-2 text-left text-xs font-medium">Summe{plan.continuation ? " im Planungszeitraum" : ""}</th>
+              <th scope="row" className="px-3 py-2 text-left text-xs font-medium sm:hidden">Summe{plan.continuation ? " im Planungszeitraum" : ""}</th>
+              <th scope="row" colSpan={2} className="hidden px-3 py-2 text-left text-xs font-medium sm:table-cell">Summe{plan.continuation ? " im Planungszeitraum" : ""}</th>
               <td className="px-2 py-2 text-right text-sm font-semibold tabular-nums">
                 <FinancialData as="span">{currency(round(plan.rows.reduce((sum, row) => sum + row.amount, 0)))}</FinancialData>
               </td>
@@ -423,6 +528,7 @@ function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, onAm
           </tfoot>
         </table>
       </div>
+      <InterestHint rows={plan.rows.filter((row) => labels[row.account]?.bank === "Trade Republic")} rate={rate} endMonth={endMonth} />
       {plan.continuation && (
         <p className="text-xs text-muted-foreground">
           Danach <FinancialData as="span" className="font-medium tabular-nums">{currency(plan.continuation.monthly)}</FinancialData> pro Monat
@@ -445,6 +551,20 @@ function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, onAm
   );
 }
 
+function InterestHint({ rows, rate, endMonth }: { rows: GoalPlanRow[]; rate?: number; endMonth?: string }) {
+  if (!rows.length || !endMonth) return null;
+  const lost = round(rows.reduce((sum, row) => sum + forgoneInterest(row.amount, rate, row.month, endMonth), 0));
+  const month = rows.map((row) => row.month).sort()[0];
+  return (
+    <p className="flex items-center gap-2 text-xs text-muted-foreground">
+      <BankLogo bank="Trade Republic" size="xs" />
+      {lost >= 0.5
+        ? <span>Umbuchung von Trade Republic im {monthLabel(month)}: ca. <FinancialData as="span" className="font-medium tabular-nums">{currency(lost)}</FinancialData> weniger Zinsen als zum Zieltermin.</span>
+        : <span>Trade Republic wird erst im {monthLabel(month)} gebraucht – bis dahin laufen die Zinsen weiter.</span>}
+    </p>
+  );
+}
+
 function AmountCell({ amount, label, onCommit }: { amount: number; label: string; onCommit: (amount: number) => void }) {
   const [text, setText] = useState(() => moneyText(amount));
   function commit() {
@@ -459,28 +579,31 @@ function AmountCell({ amount, label, onCommit }: { amount: number; label: string
   );
 }
 
-function GoalOverview({ name, target, saved, plan, date, asap, monthly, months, excludedMonths }: {
+function GoalOverview({ name, target, saved, plan, date, asap, monthly, months, excludedMonths, exceptionAccount }: {
   name: string; target: number; saved: number; plan: PlanResult | null; date?: string; asap: boolean; monthly: number | null;
-  months: string[]; excludedMonths: string[];
+  months: string[]; excludedMonths: string[]; exceptionAccount?: string;
 }) {
-  const transfers = plan ? round(plan.rows.filter((row) => row.account !== GOAL_SURPLUS).reduce((sum, row) => sum + row.amount, 0)) : 0;
+  const transfers = plan ? round(plan.rows.filter((row) => row.account !== GOAL_SURPLUS && row.account !== exceptionAccount).reduce((sum, row) => sum + row.amount, 0)) : 0;
+  const exceptional = plan && exceptionAccount ? round(plan.rows.filter((row) => row.account === exceptionAccount).reduce((sum, row) => sum + row.amount, 0)) : 0;
   const rates = plan ? round(plan.rows.filter((row) => row.account === GOAL_SURPLUS).reduce((sum, row) => sum + row.amount, 0)) : 0;
   const later = plan?.continuation ? round(plan.continuation.monthly * (monthsBetween(plan.continuation.from, plan.continuation.to) + 1)) : 0;
-  const scale = Math.max(target, saved + transfers + rates + later, 1);
+  const scale = Math.max(target, saved + transfers + exceptional + rates + later, 1);
   const parts = [
     { label: "Vorhanden", value: saved, className: "bg-primary" },
     { label: "Umbuchungen", value: transfers, className: "bg-chart-2" },
+    { label: "Trade Republic", value: exceptional, className: "bg-chart-4" },
     { label: "Monatsraten", value: rates, className: "bg-primary/45" },
     { label: "Danach", value: later, className: "bg-primary/20" },
   ].filter((part) => part.value > 0);
   const byMonth = plan ? [...new Set([...months, ...plan.rows.map((row) => row.month)])].sort().map((month) => ({
     month,
     surplus: plan.rows.filter((row) => row.month === month && row.account === GOAL_SURPLUS).reduce((sum, row) => sum + row.amount, 0),
-    pockets: plan.rows.filter((row) => row.month === month && row.account !== GOAL_SURPLUS).reduce((sum, row) => sum + row.amount, 0),
+    pockets: plan.rows.filter((row) => row.month === month && row.account !== GOAL_SURPLUS && row.account !== exceptionAccount).reduce((sum, row) => sum + row.amount, 0),
+    exception: plan.rows.filter((row) => row.month === month && row.account === exceptionAccount).reduce((sum, row) => sum + row.amount, 0),
   })) : [];
-  const peak = Math.max(1, ...byMonth.map((entry) => entry.surplus + entry.pockets));
+  const peak = Math.max(1, ...byMonth.map((entry) => entry.surplus + entry.pockets + entry.exception));
   const funded = byMonth.filter((entry) => entry.surplus > 0);
-  const covered = round(saved + transfers + rates + later);
+  const covered = round(saved + transfers + exceptional + rates + later);
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -505,11 +628,12 @@ function GoalOverview({ name, target, saved, plan, date, asap, monthly, months, 
           <h4 className="text-xs font-medium text-muted-foreground">Geplante Einzahlungen</h4>
           <div aria-hidden="true" className="flex h-28 items-end gap-1 rounded-2xl border border-border/70 px-3 pt-3 pb-2">
             {byMonth.map((entry) => {
-              const amount = entry.surplus + entry.pockets;
+              const amount = entry.surplus + entry.pockets + entry.exception;
               return (
                 <div key={entry.month} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
                   {amount > 0 ? (
                     <div className="flex w-full max-w-6 flex-col justify-end overflow-hidden rounded-t-md" style={{ height: `${Math.max(4, amount / peak * 100)}%` }}>
+                      {entry.exception > 0 && <span className="w-full bg-chart-4" style={{ height: `${entry.exception / amount * 100}%` }} />}
                       {entry.pockets > 0 && <span className="w-full bg-chart-2" style={{ height: `${entry.pockets / amount * 100}%` }} />}
                       {entry.surplus > 0 && <span className="w-full flex-1 bg-primary/70" />}
                     </div>

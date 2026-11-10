@@ -365,6 +365,8 @@ export const savingsGoalSchema = z.object({
       accounts: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
     }).strict().optional(),
     auto: z.boolean().optional(),
+    // Accounts used for this goal despite their account rule (e.g. the Trade Republic Notgroschen), with the minimum kept there.
+    exceptions: z.array(z.object({ account: z.string().trim().min(1).max(100), keep: moneySchema.nonnegative().optional() }).strict()).max(5).optional(),
   }).optional(),
   // "As soon as possible": the date is the month the plan reaches the target.
   asap: z.boolean().optional(),

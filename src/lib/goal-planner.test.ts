@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { calculateDashboard, monthsForYear } from "./calc";
 import { allocateGoals, goalExtraIncome, goalPocketConflicts, GOAL_SURPLUS, pocketKey, SAVINGS_FLOOR, vacationSavingPaused } from "./goals";
-import { planGoal, withGoalPlan, type PlanInput } from "./goal-planner";
+import { forgoneInterest, planGoal, withGoalPlan, type PlanInput } from "./goal-planner";
 import { createSeed } from "./seed";
 import { emptyPockets, type SavingsGoal } from "./types";
 import { monthlyVariableBudget } from "./variable-budgets";
@@ -144,6 +144,53 @@ describe("goal planner", () => {
     const fast = planGoal(base({ need: 4200, goalMonth: undefined }));
     expect(fast.continuation).toEqual({ monthly: 500, from: "2027-05", to: "2027-07" });
     expect(fast.reached).toBe("2027-07");
+  });
+});
+
+describe("Trade Republic as an exception", () => {
+  it("covers only what surplus and other pockets leave open, in the goal month", () => {
+    const capacity = Object.fromEntries(months("2026-11", 6).map((month) => [month, 100]));
+    const result = planGoal(base({ need: 1500, capacity, accounts: [{ id: "Notgroschen", available: 4000, late: true }, { id: "Sparkonto", available: 200 }] }));
+    expect(amounts(result.rows)).toEqual([100, 100, 100, 100, 100, 100]);
+    expect(result.rows.filter((row) => row.account !== GOAL_SURPLUS)).toEqual([
+      { month: "2026-11", account: "Sparkonto", amount: 200 },
+      { month: "2027-04", account: "Notgroschen", amount: 700 },
+    ]);
+    expect(result).toMatchObject({ planned: 1500, missing: 0, reached: "2027-04" });
+  });
+
+  it("is not touched while the surplus is enough and respects its available amount", () => {
+    expect(planGoal(base({ accounts: [{ id: "Notgroschen", available: 4000, late: true }] })).rows.some((row) => row.account === "Notgroschen")).toBe(false);
+    const capacity = Object.fromEntries(months("2026-11", 6).map((month) => [month, 100]));
+    const short = planGoal(base({ need: 1500, capacity, accounts: [{ id: "Notgroschen", available: 300.9, late: true }] }));
+    expect(short.rows.find((row) => row.account === "Notgroschen")).toEqual({ month: "2027-04", account: "Notgroschen", amount: 300 });
+    expect(short.missing).toBe(600);
+  });
+
+  it("reaches an as-soon-as-possible goal earlier, with the transfer in the month it is reached", () => {
+    const without = planGoal(base({ goalMonth: undefined, need: 2000 }));
+    expect(without.reached).toBe("2027-02");
+    const withTr = planGoal(base({ goalMonth: undefined, need: 2000, accounts: [{ id: "Notgroschen", available: 1200, late: true }] }));
+    expect(withTr.reached).toBe("2026-12");
+    expect(withTr.rows).toEqual([
+      { month: "2026-11", account: GOAL_SURPLUS, amount: 500 },
+      { month: "2026-12", account: GOAL_SURPLUS, amount: 500 },
+      { month: "2026-12", account: "Notgroschen", amount: 1000 },
+    ]);
+  });
+
+  it("keeps a transfer the user moved to another month", () => {
+    const capacity = Object.fromEntries(months("2026-11", 6).map((month) => [month, 100]));
+    const result = planGoal(base({ need: 1500, capacity, accounts: [{ id: "Notgroschen", available: 4000, late: true }],
+      locked: [{ month: "2027-01", account: "Notgroschen", amount: 900 }] }));
+    expect(result.rows.filter((row) => row.account === "Notgroschen")).toEqual([{ month: "2027-01", account: "Notgroschen", amount: 900, locked: true }]);
+    expect(amounts(result.rows)).toEqual([100, 100, 100, 100, 100, 100]);
+  });
+
+  it("estimates the interest an earlier transfer gives up", () => {
+    expect(forgoneInterest(1000, 0.0225, "2027-01", "2027-04")).toBe(4.08);
+    expect(forgoneInterest(1000, 0.0225, "2027-04", "2027-04")).toBe(0);
+    expect(forgoneInterest(1000, undefined, "2027-01", "2027-04")).toBe(0);
   });
 });
 

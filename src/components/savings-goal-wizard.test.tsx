@@ -21,8 +21,7 @@ function fixture(): AppState {
   return state;
 }
 
-function open() {
-  const state = fixture();
+function open(state = fixture()) {
   const onSave = vi.fn();
   render(<SavingsGoalWizard open isNew goal={{ id: "new-goal", name: "", pocket: "", target: 0, date: state.settings.asOf }} goals={[]}
     state={state} dashboard={calculateDashboard(state)} disabled={false} storageError={null} onClose={vi.fn()} onSave={onSave} />);
@@ -108,5 +107,56 @@ describe("savings goal wizard", () => {
     expect(dialog.getByText(/gültiges Zieldatum/)).toBeTruthy();
     expect(screen.getByRole("group", { name: "Ziel" })).toBeTruthy();
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("includes Trade Republic only as a deliberate exception, keeps the minimum and transfers as late as possible", async () => {
+    const state = fixture();
+    state.trBalances = [{ date: "2026-11-01", balance: 5000 }];
+    state.settings.emergencyTarget = 1000;
+    const { onSave, dialog } = open(state);
+    fireEvent.change(dialog.getByLabelText("Name"), { target: { value: "Auto" } });
+    fireEvent.change(dialog.getByLabelText("Zielbetrag"), { target: { value: "9000" } });
+    fireEvent.change(dialog.getByLabelText("Zieldatum"), { target: { value: "2027-03-31" } });
+    fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+    await screen.findByRole("group", { name: "Startkapital" });
+    fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+    const sources = await screen.findByRole("group", { name: "Konten" });
+    const tr = within(within(sources).getByText("Trade Republic · Notgroschen").closest("li") as HTMLElement);
+    expect(tr.getByText(/Kontoregel: nur für Notfälle/)).toBeTruthy();
+    fireEvent.click(tr.getByRole("switch", { name: "Als Ausnahme einbeziehen" }));
+    expect((tr.getByLabelText("Mindestens behalten") as HTMLInputElement).value).toBe("1.000,00");
+    expect(tr.getByText("verplanbar")).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+
+    const plan = await screen.findByRole("group", { name: "Verteilung" });
+    expect((within(plan).getByLabelText("Betrag März 2027, Trade Republic") as HTMLInputElement).value).toBe("4.000,00");
+    expect(within(plan).getByText(/bis dahin laufen die Zinsen weiter/)).toBeTruthy();
+    fireEvent.change(within(plan).getByLabelText("Monat Trade Republic"), { target: { value: "2027-01" } });
+    expect(within(plan).getByText(/weniger Zinsen als zum Zieltermin/)).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+    await screen.findByRole("group", { name: "Übersicht" });
+    fireEvent.click(dialog.getByRole("button", { name: "Sparziel anlegen" }));
+
+    const { goal } = onSave.mock.calls[0][0];
+    expect(goal.funding.exceptions).toEqual([{ account: "Notgroschen", keep: 1000 }]);
+    expect(goal.funding.plan).toContainEqual({ month: "2027-01", account: "Notgroschen", amount: 4000, locked: true });
+    expect(goal.funding.excluded?.accounts ?? []).not.toContain("Notgroschen");
+  });
+
+  it("leaves Trade Republic out without the exception", async () => {
+    const state = fixture();
+    state.trBalances = [{ date: "2026-11-01", balance: 5000 }];
+    const { onSave, dialog } = open(state);
+    fireEvent.change(dialog.getByLabelText("Name"), { target: { value: "Auto" } });
+    fireEvent.change(dialog.getByLabelText("Zielbetrag"), { target: { value: "9000" } });
+    fireEvent.change(dialog.getByLabelText("Zieldatum"), { target: { value: "2027-03-31" } });
+    for (const step of ["Startkapital", "Konten", "Verteilung", "Übersicht"]) {
+      fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+      await screen.findByRole("group", { name: step });
+    }
+    fireEvent.click(dialog.getByRole("button", { name: "Sparziel anlegen" }));
+    const { goal } = onSave.mock.calls[0][0];
+    expect(goal.funding.exceptions).toBeUndefined();
+    expect(goal.funding.plan.some((row: { account: string }) => row.account === "Notgroschen")).toBe(false);
   });
 });
