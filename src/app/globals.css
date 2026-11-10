@@ -6,6 +6,16 @@
 @theme {
   --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-snappy: cubic-bezier(0.32, 0.72, 0, 1);
+  /* Gehalt & Steuern: the Brutto → Netto bar grows in once from the left. */
+  --animate-bar-grow: bar-grow 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  @keyframes bar-grow {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
 }
 
 @theme inline {

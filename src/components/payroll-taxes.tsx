@@ -1,16 +1,21 @@
 "use client";
 
 import { useState } from "react";
-import { FileUp, ReceiptText } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileUp, ReceiptText } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipImportPanel } from "@/components/payslip-import";
 import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { PayrollCoverage, PayrollResults } from "@/components/payroll-results";
-import { PayrollDetails } from "@/components/payroll-details";
+import { PayrollFocusCard } from "@/components/payroll-focus";
+import { PayrollYearCard } from "@/components/payroll-year";
+import { PayrollMonths, payrollMonthName } from "@/components/payroll-months";
 import { TaxFolderPanel } from "@/components/tax-folder-panel";
 import { payrollPresentation } from "@/components/payroll-presentation";
+import { employerPayslips } from "@/lib/payroll-overview";
 import { payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
+
+const scopeKey = (year: number, employer: string) => `${year}|${payrollEmployerKey(employer)}`;
 
 function PayrollWorkspace() {
   const { state } = useFinance();
@@ -18,9 +23,12 @@ function PayrollWorkspace() {
     state.settings.asOf.startsWith("2027") ? 2027 : 2026,
   );
   const [selectedEmployer, setSelectedEmployer] = useState("");
+  // The chosen month only applies to the year and employer it was picked for; otherwise the latest payslip leads.
+  const [focus, setFocus] = useState<{ scope: string; month: number } | null>(null);
+  const payslips = state.payslips ?? [];
   const employers = [
     ...new Map(
-      (state.payslips ?? [])
+      payslips
         .filter((entry) => entry.year === year)
         .map((entry) => [payrollEmployerKey(entry.employer), entry.employer]),
     ).values(),
@@ -32,20 +40,23 @@ function PayrollWorkspace() {
     ) ??
     employers[0] ??
     "";
-  const view = payrollPresentation(
-    state.payslips ?? [],
-    year,
-    employer,
-    state.settings.asOf,
-  );
+  const view = payrollPresentation(payslips, year, employer, state.settings.asOf);
+  const entries = employerPayslips(payslips, year, employer);
+  const scope = scopeKey(year, employer);
+  const focusEntry =
+    (focus?.scope === scope
+      ? entries.find((entry) => entry.month === focus.month)
+      : undefined) ?? entries.at(-1);
+  const focusIndex = focusEntry ? entries.indexOf(focusEntry) : -1;
+  const previousEntry = focusIndex > 0 ? entries[focusIndex - 1] : undefined;
+  const nextEntry = focusIndex >= 0 ? entries[focusIndex + 1] : undefined;
+  const selectMonth = (month: number) => setFocus({ scope, month });
 
   return (
     <>
-      <PageHeading
-        title="Gehalt & Steuern"
-      >
+      <PageHeading title="Gehalt & Steuern">
         <div
-          className="flex flex-wrap items-end gap-3"
+          className="flex flex-wrap items-end gap-2 sm:gap-3"
           aria-label="Abrechnungsauswahl"
           role="group"
         >
@@ -55,18 +66,19 @@ function PayrollWorkspace() {
             </label>
             <select
               id="payroll-year"
-              className="select-input mt-1 w-28"
+              className="select-input mt-1 w-24"
               value={year}
-              onChange={(event) =>
-                setYear(event.target.value === "2027" ? 2027 : 2026)
-              }
+              onChange={(event) => {
+                setYear(event.target.value === "2027" ? 2027 : 2026);
+                setFocus(null);
+              }}
             >
               <option value="2026">2026</option>
               <option value="2027">2027</option>
             </select>
           </div>
           {employers.length > 0 && (
-            <div className="min-w-0 max-w-full text-xs text-muted-foreground sm:w-64">
+            <div className="min-w-0 max-w-full text-xs text-muted-foreground sm:w-56">
               <label className="block" htmlFor="payroll-employer">
                 Dienstverhältnis
               </label>
@@ -75,7 +87,10 @@ function PayrollWorkspace() {
                 className="select-input mt-1 w-full min-w-0 max-w-full truncate"
                 title={employer}
                 value={employer}
-                onChange={(event) => setSelectedEmployer(event.target.value)}
+                onChange={(event) => {
+                  setSelectedEmployer(event.target.value);
+                  setFocus(null);
+                }}
               >
                 {employers.map((name) => (
                   <option key={name} value={name}>
@@ -83,6 +98,45 @@ function PayrollWorkspace() {
                   </option>
                 ))}
               </select>
+            </div>
+          )}
+          {focusEntry && (
+            <div className="min-w-0 text-xs text-muted-foreground">
+              <label className="block" htmlFor="payroll-month">
+                Monat
+              </label>
+              <div className="mt-1 flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Vorheriger Monat"
+                  disabled={!previousEntry}
+                  onClick={() => previousEntry && selectMonth(previousEntry.month)}
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </Button>
+                <select
+                  id="payroll-month"
+                  className="select-input w-32"
+                  value={focusEntry.month}
+                  onChange={(event) => selectMonth(Number(event.target.value))}
+                >
+                  {entries.map((entry) => (
+                    <option key={entry.month} value={entry.month}>
+                      {payrollMonthName(entry.month)}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label="Nächster Monat"
+                  disabled={!nextEntry}
+                  onClick={() => nextEntry && selectMonth(nextEntry.month)}
+                >
+                  <ChevronRight aria-hidden="true" />
+                </Button>
+              </div>
             </div>
           )}
           <Button asChild className="min-h-10">
@@ -95,40 +149,47 @@ function PayrollWorkspace() {
       </PageHeading>
       <div className="space-y-5">
         <PayrollCoverage view={view} />
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
-          {view.latest ? (
-            <PayrollResults view={view} />
-          ) : (
-            <section
-              aria-label="Abrechnungsstand"
-              className="panel flex flex-col items-start gap-3 p-6 sm:p-8"
-            >
-              <span aria-hidden="true" className="flex size-11 items-center justify-center rounded-2xl bg-accent-muted text-primary">
-                <ReceiptText className="size-5" />
-              </span>
-              <h2 className="font-semibold">
-                Noch keine Lohnabrechnungen für {year}
-              </h2>
-              <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-                Lade deine PDF-Abrechnungen hoch. Erkannte Werte erscheinen dann hier.
-              </p>
-              <Button asChild variant="soft" size="sm" className="mt-1">
-                <a href="#payroll-import"><FileUp aria-hidden="true" />PDF hochladen</a>
-              </Button>
-            </section>
-          )}
-          <PayslipImportPanel
-            year={year}
-            employer={employer}
-            onImported={(entry) => {
-              setYear(entry.year);
-              setSelectedEmployer(entry.employer);
-            }}
-          />
-        </div>
-        {view.latest && (
-          <PayrollDetails view={view} />
+        {focusEntry ? (
+          <>
+            <PayrollFocusCard entry={focusEntry} payslips={payslips} />
+            <div className="grid gap-5 lg:grid-cols-2">
+              <PayrollYearCard
+                year={year}
+                entries={entries}
+                forecast={view.analysis.forecast.months}
+                selectedMonth={focusEntry.month}
+                onSelectMonth={selectMonth}
+              />
+              <PayrollResults view={view} />
+            </div>
+            <PayrollMonths view={view} entries={entries} selectedMonth={focusEntry.month} />
+          </>
+        ) : (
+          <section
+            aria-label="Abrechnungsstand"
+            className="flex flex-col items-start gap-3 pt-2"
+          >
+            <span aria-hidden="true" className="flex size-11 items-center justify-center rounded-2xl bg-accent-muted text-primary">
+              <ReceiptText className="size-5" />
+            </span>
+            <h2 className="font-semibold">
+              Noch keine Lohnabrechnungen für {year}
+            </h2>
+            <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+              Lade deine PDF-Abrechnungen hoch. Erkannte Werte erscheinen dann hier.
+            </p>
+          </section>
         )}
+        {/* Same tree position in both layouts, so an import's report survives the switch from the empty state. */}
+        <PayslipImportPanel
+          year={year}
+          employer={employer}
+          onImported={(entry) => {
+            setYear(entry.year);
+            setSelectedEmployer(entry.employer);
+            setFocus({ scope: scopeKey(entry.year, entry.employer), month: entry.month });
+          }}
+        />
         <TaxFolderPanel year={year} />
       </div>
     </>

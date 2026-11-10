@@ -206,10 +206,11 @@ export function PayslipImportPanel({ year, employer, onImported }: {
   const records = (state.payslips ?? []).filter((entry) => entry.year === year &&
     (!employer || payrollEmployerKey(entry.employer) === payrollEmployerKey(employer))).sort((a, b) => b.month - a.month);
   return <>
-    <section ref={importer} id="payroll-import" tabIndex={-1} className="panel min-w-0 rounded-2xl p-5 shadow-sm focus-visible:outline-2 focus-visible:outline-ring" aria-label="Lohnabrechnungen importieren">
-      <SectionHeading title="Lohnabrechnungen" subtitle="PDF · max. 24 Dateien · 20 MB je Datei" />
-      <div className="space-y-4">
-        <div role="group" aria-label="PDF-Ablage für Lohnabrechnungen" className={cn("rounded-xl border border-dashed p-5 text-center", dragging && "border-primary bg-primary/5")}
+    <section ref={importer} id="payroll-import" tabIndex={-1} className="panel @container min-w-0 scroll-mt-24 p-5 focus-visible:outline-2 focus-visible:outline-ring sm:p-6" aria-label="Lohnabrechnungen importieren">
+      <SectionHeading title="Abrechnungen" subtitle="PDF · max. 24 Dateien · 20 MB je Datei" />
+      <div className={cn("grid gap-x-8 gap-y-4", records.length > 0 && "@3xl:grid-cols-2 @3xl:items-start")}>
+      <div className="min-w-0 space-y-4">
+        <div role="group" aria-label="PDF-Ablage für Lohnabrechnungen" className={cn("rounded-xl border border-dashed border-muted-foreground/40 bg-surface-sunken p-6 text-center", records.length === 0 && "sm:py-10", dragging && "border-primary bg-primary/5")}
           onDragOver={(event) => { event.preventDefault(); if (!busy) setDragging(true); }}
           onDragLeave={() => setDragging(false)}
           onDrop={(event) => { event.preventDefault(); setDragging(false); void readFiles(Array.from(event.dataTransfer.files)); }}>
@@ -234,11 +235,10 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           {filesToRetry.length > 0 && <Button variant="outline" disabled={busy || !password || !!storageError} onClick={() => { void readFiles(filesToRetry); }}>Mit Passwort erneut lesen</Button>}
           </div>
         </details>
-      </div>
-      {(error || storageError) && <p role="alert" className="mt-3 text-sm text-destructive">{storageError || error}</p>}
-      {notice && <p role="status" className="mt-3 text-sm">{notice}</p>}
-      {report && <div className="mt-4 space-y-3" aria-label="Upload-Auswertung">
-        {incomplete.length > 0 && <div role="alert" className="rounded-lg border border-amber-500/30 p-3 text-sm">
+      {(error || storageError) && <p role="alert" className="text-sm text-destructive">{storageError || error}</p>}
+      {notice && <p role="status" className="text-sm">{notice}</p>}
+      {report && <div className="space-y-3" aria-label="Upload-Auswertung">
+        {incomplete.length > 0 && <div role="alert" className="rounded-lg bg-warning-soft p-3 text-sm">
           <p>Nicht vollständig erkannt: {incomplete.join(", ")}. Diese Monate wurden nicht übernommen.</p>
         </div>}
         {(report.issues.length > 0 || incomplete.length > 0) && <details className="text-sm">
@@ -263,11 +263,15 @@ export function PayslipImportPanel({ year, employer, onImported }: {
           </div>
         </details>
       </div>}
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">Das Netto landet im Folgemonat automatisch im Budget.</p>
+      </div>
+      <div className="min-w-0">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="min-w-0 flex-1 basis-48 text-xs leading-relaxed text-muted-foreground">Das Netto landet im Folgemonat automatisch im Budget.</p>
         {(state.payslips?.length ?? 0) > 0 && <Button variant="outline" size="sm" disabled={busy || !!storageError} onClick={syncStoredPayslips}>Gespeicherte ins Budget übertragen</Button>}
       </div>
       <PayslipRecords records={records} disabled={busy || !!storageError} onDelete={(record, trigger) => { deleteTrigger.current = trigger; setError(""); setDeleting(payslipSchema.parse(record)); }} />
+      </div>
+      </div>
     </section>
     <Dialog open={!!replacement} onOpenChange={(open) => {
       if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }

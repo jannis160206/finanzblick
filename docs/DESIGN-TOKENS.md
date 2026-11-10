@@ -161,6 +161,7 @@ Geändert in M3: `--chart-3` Violett (`#7c3aed` / dunkel `#a78bfa`) statt Amber 
 
 - Easing-Klassen `ease-soft` (`cubic-bezier(0.22, 1, 0.36, 1)`) und `ease-snappy` (`cubic-bezier(0.32, 0.72, 0, 1)`); Dauern `--duration-fast` 150 ms, `--duration-base` 220 ms, `--duration-slow` 420 ms.
 - Bewegung transportiert Zustand (Fortschritt, Auswahl, Wertänderung), keine orchestrierten Seiteneinblendungen. `prefers-reduced-motion` und `data-reduce-motion` schalten alles ab.
+- `animate-bar-grow` (600 ms, `ease-soft`, `scaleX` von links): einmaliger Aufbau des Brutto → Netto-Balkens auf **Gehalt & Steuern**; mit `motion-safe:` und `data-reduce-motion` abgeschaltet.
 
 ### 3.7 Neue Primitive
 

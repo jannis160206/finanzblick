@@ -186,6 +186,7 @@ for (const width of [1440, 390, 320]) {
         exact: true,
       }),
     ).toBeVisible();
+    await page.getByText("Mehr Details", { exact: true }).click();
     await page.getByText("Steuerbeispiel für 1.000 €", { exact: true }).click();
     await expect(
       page.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }),
@@ -425,7 +426,7 @@ test("large supported amounts fit 320px without overflowing result cards", async
 });
 
 for (const width of [1440, 390]) {
-  test(`monthly forecast cards preserve January-based values and highlight special payments at ${width}px`, async ({
+  test(`monthly forecast rows preserve January-based values and highlight special payments at ${width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -456,8 +457,8 @@ for (const width of [1440, 390]) {
     const second = await forecast.getByRole("article").nth(1).boundingBox();
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
-    if (width === 1440) expect(second!.y).toBe(first!.y);
-    else expect(second!.y).toBeGreaterThan(first!.y);
+    // Compact list instead of the former card grid: one month per row at every width.
+    expect(second!.y).toBeGreaterThan(first!.y);
     for (const theme of ["dark", "light"]) {
       await noOverflow(page);
       await page.screenshot({ path: testInfo.outputPath(`forecast-${width}-${theme}.png`), fullPage: true });

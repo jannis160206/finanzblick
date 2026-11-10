@@ -1,4 +1,4 @@
-import { CalendarDays } from "lucide-react";
+import { FinancialData } from "@/components/financial-data";
 import { PayrollDisclosure } from "@/components/payroll-ui";
 import {
   payrollEstimate,
@@ -6,8 +6,8 @@ import {
   payrollPeriod,
   type PayrollPresentation,
 } from "@/components/payroll-presentation";
+import { Badge } from "@/components/ui/badge";
 import { monthLabel } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 export function PayrollDetails({ view }: { view: PayrollPresentation }) {
   const { analysis, year, projectedMonths } = view;
@@ -16,9 +16,10 @@ export function PayrollDetails({ view }: { view: PayrollPresentation }) {
     <PayrollDisclosure
       title="Monatliche Prognose anzeigen"
       label="Monatliche Prognose"
+      inset
     >
       <section aria-label="Monatliche Gehaltsprognose">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <FinancialData className="divide-y divide-border/60">
           {projectedMonths.map((month) => {
             const forecast = analysis.forecast.months.find(
               (entry) => entry.month === month.month,
@@ -32,65 +33,48 @@ export function PayrollDetails({ view }: { view: PayrollPresentation }) {
               <article
                 key={month.month}
                 aria-label={label}
-                className={cn(
-                  "min-w-0 rounded-xl border bg-muted/15 p-4",
-                  hasSpecial && "border-primary/30 bg-primary/5",
-                )}
+                className="grid min-w-0 gap-x-4 gap-y-2 py-3 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)] sm:items-center"
               >
-                <header className="flex flex-wrap items-start justify-between gap-2">
-                  <h3 className="flex items-center gap-2 text-sm font-semibold">
-                    <CalendarDays
-                      className="size-4 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    {label}
-                  </h3>
-                  {hasSpecial && (
-                    <span className="rounded-md bg-primary/10 px-2 py-1 text-2xs font-medium text-primary">
-                      Sonderzahlung
-                    </span>
-                  )}
+                <header className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-medium">{label}</h3>
+                  {hasSpecial && <Badge>Sonderzahlung</Badge>}
                 </header>
-                <dl className="mt-4 grid grid-cols-2 gap-3">
+                <dl className="grid grid-cols-3 gap-3">
                   {[
                     {
                       label: "Laufendes Brutto",
+                      aria: "Laufendes Brutto",
                       value: payrollMoney(forecast?.regularGross),
                     },
                     {
                       label: "Sonderzahlung",
+                      aria: "Sonderzahlung",
                       value:
                         special === 0 ? "Keine geplant" : payrollMoney(special),
                     },
+                    {
+                      label: "Jahressechstel · Schätzung",
+                      aria: "Jahressechstel",
+                      value: payrollEstimate(month),
+                    },
                   ].map((figure) => (
-                    <div key={figure.label} className="min-w-0">
+                    <div key={figure.aria} className="min-w-0">
                       <dt className="text-xs text-muted-foreground">
                         {figure.label}
                       </dt>
                       <dd
-                        aria-label={`${label} ${figure.label}`}
-                        className="mt-1 break-words text-base font-semibold tabular-nums"
+                        aria-label={`${label} ${figure.aria}`}
+                        className="mt-0.5 break-words text-sm font-medium tabular-nums"
                       >
                         {figure.value}
                       </dd>
                     </div>
                   ))}
-                  <div className="col-span-2 min-w-0 border-t pt-3">
-                    <dt className="text-xs text-muted-foreground">
-                      Jahressechstel · Schätzung
-                    </dt>
-                    <dd
-                      aria-label={`${label} Jahressechstel`}
-                      className="mt-1 break-words text-sm font-medium tabular-nums"
-                    >
-                      {payrollEstimate(month)}
-                    </dd>
-                  </div>
                 </dl>
               </article>
             );
           })}
-        </div>
+        </FinancialData>
       </section>
     </PayrollDisclosure>
   );
