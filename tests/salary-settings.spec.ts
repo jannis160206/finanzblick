@@ -45,81 +45,85 @@ async function logoLoaded(scope: Locator) {
   await expect(scope.locator("[data-bank-logo] img").first()).toHaveClass(/opacity-100/);
 }
 
-for (const width of widths) {
-  for (const theme of themes) {
-    test(`Gehalt & Steuern leads with Brutto → Netto at ${width}px (${theme})`, async ({ page }) => {
-      await prepare(page, width, theme, payrollFixture());
-      await page.goto("/gehalt-steuern");
-      await expect(page.getByRole("heading", { level: 1, name: "Gehalt & Steuern" })).toBeVisible();
-      const focus = page.getByRole("region", { name: /^Gehalt \S+ 2026$/ });
-      await expect(focus).toBeVisible();
-      await expect(focus.getByRole("list", { name: "Aufteilung des Bruttos" })).toBeVisible();
-      await expect(page.getByRole("region", { name: "Jahr bisher" })).toBeVisible();
-      await expect(page.getByRole("list", { name: "Monate 2026" }).getByRole("listitem")).toHaveCount(12);
-      await page.getByLabel("Monat", { exact: true }).selectOption("1");
-      await expect(page.getByRole("region", { name: "Gehalt Jänner 2026" })).toBeVisible();
-      await settled(page, theme);
-      await axe(page);
-    });
+test.describe("browser mode", () => {
+  test.skip(process.env.FINANZBLICK_AUTH === "true", "Seeds the browser-mode store; account mode is covered below.");
 
-    test(`settings open categories and deep links at ${width}px (${theme})`, async ({ page }) => {
-      await prepare(page, width, theme, createSeed());
-      await page.goto("/einstellungen#sicherung");
-      await expect(page.getByRole("region", { name: "Sicherung" })).toBeVisible();
+  for (const width of widths) {
+    for (const theme of themes) {
+      test(`Gehalt & Steuern leads with Brutto → Netto at ${width}px (${theme})`, async ({ page }) => {
+        await prepare(page, width, theme, payrollFixture());
+        await page.goto("/gehalt-steuern");
+        await expect(page.getByRole("heading", { level: 1, name: "Gehalt & Steuern" })).toBeVisible();
+        const focus = page.getByRole("region", { name: /^Gehalt \S+ 2026$/ });
+        await expect(focus).toBeVisible();
+        await expect(focus.getByRole("list", { name: "Aufteilung des Bruttos" })).toBeVisible();
+        await expect(page.getByRole("region", { name: "Jahr bisher" })).toBeVisible();
+        await expect(page.getByRole("list", { name: "Monate 2026" }).getByRole("listitem")).toHaveCount(12);
+        await page.getByLabel("Monat", { exact: true }).selectOption("1");
+        await expect(page.getByRole("region", { name: "Gehalt Jänner 2026" })).toBeVisible();
+        await settled(page, theme);
+        await axe(page);
+      });
+
+      test(`settings open categories and deep links at ${width}px (${theme})`, async ({ page }) => {
+        await prepare(page, width, theme, createSeed());
+        await page.goto("/einstellungen#sicherung");
+        await expect(page.getByRole("region", { name: "Sicherung" })).toBeVisible();
+        await settled(page, theme);
+        await axe(page);
+        if (width < 1024) await page.getByRole("button", { name: "Alle Einstellungen" }).click();
+        await page.getByRole("link", { name: /^Darstellung/ }).click();
+        await expect(page.getByRole("region", { name: "Erscheinungsbild" })).toBeVisible();
+        await expect(page.getByRole("region", { name: "Sicherung" })).toBeHidden();
+        await settled(page, theme);
+      });
+    }
+  }
+
+  test("Gehalt & Steuern without payslips starts with the import at 375px", async ({ page }) => {
+    const state = createSeed();
+    state.payslips = [];
+    await prepare(page, 375, "light", state);
+    await page.goto("/gehalt-steuern");
+    await expect(page.getByText("Noch keine Lohnabrechnungen für 2026")).toBeVisible();
+    await expect(page.getByRole("button", { name: "PDF auswählen", exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: /^Gehalt / })).toHaveCount(0);
+    await settled(page, "light");
+  });
+
+  for (const [width, theme] of [[375, "light"], [1440, "dark"]] as const) {
+    test(`savings goal includes Trade Republic only as a deliberate exception at ${width}px (${theme})`, async ({ page }) => {
+      const state = pocketFixture();
+      state.trBalances = [{ date: "2026-10-09", balance: 9000 }];
+      state.settings.emergencyTarget = 2000;
+      await prepare(page, width, theme, state);
+      await page.goto("/sparen");
+      await page.getByRole("button", { name: "Sparziel hinzufügen" }).first().click();
+      const dialog = page.getByRole("dialog", { name: "Sparziel hinzufügen" });
+      await dialog.getByLabel("Name", { exact: true }).fill("Auto");
+      await dialog.getByLabel("Zielbetrag").fill("40000");
+      await dialog.getByLabel("Zieldatum").fill("2027-06-30");
+      await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+      await expect(dialog.getByRole("group", { name: "Startkapital" })).toBeVisible();
+      await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+      const tr = dialog.getByRole("listitem").filter({ hasText: "Trade Republic · Notgroschen" });
+      await expect(tr.getByLabel("Mindestens behalten")).toHaveCount(0);
+      await tr.getByRole("switch", { name: "Als Ausnahme einbeziehen" }).click();
+      await expect(tr.getByLabel("Mindestens behalten")).toHaveValue("2.000,00");
       await settled(page, theme);
-      await axe(page);
-      if (width < 1024) await page.getByRole("button", { name: "Alle Einstellungen" }).click();
-      await page.getByRole("link", { name: /^Darstellung/ }).click();
-      await expect(page.getByRole("region", { name: "Erscheinungsbild" })).toBeVisible();
-      await expect(page.getByRole("region", { name: "Sicherung" })).toBeHidden();
+      await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+      const plan = dialog.getByRole("group", { name: "Verteilung" });
+      await expect(plan.getByLabel(/^Betrag .+, Trade Republic$/)).toHaveValue("7.000,00");
+      await expect(plan.getByLabel("Monat Trade Republic")).toBeVisible();
       await settled(page, theme);
+      await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+      await expect(dialog.getByRole("group", { name: "Übersicht" }).getByRole("listitem").filter({ hasText: "Trade Republic" })).toBeVisible();
+      await axe(page, '[role="dialog"]');
+      await dialog.getByRole("button", { name: "Sparziel anlegen" }).click();
+      await expect(dialog).toBeHidden();
     });
   }
-}
-
-test("Gehalt & Steuern without payslips starts with the import at 375px", async ({ page }) => {
-  const state = createSeed();
-  state.payslips = [];
-  await prepare(page, 375, "light", state);
-  await page.goto("/gehalt-steuern");
-  await expect(page.getByText("Noch keine Lohnabrechnungen für 2026")).toBeVisible();
-  await expect(page.getByRole("button", { name: "PDF auswählen", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: /^Gehalt / })).toHaveCount(0);
-  await settled(page, "light");
 });
-
-for (const [width, theme] of [[375, "light"], [1440, "dark"]] as const) {
-  test(`savings goal includes Trade Republic only as a deliberate exception at ${width}px (${theme})`, async ({ page }) => {
-    const state = pocketFixture();
-    state.trBalances = [{ date: "2026-10-09", balance: 9000 }];
-    state.settings.emergencyTarget = 2000;
-    await prepare(page, width, theme, state);
-    await page.goto("/sparen");
-    await page.getByRole("button", { name: "Sparziel hinzufügen" }).first().click();
-    const dialog = page.getByRole("dialog", { name: "Sparziel hinzufügen" });
-    await dialog.getByLabel("Name", { exact: true }).fill("Auto");
-    await dialog.getByLabel("Zielbetrag").fill("40000");
-    await dialog.getByLabel("Zieldatum").fill("2027-06-30");
-    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
-    await expect(dialog.getByRole("group", { name: "Startkapital" })).toBeVisible();
-    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
-    const tr = dialog.getByRole("listitem").filter({ hasText: "Trade Republic · Notgroschen" });
-    await expect(tr.getByLabel("Mindestens behalten")).toHaveCount(0);
-    await tr.getByRole("switch", { name: "Als Ausnahme einbeziehen" }).click();
-    await expect(tr.getByLabel("Mindestens behalten")).toHaveValue("2.000,00");
-    await settled(page, theme);
-    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
-    const plan = dialog.getByRole("group", { name: "Verteilung" });
-    await expect(plan.getByLabel(/^Betrag .+, Trade Republic$/)).toHaveValue("7.000,00");
-    await expect(plan.getByLabel("Monat Trade Republic")).toBeVisible();
-    await settled(page, theme);
-    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
-    await expect(dialog.getByRole("group", { name: "Übersicht" }).getByRole("listitem").filter({ hasText: "Trade Republic" })).toBeVisible();
-    await axe(page, '[role="dialog"]');
-    await dialog.getByRole("button", { name: "Sparziel anlegen" }).click();
-    await expect(dialog).toBeHidden();
-  });
-}
 
 test.describe("account mode", () => {
   test.skip(process.env.PLAYWRIGHT_LOCAL_ADMIN !== "1", "Requires an isolated account-mode test database.");

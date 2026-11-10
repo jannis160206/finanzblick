@@ -84,6 +84,16 @@ async function noOverflow(page: Page) {
     ),
   ).toBe(true);
 }
+// The payslip-based Jahressechstel sits in the collapsed "Mehr Details"; open it once, never toggle it shut.
+async function details(page: Page) {
+  const actual = page.getByRole("region", {
+    name: "Jahressechstel Abrechnungsstand",
+    exact: true,
+  });
+  if (!(await actual.isVisible()))
+    await page.getByText("Mehr Details", { exact: true }).click();
+  await expect(actual).toBeVisible();
+}
 async function field(page: Page, label: string, value: number | undefined) {
   const special = page.getByRole("region", {
     name: "Steuer nächste Sonderzahlung",
@@ -102,6 +112,7 @@ async function modelValues(page: Page, state: AppState) {
     2026,
     payrollEmployer,
   );
+  await details(page);
   await expect(
     page.getByRole("region", {
       name: "Jahressechstel Abrechnungsstand",
@@ -186,7 +197,7 @@ for (const width of [1440, 390, 320]) {
         exact: true,
       }),
     ).toBeVisible();
-    await page.getByText("Mehr Details", { exact: true }).click();
+    await details(page);
     await page.getByText("Steuerbeispiel für 1.000 €", { exact: true }).click();
     await expect(
       page.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }),
@@ -209,6 +220,7 @@ for (const width of [1440, 390, 320]) {
     await page
       .getByLabel("Dienstverhältnis", { exact: true })
       .selectOption(otherPayrollEmployer);
+    await details(page);
     await expect(
       page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
     ).toContainText(currency(6000));
@@ -246,9 +258,7 @@ for (const width of [1440, 390]) {
     });
     await picker.setInputFiles(pdf());
     await expect(
-      importer.getByText("1 Abrechnung(en) automatisch übernommen.", {
-        exact: true,
-      }),
+      importer.getByText(/^1 Abrechnung\(en\) automatisch übernommen\./),
     ).toBeVisible();
     await expect(
       page.getByText("Synchronisiert", { exact: true }),
@@ -259,8 +269,7 @@ for (const width of [1440, 390]) {
     await picker.setInputFiles(pdf());
     await expect(
       importer.getByText(
-        "Abrechnungen bereits vorhanden – nicht doppelt übernommen.",
-        { exact: true },
+        /^Abrechnungen bereits vorhanden – nicht doppelt übernommen\./,
       ),
     ).toBeVisible();
     expect((await snapshot(page)).state.payslips).toEqual(saved.payslips);
@@ -330,7 +339,11 @@ for (const width of [1440, 390]) {
       ),
     );
     expect(after.transactions).toEqual(initial.transactions);
-    expect(after.financeRows).toEqual(initial.financeRows);
+    // The import wrote the net into the next month's income; removing the payslip leaves it untouched.
+    // (Variable budgets of the current month may be filled in on reload independently of payroll.)
+    const income = (rows: AppState["financeRows"]) =>
+      rows.filter((row) => row.kind === "income");
+    expect(income(after.financeRows)).toEqual(income(saved.financeRows));
     expect(after.savingsGoals).toEqual(initial.savingsGoals);
     await noOverflow(page);
   });
@@ -417,6 +430,7 @@ test("large supported amounts fit 320px without overflowing result cards", async
     },
   ];
   await open(page, fixture);
+  await details(page);
   await expect(
     page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
   ).toContainText(currency(1_000_000_000));

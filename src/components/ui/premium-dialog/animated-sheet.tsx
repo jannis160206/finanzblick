@@ -53,6 +53,7 @@ export const SheetSurface = forwardRef<HTMLDivElement, SheetSurfaceProps>(functi
   const [isPresent, safeToRemove] = usePresence();
   const drag = useRef<{ start: number; origin: number; samples: { y: number; t: number }[] } | null>(null);
   const entered = useRef(false);
+  const exiting = useRef(false);
   const busy = useRef(false);
 
   const height = () => element.current?.offsetHeight ?? 0;
@@ -73,11 +74,16 @@ export const SheetSurface = forwardRef<HTMLDivElement, SheetSurfaceProps>(functi
     else y.set(0);
   }, [mode, run, y]);
 
+  // Reopened while still sliding out (AnimatePresence revives the same element): slide back in instead of staying off-screen.
   useEffect(() => {
-    if (isPresent) return;
+    if (isPresent) {
+      if (exiting.current) { exiting.current = false; void run(0); }
+      return;
+    }
+    exiting.current = true;
     if (mode !== "full") { safeToRemove?.(); return; }
-    void animate(y, height() + 24, exitTween).then(() => safeToRemove?.());
-  }, [isPresent, safeToRemove, mode, y]);
+    void animate(y, height() + 24, exitTween).then(() => { if (exiting.current) safeToRemove?.(); });
+  }, [isPresent, safeToRemove, mode, run, y]);
 
   // The on-screen keyboard shrinks the visual viewport; the sheet moves up with it.
   useEffect(() => {
