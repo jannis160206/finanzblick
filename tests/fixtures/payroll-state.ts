@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appStateSchema } from "../../src/lib/types";
 import type { Payslip } from "../../src/lib/payslip-schema";
 import { pocketFixture } from "./pocket-state";
@@ -39,7 +40,45 @@ export function payrollFixture() {
   return appStateSchema.parse(state);
 }
 
-export function syntheticPayslipPdf(month = 10, gross = 4000): Buffer {
+const passwordPadding = Buffer.from("28BF4E5E4E758A4164004E56FFFA01082E2E00B6D0683E802F0CA9FE6453697A", "hex");
+const padPassword = (password: string) => Buffer.concat([Buffer.from(password, "latin1"), passwordPadding]).subarray(0, 32);
+const md5 = (...parts: Buffer[]) => createHash("md5").update(Buffer.concat(parts)).digest();
+
+function rc4(key: Buffer, data: Buffer): Buffer {
+  const box = Array.from({ length: 256 }, (_, index) => index);
+  let j = 0;
+  for (let i = 0; i < 256; i++) {
+    j = (j + box[i] + key[i % key.length]) & 255;
+    [box[i], box[j]] = [box[j], box[i]];
+  }
+  const out = Buffer.alloc(data.length);
+  let i = 0;
+  j = 0;
+  for (let index = 0; index < data.length; index++) {
+    i = (i + 1) & 255;
+    j = (j + box[i]) & 255;
+    [box[i], box[j]] = [box[j], box[i]];
+    out[index] = data[index] ^ box[(box[i] + box[j]) & 255];
+  }
+  return out;
+}
+
+// PDF standard security handler, revision 2 (40-bit RC4) – enough for PDF.js to ask for a password.
+function pdfEncryption(password: string) {
+  const permissions = Buffer.alloc(4);
+  permissions.writeInt32LE(-44);
+  const id = md5(Buffer.from("finanzblick-synthetic-payslip"));
+  const owner = rc4(md5(padPassword(`${password}-owner`)).subarray(0, 5), padPassword(password));
+  const key = md5(padPassword(password), owner, permissions, id).subarray(0, 5);
+  return {
+    dictionary: `<< /Filter /Standard /V 1 /R 2 /O <${owner.toString("hex")}> /U <${rc4(key, passwordPadding).toString("hex")}> /P -44 >>`,
+    id: id.toString("hex"),
+    encrypt: (object: number, data: Buffer) =>
+      rc4(md5(key, Buffer.from([object & 255, (object >> 8) & 255, (object >> 16) & 255, 0, 0])).subarray(0, 10), data),
+  };
+}
+
+export function syntheticPayslipPdf(month = 10, gross = 4000, password?: string): Buffer {
   const money = (value: number) =>
     value.toLocaleString("de-DE", {
       minimumFractionDigits: 2,
@@ -93,12 +132,17 @@ export function syntheticPayslipPdf(month = 10, gross = 4000): Buffer {
         `BT /F1 10 Tf 1 0 0 1 ${x} ${y} Tm (${text.replace(/[\\()]/g, "\\$&")}) Tj ET`,
     )
     .join("\n");
+  const encryption = password === undefined ? undefined : pdfEncryption(password);
+  const content = encryption
+    ? encryption.encrypt(5, Buffer.from(stream, "latin1")).toString("latin1")
+    : stream;
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    `<< /Length ${Buffer.byteLength(stream, "latin1")} >>\nstream\n${stream}\nendstream`,
+    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
+    ...(encryption ? [encryption.dictionary] : []),
   ];
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
@@ -112,6 +156,7 @@ export function syntheticPayslipPdf(month = 10, gross = 4000): Buffer {
     .slice(1)
     .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
     .join("");
-  pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  const secured = encryption ? ` /Encrypt 6 0 R /ID [<${encryption.id}> <${encryption.id}>]` : "";
+  pdf += `trailer\n<< /Size ${offsets.length} /Root 1 0 R${secured} >>\nstartxref\n${xref}\n%%EOF`;
   return Buffer.from(pdf, "latin1");
 }

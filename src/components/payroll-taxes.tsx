@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, FileUp, ReceiptText } from "lucide-react";
+import { ChevronLeft, ChevronRight, ReceiptText } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipImportPanel } from "@/components/payslip-import";
+import { PayslipUploadButton, PayslipUploadProvider } from "@/components/payslip-upload";
 import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { PayrollCoverage, PayrollResults } from "@/components/payroll-results";
@@ -56,7 +57,11 @@ function PayrollWorkspace() {
   const selectMonth = (month: number) => setFocus({ scope, month });
 
   return (
-    <>
+    <PayslipUploadProvider onImported={(entry) => {
+      setYear(entry.year);
+      setSelectedEmployer(entry.employer);
+      setFocus({ scope: scopeKey(entry.year, entry.employer), month: entry.month });
+    }}>
       <PageHeading title="Gehalt & Steuern">
         <div
           className="flex flex-wrap items-end gap-2 sm:gap-3"
@@ -142,12 +147,7 @@ function PayrollWorkspace() {
               </div>
             </div>
           )}
-          <Button asChild className="min-h-10">
-            <a href="#payroll-import">
-              <FileUp className="size-4" aria-hidden="true" />
-              Abrechnung hinzufügen
-            </a>
-          </Button>
+          <PayslipUploadButton />
         </div>
       </PageHeading>
       <div className="space-y-5">
@@ -179,23 +179,15 @@ function PayrollWorkspace() {
               Noch keine Lohnabrechnungen für {year}
             </h2>
             <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-              Lade deine PDF-Abrechnungen hoch. Erkannte Werte erscheinen dann hier.
+              Über „Abrechnungen hochladen“ PDFs auswählen – geschützte Dateien fragen nach dem Passwort.
             </p>
           </section>
         )}
         {/* Same tree position in both layouts, so an import's report survives the switch from the empty state. */}
-        <PayslipImportPanel
-          year={year}
-          employer={employer}
-          onImported={(entry) => {
-            setYear(entry.year);
-            setSelectedEmployer(entry.employer);
-            setFocus({ scope: scopeKey(entry.year, entry.employer), month: entry.month });
-          }}
-        />
+        <PayslipImportPanel year={year} employer={employer} />
         <TaxFolderPanel year={year} />
       </div>
-    </>
+    </PayslipUploadProvider>
   );
 }
 

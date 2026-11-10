@@ -156,8 +156,11 @@ for (const width of [1440, 390, 320]) {
       page.getByLabel("PDF-Passwort", { exact: true }),
     ).not.toBeVisible();
     await expect(
-      page.getByRole("button", { name: "PDF auswählen", exact: true }),
+      page.getByRole("button", { name: "Abrechnungen hochladen", exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "PDF auswählen", exact: true }),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("region", {
         name: "Monatliche Gehaltsprognose",
@@ -177,15 +180,11 @@ for (const width of [1440, 390, 320]) {
       path: testInfo.outputPath(`payroll-${width}-light.png`),
       fullPage: true,
     });
+    const chooser = page.waitForEvent("filechooser");
     await page
-      .getByRole("link", { name: "Abrechnung hinzufügen", exact: true })
+      .getByRole("button", { name: "Abrechnungen hochladen", exact: true })
       .click();
-    await expect(
-      page.getByRole("region", {
-        name: "Lohnabrechnungen importieren",
-        exact: true,
-      }),
-    ).toBeFocused();
+    expect((await chooser).isMultiple()).toBe(true);
     const records = page.getByText("Gespeicherte Abrechnungen (9)", {
       exact: true,
     });
@@ -250,7 +249,7 @@ for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     const initial = await open(page);
     const importer = page.getByRole("region", {
-      name: "Lohnabrechnungen importieren",
+      name: "Abrechnungen",
       exact: true,
     });
     const picker = page.getByLabel("Lohnabrechnungen als PDF auswählen", {
@@ -320,7 +319,7 @@ for (const width of [1440, 390]) {
     await expect(deleting).toHaveCount(0);
     await expect(
       page.getByRole("region", {
-        name: "Lohnabrechnungen importieren",
+        name: "Abrechnungen",
         exact: true,
       }),
     ).toBeFocused();
@@ -395,16 +394,15 @@ test("empty years provide an accessible import entry without blank tax cards", a
   await expect(
     page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
   ).toHaveCount(0);
-  await page
-    .getByRole("link", { name: "Abrechnung hinzufügen", exact: true })
-    .click();
   await expect(
-    page.getByRole("region", { name: "Lohnabrechnungen importieren" }),
-  ).toBeFocused();
-  await page.getByText("Passwortgeschützte PDF", { exact: true }).click();
+    page.getByRole("region", { name: "Abrechnungen", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("PDF-Passwort", { exact: true })).toHaveCount(0);
+  const chooser = page.waitForEvent("filechooser");
   await page
-    .getByLabel("PDF-Passwort", { exact: true })
-    .fill("synthetic-local-only");
+    .getByRole("button", { name: "Abrechnungen hochladen", exact: true })
+    .click();
+  expect((await chooser).isMultiple()).toBe(true);
   await page.getByLabel("Steuerjahr", { exact: true }).selectOption("2027");
   await expect(
     page.getByText("Noch keine Lohnabrechnungen für 2027", { exact: true }),

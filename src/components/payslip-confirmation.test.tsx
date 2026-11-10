@@ -3,6 +3,7 @@ import { StrictMode, useReducer, useState } from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PayslipImportPanel } from "@/components/payslip-import";
+import { PayslipUploadProvider } from "@/components/payslip-upload";
 import { usePayslipMutation } from "@/components/payslip-mutation";
 import { createSeed } from "@/lib/seed";
 import type { Payslip, PayrollForecast } from "@/lib/payslip-schema";
@@ -36,7 +37,7 @@ const correction = { ...january, regularGross: 3100 };
 const forecast: PayrollForecast = {
   year: 2026, employer: january.employer, months: [], standardPayrollConfirmed: true,
 };
-const element = () => <PayslipImportPanel year={2026} employer={january.employer} onImported={fixture.imported} />;
+const element = () => <PayslipUploadProvider onImported={fixture.imported}><PayslipImportPanel year={2026} employer={january.employer} /></PayslipUploadProvider>;
 
 beforeEach(() => {
   vi.clearAllMocks();

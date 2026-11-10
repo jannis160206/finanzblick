@@ -120,19 +120,19 @@ it("updates bonus headroom automatically when a newer payslip changes the model"
   expectNoManualInputs();
 });
 
-it("automatically imports dropped PDFs without a form and keeps secrets and bank data untouched", async () => {
+it("automatically imports selected PDFs without a form and keeps bank data untouched", async () => {
   render(<Fixture />);
   const before = latest;
   expectNoManualInputs();
+  expect(screen.queryByRole("group", { name: "PDF-Ablage für Lohnabrechnungen" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "PDF auswählen" })).toBeNull();
   expect(pdf.parse).not.toHaveBeenCalled();
-  fireEvent.change(screen.getByLabelText("PDF-Passwort"), { target: { value: "synthetic-password" } });
-  fireEvent.drop(screen.getByRole("group", { name: "PDF-Ablage für Lohnabrechnungen" }), { dataTransfer: { files: [file()] } });
+  selectPdf();
   await waitFor(() => expect(latest.payslips).toEqual([january]));
-  expect(pdf.parse).toHaveBeenCalledWith(expect.any(ArrayBuffer), "synthetic-password");
+  expect(pdf.parse).toHaveBeenCalledWith(expect.any(ArrayBuffer));
   expect(latest.transactions).toEqual(before.transactions);
   expect(latest.financeRows).toEqual(before.financeRows.map((row) => row.id === "income-salary"
     ? { ...row, values: { ...row.values, "2026-02": 2260 } } : row));
-  expect(localStorage.getItem("payroll-test")).not.toContain("synthetic-password");
   expect(screen.queryByRole("dialog")).toBeNull();
   expectNoManualInputs();
   const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
@@ -144,18 +144,66 @@ it("automatically imports dropped PDFs without a form and keeps secrets and bank
   expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" })).toBeTruthy();
 });
 
-it("retries a protected PDF using only its password, then analyzes it automatically", async () => {
+it("asks for the password of a protected PDF in a dialog and never stores it", async () => {
   pdf.parse.mockRejectedValueOnce(new pdf.PasswordError("Bitte das PDF-Passwort eingeben."));
   render(<Fixture />);
   const before = latest;
   selectPdf();
-  expect(await screen.findByText("Bitte das PDF-Passwort eingeben.")).toBeTruthy();
+  const dialog = within(await screen.findByRole("dialog", { name: "Geschützte Abrechnung" }));
   expect(latest).toBe(before);
-  fireEvent.change(screen.getByLabelText("PDF-Passwort"), { target: { value: "test-password" } });
-  fireEvent.click(screen.getByRole("button", { name: "Mit Passwort erneut lesen" }));
+  expect(dialog.queryByRole("switch")).toBeNull();
+  expect(dialog.getByText("payroll.pdf")).toBeTruthy();
+  const field = dialog.getByLabelText("PDF-Passwort");
+  expect(field.getAttribute("type")).toBe("password");
+  fireEvent.click(dialog.getByRole("button", { name: "Passwort anzeigen" }));
+  expect(field.getAttribute("type")).toBe("text");
+  fireEvent.change(field, { target: { value: "test-password" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Öffnen" }));
   await waitFor(() => expect(latest.payslips).toEqual([january]));
-  expect(pdf.parse).toHaveBeenCalledTimes(2);
+  expect(pdf.parse).toHaveBeenLastCalledWith(expect.any(ArrayBuffer), "test-password");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(localStorage.getItem("payroll-test")).not.toContain("test-password");
   expectNoManualInputs();
+});
+
+it("uses one password for several protected PDFs and keeps the dialog open for a wrong one", async () => {
+  const february = { ...january, month: 2 };
+  pdf.parse.mockRejectedValueOnce(new pdf.PasswordError("locked")).mockRejectedValueOnce(new pdf.PasswordError("locked"))
+    .mockRejectedValueOnce(new pdf.PasswordError("wrong")).mockRejectedValueOnce(new pdf.PasswordError("wrong"))
+    .mockResolvedValueOnce({ drafts: [january], issues: [] }).mockResolvedValueOnce({ drafts: [february], issues: [] });
+  render(<Fixture />);
+  selectPdf([file("januar.pdf"), file("februar.pdf")]);
+  const dialog = within(await screen.findByRole("dialog", { name: "2 geschützte Abrechnungen" }));
+  const together = dialog.getByRole("switch", { name: "Passwort für alle Dateien verwenden?" });
+  expect(together.getAttribute("aria-checked")).toBe("true");
+  fireEvent.change(dialog.getByLabelText("PDF-Passwort"), { target: { value: "falsch" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Öffnen" }));
+  expect(await dialog.findByText("Passwort falsch – bitte erneut eingeben.")).toBeTruthy();
+  expect(dialog.getAllByText("Passwort falsch")).toHaveLength(2);
+  expect(latest.payslips).toBeUndefined();
+  fireEvent.change(dialog.getByLabelText("PDF-Passwort"), { target: { value: "richtig" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Öffnen" }));
+  await waitFor(() => expect(latest.payslips).toEqual([january, february]));
+  expect(pdf.parse).toHaveBeenNthCalledWith(5, expect.any(ArrayBuffer), "richtig");
+  expect(pdf.parse).toHaveBeenNthCalledWith(6, expect.any(ArrayBuffer), "richtig");
+});
+
+it("asks for one password per file when the shared password is switched off", async () => {
+  const february = { ...january, month: 2 };
+  pdf.parse.mockRejectedValueOnce(new pdf.PasswordError("locked")).mockRejectedValueOnce(new pdf.PasswordError("locked"))
+    .mockResolvedValueOnce({ drafts: [january], issues: [] }).mockResolvedValueOnce({ drafts: [february], issues: [] });
+  render(<Fixture />);
+  selectPdf([file("januar.pdf"), file("februar.pdf")]);
+  const dialog = within(await screen.findByRole("dialog", { name: "2 geschützte Abrechnungen" }));
+  fireEvent.click(dialog.getByRole("switch", { name: "Passwort für alle Dateien verwenden?" }));
+  expect(dialog.queryByLabelText("PDF-Passwort")).toBeNull();
+  fireEvent.change(dialog.getByLabelText("Passwort für januar.pdf"), { target: { value: "eins" } });
+  expect(dialog.getByRole<HTMLButtonElement>("button", { name: "Öffnen" }).disabled).toBe(true);
+  fireEvent.change(dialog.getByLabelText("Passwort für februar.pdf"), { target: { value: "zwei" } });
+  fireEvent.click(dialog.getByRole("button", { name: "Öffnen" }));
+  await waitFor(() => expect(latest.payslips).toEqual([january, february]));
+  expect(pdf.parse).toHaveBeenNthCalledWith(3, expect.any(ArrayBuffer), "eins");
+  expect(pdf.parse).toHaveBeenNthCalledWith(4, expect.any(ArrayBuffer), "zwei");
 });
 
 it("attributes deduplicated document warnings while automatically importing valid values", async () => {
@@ -234,15 +282,21 @@ it("does not overwrite an existing month when replacement is cancelled", async (
   expect(localStorage.getItem("payroll-test")).toBeNull();
 });
 
-it("does not partially save a batch when a later PDF fails to decrypt", async () => {
+it("saves nothing while a later PDF waits for its password and imports the rest after skipping it", async () => {
+  const { toast } = await import("sonner");
   pdf.parse.mockResolvedValueOnce({ drafts: [january], issues: [] })
     .mockRejectedValueOnce(new pdf.PasswordError("PDF-Passwort fehlt."));
   render(<Fixture />);
   selectPdf([file("january.pdf"), file("february.pdf")]);
-  await screen.findByText("PDF-Passwort fehlt.");
+  const dialog = within(await screen.findByRole("dialog", { name: "Geschützte Abrechnung" }));
+  expect(dialog.getByText("february.pdf")).toBeTruthy();
+  expect(dialog.queryByText("january.pdf")).toBeNull();
   expect(latest.payslips).toBeUndefined();
   expect(localStorage.getItem("payroll-test")).toBeNull();
-  expect(screen.getByRole("button", { name: "Mit Passwort erneut lesen" })).toBeTruthy();
+  fireEvent.click(dialog.getByRole("button", { name: "Überspringen" }));
+  await waitFor(() => expect(latest.payslips).toEqual([january]));
+  expect(vi.mocked(toast.success).mock.calls.at(-1)?.[0]).toContain("1 von 2 Datei(en) ohne Passwort übersprungen.");
+  expect(pdf.parse).toHaveBeenCalledTimes(2);
 });
 
 it("asks before replacing a month that appeared while PDF analysis was running", async () => {
@@ -287,8 +341,8 @@ it("surfaces import errors and prevents reads when local persistence has failed"
   expect(latest).toBe(before);
   view.unmount();
   render(<Fixture storageError="Speicher voll" />);
-  expect(screen.getByRole<HTMLButtonElement>("button", { name: "PDF auswählen" }).disabled).toBe(true);
-  fireEvent.drop(screen.getByRole("group", { name: "PDF-Ablage für Lohnabrechnungen" }), { dataTransfer: { files: [file()] } });
+  expect(screen.getByRole<HTMLButtonElement>("button", { name: "Abrechnungen hochladen" }).disabled).toBe(true);
+  selectPdf();
   expect(pdf.parse).toHaveBeenCalledTimes(1);
   expect(screen.getByText("Speicher voll")).toBeTruthy();
 });
@@ -431,8 +485,9 @@ it("offers a useful empty year without invented zero results or tax cards", () =
   expect(screen.getByText("Noch keine Lohnabrechnungen für 2026")).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Jahressechstel Abrechnungsstand" })).toBeNull();
   expect(screen.queryByText("Noch offen")).toBeNull();
-  expect(screen.getByRole("link", { name: "Abrechnung hinzufügen" }).getAttribute("href")).toBe("#payroll-import");
-  expect(screen.getByRole("region", { name: "Lohnabrechnungen importieren" }).id).toBe("payroll-import");
+  expect(screen.getByRole("button", { name: "Abrechnungen hochladen" })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Abrechnungen" })).toBeNull();
+  expect(screen.queryByLabelText("PDF-Passwort")).toBeNull();
 });
 
 it("shows the existing net special-payment model and never infers it from bank receipts", () => {
@@ -462,9 +517,11 @@ it("filters years and employers without merging their payroll data or saving vie
   expect(localStorage.getItem("payroll-test")).toBeNull();
 });
 
-it("keeps saved records and optional PDF passwords collapsed without hiding the import action", () => {
+it("keeps saved records collapsed, shows no upload area and keeps the upload action in the header", () => {
   render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
-  expect(screen.getByText("Gespeicherte Abrechnungen (8)").closest("details")?.open).toBe(false);
-  expect(screen.getByLabelText("PDF-Passwort").closest("details")?.open).toBe(false);
-  expect(screen.getByRole("button", { name: "PDF auswählen" }).closest("details")).toBeNull();
+  const records = within(screen.getByRole("region", { name: "Abrechnungen" }));
+  expect(records.getByText("Gespeicherte Abrechnungen (8)").closest("details")?.open).toBe(false);
+  expect(screen.queryByLabelText("PDF-Passwort")).toBeNull();
+  expect(screen.queryByText("Passwortgeschützte PDF")).toBeNull();
+  expect(screen.getByRole("button", { name: "Abrechnungen hochladen" }).closest("[role=group]")?.getAttribute("aria-label")).toBe("Abrechnungsauswahl");
 });

@@ -3,7 +3,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { createSeed } from "../src/lib/seed";
 import { SECURITY_ACTIVATION_KEY } from "../src/lib/security-mode";
 import type { AppState } from "../src/lib/types";
-import { payrollFixture } from "./fixtures/payroll-state";
+import { payrollFixture, syntheticPayslipPdf } from "./fixtures/payroll-state";
 import { pocketFixture } from "./fixtures/pocket-state";
 
 // Nur synthetische Daten (Fixtures bzw. createSeed, per localStorage eingespielt); Bank-API und Logos sind gemockt.
@@ -80,13 +80,49 @@ test.describe("browser mode", () => {
     }
   }
 
-  test("Gehalt & Steuern without payslips starts with the import at 375px", async ({ page }) => {
+  for (const [width, theme] of [[375, "dark"], [1440, "light"]] as const) {
+    test(`protected payslips open with a password dialog from the header button at ${width}px (${theme})`, async ({ page }) => {
+      const state = createSeed();
+      state.payslips = [];
+      await prepare(page, width, theme, state);
+      await page.goto("/gehalt-steuern");
+      await expect(page.getByLabel("PDF-Passwort", { exact: true })).toHaveCount(0);
+      const chooser = page.waitForEvent("filechooser");
+      await page.getByRole("button", { name: "Abrechnungen hochladen", exact: true }).click();
+      await (await chooser).setFiles([
+        { name: "oktober.pdf", mimeType: "application/pdf", buffer: syntheticPayslipPdf(10, 4000, "synthetisch-123") },
+        { name: "september.pdf", mimeType: "application/pdf", buffer: syntheticPayslipPdf(9, 4000, "synthetisch-123") },
+      ]);
+      const dialog = page.getByRole("dialog", { name: "2 geschützte Abrechnungen" });
+      await expect(dialog).toHaveAttribute("data-presentation", width < 768 ? "sheet" : "modal");
+      await expect(dialog.getByRole("switch", { name: "Passwort für alle Dateien verwenden?" })).toHaveAttribute("aria-checked", "true");
+      const field = dialog.getByLabel("PDF-Passwort", { exact: true });
+      await expect(field).toBeFocused();
+      await field.fill("falsch");
+      await dialog.getByRole("button", { name: "Öffnen", exact: true }).click();
+      await expect(dialog.getByText("Passwort falsch – bitte erneut eingeben.")).toBeVisible();
+      await settled(page, theme);
+      await axe(page, '[role="dialog"]');
+      await field.fill("synthetisch-123");
+      await dialog.getByRole("button", { name: "Passwort anzeigen" }).click();
+      await expect(field).toHaveAttribute("type", "text");
+      await dialog.getByRole("button", { name: "Öffnen", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      const archive = page.getByRole("region", { name: "Abrechnungen", exact: true });
+      await expect(archive.getByText(/^2 Abrechnung\(en\) automatisch übernommen\./)).toBeVisible();
+      await expect(page.getByRole("region", { name: "Gehalt Oktober 2026" })).toBeVisible();
+      expect(await page.evaluate((key) => localStorage.getItem(key) ?? "", storageKey)).not.toContain("synthetisch-123");
+      await settled(page, theme);
+    });
+  }
+
+  test("Gehalt & Steuern without payslips starts with the upload action at 375px", async ({ page }) => {
     const state = createSeed();
     state.payslips = [];
     await prepare(page, 375, "light", state);
     await page.goto("/gehalt-steuern");
     await expect(page.getByText("Noch keine Lohnabrechnungen für 2026")).toBeVisible();
-    await expect(page.getByRole("button", { name: "PDF auswählen", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Abrechnungen hochladen", exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: /^Gehalt / })).toHaveCount(0);
     await settled(page, "light");
   });

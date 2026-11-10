@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PayslipImportPanel } from "@/components/payslip-import";
+import { PayslipUploadButton, PayslipUploadProvider } from "@/components/payslip-upload";
 import { SecurityModeProvider } from "@/components/security-mode-provider";
 import { createSeed } from "@/lib/seed";
 import { getSecuritySnapshot, setSecurityMode } from "@/lib/security-mode";
@@ -30,10 +31,12 @@ afterEach(cleanup);
 
 it("keeps automatic payslip analysis open through the native Explorer focus cycle", async () => {
   render(<SecurityModeProvider>
-    <PayslipImportPanel year={2026} employer="" onImported={vi.fn()} />
+    <PayslipUploadProvider onImported={vi.fn()}>
+      <PayslipUploadButton />
+      <PayslipImportPanel year={2026} employer="" />
+    </PayslipUploadProvider>
   </SecurityModeProvider>);
-  fireEvent.change(screen.getByLabelText("PDF-Passwort"), { target: { value: "synthetic-password" } });
-  fireEvent.click(screen.getByRole("button", { name: "PDF auswählen" }));
+  fireEvent.click(screen.getByRole("button", { name: "Abrechnungen hochladen" }));
   fireEvent(window, new Event("blur"));
   expect(getSecuritySnapshot().locked).toBe(false);
 
@@ -44,7 +47,7 @@ it("keeps automatic payslip analysis open through the native Explorer focus cycl
   fireEvent(window, new Event("focus"));
 
   expect(await screen.findByText(/automatisch übernommen/)).toBeTruthy();
-  expect(pdf.parse).toHaveBeenCalledWith(buffer, "synthetic-password");
+  expect(pdf.parse).toHaveBeenCalledWith(buffer);
   expect(getSecuritySnapshot().locked).toBe(false);
   expect(update).toHaveBeenCalledOnce();
   expect(screen.queryByRole("dialog")).toBeNull();
