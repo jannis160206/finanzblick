@@ -116,6 +116,28 @@ test.describe("browser mode", () => {
     });
   }
 
+  test("a password stored in the settings opens protected payslips without asking", async ({ page }) => {
+    const state = createSeed();
+    state.payslips = [];
+    await prepare(page, 1440, "dark", state);
+    await page.goto("/einstellungen?bereich=abrechnungen");
+    const section = page.getByRole("region", { name: "PDF-Passwort" });
+    await expect(section.getByText("Kein Passwort hinterlegt")).toBeVisible();
+    await section.getByLabel("PDF-Passwort", { exact: true }).fill("synthetisch-123");
+    await section.getByRole("button", { name: "Speichern" }).click();
+    await expect(section.getByText("Passwort hinterlegt")).toBeVisible();
+    await expect(section.getByText(/verschlüsselt nur in diesem Browser/)).toBeVisible();
+    await settled(page, "dark");
+    await axe(page);
+    expect(await page.evaluate((key) => localStorage.getItem(key) ?? "", storageKey)).not.toContain("synthetisch-123");
+    await page.goto("/gehalt-steuern");
+    const chooser = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Abrechnungen hochladen", exact: true }).click();
+    await (await chooser).setFiles({ name: "oktober.pdf", mimeType: "application/pdf", buffer: syntheticPayslipPdf(10, 4000, "synthetisch-123") });
+    await expect(page.getByRole("region", { name: "Abrechnungen", exact: true }).getByText(/^1 Abrechnung\(en\) automatisch übernommen\./)).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
   test("Gehalt & Steuern without payslips starts with the upload action at 375px", async ({ page }) => {
     const state = createSeed();
     state.payslips = [];

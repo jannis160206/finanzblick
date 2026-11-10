@@ -65,7 +65,7 @@ it("shows one category at a time, opens deep links and searches across categorie
   mount();
   const nav = within(screen.getByRole("navigation", { name: "Einstellungsbereiche" }));
   expect(nav.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
-    ["?bereich=darstellung", "?bereich=privatsphaere", "?bereich=daten"],
+    ["?bereich=darstellung", "?bereich=privatsphaere", "?bereich=abrechnungen", "?bereich=daten"],
   );
   await vi.waitFor(() => expect(screen.getByRole("region", { name: "Sicherheitsmodus" })).toBeTruthy());
   expect(nav.getByRole("link", { name: /^Mitteilungen & Privatsphäre/ }).getAttribute("aria-current")).toBe("page");

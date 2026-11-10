@@ -5,6 +5,7 @@ import { useAccountWorkspace } from "@/components/account-context";
 import { BankLogo } from "@/components/bank-logo";
 import { useFinance } from "@/components/finance-provider";
 import { useSecurityMode } from "@/components/security-mode-provider";
+import { usePayslipPasswordStatus, usePayslipPasswordStore } from "@/components/payslip-password";
 import { backupAgeText, backupStatus, localDateKey, readLastBackup, subscribeBackup } from "@/lib/backup-age";
 import { canonicalBank } from "@/lib/banks/registry";
 import { defaultSeasonalPreference, seasonalLabels } from "@/lib/seasonal-theme";
@@ -36,6 +37,8 @@ export function useSettingsSummaries(): Record<string, ReactNode> {
   const scope = workspace?.user.id ?? "local";
   const lastBackup = useSyncExternalStore(subscribeBackup, () => readLastBackup(scope), () => undefined);
   const banks = useKnownBanks();
+  const passwordStore = usePayslipPasswordStore();
+  const password = usePayslipPasswordStatus(passwordStore);
   const seasonal = state.seasonalTheme ?? defaultSeasonalPreference;
   const backup = lastBackup === undefined ? null : backupStatus(lastBackup, localDateKey());
   return {
@@ -46,6 +49,7 @@ export function useSettingsSummaries(): Record<string, ReactNode> {
         <span className="truncate">{banks.length === 1 ? banks[0] : `${banks.length} Banken`}</span>
       </span>
       : "Keine Bank verbunden",
+    abrechnungen: password.state === "stored" ? "PDF-Passwort hinterlegt" : password.state === "none" ? "Kein PDF-Passwort" : "",
     darstellung: [
       seasonal.mode === "fixed" && seasonal.theme ? seasonalLabels[seasonal.theme] : "Thema nach Saison",
       seasonal.reduceMotion ? "weniger Bewegung" : null,

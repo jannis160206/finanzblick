@@ -2,6 +2,8 @@ import {
   Bell,
   Building2,
   DatabaseBackup,
+  FileLock2,
+  KeyRound,
   Landmark,
   Mail,
   Palette,
@@ -31,6 +33,9 @@ export const settingsGroups: SettingsGroup[] = [
   { id: "privatsphaere", label: "Mitteilungen & Privatsphäre", icon: ShieldCheck, items: [
     { id: "benachrichtigungen", label: "Benachrichtigungen", icon: Bell, keywords: "hinweise push mitteilung budget gehalt" },
     { id: "sichtschutz", label: "Sichtschutz", icon: Shield, keywords: "sicherheitsmodus privatsphäre unscharf verbergen" },
+  ] },
+  { id: "abrechnungen", label: "Abrechnungen", icon: FileLock2, items: [
+    { id: "pdf-passwort", label: "PDF-Passwort", icon: KeyRound, keywords: "lohnzettel lohnabrechnung gehalt passwort pdf verschlüsselt geschützt entsperren speichern" },
   ] },
   { id: "daten", label: "Daten", icon: DatabaseBackup, items: [
     { id: "sicherung", label: "Sicherung", icon: DatabaseBackup, keywords: "backup excel export import wiederherstellen abgleich server konflikt" },

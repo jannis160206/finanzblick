@@ -14,6 +14,7 @@ import {
 import { PasswordInput } from "@/components/ui/password-input";
 import { isPayslipMutationRejection, usePayslipMutation } from "@/components/payslip-mutation";
 import { useImportInbox } from "@/components/use-import-inbox";
+import { usePayslipPasswordStore, type PayslipPasswordStore } from "@/components/payslip-password";
 import { parsePayslipPdf, PayslipPasswordError } from "@/lib/import/payslip";
 import { payslipKey, payslipSchema, payrollEmployerKey, type Payslip, type PayslipDraft, type PayslipImport } from "@/lib/payslip-schema";
 import { assertPayslipReview, capturePayslipReview, PayslipMutationError, preparePayslipMerge, type PayslipReview } from "@/lib/payslip-storage";
@@ -41,7 +42,7 @@ export function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncom
 }
 
 type LockedFile = { file: File; index: number; wrong: boolean };
-type PasswordPrompt = { files: File[]; results: (PayslipImport | null)[]; locked: LockedFile[] };
+type PasswordPrompt = { files: File[]; results: (PayslipImport | null)[]; locked: LockedFile[]; storedFailed: boolean };
 
 type PayslipUploadValue = {
   busy: boolean;
@@ -65,6 +66,7 @@ export function usePayslipUpload(): PayslipUploadValue {
 /** Reads payslip PDFs from the upload button and the central import, asks for passwords only when a file needs one. */
 export function PayslipUploadProvider({ onImported, children }: { onImported: (entry: Payslip) => void; children: ReactNode }) {
   const { state, update, storageError } = useFinance();
+  const passwordStore = usePayslipPasswordStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -195,12 +197,29 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
         }
         if (current !== request.current) return;
       }
-      if (locked.length) setPrompt({ files, results, locked });
+      let storedFailed = false;
+      if (locked.length) {
+        const stored = passwordStore.available ? await passwordStore.reveal().catch(() => null) : null;
+        if (current !== request.current) return;
+        if (stored) {
+          for (const entry of [...locked]) {
+            try {
+              results[entry.index] = await parsePayslipPdf(await entry.file.arrayBuffer(), stored);
+              locked.splice(locked.indexOf(entry), 1);
+            } catch (cause) {
+              if (!(cause instanceof PayslipPasswordError)) throw cause;
+              storedFailed = true;
+            }
+            if (current !== request.current) return;
+          }
+        }
+      }
+      if (locked.length) setPrompt({ files, results, locked, storedFailed });
       else finish(files, results);
     });
   }
 
-  async function unlock(passwords: Map<number, string>) {
+  async function unlock(passwords: Map<number, string>, remember?: string) {
     const pending = prompt;
     if (!pending) return;
     await run(async (current) => {
@@ -217,6 +236,12 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
       }
       if (stillLocked.length) { setPrompt({ ...pending, results, locked: stillLocked }); return; }
       setPrompt(null);
+      if (remember) {
+        await passwordStore.save(remember).then(
+          () => toast.success("PDF-Passwort gespeichert – künftig wird es automatisch verwendet."),
+          (cause: unknown) => setError(cause instanceof Error ? cause.message : "Passwort konnte nicht gespeichert werden."),
+        );
+      }
       finish(pending.files, results);
     });
   }
@@ -252,7 +277,8 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
       <input ref={fileInput} type="file" accept=".pdf,application/pdf" multiple className="sr-only" tabIndex={-1}
         aria-label="Lohnabrechnungen als PDF auswählen" disabled={busy || !!storageError}
         onChange={(event) => { if (event.target.files?.length) void readFiles(Array.from(event.target.files)); }} />
-      <PayslipPasswordDialog prompt={prompt} busy={busy} onUnlock={(passwords) => { void unlock(passwords); }} onSkip={skipLocked} />
+      <PayslipPasswordDialog prompt={prompt} busy={busy} store={passwordStore}
+        onUnlock={(passwords, remember) => { void unlock(passwords, remember); }} onSkip={skipLocked} />
       <Dialog open={!!replacement} onOpenChange={(open) => {
         if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }
       }}>
@@ -297,21 +323,25 @@ export function PayslipUploadButton({ className }: { className?: string }) {
   );
 }
 
-function PayslipPasswordDialog({ prompt, busy, onUnlock, onSkip }: {
+type UnlockHandler = (passwords: Map<number, string>, remember?: string) => void;
+
+function PayslipPasswordDialog({ prompt, busy, store, onUnlock, onSkip }: {
   prompt: PasswordPrompt | null;
   busy: boolean;
-  onUnlock: (passwords: Map<number, string>) => void;
+  store: PayslipPasswordStore;
+  onUnlock: UnlockHandler;
   onSkip: () => void;
 }) {
   return (
     <PremiumDialog open={!!prompt} onOpenChange={(open) => { if (!open && !busy) onSkip(); }}>
-      {prompt && <PasswordForm key={prompt.files.length} prompt={prompt} busy={busy} onUnlock={onUnlock} />}
+      {prompt && <PasswordForm key={prompt.files.length} prompt={prompt} busy={busy} store={store} onUnlock={onUnlock} />}
     </PremiumDialog>
   );
 }
 
-function PasswordForm({ prompt, busy, onUnlock }: { prompt: PasswordPrompt; busy: boolean; onUnlock: (passwords: Map<number, string>) => void }) {
+function PasswordForm({ prompt, busy, store, onUnlock }: { prompt: PasswordPrompt; busy: boolean; store: PayslipPasswordStore; onUnlock: UnlockHandler }) {
   const [shared, setShared] = useState("");
+  const [remember, setRemember] = useState(false);
   const [together, setTogether] = useState(true);
   const [single, setSingle] = useState<Record<number, string>>({});
   const [checked, setChecked] = useState(true);
@@ -323,12 +353,13 @@ function PasswordForm({ prompt, busy, onUnlock }: { prompt: PasswordPrompt; busy
   return (
     <PremiumDialogContent size="sm" financial={false}>
       <PremiumDialogHeader icon={LockKeyhole} title={title}
-        description="Gib das PDF-Passwort ein. Es wird nur zum Öffnen verwendet und nicht gespeichert." />
+        description={prompt.storedFailed ? `Das gespeicherte PDF-Passwort passt nicht zu ${many ? "diesen Dateien" : "dieser Datei"}.` : `Gib das PDF-Passwort ein, um ${many ? "die Dateien" : "die Datei"} zu öffnen.`} />
       <form className="flex min-h-0 flex-1 flex-col" noValidate onSubmit={(event) => {
         event.preventDefault();
         if (!ready || busy) return;
         setChecked(true);
-        onUnlock(new Map(prompt.locked.map((entry) => [entry.index, sharing ? shared : single[entry.index] ?? ""])));
+        onUnlock(new Map(prompt.locked.map((entry) => [entry.index, sharing ? shared : single[entry.index] ?? ""])),
+          sharing && remember && store.available ? shared : undefined);
       }}>
         <PremiumDialogBody className="space-y-5">
           <PremiumDialogItem>
@@ -349,9 +380,17 @@ function PasswordForm({ prompt, busy, onUnlock }: { prompt: PasswordPrompt; busy
             </PremiumDialogItem>
           )}
           {sharing ? (
-            <Field label="PDF-Passwort" error={anyWrong ? "Passwort falsch – bitte erneut eingeben." : null}>
-              <PasswordInput autoFocus value={shared} maxLength={200} disabled={busy} onChange={(event) => setShared(event.target.value)} />
-            </Field>
+            <>
+              <Field label="PDF-Passwort" error={anyWrong ? "Passwort falsch – bitte erneut eingeben." : null}>
+                <PasswordInput autoFocus value={shared} maxLength={200} disabled={busy} onChange={(event) => setShared(event.target.value)} />
+              </Field>
+              {store.available && (
+                <PremiumDialogItem>
+                  <ToggleRow checked={remember} onCheckedChange={setRemember} disabled={busy} label="Passwort sicher speichern"
+                    description={store.scope === "account" ? "Verschlüsselt auf deinem Server, künftig automatisch verwendet." : "Verschlüsselt in diesem Browser, künftig automatisch verwendet."} />
+                </PremiumDialogItem>
+              )}
+            </>
           ) : (
             prompt.locked.map((entry, position) => (
               <Field key={entry.index} label={<span className="min-w-0 truncate">Passwort für {entry.file.name}</span>}
