@@ -36,6 +36,23 @@ const outcomeBadge: Record<DriveProcessed["outcome"], { label: string; variant: 
   failed: { label: "Fehler", variant: "destructive" },
 };
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
+type Phase = "connected" | "expired" | "disconnected" | "unconfigured";
+const phases: Record<Phase, { label: string; variant: "success" | "warning" | "secondary" }> = {
+  connected: { label: "Verbunden", variant: "success" },
+  expired: { label: "Freigabe abgelaufen", variant: "warning" },
+  disconnected: { label: "Nicht verbunden", variant: "secondary" },
+  unconfigured: { label: "Nicht eingerichtet", variant: "warning" },
+};
+
+function phaseOf(status: DriveStatus): Phase {
+  if (status.connected) return status.expired ? "expired" : "connected";
+  return status.configured ? "disconnected" : "unconfigured";
+}
+
+const missingText = (missing: string[] | undefined) => {
+  const names = missing?.length ? missing : ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"];
+  return `${names.join(" und ")} ${names.length === 1 ? "fehlt" : "fehlen"} in der Umgebung des Servers. Eintragen und Finanzblick neu starten.`;
+};
 const timeFormat = new Intl.DateTimeFormat("de-AT", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" });
 
 export function DriveConnection() {
@@ -129,6 +146,7 @@ export function DriveConnection() {
   const redirectUri = status?.redirectUri ?? (typeof window === "undefined" ? "" : `${window.location.origin}/api/auth/callback/google`);
   const connected = !!status?.connected;
   const expired = !!status?.expired;
+  const phase = status ? phaseOf(status) : null;
 
   return (
     <SettingsSection id="google-drive" title="Google Drive" icon={FolderSync}
@@ -147,14 +165,14 @@ export function DriveConnection() {
             </span>
             <div className="min-w-0 flex-1 basis-48">
               <p className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                <span className="truncate">{connected ? status.email ?? status.name ?? "Google-Konto" : status.configured ? "Nicht verbunden" : "Nicht eingerichtet"}</span>
-                {connected && <Badge variant={expired ? "warning" : "success"}>{expired ? "Freigabe abgelaufen" : "Aktiv"}</Badge>}
+                <span className="truncate">{connected ? status.email ?? status.name ?? "Google-Konto" : status.configured ? "Kein Google-Konto verbunden" : "Zugangsdaten fehlen"}</span>
+                {phase && <Badge variant={phases[phase].variant}>{phases[phase].label}</Badge>}
               </p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {connected
                   ? [status.connectedAt ? `Verbunden seit ${dayFormat.format(status.connectedAt)}` : null,
                     status.lastSync ? `zuletzt geprüft ${timeFormat.format(status.lastSync)}` : "noch nicht geprüft"].filter(Boolean).join(" · ")
-                  : status.configured ? "Ordner „AMEX Abrechnungen“ und „Abrechnungen“ automatisch einlesen." : "GOOGLE_CLIENT_ID und GOOGLE_CLIENT_SECRET fehlen auf dem Server."}
+                  : status.configured ? "Ordner „AMEX Abrechnungen“ und „Abrechnungen“ automatisch einlesen." : missingText(status.missing)}
               </p>
             </div>
             {connected && !expired && (
@@ -241,11 +259,15 @@ function DriveFolders({ status, busy, onChoose }: { status: DriveStatus; busy: b
   );
 }
 
+const pending = (status: DriveStatus) => Math.max(0, (status.inbox ?? 0) - (status.inboxPassword ?? 0) - (status.inboxConfirm ?? 0));
+
 function DriveActivity({ status, busy, retrying, onRetry }: { status: DriveStatus; busy: boolean; retrying: boolean; onRetry: () => void }) {
   const recent = status.recent ?? [];
   const hints = [
     ...(status.notes ?? []),
-    ...(status.inbox ? [`${status.inbox} Lohnzettel ${status.inbox === 1 ? "wartet" : "warten"} auf das Einlesen.`] : []),
+    ...(status.inboxPassword ? [`${status.inboxPassword} Lohnzettel ${status.inboxPassword === 1 ? "braucht" : "brauchen"} ein PDF-Passwort – unter „Abrechnungen“ hinterlegen oder beim Öffnen der App eingeben.`] : []),
+    ...(status.inboxConfirm ? [`${status.inboxConfirm} Lohnzettel ${status.inboxConfirm === 1 ? "weicht" : "weichen"} von gespeicherten ab – beim Öffnen der App bestätigen.`] : []),
+    ...(pending(status) ? [`${pending(status)} Lohnzettel ${pending(status) === 1 ? "wird" : "werden"} im Hintergrund eingelesen.`] : []),
     ...(status.backlog ? ["Weitere Dateien folgen beim nächsten Abruf."] : []),
   ];
   if (!recent.length && !hints.length && !status.retryable) return null;

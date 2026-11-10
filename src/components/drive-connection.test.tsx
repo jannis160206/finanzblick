@@ -30,13 +30,27 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 const mount = () => render(<AccountWorkspaceContext value={workspace}><DriveConnection /></AccountWorkspaceContext>);
 
-it("explains a missing server configuration with the redirect URI to register", async () => {
-  status = { configured: false, connected: false };
-  mount();
+it("names exactly the credentials the server still lacks", async () => {
+  status = { configured: false, connected: false, missing: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] };
+  const view = mount();
   const section = within(screen.getByRole("region", { name: "Google Drive" }));
   expect(await section.findByText("Nicht eingerichtet")).toBeTruthy();
   expect(section.queryByRole("button", { name: "Mit Google verbinden" })).toBeNull();
   expect(section.getByText(/GOOGLE_CLIENT_ID und GOOGLE_CLIENT_SECRET fehlen/)).toBeTruthy();
+  view.unmount();
+  status = { configured: false, connected: false, missing: ["GOOGLE_CLIENT_SECRET"] };
+  mount();
+  expect(await screen.findByText(/^GOOGLE_CLIENT_SECRET fehlt in der Umgebung des Servers/)).toBeTruthy();
+});
+
+it("shows a configured server as not connected instead of not set up", async () => {
+  status = { configured: true, connected: false, redirectUri: "http://localhost:3000/api/auth/callback/google" };
+  mount();
+  const section = within(screen.getByRole("region", { name: "Google Drive" }));
+  expect(await section.findByText("Nicht verbunden")).toBeTruthy();
+  expect(section.queryByText("Nicht eingerichtet")).toBeNull();
+  expect(section.queryByText(/in der Umgebung des Servers/)).toBeNull();
+  expect(section.getByRole("button", { name: "Mit Google verbinden" })).toBeTruthy();
 });
 
 it("starts the Google consent from the server-provided URL", async () => {
@@ -60,7 +74,7 @@ it("shows the connected account, offers reconnecting after expiry and disconnect
   status = { ...status, expired: false };
   mount();
   const fresh = within(screen.getByRole("region", { name: "Google Drive" }));
-  expect(await fresh.findByText("Aktiv")).toBeTruthy();
+  expect(await fresh.findByText("Verbunden")).toBeTruthy();
   fireEvent.click(fresh.getByRole("button", { name: "Trennen" }));
   fireEvent.click(within(screen.getByRole("dialog", { name: "Google Drive trennen?" })).getByRole("button", { name: "Trennen" }));
   expect(await fresh.findByText("Nicht verbunden")).toBeTruthy();
@@ -79,7 +93,7 @@ it("reports the result of the Google redirect once and removes it from the addre
 
 it("shows both folders, recent files and checks on request", async () => {
   status = {
-    configured: true, connected: true, email: "alice@example.test", connectedAt: 1, lastSync: Date.UTC(2026, 10, 9, 8), retryable: 1, inbox: 2,
+    configured: true, connected: true, email: "alice@example.test", connectedAt: 1, lastSync: Date.UTC(2026, 10, 9, 8), retryable: 1, inbox: 4, inboxPassword: 1, inboxConfirm: 1,
     folders: { payslips: { id: "folder-payslips", name: "Abrechnungen", lastCount: 12 } },
     notes: ["Ordner „AMEX Abrechnungen“ nicht gefunden."],
     recent: [{ kind: "payslips", name: "Lohnzettel Oktober.pdf", at: Date.UTC(2026, 10, 9, 8), outcome: "skipped", note: "Passwort fehlt." }],
@@ -102,7 +116,9 @@ it("shows both folders, recent files and checks on request", async () => {
   expect(folders.getByText("Nicht gefunden")).toBeTruthy();
   expect(folders.getByText("12 Dateien")).toBeTruthy();
   expect(section.getByText("Ordner „AMEX Abrechnungen“ nicht gefunden.")).toBeTruthy();
-  expect(section.getByText("2 Lohnzettel warten auf das Einlesen.")).toBeTruthy();
+  expect(section.getByText("1 Lohnzettel braucht ein PDF-Passwort – unter „Abrechnungen“ hinterlegen oder beim Öffnen der App eingeben.")).toBeTruthy();
+  expect(section.getByText("1 Lohnzettel weicht von gespeicherten ab – beim Öffnen der App bestätigen.")).toBeTruthy();
+  expect(section.getByText("2 Lohnzettel werden im Hintergrund eingelesen.")).toBeTruthy();
   const recent = within(section.getByRole("list", { name: "Zuletzt verarbeitete Dateien" }));
   expect(recent.getByText("Übersprungen")).toBeTruthy();
   expect(recent.getByText(/Passwort fehlt\./)).toBeTruthy();

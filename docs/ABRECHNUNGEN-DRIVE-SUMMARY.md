@@ -17,7 +17,8 @@ Jeder Meilenstein ist ein eigener Commit auf einem eigenen, gestapelten Branch (
 | M4 Ordner-Abfrage | `drive/m4-polling` | `f1d300f` | Hintergrund-Abruf, Dedupe, AMEX → Auszugs-Warteschlange, Lohnzettel → Drive-Inbox |
 | M5 Sonderzahlung & Jahressechstel | `drive/m5-sixth` | `384d86b` | Karten, 12er-Monatsraster, Progressive Disclosure |
 | M6 Regeln & Planung | `drive/m6-rules` | `60dade9` | Verträge, Sparziel-Logik, Gehaltsprognose, Trade Republic nur per API, Mittagessen |
-| M7 Feinschliff | `drive/m7-polish` | dieser Commit | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
+| M7 Feinschliff | `drive/m7-polish` | `8fd9598` | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
+| M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | siehe Branch | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
 
 Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen und jeweils gegen den Vorgänger öffnen.
 
@@ -47,9 +48,9 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 - Tokens liegen verschlüsselt in `secrets/<id>.json`, der Status in `drive-links/<id>.json`.
 
 ### M4 – Automatische Ordner-Abfrage
-- **Takt**: Der Statement-Worker prüft alle 15 Minuten, je Konto stündlich (bei Rückstau früher). **„Jetzt prüfen“** startet sofort.
+- **Takt**: Der Statement-Worker läuft alle 5 Minuten (seit M8; vorher 15), die Ordner je Konto stündlich (bei Rückstau früher). **„Jetzt prüfen“** startet sofort.
 - **„AMEX Abrechnungen“** (PDF/CSV/XLSX) → dieselbe Warteschlange wie ein manueller Kontoauszug. Funktioniert auch ohne offenen Browser.
-- **„Abrechnungen“** (PDF) → private Drive-Inbox. Die geöffnete App liest diese Lohnzettel mit dem normalen Import (gespeichertes Passwort, sonst Pop-up „Neu aus Google Drive“) und meldet je Datei das Ergebnis zurück. Ein manueller Upload hat immer Vorrang.
+- **„Abrechnungen“** (PDF) → private Drive-Inbox. Seit M8 liest der Worker diese Lohnzettel im Hintergrund (siehe M8); die geöffnete App übernimmt nur noch, was den Nutzer braucht (Passwort-Pop-up „Neu aus Google Drive“, Ersetzen-Bestätigung). Ein manueller Upload hat immer Vorrang.
 - **Deduplizierung**:
   - Register aus Drive-ID + Prüfsumme bzw. Änderungszeit (max. 5000 Einträge).
   - Geänderte Dateien laufen erneut durch; die bestehende Inhalts-Dublettenprüfung verhindert doppelte Buchungen.
@@ -92,6 +93,20 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 - Die Inbox-Dateirouten haben ein Rate-Limit (600 Anfragen pro Minute und Konto).
 - Die Assistenten-Texte (Sparanteil, Reserve, Zinssatz aus Gutschriften) und das README sind aktualisiert.
 
+### M8 – Einrichtung, Weiterleitung und Lohnzettel im Hintergrund
+- **Zugangsdaten**: `GOOGLE_CLIENT_ID` und `GOOGLE_CLIENT_SECRET` stehen in der lokalen, git-ignorierten `.env.local`, nie im Code und in keinem Commit. Next.js lädt die Datei beim Start; der Statement-Worker erbt die Umgebung (`npm run dev`) bzw. lädt sie selbst (`npm run worker`, in Produktion `EnvironmentFile=/etc/finanzblick.env`). Google bestätigt Client-ID, Secret und die `localhost`-Weiterleitungs-URI (Probe gegen Autorisierungs- und Token-Endpunkt).
+- **„Nicht eingerichtet“** erscheint nur noch, wenn eine Variable wirklich fehlt, und nennt dann genau diese. Sonst zeigt der Bereich ein Status-Badge: **Verbunden**, **Nicht verbunden** oder **Freigabe abgelaufen**.
+- **Weiterleitungs-URI**:
+  - Lokal verwendet Finanzblick immer `http://localhost:<Port>/api/auth/callback/google`, auch unter `127.0.0.1` oder `[::1]`. Das ist die in der Console eingetragene URI; `127.0.0.1` lehnt Google für diesen Client ab.
+  - Der Ursprung, auf dem die Verbindung gestartet wurde, steht zusätzlich im OAuth-`state`; geprüft wird der gesamte `state` weiterhin gegen das versiegelte State-Cookie. Kommt Googles Antwort auf `localhost` an, wo weder Sitzungs- noch State-Cookie liegen, reicht der Callback sie an diesen Ursprung weiter: nur zwischen Loopback-Namen mit gleichem Port und Schema, nie an einen anderen Server. Dort laufen State-, Sitzungs- und PKCE-Prüfung unverändert.
+  - Damit funktioniert die Verbindung mit `FINANZBLICK_ORIGIN=http://127.0.0.1:3000` (aktuelle Einstellung) ebenso wie mit `localhost`. Finanzblick selbst bleibt unter der Adresse aus `FINANZBLICK_ORIGIN` zu öffnen, weil Änderungen nur von dort angenommen werden (unverändert).
+- **Lohnzettel ohne offenen Browser** – ohne Änderung an `src/lib/import/`:
+  - Der Worker liest Lohnzettel aus der Drive-Inbox mit demselben Parser wie der Browser (`parsePayslipPdf`; im Browser nutzt PDF.js den Worker unter `/api/pdf-worker`, in Node wird nur der PDF.js-Worker-Pfad von außen gesetzt).
+  - Gelesen wird in einem kurzlebigen, isolierten Prozess ohne Umgebungs-Secrets (384 MB, 60 s). Das gespeicherte PDF-Passwort geht nur per IPC an diesen Prozess.
+  - Die Übernahme entspricht dem Upload: speichern, Netto in den Folgemonat, Standard-Gehaltsmodelle zur Bestätigung zurücksetzen, Planung abgleichen. Das passiert in einer Revision der Finanzdaten; ein offener Tab erfährt es per Echtzeit-Update.
+  - Bleibt für die App: Lohnzettel, zu denen kein gespeichertes Passwort passt (ein später gespeichertes Passwort wird automatisch erneut versucht), und Lohnzettel, die gespeicherte abweichende Werte ersetzen würden (nie ohne Bestätigung).
+  - Ohne laufenden Worker liest die geöffnete App die Inbox nach 20 Minuten selbst, nach „Jetzt prüfen“ sofort.
+
 ## Einrichtung Google Drive
 
 1. **Google Cloud Console**:
@@ -107,7 +122,8 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
    GOOGLE_CLIENT_SECRET="…"
    # optional: FINANZBLICK_SECRET_KEY=<32 Byte Base64, z. B. openssl rand -base64 32>
    ```
-4. **Host**: Finanzblick unter **demselben Host** öffnen wie in der Weiterleitungs-URI, weil Sitzungscookies je Host gelten. Also `http://localhost:3000` statt `127.0.0.1`, oder die 127.0.0.1-URI zusätzlich eintragen. Alternativ `FINANZBLICK_ORIGIN=http://localhost:3000` setzen.
+   Auf diesem Rechner ist das in `.env.local` erledigt.
+4. **Weiterleitungs-URI**: In der Console genügt lokal `http://localhost:3000/api/auth/callback/google`. Finanzblick wird unter der Adresse aus `FINANZBLICK_ORIGIN` geöffnet (hier `http://127.0.0.1:3000`); die Rückkehr von Google über `localhost` wird automatisch dorthin weitergereicht. Für einen Server mit Domain: `https://<domain>/api/auth/callback/google` eintragen (oder per `GOOGLE_REDIRECT_URI` festlegen).
 5. **Neu starten**:
    - `npm run dev` startet Web-App und Worker gemeinsam.
    - In Produktion braucht es den Web-Dienst **und** `finanzblick-worker.service`. Der Worker führt die stündliche Abfrage aus und liest dieselbe `/etc/finanzblick.env`; nach dem Eintragen beide Dienste neu starten.
@@ -116,7 +132,12 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 
 **Sicherheit:**
 - `secret.key` (bzw. `FINANZBLICK_SECRET_KEY`) gehört zur Sicherung dazu. Ohne ihn lassen sich gespeichertes PDF-Passwort und Drive-Tokens nicht entschlüsseln; dann einfach neu hinterlegen bzw. neu verbinden.
-- Das Client-Secret wurde in diesem Chat als Datei geteilt. Es wurde nirgends gespeichert. Trotzdem wird empfohlen, es in der Google Cloud Console zu **rotieren** und nur das neue in die Umgebungsdatei einzutragen.
+- **Client-Secret rotieren**: Client-ID und Client-Secret standen im Klartext im Chat (als Nachricht, als JSON-Datei und auf einem Screenshot). Sie liegen jetzt nur in der git-ignorierten `.env.local` und in keinem Commit. Trotzdem gilt das Secret als offengelegt:
+  1. Google Cloud Console → Google Auth Platform → Clients → diesen Client öffnen → **Secret hinzufügen**.
+  2. Das neue Secret in `.env.local` (bzw. `/etc/finanzblick.env`) bei `GOOGLE_CLIENT_SECRET` eintragen.
+  3. Finanzblick und Worker neu starten.
+  4. Das alte Secret in der Console **deaktivieren und löschen**. Bestehende Verbindungen laufen weiter (Refresh-Tokens gelten pro Client, nicht pro Secret).
+  5. Die heruntergeladene JSON-Datei löschen.
 
 ## Annahmen (autonom getroffen)
 
@@ -125,9 +146,9 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 | 1 | Pop-up nur bei Bedarf | ✓ |
 | 2 | Passwort unter „Abrechnungen“, Drive unter „Banken & Verbindungen“ | ✓ |
 | 3 | Serverseitige Verschlüsselung, im Browser Web Crypto | ✓ |
-| 4 | Drive nur im Kontomodus; Lohnzettel beim nächsten Öffnen der App | ✓ |
+| 4 | Drive nur im Kontomodus; Lohnzettel beim nächsten Öffnen der App | ✓, seit M8 im Hintergrund (Passwort und Ersetzen weiterhin in der App) |
 | 5 | Abfrage stündlich + „Jetzt prüfen“, exakte Ordnernamen | ✓ |
-| 6 | Weiterleitungs-URI aus der Finanzblick-Adresse | ✓ (`GOOGLE_REDIRECT_URI` optional) |
+| 6 | Weiterleitungs-URI aus der Finanzblick-Adresse | ✓ (`GOOGLE_REDIRECT_URI` optional); seit M8 lokal immer `localhost` mit Weiterleitung |
 | 7 | Kachelraster ersetzt Monatsliste und „Monatliche Prognose“ | ✓ |
 | 8 | Alte Vertragsentscheidungen über die Marke übernehmen, wenn eindeutig | ✓ |
 | 9 | Reserve 15 %, Sparanteil 10 % (mind. 180 €), Behalten TR = Notgroschen-Ziel | ✓ |
@@ -143,6 +164,12 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
   - `npm run typecheck`: Exit 0.
   - `npm test`: 5057 bestanden, 5 erwartet fehlschlagend, 3 übersprungen (vorher 4968).
   - `npm run build`: Exit 0. Die Build-Warnungen in `src/lib/ai/logo-finder.ts` bestanden schon vorher.
+- **Nach M8**: `npm run typecheck` und `npm run build` Exit 0, `npm test` 5069 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu:
+  - Weiterleitung localhost ↔ 127.0.0.1, inklusive Ablehnung fremder Hosts und Ports;
+  - fehlende Variablen und Status-Badges;
+  - Lohnzettel-Prozess mit echter verschlüsselter PDF;
+  - Hintergrund-Import mit echter Kontodatenbank: Übernahme, Dubletten, Passwort später gespeichert, keine Ersetzung ohne Bestätigung;
+  - Browser übernimmt nur Wartendes.
 - **Neue Tests**: Verschlüsselung, Secret-Speicher, Passwort-Route, OAuth, Drive-Client, Inbox, Sync (Dedupe, Paginierung, Rückstau, Wiederholung, Ordnerwahl, Token-Erneuerung), Drive-Routen, Upload-Provider (Batch-Ergebnisse, Vorrang manueller Uploads), Inbox-Verarbeitung, Einstellungsbereiche, Monatsraster und Karten, Verträge, Trade-Republic-Zins, Mittagessen, Gehaltsprognose, Budget-Korrekturen und Sparziel-Planer.
 - **E2E (Playwright)**, bestanden:
   - `salary-settings.spec.ts` in beiden Modi: Gehaltsseite, Einstellungen, Passwort-Dialog, gespeichertes Passwort, Sparziel mit Trade Republic, Bank-Logos, Google Drive (375/768/1440 px, hell/dunkel, axe).
@@ -156,7 +183,7 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 
 - **Produktion**: Google erlaubt als Weiterleitungs-URI keine öffentliche IP-Adresse. Auf dem Server braucht es eine Domain (z. B. über einen Reverse Proxy).
 - **Testmodus**: Freigaben laufen nach 7 Tagen ab, und nur Testnutzer können sich verbinden. Dauerhaft geht das nur mit veröffentlichter App. `drive.readonly` ist ein eingeschränkter Scope; die Veröffentlichung verlangt eine Google-Prüfung.
-- **Lohnzettel aus Drive** brauchen eine geöffnete App, weil Lohnzettel nur im Browser gelesen werden. AMEX-Dateien laufen dagegen vollständig serverseitig.
+- **Lohnzettel aus Drive** laufen seit M8 im Hintergrund. Nur geschützte Dateien ohne passendes gespeichertes Passwort und Abrechnungen, die gespeicherte Werte ersetzen würden, warten auf die geöffnete App. Ohne laufenden Statement-Worker (`FINANZBLICK_AUTO_WORKER=0` bzw. Dienst gestoppt) liest die App die Inbox wie bisher selbst.
 - **Passwortgeschützte AMEX-PDFs** werden vom Server-Parser nicht entschlüsselt (die Import-Logik in `src/lib/import/` bleibt bewusst unverändert). Der Auszugs-Import meldet sie im Uploadstatus als nicht lesbar. Eine entsperrte Kopie im Ordner wird als neue Datei übernommen.
 - **Gleichzeitiger Abruf** von Worker und „Jetzt prüfen“ ist nur innerhalb eines Prozesses gesperrt. Doppelte Übernahmen verhindert die Inhalts-Dublettenprüfung.
 - **Bestehende Klartext-Secrets** der Mail- und Bankanbindung wurden nicht angefasst (außerhalb des Umfangs). Sie ließen sich mit `src/lib/server/secrets.ts` nachziehen.

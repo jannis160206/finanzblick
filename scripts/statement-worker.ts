@@ -8,7 +8,7 @@ import { PublicMerchantCatalogue } from "../src/lib/automation/catalogue-refresh
 import { assertParserRuntimeAvailable } from "../src/lib/automation/parser-runtime";
 import { startBankAutoSync } from "../src/lib/banking/auto-sync";
 import { startMailAutoSync } from "../src/lib/mail/sync";
-import { startDriveAutoSync } from "../src/lib/drive/sync";
+import { startDriveAutoSync } from "../src/lib/drive/auto-sync";
 
 const config = readAccountConfig();
 const accounts = new AccountDatabase(config.databasePath);

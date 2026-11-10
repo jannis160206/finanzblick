@@ -109,3 +109,45 @@ describe("Google Drive connect and callback", () => {
     expect(foreign.status).toBe(403);
   });
 });
+
+describe("Google Drive between localhost and 127.0.0.1", () => {
+  const local = "http://127.0.0.1:3000";
+  const useOrigin = (configured: string) => mocks.runtime.mockResolvedValue({
+    config: { origin: configured, secureCookies: false },
+    database: { ...host, currentUser: mocks.currentUser, consumeRateLimit: mocks.rateLimit },
+  });
+  const startAt = async (from: string) => {
+    const response = await connect(new Request(`${from}/api/drive/connect`, {
+      method: "POST",
+      headers: { Origin: from, Cookie: "finanzblick_session=session-token", "X-Finanzblick-Account": "synthetic-account" },
+    }));
+    const { url } = await response.json() as { url: string };
+    return { params: new URL(url).searchParams, pair: (response.headers.get("Set-Cookie") ?? "").split(";")[0] };
+  };
+
+  it("sends Google to the registered localhost URI and hands the answer back to 127.0.0.1", async () => {
+    useOrigin(local);
+    const { params, pair } = await startAt(local);
+    expect(params.get("redirect_uri")).toBe("http://localhost:3000/api/auth/callback/google");
+    const query = `code=synthetic-code&state=${encodeURIComponent(params.get("state") ?? "")}`;
+    const arrived = await callback(new Request(`http://localhost:3000/api/auth/callback/google?${query}`, { headers: { Host: "localhost:3000" } }));
+    expect(arrived.status).toBe(303);
+    expect(arrived.headers.get("Location")).toBe(`${local}/api/auth/callback/google?${query}`);
+    expect(arrived.headers.get("Set-Cookie")).toBeNull();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    const done = await callback(new Request(`${local}/api/auth/callback/google?${query}`, { headers: { Cookie: `${pair}; finanzblick_session=session-token` } }));
+    expect(outcome(done)).toBe("verbunden");
+    expect(new URL(done.headers.get("Location") ?? "").origin).toBe(local);
+    expect(new URLSearchParams(String(mocks.fetch.mock.calls[0][1].body)).get("redirect_uri")).toBe("http://localhost:3000/api/auth/callback/google");
+  });
+
+  it("never relays to another host, another port or from a public host", async () => {
+    useOrigin(local);
+    const state = (target: string) => `${"a".repeat(43)}.${Buffer.from(target).toString("base64url")}`;
+    const arrive = (url: string, target: string) => callback(new Request(`${url}/api/auth/callback/google?code=c&state=${state(target)}`));
+    expect(outcome(await arrive("http://localhost:3000", "https://evil.example"))).toBe("anmeldung");
+    expect(outcome(await arrive("http://localhost:3000", "http://127.0.0.1:4000"))).toBe("anmeldung");
+    expect(outcome(await arrive("https://finanzen.example", "http://127.0.0.1:3000"))).toBe("anmeldung");
+    expect(outcome(await arrive("http://127.0.0.1:3000", "http://127.0.0.1:3000"))).toBe("anmeldung");
+  });
+});

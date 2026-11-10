@@ -14,6 +14,8 @@ export const DRIVE_INBOX_EVENT = "finanzblick:drive-inbox";
 const POLL_MS = 5 * 60 * 1000;
 const BATCH_SIZE = 24;
 const MAX_ROUNDS = 10;
+/** The statement worker imports new payslips within minutes; older ones mean it is not running. */
+const WORKER_GRACE_MS = 20 * 60 * 1000;
 
 /** Asks the app to read new Drive payslips now, e.g. right after "Jetzt prüfen". */
 export function requestDriveInbox() {
@@ -37,9 +39,15 @@ function noticeExpired() {
   });
 }
 
+/** Items the browser should read now: those that need the user, those the worker left behind, or all on request. */
+export function browserInboxItems(items: DriveInboxItem[], everything: boolean, now = Date.now()) {
+  return everything ? items : items.filter((item) => item.waiting || now - item.addedAt > WORKER_GRACE_MS);
+}
+
 /**
- * Reads payslips that the server fetched from the Drive folder "Abrechnungen" with the regular payslip import
- * (stored password first, password dialog only when needed) and reports each result back to the server.
+ * Payslips from the Drive folder "Abrechnungen" are imported in the background by the statement worker. The app reads
+ * the ones that need the user (no stored password fits, stored values would be replaced) with the regular payslip
+ * import – password dialog, replacement confirmation – and reports each result back to the server.
  */
 export function DriveInbox() {
   const workspace = useAccountWorkspace();
@@ -59,9 +67,10 @@ export function DriveInbox() {
     const report = (id: string, outcome: "imported" | "skipped" | "failed", note?: string) =>
       accountRequest(`/api/drive/inbox/${encodeURIComponent(id)}`, user, { method: "POST", json: { outcome, ...(note ? { note } : {}) } }).catch(() => null);
 
-    async function round(): Promise<boolean> {
-      const { items, expired } = await accountRequest<{ items: DriveInboxItem[]; expired?: boolean }>("/api/drive/inbox", user);
-      if (expired) noticeExpired();
+    async function round(everything: boolean): Promise<boolean> {
+      const listed = await accountRequest<{ items: DriveInboxItem[]; expired?: boolean }>("/api/drive/inbox", user);
+      if (listed.expired) noticeExpired();
+      const items = browserInboxItems(listed.items, everything);
       const batch = items.slice(0, BATCH_SIZE);
       if (!batch.length || cancelled) return false;
       const files: File[] = [];
@@ -86,12 +95,12 @@ export function DriveInbox() {
       return items.length > batch.length;
     }
 
-    async function run() {
+    async function run(everything = false) {
       if (running || cancelled || document.visibilityState === "hidden") return;
       running = true;
       try {
         let rounds = 0;
-        while (rounds++ < MAX_ROUNDS && !cancelled && await round()) { /* more items are waiting */ }
+        while (rounds++ < MAX_ROUNDS && !cancelled && await round(everything)) { /* more items are waiting */ }
       } catch {
         // Status and errors are shown in the settings; the next poll tries again.
       } finally {
@@ -101,7 +110,7 @@ export function DriveInbox() {
 
     void run();
     const timer = window.setInterval(() => { void run(); }, POLL_MS);
-    const wake = () => { void run(); };
+    const wake = () => { void run(true); };
     const visible = () => { if (document.visibilityState === "visible") void run(); };
     window.addEventListener(DRIVE_INBOX_EVENT, wake);
     document.addEventListener("visibilitychange", visible);

@@ -4,6 +4,7 @@ import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { AccountWorkspaceContext, type AccountWorkspace } from "@/components/account-context";
 import { DriveInbox, requestDriveInbox } from "@/components/drive-inbox";
 import { PayslipUploadProvider } from "@/components/payslip-upload";
+import type { DriveInboxItem } from "@/lib/drive/inbox";
 import { createSeed } from "@/lib/seed";
 import type { Payslip } from "@/lib/payslip-schema";
 import type { AppState } from "@/lib/types";
@@ -23,7 +24,7 @@ vi.mock("@/lib/browser-navigation", () => ({ navigate }));
 
 const october: Payslip = { year: 2026, month: 10, employer: "Musterbetrieb GmbH", regularGross: 3000, specialGross: 0, monthlyPayroll: true };
 const workspace: AccountWorkspace = { user: { id: "own-account", username: "synthetic", role: "admin" }, loadServer: async () => {} };
-let inbox: { id: string; name: string; size: number; addedAt: number }[];
+let inbox: DriveInboxItem[];
 let expired: boolean;
 let missing: Set<string>;
 const reports: { id: string; body: unknown }[] = [];
@@ -128,4 +129,14 @@ it("tells once per session that the Google approval has ended and links to recon
   renderInbox();
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/drive/inbox")).toHaveLength(2));
   expect(toast.warning).toHaveBeenCalledOnce();
+});
+
+it("leaves fresh payslips to the background import unless asked, but reads those that need the user", async () => {
+  inbox = [{ ...item("slip-fresh", "Frisch.pdf"), addedAt: Date.now() }, { ...item("slip-locked", "Gesperrt.pdf"), addedAt: Date.now(), waiting: "password" }];
+  fixture.parse.mockResolvedValue({ drafts: [october], issues: [] });
+  renderInbox();
+  await waitFor(() => expect(reports).toEqual([{ id: "slip-locked", body: { outcome: "imported" } }]));
+  expect(inbox.map((entry) => entry.id)).toEqual(["slip-fresh"]);
+  act(() => requestDriveInbox());
+  await waitFor(() => expect(reports.at(-1)).toEqual({ id: "slip-fresh", body: { outcome: "imported" } }));
 });

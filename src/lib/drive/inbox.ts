@@ -7,7 +7,16 @@ import { withDriveLock } from "./store";
 type Host = { path: string };
 
 const fileId = z.string().regex(/^[A-Za-z0-9_-]{6,200}$/);
-const itemSchema = z.object({ id: fileId, name: z.string().max(300), size: z.number().int().nonnegative(), addedAt: z.number().int().nonnegative() });
+const itemSchema = z.object({
+  id: fileId,
+  name: z.string().max(300),
+  size: z.number().int().nonnegative(),
+  addedAt: z.number().int().nonnegative(),
+  /** The background import could not finish it: the browser asks for the password or the replacement. */
+  waiting: z.enum(["password", "conflict"]).optional(),
+  /** Version of the stored PDF password that was tried; a newer password is tried again in the background. */
+  passwordAt: z.number().int().nonnegative().optional(),
+});
 const indexSchema = z.object({ version: z.literal(1), items: z.array(itemSchema).max(500) });
 export type DriveInboxItem = z.infer<typeof itemSchema>;
 
@@ -55,6 +64,17 @@ export async function addInboxItem(host: Host, userId: string, item: Omit<DriveI
 }
 
 export const listInbox = (host: Host, userId: string) => readIndex(host, userId);
+
+export const inboxFilePath = (host: Host, userId: string, id: string) => join(directory(host, userId), `${fileId.parse(id)}.pdf`);
+
+export async function markInboxItem(host: Host, userId: string, id: string, patch: Pick<DriveInboxItem, "waiting" | "passwordAt">) {
+  fileId.parse(id);
+  await withDriveLock(`inbox:${userId}`, async () => {
+    const items = await readIndex(host, userId);
+    if (!items.some((entry) => entry.id === id)) return;
+    await writeIndex(host, userId, items.map((entry) => entry.id === id ? { ...entry, ...patch } : entry));
+  });
+}
 
 export async function readInboxFile(host: Host, userId: string, id: string): Promise<{ item: DriveInboxItem; bytes: Buffer } | null> {
   fileId.parse(id);

@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promise
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { deleteUserSecret, readUserSecret, writeUserSecret } from "@/lib/server/user-secrets";
-import { DriveAuthError, refreshAccessToken, revokeToken, type DriveOAuthConfig, type DriveTokens, type Fetcher } from "./oauth";
+import { DriveAuthError, missingDriveCredentials, refreshAccessToken, revokeToken, type DriveCredential, type DriveOAuthConfig, type DriveTokens, type Fetcher } from "./oauth";
 
 type Host = { path: string };
 
@@ -142,6 +142,14 @@ export async function forgetAccessToken(host: Host, userId: string): Promise<voi
   });
 }
 
+/** The browser or the background import reports what became of an inbox payslip. */
+export async function recordInboxOutcome(host: Host, userId: string, id: string, outcome: "imported" | "skipped" | "failed", note?: string) {
+  return markDriveLink(host, userId, (link) => ({
+    ...link,
+    processed: (link.processed ?? []).map((entry) => entry.id === id ? { ...entry, outcome, ...(note ? { note: note.slice(0, 300) } : {}) } : entry),
+  }));
+}
+
 /** A valid access token, refreshed shortly before expiry; an expired refresh token marks the connection as expired. */
 export async function driveAccessToken(host: Host, userId: string, config: DriveOAuthConfig, fetcher: Fetcher = fetch, now = Date.now()): Promise<string> {
   const tokens = await readTokens(host, userId);
@@ -160,6 +168,8 @@ export async function driveAccessToken(host: Host, userId: string, config: Drive
 
 export type DriveStatus = {
   configured: boolean;
+  /** Environment variables the server still needs (names only). */
+  missing?: DriveCredential[];
   redirectUri?: string;
   connected: boolean;
   expired?: boolean;
@@ -172,15 +182,18 @@ export type DriveStatus = {
   notes?: string[];
   recent?: Omit<DriveProcessed, "id" | "md5" | "modified">[];
   backlog?: boolean;
-  /** Payslips waiting for the browser to read them. */
+  /** Payslips from Drive not imported yet. */
   inbox?: number;
+  /** Of those, the ones that need a PDF password or a confirmation to replace stored values. */
+  inboxPassword?: number;
+  inboxConfirm?: number;
   /** Files that were skipped or failed and can be fetched again. */
   retryable?: number;
 };
 
 export async function driveStatus(host: Host, userId: string, config: DriveOAuthConfig | null): Promise<DriveStatus> {
   const link = await readDriveLink(host, userId);
-  const base = { configured: !!config, ...(config ? { redirectUri: config.redirectUri } : {}) };
+  const base = { configured: !!config, ...(config ? { redirectUri: config.redirectUri } : { missing: missingDriveCredentials() }) };
   if (!link) return { ...base, connected: false };
   return {
     ...base,

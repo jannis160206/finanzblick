@@ -2,7 +2,7 @@ import { isAccountMode } from "@/lib/server/config";
 import { requestSessionToken } from "@/lib/server/http";
 import { getAccountRuntime } from "@/lib/server/runtime";
 import { driveAccount } from "@/lib/drive/client";
-import { appOrigin, openPendingAuthorization, readStateCookie, stateCookie } from "@/lib/drive/http";
+import { appOrigin, callbackRelay, openPendingAuthorization, readStateCookie, stateCookie } from "@/lib/drive/http";
 import { DriveAuthError, driveOAuthConfig, exchangeCode } from "@/lib/drive/oauth";
 import { saveDriveConnection } from "@/lib/drive/store";
 
@@ -26,10 +26,14 @@ export async function GET(request: Request): Promise<Response> {
     });
   };
   try {
+    const params = new URL(request.url).searchParams;
+    const cookie = readStateCookie(request);
+    const relay = cookie ? null : callbackRelay(request, params.get("state"));
+    if (relay)
+      return new Response(null, { status: 303, headers: { Location: relay.toString(), "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
     const user = database.currentUser(requestSessionToken(request));
     if (!user) return done("anmeldung");
-    const params = new URL(request.url).searchParams;
-    const pending = await openPendingAuthorization(database.path, readStateCookie(request));
+    const pending = await openPendingAuthorization(database.path, cookie);
     if (!pending || pending.user !== user.id || params.get("state") !== pending.state) return done("abgelaufen");
     if (params.get("error")) return done("abgelehnt");
     const code = params.get("code");

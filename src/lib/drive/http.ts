@@ -6,7 +6,7 @@ import { getAccountRuntime } from "@/lib/server/runtime";
 import { masterKey, openSecret, sealSecret } from "@/lib/server/secrets";
 import { dirname } from "node:path";
 import { DriveApiError } from "./client";
-import { CALLBACK_PATH, DriveAuthError, driveOAuthConfig } from "./oauth";
+import { CALLBACK_PATH, DriveAuthError, driveOAuthConfig, isLoopbackHostname } from "./oauth";
 
 const STATE_CONTEXT = "finanzblick:google-oauth-state";
 const STATE_SECONDS = 600;
@@ -67,6 +67,29 @@ export function readStateCookie(request: Request): string | null {
 }
 
 export const STATE_TTL_MS = STATE_SECONDS * 1000;
+
+/**
+ * Google returns to the registered redirect URI (e.g. http://localhost:3000) even when Finanzblick runs as
+ * http://127.0.0.1:3000; cookies are per host, so the answer is passed on to the origin named in the state.
+ * Only between loopback names of the same port and scheme – never to another server.
+ */
+export function callbackRelay(request: Request, state: string | null): URL | null {
+  const encoded = state?.split(".")[1];
+  if (!encoded || !/^[A-Za-z0-9_-]{1,200}$/.test(encoded)) return null;
+  let target: URL;
+  let current: URL;
+  try {
+    target = new URL(Buffer.from(encoded, "base64url").toString("utf8"));
+    current = new URL(request.url);
+    const host = request.headers.get("host");
+    if (host) current = new URL(`${current.protocol}//${host}`);
+  } catch {
+    return null;
+  }
+  if (target.protocol !== current.protocol || target.port !== current.port || target.host === current.host) return null;
+  if (!isLoopbackHostname(target.hostname) || !isLoopbackHostname(current.hostname)) return null;
+  return new URL(`${CALLBACK_PATH}${new URL(request.url).search}`, target.origin);
+}
 
 /** Google answers become readable messages: an ended grant asks to reconnect, Drive outages are a gateway error. */
 export function driveErrorResponse(error: unknown): Response {

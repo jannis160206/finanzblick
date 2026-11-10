@@ -28,7 +28,10 @@ it("keeps tokens encrypted and only status data in the link file", async () => {
   expect(link).not.toContain("synthetic-access");
   expect(await readFile(join(directory, "secrets", "alice.json"), "utf8")).not.toContain("synthetic-refresh");
   expect(await driveStatus(host, "alice", config)).toMatchObject({ configured: true, connected: true, email: "alice@example.test", connectedAt: 1_000_000, redirectUri: config.redirectUri });
-  expect(await driveStatus(host, "bob", null)).toEqual({ configured: false, connected: false });
+  vi.stubEnv("GOOGLE_CLIENT_ID", "synthetic-client");
+  vi.stubEnv("GOOGLE_CLIENT_SECRET", "");
+  expect(await driveStatus(host, "bob", null)).toEqual({ configured: false, connected: false, missing: ["GOOGLE_CLIENT_SECRET"] });
+  vi.unstubAllEnvs();
 });
 
 it("uses a valid access token, refreshes it shortly before expiry and marks an expired grant", async () => {

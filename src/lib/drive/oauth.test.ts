@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { createAuthorization, DRIVE_SCOPE, DriveAuthError, driveOAuthConfig, exchangeCode, refreshAccessToken, revokeToken } from "./oauth";
+import { createAuthorization, DRIVE_SCOPE, DriveAuthError, driveOAuthConfig, exchangeCode, missingDriveCredentials, refreshAccessToken, revokeToken } from "./oauth";
 
 const config = { clientId: "synthetic-client.apps.example", clientSecret: "synthetic-secret", redirectUri: "http://localhost:3000/api/auth/callback/google" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -13,6 +13,23 @@ describe("Google OAuth for Drive", () => {
       .toEqual({ clientId: "id", clientSecret: "secret", redirectUri: "http://localhost:3000/api/auth/callback/google" });
     expect(driveOAuthConfig("http://localhost:3000", { GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret", GOOGLE_REDIRECT_URI: "https://finanzen.example/api/auth/callback/google" })?.redirectUri)
       .toBe("https://finanzen.example/api/auth/callback/google");
+  });
+
+  it("uses the registered localhost redirect for every loopback origin and names missing credentials", () => {
+    const env = { GOOGLE_CLIENT_ID: "id", GOOGLE_CLIENT_SECRET: "secret" };
+    expect(driveOAuthConfig("http://127.0.0.1:3000", env)?.redirectUri).toBe("http://localhost:3000/api/auth/callback/google");
+    expect(driveOAuthConfig("http://[::1]:3000", env)?.redirectUri).toBe("http://localhost:3000/api/auth/callback/google");
+    expect(driveOAuthConfig("https://finanzen.example", env)?.redirectUri).toBe("https://finanzen.example/api/auth/callback/google");
+    expect(missingDriveCredentials({})).toEqual(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]);
+    expect(missingDriveCredentials({ GOOGLE_CLIENT_ID: " id ", GOOGLE_CLIENT_SECRET: "   " })).toEqual(["GOOGLE_CLIENT_SECRET"]);
+    expect(missingDriveCredentials(env)).toEqual([]);
+  });
+
+  it("carries the starting origin in the state only when Google returns to another one", () => {
+    expect(createAuthorization(config, "http://localhost:3000").state).not.toContain(".");
+    const [random, back] = createAuthorization(config, "http://127.0.0.1:3000").state.split(".");
+    expect(random).toMatch(/^[\w-]{43}$/);
+    expect(Buffer.from(back, "base64url").toString()).toBe("http://127.0.0.1:3000");
   });
 
   it("asks for read-only Drive access with offline access, state and a PKCE S256 challenge", () => {

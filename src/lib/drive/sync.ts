@@ -2,13 +2,12 @@ import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { AccountError, isAccountError } from "@/lib/server/errors";
 import type { AccountDatabase } from "@/lib/server/database";
-import { readAccountConfig } from "@/lib/server/config";
 import { downloadFile, findFolders, listFolderFiles, type DriveFile } from "./client";
 import { addInboxItem, listInbox } from "./inbox";
-import { DriveAuthError, driveOAuthConfig, type DriveOAuthConfig, type Fetcher } from "./oauth";
+import { DriveAuthError, type DriveOAuthConfig, type Fetcher } from "./oauth";
 import { DRIVE_FOLDER_NAMES } from "./folders";
 import { enqueueStatement } from "./statements";
-import { driveAccessToken, driveFolderKinds, driveStatus, forgetAccessToken, markDriveLink, readDriveLink, type DriveFolderKind, type DriveLink, type DriveProcessed, type DriveStatus } from "./store";
+import { driveAccessToken, driveFolderKinds, driveStatus, forgetAccessToken, markDriveLink, recordInboxOutcome, readDriveLink, type DriveFolderKind, type DriveLink, type DriveProcessed, type DriveStatus } from "./store";
 
 const ACCEPTED: Record<DriveFolderKind, RegExp> = { amex: /\.(pdf|csv|xlsx)$/i, payslips: /\.pdf$/i };
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -127,7 +126,9 @@ async function syncOnce(database: AccountDatabase, userId: string, oauth: DriveO
 export async function driveOverview(database: AccountDatabase, userId: string, oauth: DriveOAuthConfig | null): Promise<DriveStatus> {
   const status = await driveStatus(database, userId, oauth);
   if (!status.connected) return status;
-  return { ...status, inbox: (await listInbox(database, userId)).length };
+  const items = await listInbox(database, userId);
+  const waiting = (kind: "password" | "conflict") => items.filter((item) => item.waiting === kind).length;
+  return { ...status, inbox: items.length, inboxPassword: waiting("password"), inboxConfirm: waiting("conflict") };
 }
 
 /** Remembers which of several same-named folders to read. */
@@ -149,14 +150,6 @@ export async function retryDriveFiles(database: AccountDatabase, userId: string)
   }));
 }
 
-/** The browser reports what became of an inbox payslip. */
-export async function recordInboxOutcome(database: AccountDatabase, userId: string, id: string, outcome: "imported" | "skipped" | "failed", note?: string) {
-  return markDriveLink(database, userId, (link) => ({
-    ...link,
-    processed: (link.processed ?? []).map((entry) => entry.id === id ? { ...entry, outcome, ...(note ? { note: note.slice(0, 300) } : {}) } : entry),
-  }));
-}
-
 export async function linkedDriveUsers(database: AccountDatabase): Promise<string[]> {
   try {
     return (await readdir(join(dirname(database.path), "drive-links")))
@@ -172,45 +165,4 @@ export function driveSyncDue(link: DriveLink | null, now = Date.now()) {
   return !!link && !link.expired && (!!link.backlog || !link.lastSync || now - link.lastSync >= AUTO_SYNC_INTERVAL_MS);
 }
 
-const CHECK_MS = 15 * 60 * 1000;
-
-/** Checks the Drive folders in the background (hourly per user, sooner while a backlog remains) while the statement worker runs. */
-export function startDriveAutoSync(database: AccountDatabase, signal: AbortSignal): void {
-  let origin: string;
-  try {
-    origin = readAccountConfig().origin ?? "http://localhost";
-  } catch {
-    return;
-  }
-  const oauth = driveOAuthConfig(origin);
-  if (!oauth) return;
-  let running = false;
-  const tick = async () => {
-    if (running || signal.aborted) return;
-    running = true;
-    try {
-      for (const userId of await linkedDriveUsers(database)) {
-        if (signal.aborted) break;
-        if (!driveSyncDue(await readDriveLink(database, userId))) continue;
-        try {
-          const result = await syncDrive(database, userId, oauth);
-          const added = driveFolderKinds.reduce((sum, kind) => sum + result.folders[kind].added, 0);
-          const failed = driveFolderKinds.reduce((sum, kind) => sum + result.folders[kind].failed, 0);
-          if (added || failed || result.backlog)
-            console.info(`Google Drive: ${added} neue Datei(en) übernommen${failed ? `, ${failed} fehlgeschlagen` : ""}${result.backlog ? ", weitere folgen" : ""}.`);
-        } catch (error) {
-          // Messages only, never file names or tokens.
-          if (error instanceof DriveAuthError && error.kind === "expired")
-            console.warn("Google Drive: Freigabe abgelaufen – in den Einstellungen erneut verbinden.");
-          else console.warn("Google Drive: Abruf fehlgeschlagen:", error instanceof Error ? error.message : "unbekannt");
-        }
-      }
-    } finally {
-      running = false;
-    }
-  };
-  const timer = setInterval(() => void tick(), CHECK_MS);
-  timer.unref();
-  signal.addEventListener("abort", () => clearInterval(timer), { once: true });
-  setTimeout(() => void tick(), 45_000).unref();
-}
+export { recordInboxOutcome };

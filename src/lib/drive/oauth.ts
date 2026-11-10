@@ -11,12 +11,31 @@ const TIMEOUT_MS = 15_000;
 export type Fetcher = typeof fetch;
 export type DriveOAuthConfig = { clientId: string; clientSecret: string; redirectUri: string };
 
+type Env = Record<string, string | undefined>;
+const CREDENTIALS = ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"] as const;
+export type DriveCredential = (typeof CREDENTIALS)[number];
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export const isLoopbackHostname = (hostname: string) => LOOPBACK.has(hostname.toLowerCase());
+
+/** Local servers register one redirect URI: 127.0.0.1 and [::1] use the "localhost" one, the callback relays back. */
+export function canonicalRedirectOrigin(origin: string): string {
+  const url = new URL(origin);
+  if (url.hostname === "127.0.0.1" || url.hostname === "[::1]") url.hostname = "localhost";
+  return url.origin;
+}
+
+/** Names of the credentials the server still lacks; values are never reported. */
+export function missingDriveCredentials(env: Env = process.env): DriveCredential[] {
+  return CREDENTIALS.filter((name) => !env[name]?.trim());
+}
+
 /** Google OAuth settings only from the environment; the redirect URI must match the one in the Google Cloud Console. */
-export function driveOAuthConfig(origin: string, env: Record<string, string | undefined> = process.env): DriveOAuthConfig | null {
+export function driveOAuthConfig(origin: string, env: Env = process.env): DriveOAuthConfig | null {
   const clientId = env.GOOGLE_CLIENT_ID?.trim();
   const clientSecret = env.GOOGLE_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) return null;
-  return { clientId, clientSecret, redirectUri: env.GOOGLE_REDIRECT_URI?.trim() || `${origin}${CALLBACK_PATH}` };
+  return { clientId, clientSecret, redirectUri: env.GOOGLE_REDIRECT_URI?.trim() || `${canonicalRedirectOrigin(origin)}${CALLBACK_PATH}` };
 }
 
 export class DriveAuthError extends Error {
@@ -28,8 +47,13 @@ export class DriveAuthError extends Error {
 
 const base64url = (bytes: Buffer) => bytes.toString("base64url");
 
-export function createAuthorization(config: DriveOAuthConfig) {
-  const state = base64url(randomBytes(32));
+/**
+ * `returnTo` is the origin the browser started on (where the state cookie and the session live). When it differs from
+ * the redirect URI's origin it travels in the state, so the callback can hand the answer back (see callbackRelay).
+ */
+export function createAuthorization(config: DriveOAuthConfig, returnTo?: string) {
+  const back = returnTo && new URL(returnTo).origin !== new URL(config.redirectUri).origin ? new URL(returnTo).origin : null;
+  const state = base64url(randomBytes(32)) + (back ? `.${Buffer.from(back).toString("base64url")}` : "");
   const verifier = base64url(randomBytes(48));
   const challenge = base64url(createHash("sha256").update(verifier).digest());
   const url = new URL(AUTHORIZE_URL);
