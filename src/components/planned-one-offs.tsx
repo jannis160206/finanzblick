@@ -6,13 +6,14 @@ import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogFooter, DialogForm, DialogTrigger } from "@/components/ui/dialog";
+import { DialogStep, DialogSteps, Field, MoneyField, PremiumDialogContent, PremiumDialogHeader, ToggleRow } from "@/components/ui/premium-dialog";
 import { addMonths, calculateMonthTotals, daysInMonth } from "@/lib/calc";
 import { dateLabel, monthLabel } from "@/lib/format";
 import { parseStatementAmount } from "@/lib/import/statements";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { dateSchema, plannedOneOffSchema, type PlannedOneOff } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const amountLabel = (value: number) => `${new Intl.NumberFormat("de-AT", { maximumFractionDigits: 2 }).format(value)} €`;
 const shortMonthLabel = (date: string) => new Intl.DateTimeFormat("de-AT", { month: "short", timeZone: "UTC" })
@@ -68,11 +69,12 @@ export function PlannedOneOffs({ className }: { className?: string } = {}) {
   const [total, setTotal] = useState("");
   const [shared, setShared] = useState(false);
   const [error, setError] = useState("");
+  const [invalid, setInvalid] = useState<string>();
   const items = state.plannedOneOffs ?? [];
   const reset = () => {
     setEditing(undefined); setDeleting(undefined); setName(""); setDate(state.settings.asOf);
     setMonth(state.settings.asOf.slice(0, 7)); setAmount(""); setPocket("Giro");
-    setInstallments("1"); setTotal(""); setShared(false); setError("");
+    setInstallments("1"); setTotal(""); setShared(false); setError(""); setInvalid(undefined);
   };
   const changeOpen = (value: boolean) => { setOpen(value); reset(); };
   const draft = {
@@ -101,82 +103,111 @@ export function PlannedOneOffs({ className }: { className?: string } = {}) {
     setTotal(item.total === undefined ? "" : String(item.total).replace(".", ","));
     setShared(item.sharedWithRaphael === true); setError("");
   };
+  const save = () => {
+    if (storageError) { setError(storageError); return; }
+    const parsed = plannedOneOffSchema.safeParse(draft);
+    if (!parsed.success) { setError(parsed.error.issues[0].message); return; }
+    const item = { ...parsed.data, id: editing ?? crypto.randomUUID() };
+    update((current) => ({ ...current,
+      plannedOneOffs: [...(current.plannedOneOffs ?? []).filter((row) => row.id !== editing), item],
+    }));
+    reset();
+  };
+  // Each step reports the first schema problem of its own fields.
+  const stepValid = (fields: string[]) => {
+    const parsed = plannedOneOffSchema.safeParse(draft);
+    const issue = parsed.success ? undefined : parsed.error.issues.find((item) => fields.includes(String(item.path[0])));
+    setError(issue?.message ?? "");
+    setInvalid(issue ? String(issue.path[0]) : undefined);
+    return !issue;
+  };
+  const fieldError = (field: string) => invalid === field || undefined;
   return <Dialog open={open} onOpenChange={changeOpen}>
     <DialogTrigger asChild><Button size="sm" variant="outline" className={className} disabled={!!storageError}>Geplante Ausgaben</Button></DialogTrigger>
-    <DialogContent>
-      <DialogHeader><DialogTitle>Geplante Ausgaben</DialogTitle><DialogDescription>Einmalig oder in Raten.</DialogDescription></DialogHeader>
-      <DialogForm noValidate onSubmit={(event) => {
+    <PremiumDialogContent size="md">
+      <PremiumDialogHeader title="Geplante Ausgaben" description="Einmalig oder in Raten." />
+      {deleting ? <DialogForm noValidate onSubmit={(event) => {
         event.preventDefault();
         if (storageError) { setError(storageError); return; }
-        if (deleting) {
-          update((current) => ({ ...current, plannedOneOffs: current.plannedOneOffs?.filter((item) => item.id !== deleting) }));
-          reset(); return;
-        }
-        const parsed = plannedOneOffSchema.safeParse(draft);
-        if (!parsed.success) { setError(parsed.error.issues[0].message); return; }
-        const item = { ...parsed.data, id: editing ?? crypto.randomUUID() };
-        update((current) => ({ ...current,
-          plannedOneOffs: [...(current.plannedOneOffs ?? []).filter((row) => row.id !== editing), item],
-        }));
+        update((current) => ({ ...current, plannedOneOffs: current.plannedOneOffs?.filter((item) => item.id !== deleting) }));
         reset();
       }}>
-        <DialogBody className="space-y-5">
-          {deleting ? <p className="text-sm">„{items.find((item) => item.id === deleting)?.name}“ wirklich löschen?</p> : <>
-            <div><Label htmlFor="one-off-name">Name</Label><Input id="one-off-name" className="mt-2" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} /></div>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div><Label htmlFor="one-off-date">Datum</Label><Input id="one-off-date" className="mt-2" type="date" value={date} onChange={(event) => {
-                setDate(event.target.value);
-                if (dateSchema.safeParse(event.target.value).success) setMonth(event.target.value.slice(0, 7));
-              }} /></div>
-              <div><Label htmlFor="one-off-pocket">Pocket</Label><select id="one-off-pocket" className="select-input mt-2 w-full" value={pocket}
-                onChange={(event) => setPocket(event.target.value === "Sparkonto" ? "Sparkonto" : "Giro")}><option>Giro</option><option>Sparkonto</option></select></div>
-            </div>
-            <div className="max-w-64" aria-label="Monatskalender">
-              <div className="mb-2 flex items-center justify-between">
-                <Button type="button" size="icon" variant="ghost" aria-label="Voriger Monat" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="size-4" /></Button>
-                <span className="text-xs">{monthLabel(month)}</span>
-                <Button type="button" size="icon" variant="ghost" aria-label="Nächster Monat" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="size-4" /></Button>
-              </div>
-              <div className="grid grid-cols-7 gap-1 text-center text-xs">
-                {["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map((day) => <span key={day} className="text-muted-foreground">{day}</span>)}
-                {Array.from({ length: offset }, (_, index) => <span key={`space-${index}`} />)}
-                {Array.from({ length: daysInMonth(month) }, (_, index) => {
-                  const day = `${month}-${String(index + 1).padStart(2, "0")}`;
-                  return <button key={day} type="button" className="relative rounded py-2 hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
-                    aria-label={`${dateLabel(day)}${marked.has(day) ? " · Geplante Ausgabe" : ""}`}
-                    onClick={() => setDate(day)}>{index + 1}{marked.has(day) && <span aria-hidden="true" className="absolute bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full bg-primary" />}</button>;
-                })}
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="one-off-amount">Betrag (€)</Label><Input id="one-off-amount" className="mt-2" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} />
-              {remaining !== undefined && <p role="status" className={`mt-2 text-xs ${remaining < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                {remaining < 0 ? `Fehlen ${amountLabel(-remaining)}` : `Danach ${amountLabel(remaining)}`}
-              </p>}
-            </div>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="accent-primary" checked={shared} onChange={(event) => setShared(event.target.checked)} />Mit Raphael teilen</label>
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div><Label htmlFor="one-off-installments">N × ab Datum</Label><Input id="one-off-installments" className="mt-2" type="number" min={1} max={120} value={installments} onChange={(event) => { setInstallments(event.target.value); setTotal(""); }} /></div>
-              {Number(installments) > 1 && <div><Label htmlFor="one-off-total">Gesamt (€), optional</Label><Input id="one-off-total" className="mt-2" inputMode="decimal" value={total} onChange={(event) => setTotal(event.target.value)} /></div>}
-            </div>
-            {items.length > 0 && <section className="space-y-3 border-t pt-4">
-              {items.map((item) => {
-                const booked = finance.dashboard.plannedOneOffs.filter((occurrence) => occurrence.itemId === item.id && occurrence.bookingId).length;
-                return <div key={item.id} className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className="min-w-0 flex-1">{item.name} · {dateLabel(item.date)} · {amountLabel(item.amount)}{item.installments > 1 ? ` · ${item.installments}×` : ""}{booked ? item.installments === 1 ? " · Gebucht" : ` · ${booked}/${item.installments} gebucht` : ""}</span>
-                  <Button type="button" size="sm" variant="ghost" aria-label={`Bearbeiten: ${item.name}`} onClick={() => edit(item)}>Bearbeiten</Button>
-                  <Button type="button" size="sm" variant="ghost" disabled={!!storageError} aria-label={`Löschen: ${item.name}`} onClick={() => { setDeleting(item.id); setError(""); }}>Löschen</Button>
-                </div>;
-              })}
-            </section>}
-          </>}
+        <DialogBody className="space-y-3">
+          <p className="text-sm">„{items.find((item) => item.id === deleting)?.name}“ wirklich löschen?</p>
           {(error || storageError) && <p role="alert" className="text-sm text-destructive">{error || storageError}</p>}
         </DialogBody>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => deleting ? setDeleting(undefined) : changeOpen(false)}>Abbrechen</Button>
-          <Button type="submit" disabled={!!storageError}>{deleting ? "Löschen bestätigen" : editing ? "Änderung speichern" : "Ausgabe speichern"}</Button>
+          <Button type="button" variant="outline" onClick={() => setDeleting(undefined)}>Abbrechen</Button>
+          <Button type="submit" variant="destructive" disabled={!!storageError}>Löschen bestätigen</Button>
         </DialogFooter>
-      </DialogForm>
-    </DialogContent>
+      </DialogForm> : <DialogSteps key={editing ?? "new"} mode="auto" editing={!!editing} submitLabel={editing ? "Änderung speichern" : "Ausgabe speichern"}
+        submitDisabled={!!storageError} onComplete={save}
+        message={(error || storageError) && <p role="alert" className="text-sm text-destructive">{error || storageError}</p>}>
+        <DialogStep id="what" title="Was & wann" validate={() => stepValid(["name", "date", "pocket"])}>
+          {items.length > 0 && <section aria-label="Bereits geplant" className="space-y-1 rounded-2xl border border-border/70 p-2">
+            {items.map((item) => {
+              const booked = finance.dashboard.plannedOneOffs.filter((occurrence) => occurrence.itemId === item.id && occurrence.bookingId).length;
+              return <div key={item.id} className={cn("flex flex-wrap items-center gap-1 rounded-xl py-1 pr-1 pl-3 text-xs", item.id === editing && "bg-accent-muted/50")}>
+                <span className="min-w-0 flex-1">{item.name} · {dateLabel(item.date)} · {amountLabel(item.amount)}{item.installments > 1 ? ` · ${item.installments}×` : ""}{booked ? item.installments === 1 ? " · Gebucht" : ` · ${booked}/${item.installments} gebucht` : ""}</span>
+                <Button type="button" size="sm" variant="ghost" aria-label={`Bearbeiten: ${item.name}`} onClick={() => edit(item)}>Bearbeiten</Button>
+                <Button type="button" size="sm" variant="ghost" disabled={!!storageError} aria-label={`Löschen: ${item.name}`} onClick={() => { setDeleting(item.id); setError(""); }}>Löschen</Button>
+              </div>;
+            })}
+          </section>}
+          <Field label="Name">
+            <Input value={name} maxLength={100} aria-invalid={fieldError("name")} onChange={(event) => { setName(event.target.value); setInvalid(undefined); }} />
+          </Field>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Datum">
+              <Input type="date" value={date} aria-invalid={fieldError("date")} onChange={(event) => {
+                setDate(event.target.value);
+                setInvalid(undefined);
+                if (dateSchema.safeParse(event.target.value).success) setMonth(event.target.value.slice(0, 7));
+              }} />
+            </Field>
+            <Field label="Pocket">
+              <select className="select-input w-full" value={pocket}
+                onChange={(event) => setPocket(event.target.value === "Sparkonto" ? "Sparkonto" : "Giro")}><option>Giro</option><option>Sparkonto</option></select>
+            </Field>
+          </div>
+          <div className="max-w-72 rounded-2xl border border-border/70 p-3" aria-label="Monatskalender">
+            <div className="mb-2 flex items-center justify-between">
+              <Button type="button" size="icon" variant="ghost" aria-label="Voriger Monat" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="size-4" /></Button>
+              <span className="text-xs font-medium">{monthLabel(month)}</span>
+              <Button type="button" size="icon" variant="ghost" aria-label="Nächster Monat" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="size-4" /></Button>
+            </div>
+            <div className="grid grid-cols-7 gap-1 text-center text-xs">
+              {["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map((day) => <span key={day} className="text-muted-foreground">{day}</span>)}
+              {Array.from({ length: offset }, (_, index) => <span key={`space-${index}`} />)}
+              {Array.from({ length: daysInMonth(month) }, (_, index) => {
+                const day = `${month}-${String(index + 1).padStart(2, "0")}`;
+                return <button key={day} type="button" aria-pressed={day === date}
+                  className={cn("relative rounded-lg py-2 transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring", day === date && "bg-primary text-primary-foreground hover:bg-primary")}
+                  aria-label={`${dateLabel(day)}${marked.has(day) ? " · Geplante Ausgabe" : ""}`}
+                  onClick={() => { setDate(day); setInvalid(undefined); }}>{index + 1}{marked.has(day) && <span aria-hidden="true" className={cn("absolute bottom-0.5 left-1/2 size-1 -translate-x-1/2 rounded-full", day === date ? "bg-primary-foreground" : "bg-primary")} />}</button>;
+              })}
+            </div>
+          </div>
+        </DialogStep>
+        <DialogStep id="amount" title="Betrag & Raten" validate={() => stepValid(["amount", "installments", "total"])}>
+          <Field label="Betrag" hint={remaining !== undefined ? undefined : "Pro Rate, bei geteilten Kosten der Gesamtbetrag."}>
+            <MoneyField value={amount} aria-invalid={fieldError("amount")} onValueChange={(value) => { setAmount(value); setInvalid(undefined); }} />
+          </Field>
+          {remaining !== undefined && <p role="status" className={`-mt-3 text-xs ${remaining < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+            {remaining < 0 ? `Fehlen ${amountLabel(-remaining)}` : `Danach ${amountLabel(remaining)}`}
+          </p>}
+          <ToggleRow checked={shared} onCheckedChange={setShared} label="Mit Raphael teilen" description="Nur dein Anteil belastet den Monatsplan." />
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="N × ab Datum">
+              <Input type="number" min={1} max={120} value={installments} aria-invalid={fieldError("installments")}
+                onChange={(event) => { setInstallments(event.target.value); setTotal(""); setInvalid(undefined); }} />
+            </Field>
+            {Number(installments) > 1 && <Field label="Gesamtbetrag" optional>
+              <MoneyField value={total} aria-invalid={fieldError("total")} onValueChange={(value) => { setTotal(value); setInvalid(undefined); }} />
+            </Field>}
+          </div>
+        </DialogStep>
+      </DialogSteps>}
+    </PremiumDialogContent>
   </Dialog>;
 }

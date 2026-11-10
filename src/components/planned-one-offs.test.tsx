@@ -99,24 +99,24 @@ describe("planned one-offs UI", () => {
   it("previews while typing using the half, saves only on confirmation, then supports editing and deleting", () => {
     const read = mount();
     open();
-    type("Name", "Schrank"); type("Betrag (€)", "200");
+    type("Name", "Schrank"); type("Betrag", "200");
     expect(screen.getByRole("status").textContent).toBe("Danach 580 €");
-    type("Betrag (€)", "900");
+    type("Betrag", "900");
     expect(screen.getByRole("status").textContent).toBe("Fehlen 120 €");
-    type("Betrag (€)", "400");
+    type("Betrag", "400");
     fireEvent.click(screen.getByLabelText("Mit Raphael teilen"));
     expect(screen.getByRole("status").textContent).toBe("Danach 580 €");
     expect(read().plannedOneOffs).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
     expect(read().plannedOneOffs).toEqual([]);
-    open(); type("Name", "Schrank"); type("Betrag (€)", "400");
+    open(); type("Name", "Schrank"); type("Betrag", "400");
     fireEvent.click(screen.getByLabelText("Mit Raphael teilen"));
     fireEvent.click(screen.getByRole("button", { name: "Ausgabe speichern" }));
     expect(read().plannedOneOffs).toHaveLength(1);
     expect(read().plannedOneOffs?.[0]).toMatchObject({ name: "Schrank", amount: 400, sharedWithRaphael: true, installments: 1, pocket: "Giro" });
     fireEvent.click(screen.getByRole("button", { name: "Bearbeiten: Schrank" }));
     expect(screen.getByRole("status").textContent).toBe("Danach 580 €");
-    type("Betrag (€)", "600");
+    type("Betrag", "600");
     expect(screen.getByRole("status").textContent).toBe("Danach 480 €");
     expect(read().plannedOneOffs?.[0].amount).toBe(400);
     fireEvent.click(screen.getByRole("button", { name: "Änderung speichern" }));
@@ -132,7 +132,7 @@ describe("planned one-offs UI", () => {
     expect(screen.getAllByRole("button", { name: / · Geplante Ausgabe$/ })).toHaveLength(4);
     fireEvent.click(screen.getByRole("button", { name: "Bearbeiten: Monitor-Rate" }));
     expect((screen.getByLabelText("N × ab Datum") as HTMLInputElement).value).toBe("12");
-    expect((screen.getByLabelText("Gesamt (€), optional") as HTMLInputElement).value).toBe("664");
+    expect((screen.getByLabelText(/^Gesamtbetrag/) as HTMLInputElement).value).toBe("664");
     fireEvent.click(screen.getByRole("button", { name: "Änderung speichern" }));
     expect(read().plannedOneOffs).toHaveLength(5);
     fireEvent.click(screen.getByRole("button", { name: "Nächster Monat" }));

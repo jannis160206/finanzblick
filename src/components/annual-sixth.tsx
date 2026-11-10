@@ -7,7 +7,8 @@ import { useFinance } from "@/components/finance-provider";
 import { SectionHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogForm, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog } from "@/components/ui/dialog";
+import { DialogStep, DialogSteps, Field, MoneyField, PremiumDialogContent, PremiumDialogHeader, moneyText, moneyValue } from "@/components/ui/premium-dialog";
 import { calculateAnnualSixth, annualSixthSources } from "@/lib/annual-sixth";
 import { currency, monthLabel } from "@/lib/format";
 import { annualSixthSchema, type AnnualSixth } from "@/lib/types";
@@ -23,13 +24,13 @@ function AnnualSixthForm({ year, saved, onClose }: {
   const [value, setValue] = useState(() => ({
     month: String(saved?.month ?? (year === currentYear ? Number(state.settings.asOf.slice(5, 7)) : year < currentYear ? 12 : 1)),
     employer: saved?.employer ?? "",
-    regularGross: saved ? String(saved.regularGross) : "",
-    specialGross: saved ? String(saved.specialGross) : "",
-    plannedSpecialGross: String(saved?.plannedSpecialGross ?? 0),
-    reportedSixth: saved?.reportedSixth === undefined ? "" : String(saved.reportedSixth),
+    regularGross: saved ? moneyText(saved.regularGross) : "",
+    specialGross: saved ? moneyText(saved.specialGross) : "",
+    plannedSpecialGross: moneyText(saved?.plannedSpecialGross ?? 0),
+    reportedSixth: moneyText(saved?.reportedSixth),
     monthlyPayroll: saved?.monthlyPayroll ?? false,
   }));
-  const amount = (text: string) => text.trim() === "" ? NaN : Number(text);
+  const amount = (text: string) => text.trim() === "" ? NaN : moneyValue(text) ?? NaN;
   const parsed = annualSixthSchema.safeParse({
     year, month: Number(value.month), employer: value.employer,
     regularGross: amount(value.regularGross), specialGross: amount(value.specialGross),
@@ -38,70 +39,59 @@ function AnnualSixthForm({ year, saved, onClose }: {
     monthlyPayroll: value.monthlyPayroll,
   });
   const change = (key: Exclude<keyof typeof value, "monthlyPayroll">, next: string) => setValue({ ...value, [key]: next });
+  const hint = parsed.success ? undefined : parsed.error.issues.find((issue) => issue.code === "custom")?.message ??
+    "Bruttobeträge mit höchstens zwei Nachkommastellen eingeben; geplante Zahlung ggf. 0.";
+  const money = (key: "regularGross" | "specialGross" | "plannedSpecialGross" | "reportedSixth", label: string, caption: string, optional = false) => (
+    <Field label={caption} optional={optional}>
+      <MoneyField aria-label={label} value={value[key]} onValueChange={(next) => change(key, next)} />
+    </Field>
+  );
   return <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-    <DialogContent>
-      <DialogHeader>
-        <DialogTitle>Jahressechstel {year}: Bruttowerte</DialogTitle>
-        <DialogDescription>Bruttowerte aus der Lohnabrechnung, keine Netto-Kontoeingänge. Ein Dienstverhältnis, kumuliert bis einschließlich des gewählten Monats.</DialogDescription>
-      </DialogHeader>
-      <DialogForm onSubmit={(event) => {
-        event.preventDefault();
-        if (!parsed.success) {
-          toast.error("Bruttowerte und Berechnungsgrundlage prüfen.");
-          return;
-        }
-        if (storageError) { toast.error(storageError); return; }
-        const entry = parsed.data;
-        update((current) => ({ ...current,
-          annualSixth: [...(current.annualSixth ?? []).filter((item) => item.year !== year), entry].sort((a, b) => a.year - b.year),
-        }));
-        onClose();
-        toast.success("Jahressechstel-Grundlage gespeichert");
-      }}>
-        <DialogBody className="space-y-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <label className="space-y-2 text-sm">Arbeitgeber (optional)
+    <PremiumDialogContent size="md">
+      <PremiumDialogHeader title={`Jahressechstel ${year}: Bruttowerte`}
+        description="Bruttowerte aus der Lohnabrechnung, keine Netto-Kontoeingänge. Ein Dienstverhältnis, kumuliert bis einschließlich des gewählten Monats." />
+      <DialogSteps mode="auto" submitLabel="Bruttowerte speichern" submitDisabled={!parsed.success || !!storageError}
+        message={storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
+        onComplete={() => {
+          if (!parsed.success) { toast.error("Bruttowerte und Berechnungsgrundlage prüfen."); return; }
+          if (storageError) { toast.error(storageError); return; }
+          const entry = parsed.data;
+          update((current) => ({ ...current,
+            annualSixth: [...(current.annualSixth ?? []).filter((item) => item.year !== year), entry].sort((a, b) => a.year - b.year),
+          }));
+          onClose();
+          toast.success("Jahressechstel-Grundlage gespeichert");
+        }}>
+        <DialogStep id="basis" title="Abrechnung">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Arbeitgeber" optional>
               <Input aria-label="Arbeitgeber" maxLength={120} value={value.employer} onChange={(event) => change("employer", event.target.value)} />
-            </label>
-            <label className="space-y-2 text-sm">Abrechnungsmonat
+            </Field>
+            <Field label="Abrechnungsmonat">
               <select className="select-input w-full" aria-label="Abrechnungsmonat" value={value.month} onChange={(event) => change("month", event.target.value)}>
                 {Array.from({ length: 12 }, (_, index) => <option key={index} value={index + 1}>{monthLabel(`${year}-${String(index + 1).padStart(2, "0")}`)}</option>)}
               </select>
-            </label>
-            <label className="space-y-2 text-sm">Laufendes Brutto seit Jänner (€)
-              <Input aria-label="Laufendes Brutto seit Jänner" type="number" min="0" max="1000000000" step="0.01" required
-                value={value.regularGross} onChange={(event) => change("regularGross", event.target.value)} />
-            </label>
-            <label className="space-y-2 text-sm">Sechstelrelevante Sonderzahlungen bisher (€)
-              <Input aria-label="Sonderzahlungen brutto bisher" type="number" min="0" max="1000000000" step="0.01" required
-                value={value.specialGross} onChange={(event) => change("specialGross", event.target.value)} />
-            </label>
-            <label className="space-y-2 text-sm">Geplante zusätzliche Sonderzahlung (€)
-              <Input aria-label="Geplante Sonderzahlung brutto" type="number" min="0" max="1000000000" step="0.01" required
-                value={value.plannedSpecialGross} onChange={(event) => change("plannedSpecialGross", event.target.value)} />
-            </label>
-            <label className="space-y-2 text-sm">Jahressechstel laut Abrechnung (€; optional)
-              <Input aria-label="Jahressechstel laut Abrechnung" type="number" min="0" max="1000000000" step="0.01"
-                value={value.reportedSixth} onChange={(event) => change("reportedSixth", event.target.value)} />
-            </label>
+            </Field>
           </div>
-          <p className="text-xs leading-relaxed text-muted-foreground">Brutto vor SV. Laufende Bezüge nur laut Sechstelbasis, ohne Sonderzahlungen oder steuerfreie Reisekosten; steuerpflichtiges Brutto kann abweichen. Sonderzahlungen nur nach § 67 Abs. 1/2 EStG, einschließlich tarifversteuerter Überhänge, ohne Abfertigungen oder anders geregelte Zahlungen. Ohne bisherige/geplante Sonderzahlung: jeweils 0.</p>
-          <label className="flex items-start gap-3 text-sm">
+          <label className="flex items-start gap-3 rounded-2xl border border-border/70 p-4 text-sm">
             <input type="checkbox" className="mt-1 size-4 accent-primary" checked={value.monthlyPayroll}
               onChange={(event) => setValue({ ...value, monthlyPayroll: event.target.checked })} />
             <span>Monatliche Standardabrechnung bestätigt, keine ungeklärten Sonderfälle.</span>
           </label>
           <p className="text-xs leading-relaxed text-muted-foreground">Kalendermonate seit Jänner zählen auch bei späterem Eintritt. Abrechnungsmonat und kumuliertes Brutto müssen zusammenpassen. Bei untermonatigem Austritt, tagesweiser Abrechnung, ungeklärten Vorbezügen oder anderen Sonderfällen den Abrechnungswert übernehmen; dieser hat Vorrang. BUAG/Jahreszwölftel wird nicht berechnet.</p>
-          {!parsed.success && <p role="status" className="text-xs text-muted-foreground">{parsed.error.issues.find((issue) => issue.code === "custom")?.message ??
-            "Bruttobeträge mit höchstens zwei Nachkommastellen eingeben; geplante Zahlung ggf. 0."}</p>}
-          {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
-        </DialogBody>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>Abbrechen</Button>
-          <Button type="submit" disabled={!parsed.success || !!storageError}>Bruttowerte speichern</Button>
-        </DialogFooter>
-      </DialogForm>
-    </DialogContent>
+        </DialogStep>
+        <DialogStep id="gross" title="Bruttowerte">
+          <div className="grid gap-5 sm:grid-cols-2">
+            {money("regularGross", "Laufendes Brutto seit Jänner", "Laufendes Brutto seit Jänner")}
+            {money("specialGross", "Sonderzahlungen brutto bisher", "Sechstelrelevante Sonderzahlungen bisher")}
+            {money("plannedSpecialGross", "Geplante Sonderzahlung brutto", "Geplante zusätzliche Sonderzahlung")}
+            {money("reportedSixth", "Jahressechstel laut Abrechnung", "Jahressechstel laut Abrechnung", true)}
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">Brutto vor SV. Laufende Bezüge nur laut Sechstelbasis, ohne Sonderzahlungen oder steuerfreie Reisekosten; steuerpflichtiges Brutto kann abweichen. Sonderzahlungen nur nach § 67 Abs. 1/2 EStG, einschließlich tarifversteuerter Überhänge, ohne Abfertigungen oder anders geregelte Zahlungen. Ohne bisherige/geplante Sonderzahlung: jeweils 0.</p>
+          {hint && <p role="status" className="text-xs text-muted-foreground">{hint}</p>}
+        </DialogStep>
+      </DialogSteps>
+    </PremiumDialogContent>
   </Dialog>;
 }
 

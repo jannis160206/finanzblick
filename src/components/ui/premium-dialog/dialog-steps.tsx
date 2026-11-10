@@ -4,7 +4,7 @@ import { Children, isValidElement, useEffect, useId, useLayoutEffect, useRef, us
 import { AnimatePresence } from "motion/react";
 import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button, DialogFooterButtonContext } from "@/components/ui/button";
-import { DialogClose } from "@/components/ui/dialog";
+import { DialogClose } from "@/components/ui/dialog-base";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import { cn } from "@/lib/utils";
 import { MotionBox, stepVariants } from "./motion";
@@ -33,6 +33,8 @@ type DialogStepsProps = {
   /** Editing an existing entry: every step can be opened and saving is possible at any time. */
   editing?: boolean;
   disabled?: boolean;
+  /** Disables only the final save (not "Weiter"), e.g. until a calculation basis is complete. */
+  submitDisabled?: boolean;
   /** General message above the buttons, e.g. a storage error. */
   message?: ReactNode;
   initialStep?: string;
@@ -50,7 +52,7 @@ function focusInside(container: HTMLElement | null, selector: string) {
 
 export function DialogSteps({
   children, mode = "auto", onComplete, submitLabel = "Speichern", cancelLabel = "Abbrechen", editing = false, disabled = false,
-  message, initialStep, onStepChange, className,
+  submitDisabled = false, message, initialStep, onStepChange, className,
 }: DialogStepsProps) {
   const steps = Children.toArray(children).filter((child): child is ReactElement<DialogStepProps> => isValidElement(child) && child.type === DialogStep)
     .map((child) => child.props);
@@ -122,7 +124,9 @@ export function DialogSteps({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (disabled) return;
-    if (layout === "single" || editing || last) completeAll();
+    const final = layout === "single" || editing || last;
+    if (final && submitDisabled) return;
+    if (final) completeAll();
     else goTo(index + 1);
   }
 
@@ -151,15 +155,15 @@ export function DialogSteps({
       </div>
       {message && <div className="shrink-0 px-6 pb-3 sm:px-8">{message}</div>}
       <StepFooter
-        stepped={stepped} index={index} last={last} editing={editing} disabled={disabled}
+        stepped={stepped} index={index} last={last} editing={editing} disabled={disabled} submitDisabled={submitDisabled}
         submitLabel={submitLabel} cancelLabel={cancelLabel} onBack={() => goTo(index - 1)} onNext={() => goTo(index + 1)} />
       {stepped && current && <p className="sr-only" aria-live="polite">Schritt {index + 1} von {steps.length}: {current.title}</p>}
     </form>
   );
 }
 
-function StepFooter({ stepped, index, last, editing, disabled, submitLabel, cancelLabel, onBack, onNext }: {
-  stepped: boolean; index: number; last: boolean; editing: boolean; disabled: boolean; submitLabel: string; cancelLabel: string;
+function StepFooter({ stepped, index, last, editing, disabled, submitDisabled, submitLabel, cancelLabel, onBack, onNext }: {
+  stepped: boolean; index: number; last: boolean; editing: boolean; disabled: boolean; submitDisabled: boolean; submitLabel: string; cancelLabel: string;
   onBack: () => void; onNext: () => void;
 }) {
   const { presentation } = usePremiumDialog();
@@ -180,7 +184,7 @@ function StepFooter({ stepped, index, last, editing, disabled, submitLabel, canc
           {stepped && editing && !last && (
             <Button type="button" variant="outline" onClick={onNext}>Weiter<ChevronRight aria-hidden="true" /></Button>
           )}
-          <Button type="submit" disabled={disabled} className="min-w-28">
+          <Button type="submit" disabled={disabled || (primary !== "Weiter" && submitDisabled)} className="min-w-28">
             {primary}{primary === "Weiter" && <ChevronRight aria-hidden="true" />}
           </Button>
         </div>

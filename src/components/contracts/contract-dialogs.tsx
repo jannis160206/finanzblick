@@ -8,14 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ContractMark, contractTypeLabel } from "@/components/contracts/contract-visuals";
+import { Field } from "@/components/ui/premium-dialog";
 import { contractNotice } from "@/lib/contract-types";
 import { daysBetween, intervalLabel, noticeLabel, type Contract } from "@/lib/contracts";
 import { currency, dateLabel } from "@/lib/format";
 import type { ContractOverride } from "@/lib/types";
 
 export type ContractPatch = Partial<Omit<ContractOverride, "id" | "updatedAt">>;
-
-const fieldClass = "block text-sm font-medium";
 
 export function ContractCancelDialog({ contract, today, disabled, onClose, onConfirm }: {
   contract: Contract | null;
@@ -34,9 +33,9 @@ export function ContractCancelDialog({ contract, today, disabled, onClose, onCon
           <DialogDescription>{contract?.name} zählt ab dem Enddatum nicht mehr zu deinen laufenden Kosten und zur Prognose.</DialogDescription>
         </DialogHeader>
         <DialogBody>
-          <label className={fieldClass}>Vertrag endet am
-            <Input type="date" className="mt-2" value={value} onChange={(event) => setEndDate(event.target.value)} />
-          </label>
+          <Field label="Vertrag endet am" error={/^\d{4}-\d{2}-\d{2}$/.test(value) ? null : "Bitte ein gültiges Enddatum wählen."}>
+            <Input type="date" value={value} onChange={(event) => setEndDate(event.target.value)} />
+          </Field>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => { setEndDate(""); onClose(); }}>Abbrechen</Button>

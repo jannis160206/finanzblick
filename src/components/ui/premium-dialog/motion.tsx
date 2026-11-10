@@ -32,6 +32,10 @@ function snapshot(): MotionMode {
   return "full";
 }
 
+/** Whether dialogs animate at all; static per environment (never in tests), so it needs no subscription. */
+export const motionAvailable = () =>
+  process.env.NODE_ENV !== "test" && typeof window !== "undefined" && typeof window.matchMedia === "function";
+
 export function useMotionMode(): MotionMode {
   return useSyncExternalStore(subscribe, snapshot, () => "none");
 }

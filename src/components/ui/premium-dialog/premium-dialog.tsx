@@ -5,13 +5,13 @@ import { AnimatePresence } from "motion/react";
 import { XIcon, type LucideIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { Button, DialogFooterButtonContext } from "@/components/ui/button";
-import { Dialog, DialogClose, DialogDescription, DialogForm, DialogTitle, DialogTrigger, useDialogState } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogDescription, DialogForm, DialogTitle, DialogTrigger, useDialogState } from "@/components/ui/dialog-base";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import { useNativeSelectBoundary } from "@/components/ui/use-native-select-boundary";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { cn } from "@/lib/utils";
 import { SheetSurface } from "./animated-sheet";
-import { MotionBox, contentVariants, exitTween, itemVariants, staggerVariants, useMotionMode, type MotionMode } from "./motion";
+import { MotionBox, contentVariants, exitTween, itemVariants, motionAvailable, staggerVariants, useMotionMode, type MotionMode } from "./motion";
 
 export type PremiumDialogSize = "sm" | "md" | "lg" | "xl";
 type Presentation = "modal" | "sheet";
@@ -59,26 +59,33 @@ type ContentProps = Omit<ComponentProps<typeof DialogPrimitive.Content>, "asChil
   financial?: boolean;
   /** Kept on the element for styling hooks and tests (e.g. "confirmation"). */
   variant?: string;
+  /** Classes for the bottom sheet instead of `className` (e.g. without modal widths). */
+  sheetClassName?: string;
 };
 
 export function PremiumDialogContent({ presentation = "auto", ...props }: ContentProps) {
-  useNativeSelectBoundary();
   const state = useDialogState();
   const { locked } = useSecurityMode();
-  const compact = useCompactLayout();
-  const mode = useMotionMode();
   const open = state?.open ?? true;
   if (locked) return null;
+  const presenter = <PremiumPresenter key="surface" presentation={presentation} requestClose={() => state?.requestClose()} {...props} />;
+  if (!motionAvailable()) return open ? presenter : null;
+  return <AnimatePresence>{open && presenter}</AnimatePresence>;
+}
+
+// Mounted only while open, so the many closed dialogs of a page never subscribe to media queries.
+function PremiumPresenter({ presentation = "auto", sheetClassName, className, ...props }: ContentProps & { requestClose: () => void }) {
+  useNativeSelectBoundary();
+  const compact = useCompactLayout();
+  const mode = useMotionMode();
   const kind: Presentation = presentation === "auto" ? (compact ? "sheet" : "modal") : presentation;
-  const surface = <PremiumSurface key={kind} kind={kind} mode={mode} requestClose={() => state?.requestClose()} {...props} />;
-  if (mode === "none") return open ? surface : null;
-  return <AnimatePresence>{open && surface}</AnimatePresence>;
+  return <PremiumSurface key={kind} kind={kind} mode={mode} className={kind === "sheet" ? sheetClassName ?? className : className} {...props} />;
 }
 
 function PremiumSurface({
   kind, mode, requestClose, size = "md", snapPoints, preview, dirty = false, showCloseButton = true, financial = true, variant = "premium",
   className, children, onEscapeKeyDown, onInteractOutside, onCloseAutoFocus, ...props
-}: Omit<ContentProps, "presentation"> & { kind: Presentation; mode: MotionMode; requestClose: () => void }) {
+}: Omit<ContentProps, "presentation" | "sheetClassName"> & { kind: Presentation; mode: MotionMode; requestClose: () => void }) {
   const [stepped, setStepped] = useState(false);
   // Dialogs opened without a DialogTrigger still return focus to where the user was.
   const [returnTo] = useState(() => (typeof document === "undefined" ? null : document.activeElement as HTMLElement | null));

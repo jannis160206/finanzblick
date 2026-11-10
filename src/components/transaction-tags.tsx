@@ -5,7 +5,8 @@ import { Tag, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Field } from "@/components/ui/premium-dialog";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { allTags, setTag, tagSummaries } from "@/lib/tags";
@@ -33,10 +34,11 @@ export function TagDialog({ ids, onClose }: { ids: string[]; onClose: () => void
           <DialogTitle>Tag vergeben</DialogTitle>
           <DialogDescription>Fasst Buchungen über Kategorien hinweg zusammen, z. B. eine Reise „Malaga 2026“.</DialogDescription>
         </DialogHeader>
-        <form id="tag-form" onSubmit={(event) => { event.preventDefault(); apply(value); }} className="space-y-3">
-          <label className="block text-sm font-medium">Tag
-            <Input className="mt-2" autoFocus list="known-tags" maxLength={40} value={value} onChange={(event) => setValue(event.target.value)} placeholder="z. B. Malaga 2026" />
-          </label>
+        <form id="tag-form" onSubmit={(event) => { event.preventDefault(); apply(value); }} className="flex min-h-0 flex-1 flex-col">
+          <DialogBody className="space-y-4">
+          <Field label="Tag">
+            <Input autoFocus list="known-tags" maxLength={40} value={value} onChange={(event) => setValue(event.target.value)} placeholder="z. B. Malaga 2026" />
+          </Field>
           <datalist id="known-tags">{known.map((tag) => <option key={tag} value={tag} />)}</datalist>
           {known.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="Vorhandene Tags">
             {known.map((tag) => <button key={tag} type="button" onClick={() => apply(tag)}
@@ -47,6 +49,7 @@ export function TagDialog({ ids, onClose }: { ids: string[]; onClose: () => void
             {selectedTags.map((tag) => <button key={tag} type="button" onClick={() => apply(tag, true)} aria-label={`Tag ${tag} entfernen`}
               className="inline-flex min-h-8 items-center gap-1 rounded-full bg-primary/10 px-3 text-xs text-primary hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring">#{tag}<X aria-hidden="true" className="size-3" /></button>)}
           </div>}
+          </DialogBody>
         </form>
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>Abbrechen</Button>

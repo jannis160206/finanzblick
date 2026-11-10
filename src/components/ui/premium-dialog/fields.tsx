@@ -31,7 +31,7 @@ export function Field({ label, hint, error, optional = false, group = false, cla
   const errorId = `${id}-error`;
   const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ") || undefined;
   const labelClass = "flex items-baseline justify-between gap-2 text-sm font-medium";
-  const caption = <>{label}{optional && <span className="text-xs font-normal text-muted-foreground">optional</span>}</>;
+  const caption = <>{label}{optional && <span className="text-xs font-normal text-muted-foreground">{" "}optional</span>}</>;
   return (
     <MotionBox mode={mode} variants={itemVariants(mode)} className={cn("space-y-2", className)} data-field>
       {group ? <p id={`${id}-label`} className={labelClass}>{caption}</p> : <label htmlFor={id} className={labelClass}>{caption}</label>}

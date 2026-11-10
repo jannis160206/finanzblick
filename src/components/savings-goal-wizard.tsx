@@ -363,7 +363,7 @@ function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, onAm
   return (
     <div className="space-y-3">
       <div aria-live="polite" className={cn("flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl px-4 py-3 text-sm",
-        plan.missing > 0 ? "bg-warning-soft text-warning-foreground" : "bg-success-soft text-success")}>
+        plan.missing > 0 ? "bg-warning-soft text-warning" : "bg-success-soft text-success")}>
         {plan.missing > 0 ? <TriangleAlert aria-hidden="true" className="size-4 shrink-0" /> : <Check aria-hidden="true" className="size-4 shrink-0" />}
         <span className="min-w-0 flex-1">
           {plan.missing > 0

@@ -40,7 +40,7 @@ describe("shared button", () => {
 });
 
 describe("shared dialog", () => {
-  it.each(["default", "confirmation", "work"] as const)("opens %s with scale/fade and a borderless responsive footer", (variant) => {
+  it.each(["default", "confirmation", "work"] as const)("opens %s as a centered premium modal with a borderless responsive footer", (variant) => {
     function Harness() {
       const [open, setOpen] = useState(false);
       return <Dialog open={open} onOpenChange={setOpen}>
@@ -56,8 +56,11 @@ describe("shared dialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open" }));
     const dialog = screen.getByRole("dialog", { name: "Details" });
     expect(dialog.getAttribute("data-state")).toBe("open");
-    for (const value of ["zoom-in-95", "zoom-out-95", "fade-in-0", "duration-200", "ease-out", "rounded-2xl"])
-      expect(dialog.className).toContain(value);
+    // Scale and fade come from the shared motion springs (no animation under test); the surface is a centered modal.
+    expect(dialog.getAttribute("data-presentation")).toBe("modal");
+    expect(dialog.getAttribute("data-variant")).toBe(variant);
+    expect(dialog.getAttribute("data-size")).toBe({ default: "md", confirmation: "sm", work: "xl" }[variant]);
+    expect(dialog.className).toContain("rounded-3xl");
     expect(dialog.className).not.toContain("slide-");
     const overlay = view.baseElement.querySelector('[data-slot="dialog-overlay"]')!;
     expect(overlay.className).toContain("bg-black/50");

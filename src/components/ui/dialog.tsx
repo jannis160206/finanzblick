@@ -6,93 +6,75 @@ import { XIcon } from "lucide-react"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { Button, DialogFooterButtonContext } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogClose,
+  DialogDescription,
+  DialogForm,
+  DialogOverlay,
+  DialogPortal,
+  DialogTitle,
+  DialogTrigger,
+  useDialogState,
+} from "@/components/ui/dialog-base"
+import { PremiumDialogContent, usePremiumDialog, type PremiumDialogSize } from "@/components/ui/premium-dialog/premium-dialog"
 import { useSecurityMode } from "@/components/security-mode-provider"
 import { useNativeSelectBoundary } from "@/components/ui/use-native-select-boundary"
 
-type DialogState = {
-  /** Effective open state after the privacy lock. */
-  open: boolean
-  locked: boolean
-  /** Closes like a dismissal (Escape, outside click), including the privacy-lock guard. */
-  requestClose: () => void
-}
-const DialogStateContext = React.createContext<DialogState | null>(null)
+type DialogVariant = "default" | "confirmation" | "work" | "navigation" | "panel" | "command"
 
-function useDialogState() {
-  return React.useContext(DialogStateContext)
-}
+const premiumSize: Record<"default" | "confirmation" | "work", PremiumDialogSize> = { default: "md", confirmation: "sm", work: "xl" }
+// Sizes a caller sets for the centered modal; a bottom sheet always spans the screen.
+const modalOnly = /^(?:[a-z0-9-]+:)*(?:max-w|max-h|min-h|w|h)-/
 
-function Dialog({
-  open,
-  defaultOpen = false,
-  onOpenChange,
-  allowWhenLocked = false,
-  children,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Root> & { allowWhenLocked?: boolean }) {
-  const { locked } = useSecurityMode()
-  const [internalOpen, setInternalOpen] = React.useState(defaultOpen)
-  const effectiveOpen = (allowWhenLocked || !locked) && (open ?? internalOpen)
-  const change = (next: boolean) => {
-    // CSS locks synchronously, before React updates the event closure.
-    if (!allowWhenLocked && (locked || document.documentElement.dataset.securityMode === "locked")) return
-    setInternalOpen(next); onOpenChange?.(next)
-  }
-  return <DialogPrimitive.Root
-    data-slot="dialog"
-    open={effectiveOpen}
-    onOpenChange={change}
-    {...props}
-  >
-    <DialogStateContext.Provider value={{ open: effectiveOpen, locked, requestClose: () => change(false) }}>{children}</DialogStateContext.Provider>
-  </DialogPrimitive.Root>
-}
-
-function DialogTrigger({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Trigger>) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />
-}
-
-function DialogPortal({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Portal>) {
-  return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />
-}
-
-function DialogClose({
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Close>) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />
-}
-
-function DialogOverlay({
+/**
+ * Input, confirmation and work dialogs open as the premium dialog (centered modal, bottom sheet below 768 px);
+ * navigation, assistant panel and command palette stay drawers.
+ */
+function DialogContent({
+  variant = "default",
   className,
-  financial = true,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay> & { financial?: boolean }) {
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Content>, "forceMount"> & {
+  showCloseButton?: boolean
+  variant?: DialogVariant
+}) {
+  if (variant === "navigation" || variant === "panel" || variant === "command") {
+    return <DrawerContent variant={variant} className={className} {...props} />
+  }
+  return <InputDialogContent variant={variant} className={className} {...props} />
+}
+
+function InputDialogContent({
+  variant,
+  className,
+  ...props
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Content>, "forceMount"> & {
+  showCloseButton?: boolean
+  variant: "default" | "confirmation" | "work"
+}) {
+  const sheetClass = className?.split(/\s+/).filter((token) => token && !modalOnly.test(token)).join(" ")
   return (
-    <DialogPrimitive.Overlay
-      data-slot="dialog-overlay"
-      data-financial-overlay={financial ? "" : undefined}
-      className={cn(
-        "fixed inset-0 z-50 bg-black/50 backdrop-blur-md duration-200 ease-out motion-reduce:animate-none! data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
-        className
-      )}
+    <PremiumDialogContent
+      size={premiumSize[variant]}
+      variant={variant}
+      snapPoints={variant === "work" ? [0.92] : undefined}
+      className={className}
+      sheetClassName={sheetClass || undefined}
       {...props}
     />
   )
 }
 
-function DialogContent({
+function DrawerContent({
   className,
   children,
   showCloseButton = true,
-  variant = "default",
+  variant,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+}: Omit<React.ComponentProps<typeof DialogPrimitive.Content>, "forceMount"> & {
   showCloseButton?: boolean
-  variant?: "default" | "confirmation" | "work" | "navigation" | "panel" | "command"
+  variant: "navigation" | "panel" | "command"
 }) {
   useNativeSelectBoundary()
   const { locked } = useSecurityMode()
@@ -112,12 +94,7 @@ function DialogContent({
             ? "inset-y-0 left-0 h-dvh w-[min(320px,calc(100vw-3rem))] rounded-r-2xl data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left"
             : variant === "panel"
             ? "inset-y-0 right-0 h-dvh w-[min(560px,100vw)] rounded-l-2xl data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right"
-            : variant === "command"
-            ? "top-3 left-1/2 max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-2xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:top-[12dvh]"
-            : "top-1/2 left-1/2 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 rounded-2xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
-          variant === "default" && "max-w-xl",
-          variant === "confirmation" && "max-w-md",
-          variant === "work" && "max-w-4xl",
+            : "top-3 left-1/2 max-h-[calc(100dvh-1.5rem)] w-[calc(100%-1.5rem)] max-w-xl -translate-x-1/2 rounded-2xl data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:top-[12dvh]",
           className
         )}
         {...props}
@@ -138,10 +115,13 @@ function DialogContent({
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+  const { presentation } = usePremiumDialog()
+  const sheet = presentation === "sheet"
   return (
     <div
       data-slot="dialog-header"
-      className={cn("shrink-0 space-y-2 p-6 pr-18 text-left sm:p-8 sm:pr-20", className)}
+      data-sheet-drag={sheet ? "" : undefined}
+      className={cn("shrink-0 space-y-2 p-6 pr-18 text-left sm:p-8 sm:pr-20", sheet && "touch-none pt-1 select-none sm:pt-1", className)}
       {...props}
     />
   )
@@ -157,16 +137,6 @@ function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function DialogForm({ className, ...props }: React.ComponentProps<"form">) {
-  return (
-    <form
-      data-slot="dialog-form"
-      className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)}
-      {...props}
-    />
-  )
-}
-
 function DialogFooter({
   className,
   showCloseButton = false,
@@ -175,11 +145,13 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean
 }) {
+  const sheet = usePremiumDialog().presentation === "sheet"
   return (
     <div
       data-slot="dialog-footer"
       className={cn(
         "flex shrink-0 flex-col items-stretch justify-end gap-2 bg-muted/20 p-6 backdrop-blur-md sm:flex-row sm:flex-wrap sm:items-center sm:px-8",
+        sheet && "pb-[calc(1.5rem+var(--safe-bottom,0px))]",
         className
       )}
       {...props}
@@ -193,32 +165,6 @@ function DialogFooter({
         )}
       </DialogFooterButtonContext.Provider>
     </div>
-  )
-}
-
-function DialogTitle({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Title>) {
-  return (
-    <DialogPrimitive.Title
-      data-slot="dialog-title"
-      className={cn("text-xl leading-snug font-semibold tracking-tight", className)}
-      {...props}
-    />
-  )
-}
-
-function DialogDescription({
-  className,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Description>) {
-  return (
-    <DialogPrimitive.Description
-      data-slot="dialog-description"
-      className={cn("text-sm leading-relaxed text-muted-foreground", className)}
-      {...props}
-    />
   )
 }
 
