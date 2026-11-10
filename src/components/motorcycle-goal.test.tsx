@@ -81,14 +81,14 @@ describe("motorcycle overview and existing goal editor", () => {
       expect(calculateDashboard(state).nextTransfer).toBe(amount);
     },
   );
-  it("keeps the same goal and its opening and extras when saved in the existing editor", () => {
+  it("keeps the same goal and its opening and extras when saved in the existing editor", async () => {
     const read = mount(fixture(), true);
     const before = read().savingsGoals![0];
     const card = screen.getByRole("article", { name: "Sparziel Motorrad" });
     expect(card.textContent).toContain(`${currency(2445)} von ${currency(5400)}`);
     fireEvent.click(within(card).getByRole("button", { name: "Motorrad bearbeiten" }));
-    expect((screen.getByLabelText("Betrag") as HTMLInputElement).value).toBe("5400");
-    expect((screen.getByLabelText("Bis-Datum") as HTMLInputElement).value).toBe("2027-04-01");
+    expect(((await screen.findByLabelText("Zielbetrag")) as HTMLInputElement).value).toBe("5.400,00");
+    expect((screen.getByLabelText("Zieldatum") as HTMLInputElement).value).toBe("2027-04-01");
     fireEvent.click(screen.getByRole("button", { name: "Speichern" }));
     expect(read().savingsGoals).toEqual([before]);
   });

@@ -203,6 +203,17 @@ export function goalExtraIncome(goal: SavingsGoal, month: string): number {
   return goal.funding?.extras[month] ?? 0;
 }
 
+/** Plan rows funded from the monthly surplus; other rows are transfers from a pocket. */
+export const GOAL_SURPLUS = "Giro";
+
+/** Surplus rate a saved goal plan sets for the month, in cents; undefined outside the plan window. */
+export function plannedSurplusCents(goal: SavingsGoal, month: string): number | undefined {
+  const window = goal.funding?.window;
+  if (!goal.funding?.plan || !window || month < window.from || month > window.to) return undefined;
+  return goal.funding.plan.filter((row) => row.month === month && row.account === GOAL_SURPLUS)
+    .reduce((total, row) => total + cents(row.amount), 0);
+}
+
 export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: Record<string, number | null>, month: string) {
   let remaining = cents(surplus);
   const savings = Math.min(remaining, cents(SAVINGS_FLOOR));
@@ -225,7 +236,7 @@ export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: R
       : cents(goal.target - balance);
     const amount = goal.funding?.paused?.includes(month)
       ? 0
-      : Math.min(remaining, gap, goal.funding ? cents(goal.funding.monthly) : Infinity);
+      : Math.min(remaining, gap, goal.funding ? plannedSurplusCents(goal, month) ?? cents(goal.funding.monthly) : Infinity);
     // Earmarked extras are additional income, not another claim on normal salary.
     funding[goal.id] = amount / 100 + (outsideBikeWindow ? 0 : goalExtraIncome(goal, month));
     remaining -= amount;

@@ -331,6 +331,14 @@ export const settingsSchema = z
     path: ["asOf"],
   });
 export type Settings = z.infer<typeof settingsSchema>;
+const goalMonthSchema = z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/);
+export const goalPlanRowSchema = z.object({
+  month: goalMonthSchema,
+  account: z.string().trim().min(1).max(100),
+  amount: moneySchema.nonnegative(),
+  locked: z.boolean().optional(),
+}).strict();
+export type GoalPlanRow = z.infer<typeof goalPlanRowSchema>;
 export const savingsGoalSchema = z.object({
   id: z.string().min(1).max(100),
   name: z.string().trim().min(1, "Name erforderlich").max(80),
@@ -345,10 +353,23 @@ export const savingsGoalSchema = z.object({
   }).optional(),
   funding: z.object({
     monthly: moneySchema.nonnegative(),
-    extras: z.record(z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/), moneySchema.nonnegative()),
+    extras: z.record(goalMonthSchema, moneySchema.nonnegative()),
     // Months without the regular rate (extras still count), e.g. set via the finance assistant.
-    paused: z.array(z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/)).max(24).optional(),
+    paused: z.array(goalMonthSchema).max(24).optional(),
+    // Distribution from the goal dialog: "Giro" rows come from the monthly surplus, other rows are transfers from a pocket.
+    plan: z.array(goalPlanRowSchema).max(240).optional(),
+    // Months the plan decides; outside of it the monthly rate applies.
+    window: z.object({ from: goalMonthSchema, to: goalMonthSchema }).strict().optional(),
+    excluded: z.object({
+      months: z.array(goalMonthSchema).max(36).optional(),
+      accounts: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+    }).strict().optional(),
+    auto: z.boolean().optional(),
   }).optional(),
+  // "As soon as possible": the date is the month the plan reaches the target.
+  asap: z.boolean().optional(),
+  // Start capital moved over from another account when the goal was set up.
+  start: z.object({ amount: moneySchema.positive(), account: z.string().trim().min(1).max(100), date: dateSchema }).strict().optional(),
 });
 export type SavingsGoal = z.infer<typeof savingsGoalSchema>;
 export const pocketOpeningBalanceSchema = savingsGoalSchema.shape.openingBalance.unwrap().extend({

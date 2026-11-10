@@ -66,13 +66,14 @@ for (const width of [1440, 390]) {
     await page.getByRole("button", { name: "Sparziel hinzufügen" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Name", { exact: true }).fill(`Kamera ${width}`);
-    await dialog.getByLabel("Betrag", { exact: true }).fill("1200");
-    await dialog.getByLabel("Bis-Datum").fill("2027-04-01");
-    await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+    await dialog.getByLabel("Zielbetrag", { exact: true }).fill("1200");
+    await dialog.getByLabel("Zieldatum").fill("2027-04-01");
+    for (let step = 0; step < 4; step++) await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+    await dialog.getByRole("button", { name: "Sparziel anlegen", exact: true }).click();
     const goal = page.getByRole("article", { name: `Sparziel Kamera ${width}`, exact: true });
     await expect(goal.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
     await goal.getByRole("button", { name: `Kamera ${width} bearbeiten` }).click();
-    await dialog.getByLabel("Betrag", { exact: true }).fill("1500");
+    await dialog.getByLabel("Zielbetrag", { exact: true }).fill("1500");
     await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
     await expect(goal).toContainText("1.200,00");
     await expect(page.getByRole("region", { name: "Sicherung" }).getByRole("button", { name: "Exportieren" })).toBeVisible();

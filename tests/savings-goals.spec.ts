@@ -43,9 +43,16 @@ test("goals follow deadline order and removing the last goal preserves the ledge
   await page.getByRole("button", { name: "Sparziel hinzufügen" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name", { exact: true }).fill("Kamera");
-  await dialog.getByLabel("Betrag", { exact: true }).fill("300");
-  await dialog.getByLabel("Bis-Datum").fill("2026-10-01");
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await dialog.getByLabel("Zielbetrag", { exact: true }).fill("300");
+  await dialog.getByLabel("Zieldatum").fill("2026-10-01");
+  for (const step of ["Startkapital", "Konten", "Verteilung"]) {
+    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+    await expect(dialog.getByRole("group", { name: step, exact: true })).toBeVisible();
+  }
+  // Deadline order is the allocation without a plan, so this goal keeps the classic behavior.
+  await dialog.getByRole("switch", { name: /Automatisch planen/ }).click();
+  await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+  await dialog.getByRole("button", { name: "Sparziel anlegen", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await stored(page);
   await page.goto("/");
@@ -53,7 +60,7 @@ test("goals follow deadline order and removing the last goal preserves the ledge
   await expect(funding).toContainText(/Sparkonto.*180,00.*Kamera.*300,00.*Motorrad.*520,00/);
   await page.goto("/einstellungen");
   await page.getByRole("button", { name: "Kamera bearbeiten" }).click();
-  await dialog.getByLabel("Betrag", { exact: true }).fill("400");
+  await dialog.getByLabel("Zielbetrag", { exact: true }).fill("400");
   await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
   await stored(page);
   await page.reload();
@@ -104,9 +111,16 @@ test("an imported completed goal stays finished after a later withdrawal", async
   await page.getByRole("button", { name: "Sparziel hinzufügen" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Name", { exact: true }).fill("Kamera");
-  await dialog.getByLabel("Betrag", { exact: true }).fill("820");
-  await dialog.getByLabel("Bis-Datum").fill("2026-09-30");
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await dialog.getByLabel("Zielbetrag", { exact: true }).fill("820");
+  await dialog.getByLabel("Zieldatum").fill("2026-09-30");
+  for (const step of ["Startkapital", "Konten", "Verteilung"]) {
+    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+    await expect(dialog.getByRole("group", { name: step, exact: true })).toBeVisible();
+  }
+  // Deadline order is the allocation without a plan, so this goal keeps the classic behavior.
+  await dialog.getByRole("switch", { name: /Automatisch planen/ }).click();
+  await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+  await dialog.getByRole("button", { name: "Sparziel anlegen", exact: true }).click();
   await stored(page);
   await importTransfers(page, "Revolut\nKamera (EUR)\nDatum;Beschreibung;Geld ein-/ausgezahlt;Guthaben\n14.09.2026;Um EUR Kamera einzustecken;820,00;820,00");
   expect((await stored(page)).savingsGoals?.find((goal) => goal.name === "Kamera")?.completedAt).toBe("2026-09-14");

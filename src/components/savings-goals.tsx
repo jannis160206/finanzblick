@@ -1,24 +1,26 @@
 "use client";
 
 import { useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { CalendarDays, Check, MoreHorizontal, Pencil, Plus, Target, Trash2, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogBody, DialogContent, DialogFooter, DialogForm, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { savingsGoalSchema, type SavingsGoal } from "@/lib/types";
+import type { GoalSave } from "@/components/savings-goal-wizard";
+import type { SavingsGoal } from "@/lib/types";
 import { goalBalanceStatus, pocketKey, preserveGoalOpeningBalances, savingsGoals, vacationSavingPaused } from "@/lib/goals";
+import { withGoalPlan } from "@/lib/goal-planner";
 import { currency, dateLabel } from "@/lib/format";
+
+const SavingsGoalWizard = dynamic(() => import("@/components/savings-goal-wizard"), { ssr: false });
 
 export function SavingsGoals() {
   const { state, dashboard, update, storageError } = useFinance();
-  const [editing, setEditing] = useState<SavingsGoal | null>(null);
-  const [error, setError] = useState("");
-  const [errorField, setErrorField] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ goal: SavingsGoal; isNew: boolean; open: boolean; session: number } | null>(null);
   const [removing, setRemoving] = useState<SavingsGoal | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
@@ -28,7 +30,25 @@ export function SavingsGoals() {
   const allocationBlocked = "allocationBlocked" in dashboard.current && dashboard.current.allocationBlocked === true;
   function edit(goal: SavingsGoal, origin: "add" | "edit" | "menu" = "edit") {
     returnTarget.current = origin === "add" ? null : { id: goal.id, action: origin };
-    setError(""); setErrorField(null); setEditing({ ...goal });
+    setEditing((current) => ({ goal: { ...goal }, isNew: origin === "add", open: true, session: (current?.session ?? 0) + 1 }));
+  }
+  const closeEditor = () => setEditing((current) => current && { ...current, open: false });
+  function save({ goal, opening }: GoalSave) {
+    if (storageError || !editing) return;
+    const value = { ...goal };
+    const status = goalBalanceStatus(state, value, dashboard.actual);
+    if (status.amount !== null && value.target > status.amount && value.target !== goals.find((item) => item.id === value.id)?.target) delete value.completedAt;
+    // A documented start keeps a new pocket's balance known, so the plan can fund every goal (as with goals from the assistant).
+    if (editing.isNew && status.status === "unknown" && !value.openingBalance) value.openingBalance = { date: state.settings.asOf, amount: opening };
+    update((current) => {
+      const booked = withGoalPlan(current, value, savingsGoals(current).find((item) => item.id === value.id));
+      return { ...preserveGoalOpeningBalances(current), months: booked.months,
+        savingsGoals: [...savingsGoals(current).filter((item) => item.id !== value.id), booked.goal],
+        settings: pocketKey(booked.goal.pocket) === "motorrad" ? { ...current.settings, bikeTarget: booked.goal.target, bikePurchaseDate: booked.goal.date } : current.settings,
+      };
+    });
+    closeEditor();
+    toast.success("Sparziel gespeichert");
   }
   function restoreFocus() {
     const target = returnTarget.current;
@@ -97,59 +117,11 @@ export function SavingsGoals() {
         ? "Keine Sparziele. Überschuss ins Sparkonto."
         : "Keine Sparziele. Nach dem Sparkonto-Sockel geht der Rest an Urlaub."}</p>
       </FinancialData>}
-      <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}>
-        <DialogContent onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
-          <DialogHeader><DialogTitle>Sparziel {goals.some((goal) => goal.id === editing?.id) ? "bearbeiten" : "hinzufügen"}</DialogTitle><DialogDescription>Was möchtest du bis wann ansparen?</DialogDescription></DialogHeader>
-          {editing && <DialogForm noValidate onSubmit={(event) => {
-            event.preventDefault();
-            if (storageError) return;
-            const amountInput = event.currentTarget.elements.namedItem("target");
-            if (amountInput instanceof HTMLInputElement && amountInput.validity.stepMismatch) {
-              setErrorField("target");
-              setError("Bitte den Betrag mit höchstens zwei Nachkommastellen eingeben.");
-              amountInput.focus();
-              return;
-            }
-            const candidate = { ...editing, pocket: editing.pocket || editing.name.trim() };
-            const parsed = savingsGoalSchema.safeParse(candidate);
-            const taken = goals.some((goal) => goal.id !== candidate.id &&
-              [pocketKey(goal.name), pocketKey(goal.pocket)].some((key) => key === pocketKey(candidate.name) || key === pocketKey(candidate.pocket)));
-            if (!parsed.success || taken || ["sparkonto", "urlaub", "notgroschen"].includes(pocketKey(candidate.name))) {
-              const field = parsed.success ? "name" : String(parsed.error.issues[0].path[0]);
-              setErrorField(field);
-              setError(parsed.success
-                ? "Bitte einen eindeutigen Zielnamen verwenden, nicht Sparkonto, Urlaub oder Notgroschen."
-                : field === "date" ? "Bitte ein gültiges Bis-Datum angeben."
-                  : field === "target" ? "Bitte einen Betrag größer als 0 und höchstens 1.000.000.000 € eingeben."
-                    : "Bitte einen Zielnamen mit 1 bis 80 Zeichen eingeben.");
-              const input = event.currentTarget.elements.namedItem(field);
-              if (input instanceof HTMLElement) input.focus();
-              return;
-            }
-            setError("");
-            setErrorField(null);
-            const value = { ...parsed.data };
-            const balance = goalBalanceStatus(state, value, dashboard.actual).amount;
-            if (balance !== null && value.target > balance && value.target !== goals.find((goal) => goal.id === value.id)?.target) delete value.completedAt;
-            update((current) => ({ ...preserveGoalOpeningBalances(current),
-              savingsGoals: [...savingsGoals(current).filter((goal) => goal.id !== value.id), value],
-              settings: pocketKey(value.pocket) === "motorrad" ? { ...current.settings, bikeTarget: value.target, bikePurchaseDate: value.date } : current.settings,
-            }));
-            setEditing(null); toast.success("Sparziel gespeichert");
-          }}>
-            <DialogBody className="space-y-5">
-              <label className="block text-sm font-medium">Name<Input name="name" aria-label="Name" className="mt-2" autoFocus value={editing.name} maxLength={80} aria-invalid={errorField === "name"} aria-describedby={errorField === "name" ? "savings-goal-error" : undefined} onChange={(event) => { setEditing({ ...editing, name: event.target.value }); if (errorField === "name") { setError(""); setErrorField(null); } }} required /></label>
-              <div className="grid gap-5 sm:grid-cols-2">
-                <label className="block text-sm font-medium">Betrag (€)<Input name="target" aria-label="Betrag" className="mt-2" type="number" inputMode="decimal" min="0.01" max="1000000000" step="0.01" value={editing.target || ""} aria-invalid={errorField === "target"} aria-describedby={errorField === "target" ? "savings-goal-error" : undefined} onChange={(event) => { setEditing({ ...editing, target: Number(event.target.value) }); if (errorField === "target") { setError(""); setErrorField(null); } }} required /></label>
-                <label className="block text-sm font-medium">Bis-Datum<Input name="date" aria-label="Bis-Datum" className="mt-2" type="date" value={editing.date} aria-invalid={errorField === "date"} aria-describedby={errorField === "date" ? "savings-goal-error" : undefined} onChange={(event) => { setEditing({ ...editing, date: event.target.value }); if (errorField === "date") { setError(""); setErrorField(null); } }} required /></label>
-              </div>
-              {error && <p id="savings-goal-error" role="alert" className="text-sm text-destructive">{error}</p>}
-              {storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}
-            </DialogBody>
-            <DialogFooter><Button type="button" variant="outline" onClick={() => setEditing(null)}>Abbrechen</Button><Button type="submit" disabled={!!storageError}>Speichern</Button></DialogFooter>
-          </DialogForm>}
-        </DialogContent>
-      </Dialog>
+      {editing && (
+        <SavingsGoalWizard key={editing.session} open={editing.open} goal={editing.goal} isNew={editing.isNew} goals={goals} state={state} dashboard={dashboard}
+          disabled={!!storageError} storageError={storageError} onClose={closeEditor} onSave={save}
+          onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }} />
+      )}
       <Dialog open={!!removing} onOpenChange={(open) => { if (!open) setRemoving(null); }}>
         <DialogContent variant="confirmation" onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}>
           <DialogHeader><DialogTitle>Sparziel entfernen?</DialogTitle><DialogDescription>Buchungen und Kontostände bleiben erhalten.</DialogDescription></DialogHeader>

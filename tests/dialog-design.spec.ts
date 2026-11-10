@@ -173,18 +173,22 @@ test("goal and planning dialogs validate inputs, preserve drafts until save and 
   const add = page.getByRole("button", { name: "Sparziel hinzufügen", exact: true });
   await add.click();
   let dialog = page.getByRole("dialog", { name: "Sparziel hinzufügen", exact: true });
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
+  await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+  await expect(dialog.getByRole("alert").first()).toBeVisible();
   await expect(dialog.getByLabel("Name", { exact: true })).toBeFocused();
   await dialog.getByLabel("Name", { exact: true }).fill("Formziel");
-  await dialog.getByLabel("Betrag", { exact: true }).fill("123.456");
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("Nachkommastellen");
-  await dialog.getByLabel("Betrag", { exact: true }).fill("1200");
-  await dialog.getByLabel("Bis-Datum", { exact: true }).fill("2027-01-01");
-  await expect(dialog.getByRole("button", { name: "Speichern", exact: true })).toBeInViewport();
+  await dialog.getByLabel("Zielbetrag", { exact: true }).fill("0");
+  await dialog.getByLabel("Zieldatum", { exact: true }).fill("2027-01-01");
+  await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("größer als 0");
+  await dialog.getByLabel("Zielbetrag", { exact: true }).fill("1200");
+  for (const step of ["Startkapital", "Konten", "Verteilung", "Übersicht"]) {
+    await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
+    await expect(dialog.getByRole("group", { name: step, exact: true })).toBeVisible();
+  }
+  await expect(dialog.getByRole("button", { name: "Sparziel anlegen", exact: true })).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("goal-mobile.png") });
-  await dialog.getByRole("button", { name: "Speichern", exact: true }).click();
+  await dialog.getByRole("button", { name: "Sparziel anlegen", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(add).toBeFocused();
   await expect.poll(async () => (await stored(page)).savingsGoals?.find((goal) => goal.name === "Formziel")?.target).toBe(1200);

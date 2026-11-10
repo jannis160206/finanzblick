@@ -148,7 +148,7 @@ test("settings contain only rare controls and save actions only appear after cha
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Motorrad bearbeiten" }).click();
   const goal = page.getByRole("dialog");
-  await goal.getByLabel("Betrag", { exact: true }).fill("9000");
+  await goal.getByLabel("Zielbetrag", { exact: true }).fill("9000");
   await goal.getByRole("button", { name: "Speichern", exact: true }).click();
   await expect(goal).toHaveCount(0);
   await expect(
