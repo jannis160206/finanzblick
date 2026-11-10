@@ -95,5 +95,7 @@ it("moves the focus card, month select and month list to the clicked column", ()
   expect(within(rows[0]).getByText("belegt")).toBeTruthy();
   expect(within(rows[1]).getByText("fehlt")).toBeTruthy();
   expect(within(rows[5]).getByText("geschätzt")).toBeTruthy();
-  expect(within(rows[2]).getByText("Netto").nextElementSibling?.textContent).toBe("–nicht auf der Abrechnung");
+  // March prints no net: the tile falls back to a clearly labelled gross amount.
+  expect(within(rows[2]).getByRole("button").textContent?.replace(/\s/g, " ")).toContain("März 2026, brutto 4.000 €, belegt");
+  expect(within(rows[2]).getByText("brutto")).toBeTruthy();
 });

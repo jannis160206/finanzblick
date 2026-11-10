@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { payrollPresentation } from "./payroll-presentation";
+import {
+  payrollMonthTiles,
+  payrollPresentation,
+  payrollWholeMoney,
+} from "./payroll-presentation";
 import {
   payrollEmployer,
   payrollFixture,
@@ -11,6 +15,74 @@ import {
   analyzePayrollAutomatically,
   estimatePayrollBonus,
 } from "@/lib/payroll-analysis";
+import { employerPayslips } from "@/lib/payroll-overview";
+
+it("builds twelve month tiles from documented payslips and the unchanged forecast", () => {
+  const state = payrollFixture();
+  const payslips = state.payslips ?? [];
+  const entries = employerPayslips(payslips, 2026, payrollEmployer);
+  const view = payrollPresentation(payslips, 2026, payrollEmployer, state.settings.asOf);
+  const tiles = payrollMonthTiles(view, entries);
+  expect(tiles.map((tile) => tile.status)).toEqual([
+    ...Array(9).fill("actual"),
+    "forecast",
+    "forecast",
+    "forecast",
+  ]);
+  expect(tiles.map((tile) => tile.label).slice(0, 2)).toEqual(["Jänner 2026", "Februar 2026"]);
+  // The fixture prints no net amount, so documented months fall back to gross.
+  expect(tiles[5]).toEqual({
+    month: 6,
+    label: "Juni 2026",
+    status: "actual",
+    special: true,
+    headline: { metric: "gross", value: 7000 },
+    details: {
+      kind: "actual",
+      net: undefined,
+      regularGross: 4000,
+      specialGross: 3000,
+      tax: 500,
+      sv: 1232.1,
+      sixth: undefined,
+    },
+  });
+  expect(tiles[8].details).toMatchObject({ kind: "actual", sixth: view.actual?.sixth });
+  const november = view.analysis.forecast.months.find((month) => month.month === 11)!;
+  expect(tiles[10]).toEqual({
+    month: 11,
+    label: "November 2026",
+    status: "forecast",
+    special: true,
+    headline: { metric: "gross", value: november.regularGross + november.specialGross },
+    details: {
+      kind: "forecast",
+      regularGross: november.regularGross,
+      specialGross: november.specialGross,
+      sixth: view.analysis.sixthEstimates.find((month) => month.month === 11),
+    },
+  });
+  expect(tiles[9]).toMatchObject({ special: false, details: { specialGross: 0 } });
+});
+
+it("prefers printed net, keeps gaps unopenable and the special-payment model unknown without a base salary", () => {
+  const base = payrollFixture().payslips![0];
+  const entries = [{ ...base, netPay: 2700 }, { ...base, month: 3, baseSalary: undefined }];
+  const view = payrollPresentation(entries, 2026, payrollEmployer, "2026-04-08");
+  const tiles = payrollMonthTiles(view, entries);
+  expect(tiles[0].headline).toEqual({ metric: "net", value: 2700 });
+  expect(tiles[1]).toEqual({ month: 2, label: "Februar 2026", status: "missing", special: false });
+  expect(view.analysis.hasSpecialPaymentModel).toBe(false);
+  expect(tiles[3]).toMatchObject({ status: "forecast", details: { kind: "forecast", specialGross: undefined } });
+  expect(payrollMonthTiles(view, [])).toEqual(
+    Array.from({ length: 12 }, (_, index) => expect.objectContaining({ status: "open", month: index + 1 })),
+  );
+});
+
+it("rounds compact tile amounts to whole euros", () => {
+  expect(payrollWholeMoney(10039.5).replace(/\s/g, " ")).toBe("10.040 €");
+  expect(payrollWholeMoney(1_000_000_000).replace(/\s/g, " ")).toBe("1.000.000.000 €");
+});
 
 it("preserves the existing automatic model and selects the next payment from the as-of month", () => {
   const state = payrollFixture();

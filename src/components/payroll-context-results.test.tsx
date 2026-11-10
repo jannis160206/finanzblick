@@ -27,7 +27,7 @@ it.each([
   expect(within(result).getByRole("status").textContent).toContain(message);
   expect(within(result).getByText("Steuer- und Nettoprognose nicht verfügbar")).toBeTruthy();
   expect(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }).textContent).toContain("6.000");
-  expect(screen.getByText("Laut Lohnabrechnung")).toBeTruthy();
+  expect(screen.getByText("laut Abrechnung")).toBeTruthy();
   expect(screen.queryByText("Geschätzter Auszahlungsanteil netto")).toBeNull();
   expect(screen.queryByText("Von 1.000 € bleiben netto")).toBeNull();
   expect(screen.queryByRole("spinbutton")).toBeNull();

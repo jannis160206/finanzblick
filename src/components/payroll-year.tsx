@@ -111,7 +111,7 @@ export function PayrollYearCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5 pt-4">
-        <FinancialData as="dl" className="grid grid-cols-2 gap-x-4 gap-y-4">
+        <FinancialData as="dl" className="grid grid-cols-2 gap-x-4 gap-y-4 md:grid-cols-4">
           <Figure label="Brutto" total={totals.gross.months ? totals.gross : undefined} months={totals.months} />
           <Figure label="Netto" total={totals.net} months={totals.months} />
           <Figure label="Lohnsteuer" total={totals.tax} months={totals.months} />

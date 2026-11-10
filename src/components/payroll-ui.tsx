@@ -1,33 +1,43 @@
 import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
-import { FinancialData } from "@/components/financial-data";
+import { payrollStatusLabel, type PayrollMonthStatus } from "@/components/payroll-presentation";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-export function PayrollFigures({
-  figures,
-  className,
-}: {
-  figures: { label: string; value: string }[];
-  className?: string;
-}) {
+// Status is never color alone: every state has its own shape and a text label next to it (or for screen readers).
+const statusDot: Record<PayrollMonthStatus, string> = {
+  actual: "rounded-full bg-success",
+  forecast: "rounded-full border-[1.5px] border-info",
+  missing: "rotate-45 rounded-[1px] bg-warning",
+  open: "rounded-full border border-dashed border-muted-foreground",
+};
+const statusBadge = {
+  actual: "success",
+  forecast: "info",
+  missing: "warning",
+  open: "secondary",
+} as const;
+
+export function PayrollStatusDot({ status, className }: { status: PayrollMonthStatus; className?: string }) {
+  return <span aria-hidden="true" className={cn("inline-block size-2 shrink-0", statusDot[status], className)} />;
+}
+
+export function PayrollStatusBadge({ status, className }: { status: PayrollMonthStatus; className?: string }) {
   return (
-    <FinancialData as="dl" className={cn("divide-y divide-border/60", className)}>
-      {figures.map(({ label, value }, index) => {
-        const open = value === "Noch offen";
-        return (
-          <div key={label} className="flex min-h-11 min-w-0 items-center justify-between gap-4 py-2">
-            <dt className="min-w-0 text-sm leading-snug text-muted-foreground">
-              {label}
-            </dt>
-            <dd className={cn("max-w-[55%] shrink-0 break-words text-right tabular-nums",
-              open ? "text-xs text-muted-foreground"
-                : index === 0 ? "amount text-lg" : "text-sm font-semibold")}>
-              {value}
-            </dd>
-          </div>
-        );
-      })}
-    </FinancialData>
+    <Badge variant={statusBadge[status]} className={cn("gap-1.5", className)}>
+      <PayrollStatusDot status={status} className="size-1.5" />
+      {payrollStatusLabel[status]}
+    </Badge>
+  );
+}
+
+/** Short visible label with the full wording for screen readers (and stable test hooks). */
+export function PayrollLabel({ short, full }: { short: ReactNode; full: string }) {
+  return (
+    <>
+      <span aria-hidden="true">{short}</span>
+      <span className="sr-only">{full}</span>
+    </>
   );
 }
 

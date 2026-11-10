@@ -156,17 +156,17 @@ function PayrollWorkspace() {
         {focusEntry ? (
           <>
             <PayrollFocusCard entry={focusEntry} payslips={payslips} />
-            <div className="grid gap-5 lg:grid-cols-2">
-              <PayrollYearCard
-                year={year}
-                entries={entries}
-                forecast={view.analysis.forecast.months}
-                selectedMonth={focusEntry.month}
-                onSelectMonth={selectMonth}
-              />
-              <PayrollResults view={view} />
-            </div>
-            <PayrollMonths view={view} entries={entries} selectedMonth={focusEntry.month} />
+            <PayrollYearCard
+              year={year}
+              entries={entries}
+              forecast={view.analysis.forecast.months}
+              selectedMonth={focusEntry.month}
+              onSelectMonth={selectMonth}
+            />
+            <PayrollResults view={view}>
+              {/* Keyed by scope so an opened month never carries over to another year or employer. */}
+              <PayrollMonths key={scope} view={view} entries={entries} selectedMonth={focusEntry.month} />
+            </PayrollResults>
           </>
         ) : (
           <section
@@ -184,7 +184,6 @@ function PayrollWorkspace() {
             </p>
           </section>
         )}
-        {/* Same tree position in both layouts, so an import's report survives the switch from the empty state. */}
         <PayslipImportPanel year={year} employer={employer} />
         <TaxFolderPanel year={year} />
       </div>

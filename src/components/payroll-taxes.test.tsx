@@ -80,11 +80,15 @@ it("shows additional gross bonus room with the isolated tariff example collapsed
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(moneyText(2000))).toBeTruthy();
   expect(bonus.getByText(/Auszahlung im November 2026/)).toBeTruthy();
-  expect(bonus.getByText(/Geplante Sonderzahlungen bereits reserviert:/).textContent).toContain(currency(3000));
+  expect(bonus.getByText("Geplante Sonderzahlungen").parentElement?.textContent).toContain(currency(3000));
   const example = within(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }));
-  expect(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }).closest("details")?.open).toBe(false);
-  fireEvent.click(bonus.getByText("Steuerbeispiel für 1.000 €"));
-  expect(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }).closest("details")?.open).toBe(true);
+  const disclosure = bonus.getByRole<HTMLDetailsElement>("group", { name: "Steuerbeispiel" });
+  expect(bonus.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }).closest("details")).toBe(disclosure);
+  expect(disclosure.open).toBe(false);
+  const summary = disclosure.querySelector("summary")!;
+  expect(summary.textContent?.replace(/\s/g, " ")).toBe(`+${moneyText(1000)} bruttoergibt${moneyText(497.58)} netto·${moneyText(331.72)} Steuer`);
+  fireEvent.click(summary);
+  expect(disclosure.open).toBe(true);
   expect(example.getByText("40 %")).toBeTruthy();
   for (const value of [170.7, 331.72, 502.42, 497.58]) expect(example.getByText(moneyText(value))).toBeTruthy();
   expectNoManualInputs();
@@ -138,10 +142,14 @@ it("automatically imports selected PDFs without a form and keeps bank data untou
   const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
   expect(actual.getAllByText(moneyText(6000)).length).toBeGreaterThan(0);
   expect(actual.getByText(`Stand: ${monthLabel("2026-01")}`)).toBeTruthy();
-  expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(false);
-  fireEvent.click(screen.getByText("Monatliche Prognose anzeigen"));
-  expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" }).closest("details")?.open).toBe(true);
-  expect(screen.getByRole("region", { name: "Monatliche Gehaltsprognose" })).toBeTruthy();
+  const february = screen.getByRole("button", { name: /^Februar 2026, brutto/ });
+  expect(february.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("region", { name: monthLabel("2026-02") })).toBeNull();
+  fireEvent.click(february);
+  expect(february.getAttribute("aria-expanded")).toBe("true");
+  const details = screen.getByRole("region", { name: monthLabel("2026-02") });
+  expect(details.closest(`#${february.getAttribute("aria-controls")}`)).toBeTruthy();
+  expect(within(details).getByLabelText(`${monthLabel("2026-02")} Laufendes Brutto`).textContent).toBe(currency(3000));
 });
 
 it("asks for the password of a protected PDF in a dialog and never stores it", async () => {
@@ -368,7 +376,7 @@ it("shows current and year-end estimates prominently while a missing February bl
   const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
   const estimates = forecast.getAllByText(moneyText(6000));
   expect(estimates).toHaveLength(2);
-  expect(estimates.every((entry) => entry.closest("details")?.getAttribute("aria-label") === "Gehaltsdetails")).toBe(true);
+  expect(estimates.every((entry) => entry.closest("details") === null)).toBe(true);
   expect(forecast.getByText(monthLabel("2026-09"))).toBeTruthy();
   expect(forecast.getByText("Jahresende · Dezember 2026")).toBeTruthy();
   expect(screen.getByRole("status").textContent).toContain(`Fehlende Abrechnung: ${monthLabel("2026-02")}`);
@@ -382,7 +390,8 @@ it("removes the technical assumptions and sources block while keeping forecast a
   expect(screen.queryByText("Berechnungsdetails, Annahmen & Quellen")).toBeNull();
   expect(screen.queryByText(/Automatisches Standardmodell mit unbestätigten Annahmen/)).toBeNull();
   expect(screen.queryByRole("link", { name: /RIS · § 67/, hidden: true })).toBeNull();
-  expect(screen.getByText("Monatliche Prognose anzeigen")).toBeTruthy();
+  const months = within(screen.getByRole("list", { name: "Monate 2026" }));
+  expect(months.getAllByRole("button", { expanded: false })).toHaveLength(12);
 });
 
 it("replaces provisional values with the computed sixth when February closes the historical gap", async () => {
@@ -498,7 +507,7 @@ it("shows the existing net special-payment model and never infers it from bank r
   const special = within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" }));
   const net = view.next?.tax?.netSpecial;
   if (net === undefined) throw new Error("Synthetic payroll fixture must have a projected net payment.");
-  expect(special.getByText("Geschätzter Auszahlungsanteil netto").nextElementSibling?.textContent).toBe(currency(net));
+  expect(special.getByText("Geschätzter Auszahlungsanteil netto").closest("div")?.querySelector("dd")?.textContent).toBe(currency(net));
   expect(latest).toBe(initial);
 });
 

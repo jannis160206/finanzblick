@@ -84,15 +84,19 @@ async function noOverflow(page: Page) {
     ),
   ).toBe(true);
 }
-// The payslip-based Jahressechstel sits in the collapsed "Mehr Details"; open it once, never toggle it shut.
+// The payslip-based Jahressechstel has its own card now; it must be visible without any disclosure.
 async function details(page: Page) {
-  const actual = page.getByRole("region", {
-    name: "Jahressechstel Abrechnungsstand",
-    exact: true,
-  });
-  if (!(await actual.isVisible()))
-    await page.getByText("Mehr Details", { exact: true }).click();
-  await expect(actual).toBeVisible();
+  await expect(
+    page.getByRole("region", {
+      name: "Jahressechstel Abrechnungsstand",
+      exact: true,
+    }),
+  ).toBeVisible();
+}
+function monthTile(page: Page, month: string) {
+  return page
+    .getByRole("list", { name: "Monate 2026", exact: true })
+    .getByRole("button", { name: new RegExp(`^${monthLabel(month)},`) });
 }
 async function field(page: Page, label: string, value: number | undefined) {
   const special = page.getByRole("region", {
@@ -163,10 +167,14 @@ for (const width of [1440, 390, 320]) {
     ).toHaveCount(0);
     await expect(
       page.getByRole("region", {
-        name: "Monatliche Gehaltsprognose",
+        name: monthLabel("2026-10"),
         exact: true,
       }),
-    ).not.toBeVisible();
+    ).toHaveCount(0);
+    await expect(monthTile(page, "2026-10")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     await noOverflow(page);
     await page.screenshot({
       path: testInfo.outputPath(`payroll-${width}-dark.png`),
@@ -197,20 +205,20 @@ for (const width of [1440, 390, 320]) {
       }),
     ).toBeVisible();
     await details(page);
-    await page.getByText("Steuerbeispiel für 1.000 €", { exact: true }).click();
+    await page
+      .getByRole("group", { name: "Steuerbeispiel", exact: true })
+      .locator("summary")
+      .click();
     await expect(
       page.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }),
     ).toBeVisible();
-    await page
-      .getByText("Monatliche Prognose anzeigen", { exact: true })
-      .click();
-    const forecast = page.getByRole("region", {
-      name: "Monatliche Gehaltsprognose",
-      exact: true,
-    });
-    await expect(forecast).toBeVisible();
+    await monthTile(page, "2026-10").click();
+    await expect(monthTile(page, "2026-10")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
     await expect(
-      forecast.getByRole("article", {
+      page.getByRole("region", {
         name: monthLabel("2026-10"),
         exact: true,
       }),
@@ -433,12 +441,15 @@ test("large supported amounts fit 320px without overflowing result cards", async
     page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
   ).toContainText(currency(1_000_000_000));
   await noOverflow(page);
-  await page.getByText("Monatliche Prognose anzeigen", { exact: true }).click();
+  await monthTile(page, "2026-02").click();
+  await expect(
+    page.getByRole("region", { name: monthLabel("2026-02"), exact: true }),
+  ).toBeVisible();
   await noOverflow(page);
 });
 
 for (const width of [1440, 390]) {
-  test(`monthly forecast rows preserve January-based values and highlight special payments at ${width}px`, async ({
+  test(`month tiles reveal January-based forecast values and highlight special payments at ${width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -449,14 +460,25 @@ for (const width of [1440, 390]) {
     const state = await open(page, fixture);
     const model = analyzePayrollAutomatically(state.payslips ?? [], 2026, payrollEmployer);
     await expect(page.getByText("Berechnungsdetails, Annahmen & Quellen", { exact: true })).toHaveCount(0);
-    const disclosure = page.getByText("Monatliche Prognose anzeigen", { exact: true });
-    await disclosure.focus();
-    await page.keyboard.press("Enter");
-    const forecast = page.getByRole("region", { name: "Monatliche Gehaltsprognose", exact: true });
-    await expect(forecast.getByRole("article")).toHaveCount(11);
+    const months = page.getByRole("list", { name: "Monate 2026", exact: true });
+    await expect(months.getByRole("listitem")).toHaveCount(12);
+    await expect(months.getByRole("button", { expanded: false })).toHaveCount(12);
+    // Grid instead of a list: 6 tiles per row on desktop, 3 on phones.
+    const tops = await months
+      .getByRole("listitem")
+      .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));
+    expect(tops.filter((top) => top === tops[0])).toHaveLength(width >= 1024 ? 6 : 3);
+    let tile = monthTile(page, "2026-01");
     for (const month of model.forecast.months) {
-      const label = monthLabel(`2026-${String(month.month).padStart(2, "0")}`);
-      const card = forecast.getByRole("article", { name: label, exact: true });
+      const period = `2026-${String(month.month).padStart(2, "0")}`;
+      const label = monthLabel(period);
+      tile = monthTile(page, period);
+      await expect(tile).toContainText(month.specialGross > 0 ? "mit Sonderzahlung" : "geschätzt");
+      await tile.focus();
+      await page.keyboard.press("Enter");
+      await expect(tile).toHaveAttribute("aria-expanded", "true");
+      const card = page.getByRole("region", { name: label, exact: true });
+      await expect(card).toBeVisible();
       await expect(card.getByLabel(`${label} Laufendes Brutto`, { exact: true })).toHaveText(currency(month.regularGross));
       await expect(card.getByLabel(`${label} Sonderzahlung`, { exact: true })).toHaveText(
         month.specialGross > 0 ? currency(month.specialGross) : "Keine geplant",
@@ -464,20 +486,17 @@ for (const width of [1440, 390]) {
       await expect(card.locator("header").getByText("Sonderzahlung", { exact: true })).toHaveCount(month.specialGross > 0 ? 1 : 0);
       const sixth = model.sixthEstimates.find((entry) => entry.month === month.month)!;
       await expect(card.getByLabel(`${label} Jahressechstel`, { exact: true })).toHaveText(currency(sixth.sixth));
+      await noOverflow(page);
     }
-    const first = await forecast.getByRole("article").nth(0).boundingBox();
-    const second = await forecast.getByRole("article").nth(1).boundingBox();
-    expect(first).not.toBeNull();
-    expect(second).not.toBeNull();
-    // Compact list instead of the former card grid: one month per row at every width.
-    expect(second!.y).toBeGreaterThan(first!.y);
     for (const theme of ["dark", "light"]) {
       await noOverflow(page);
       await page.screenshot({ path: testInfo.outputPath(`forecast-${width}-${theme}.png`), fullPage: true });
       if (theme === "dark") await page.getByRole("button", { name: "Farbschema wechseln", exact: true }).click();
     }
     expect((await snapshot(page)).state).toEqual(state);
-    await disclosure.click();
-    await expect(forecast).not.toBeVisible();
+    await page.getByRole("button", { name: "Monatsdetails schließen", exact: true }).click();
+    await expect(page.getByRole("region", { name: monthLabel("2026-12"), exact: true })).toHaveCount(0);
+    await expect(tile).toBeFocused();
+    await expect(tile).toHaveAttribute("aria-expanded", "false");
   });
 }
