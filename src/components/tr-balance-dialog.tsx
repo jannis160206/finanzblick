@@ -1,5 +1,6 @@
 "use client";
 
+import { BankLogo } from "@/components/bank-logo";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
@@ -66,9 +67,9 @@ export function TRBalanceDialog({
       >
         <DialogHeader>
           <DialogTitle>Kontostand aktualisieren</DialogTitle>
-          <DialogDescription>
-            Trade Republic · nur der Notgroschen. Revolut und Zinssätze bleiben
-            unverändert.
+          <DialogDescription className="flex items-center gap-2">
+            <BankLogo bank="Trade Republic" size="sm" />
+            <span>Trade Republic · nur der Notgroschen. Revolut und Zinssätze bleiben unverändert.</span>
           </DialogDescription>
         </DialogHeader>
         <DialogForm

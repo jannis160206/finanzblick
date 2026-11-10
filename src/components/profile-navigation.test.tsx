@@ -44,7 +44,7 @@ it("places the signed-in identity, settings and logout together in the sidebar, 
   const profile = within(sidebar).getByRole("region", { name: "Benutzerprofil" });
   expect(within(profile).getByText("admin")).toBeTruthy();
   expect(within(profile).getByText("Administrator")).toBeTruthy();
-  expect(within(profile).getByRole("link", { name: "Profil von admin öffnen" }).getAttribute("href")).toBe("/einstellungen#profil");
+  expect(within(profile).getByRole("link", { name: "Profil von admin öffnen" }).getAttribute("href")).toBe("/einstellungen?bereich=konto");
   expect(within(profile).getByRole("link", { name: "Einstellungen" }).getAttribute("href")).toBe("/einstellungen");
   expect(within(profile).getByRole("button", { name: "Abmelden" })).toBeTruthy();
   expect(within(view.container.querySelector("header")!).queryByRole("button", { name: "Abmelden" })).toBeNull();
@@ -106,15 +106,15 @@ it("surfaces logout failures inside the backup dialog instead of the header", as
   expect((within(dialog).getByRole("button", { name: "Ohne Sicherung abmelden" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
-it("shows a normal user's own profile and links to the existing settings sections", () => {
+it("shows a normal user's own profile without duplicating the settings navigation", () => {
   render(<AccountWorkspaceContext.Provider value={{ ...workspace, user: { id: "alice", username: "alice", role: "user" } }}>
     <AccountProfileSettings />
   </AccountWorkspaceContext.Provider>);
   expect(screen.getByRole("heading", { name: "alice" })).toBeTruthy();
   expect(screen.getByText("Persönliches Konto")).toBeTruthy();
   expect(screen.queryByText("Administrator")).toBeNull();
-  expect(screen.getByRole("link", { name: "Erscheinungsbild" }).getAttribute("href")).toBe("#jahreszeit");
-  expect(screen.getByRole("link", { name: "Datensicherung" }).getAttribute("href")).toBe("#sicherung");
+  expect(screen.getByText("Angemeldet")).toBeTruthy();
+  expect(screen.queryByRole("link")).toBeNull();
 });
 
 it("does not invent an account profile in unsigned browser mode", () => {

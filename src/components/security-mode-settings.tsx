@@ -16,24 +16,23 @@ const options: { value: SecurityActivationPreference; title: string; description
 export function SecurityModeSettings() {
   const { preference, setPreference, ready, error, retry } = useSecurityMode();
   const id = useId();
+  const selected = options.find((option) => option.value === preference);
   return <SettingsSection id="sichtschutz" title="Sicherheitsmodus" icon={Shield}
-    description="Beträge unscharf anzeigen.">
-    <fieldset disabled={!ready} aria-describedby={`${id}-local`} className="space-y-3">
-      <legend className="mb-3 text-sm font-medium">Sichtschutz aktivieren</legend>
-      <div className="grid gap-3 lg:grid-cols-3">
+    description="Blendet Beträge unscharf aus, z. B. wenn jemand mitschaut. Gilt nur in diesem Browser.">
+    <fieldset disabled={!ready} className="space-y-3">
+      <legend className="sr-only">Sichtschutz aktivieren</legend>
+      <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">
         {options.map((option) => <label key={option.value}
-          className={`flex min-h-11 cursor-pointer items-start gap-3 rounded-2xl border p-4 transition-colors focus-within:ring-2 focus-within:ring-ring ${preference === option.value ? "border-primary/40 bg-primary/5" : "border-border/70 bg-muted/15 hover:bg-muted/25"}`}>
+          className={`relative flex min-h-11 cursor-pointer items-center justify-center rounded-lg px-2 text-center text-sm font-medium transition-colors focus-within:ring-2 focus-within:ring-ring ${preference === option.value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
           <input type="radio" name={`${id}-activation`} value={option.value} checked={preference === option.value}
             aria-label={option.title} aria-describedby={`${id}-${option.value}`}
-            className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            onChange={() => setPreference(option.value)} />
-          <span><span className="block text-sm font-medium">{option.title}</span>
-            <span id={`${id}-${option.value}`} className="mt-1 block text-xs leading-relaxed text-muted-foreground">{option.description}</span>
-          </span>
+            className="absolute inset-0 size-full cursor-pointer appearance-none rounded-lg opacity-0" onChange={() => setPreference(option.value)} />
+          {option.title}
+          <span id={`${id}-${option.value}`} className="sr-only">{option.description}</span>
         </label>)}
       </div>
+      {selected && <p aria-hidden="true" className="text-xs leading-relaxed text-muted-foreground">{selected.description}</p>}
     </fieldset>
-    <p id={`${id}-local`} className="mt-4 text-xs leading-relaxed text-muted-foreground">Nur in diesem Browser.</p>
     {error && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/25 bg-destructive/5 p-4">
       <p role="alert" className="max-w-xl text-xs leading-relaxed">{error}</p>
       <Button type="button" variant="outline" size="lg" onClick={retry}>Erneut versuchen</Button>

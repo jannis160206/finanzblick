@@ -152,6 +152,8 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
             close();
             if (pathname === "/einstellungen") {
               window.history.replaceState(window.history.state, "", `#${item.id}`);
+              // The settings page shows one category at a time and switches to the section's category on this event.
+              window.dispatchEvent(new HashChangeEvent("hashchange"));
               document.getElementById(item.id)?.scrollIntoView?.({ block: "start" });
             } else router.push(`/einstellungen#${item.id}`);
           },

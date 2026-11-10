@@ -1,5 +1,6 @@
 "use client";
 
+import { BankLogo } from "@/components/bank-logo";
 import { useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -225,7 +226,7 @@ export function TransactionForm({
                 </div>
                 <div className="flex flex-wrap justify-between gap-2">
                   <dt className="text-muted-foreground">Konto/Pocket</dt>
-                  <dd>{accountLabel(transaction)}</dd>
+                  <dd className="flex min-w-0 items-center gap-1.5"><BankLogo bank={transaction.bank} size="xs" />{accountLabel(transaction)}</dd>
                 </div>
               </dl>
             </section>

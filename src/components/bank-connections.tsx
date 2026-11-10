@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Building2, ChevronDown, Link2, Loader2, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
+import { Building2, ChevronDown, Landmark, Loader2, MoreHorizontal, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tooltip";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DialogSkeleton } from "@/components/ui/premium-dialog";
+import { AddBankDialog, type BankCountry } from "@/components/bank-picker";
+import { BankLogo } from "@/components/bank-logo";
 import { useAccountWorkspace } from "@/components/account-context";
 import { useFinance } from "@/components/finance-provider";
 import { SettingsSection } from "@/components/settings-section";
@@ -94,22 +98,23 @@ export function BankConnections() {
   const [status, setStatus] = useState<BankStatus | null>(null);
   const [busy, setBusy] = useState<"connect" | "sync" | string | null>(null);
   const [wizard, setWizard] = useState<string | null>(null);
-  const [country, setCountry] = useState("AT");
-  const [bic, setBic] = useState("");
-  const [banks, setBanks] = useState<BankChoice[] | null>(null);
-  const [aspsp, setAspsp] = useState("");
+  const [country, setCountry] = useState<BankCountry>("AT");
+  const [loaded, setLoaded] = useState<{ country: BankCountry; banks: BankChoice[] } | null>(null);
+  const banks = loaded?.country === country ? loaded.banks : null;
+  const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const enableBanking = status?.provider === "enablebanking";
 
   useEffect(() => {
-    if (!account || !enableBanking) return;
+    if (!account || !enableBanking || !adding) return;
     let active = true;
     request(account, {}, `?banks=${country}`).then(
-      (body) => active && setBanks((body as { banks: BankChoice[] }).banks),
-      (error: unknown) => { if (active) { setBanks([]); toast.error(error instanceof Error ? error.message : "Bankliste nicht verfügbar."); } },
+      (body) => active && setLoaded({ country, banks: (body as { banks: BankChoice[] }).banks }),
+      (error: unknown) => { if (active) { setLoaded({ country, banks: [] }); toast.error(error instanceof Error ? error.message : "Bankliste nicht verfügbar."); } },
     );
     return () => { active = false; };
-  }, [account, enableBanking, country]);
+  }, [account, enableBanking, country, adding]);
 
   const load = useCallback(async () => {
     if (!account) return;
@@ -144,6 +149,7 @@ export function BankConnections() {
         window.location.assign(result.redirectUrl);
         return;
       }
+      setAdding(false);
       setWizard(result.wizardSessionKey);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Verbindung konnte nicht gestartet werden.");
@@ -176,8 +182,9 @@ export function BankConnections() {
     });
   }, [account, sync, load]);
 
-  const remove = async (id: string, name: string) => {
-    if (!account || !window.confirm(`Verbindung zu ${name} wirklich trennen? Bereits importierte Umsätze bleiben erhalten.`)) return;
+  const remove = async (id: string) => {
+    if (!account) return;
+    setRemoving(null);
     setBusy(id);
     try {
       setStatus(await request(account, { method: "DELETE" }, `?connection=${encodeURIComponent(id)}`) as BankStatus);
@@ -189,72 +196,108 @@ export function BankConnections() {
 
   if (!workspace) return null;
   const configured = status?.configured ?? false;
-  const normalizedBic = bic.replace(/\s/g, "").toUpperCase();
-  const bicValid = !normalizedBic || /^[A-Z0-9]{8}([A-Z0-9]{3})?$/.test(normalizedBic);
-  const aspspValid = !enableBanking || (banks ?? []).some((bank) => bank.name === aspsp);
+  const connections = status?.connections ?? [];
+  const asOf = Date.parse(`${state.settings.asOf}T00:00:00Z`);
   return <SettingsSection id="bankverbindung" title="Bankverbindung" icon={Building2}
-    description="Neue Umsätze kommen automatisch."
-    action={configured && status?.connections.length ? <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => void sync()}>
-      {busy === "sync" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}Jetzt abrufen
-    </Button> : undefined}>
-    {!status ? <p className="text-sm text-muted-foreground">Status wird geladen …</p> : !configured ? (
-      <div className="rounded-2xl border border-border/70 bg-muted/15 p-4 text-sm leading-relaxed sm:p-5">
-        <p className="font-medium">Noch nicht eingerichtet</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Für Privatpersonen kostenlos über <strong>Enable Banking</strong>: Auf enablebanking.com eine App registrieren, eigene Konten verknüpfen
-          und dann <code className="rounded bg-muted px-1">ENABLEBANKING_APP_ID</code> sowie <code className="rounded bg-muted px-1">ENABLEBANKING_PRIVATE_KEY_PATH</code> in
-          {" "}<code className="rounded bg-muted px-1">.env.local</code> eintragen (Anleitung in der README). Alternativ mit Firmenvertrag:
-          {" "}<code className="rounded bg-muted px-1">XS2A_API_KEY</code> von Tink. Danach Finanzblick neu starten.
-          Bis dahin funktioniert der Import per CSV, PDF oder Screenshot wie gewohnt.
-        </p>
+    description="Verbundene Konten werden etwa alle 6 Stunden abgerufen. Bereits importierte Tage werden übersprungen, doppelte Buchungen erkannt."
+    action={configured ? <div className="flex gap-2">
+      {connections.length > 0 && <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => void sync()} aria-label="Jetzt abrufen">
+        {busy === "sync" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="size-4" />}<span className="max-sm:hidden">Jetzt abrufen</span>
+      </Button>}
+      <Button size="sm" disabled={busy !== null} onClick={() => setAdding(true)}><Plus aria-hidden="true" className="size-4" />Bank hinzufügen</Button>
+    </div> : undefined}>
+    {!status ? <DialogSkeleton rows={2} label="Status wird geladen …" /> : !configured ? (
+      <div className="rounded-2xl border border-dashed border-border/80 p-4 text-sm sm:p-5">
+        <p className="font-medium">Bankanbindung noch nicht eingerichtet</p>
+        <p className="mt-1 text-xs text-muted-foreground">Bis dahin funktioniert der Import per CSV, PDF oder Screenshot wie gewohnt.</p>
+        <details className="group mt-3 text-xs leading-relaxed text-muted-foreground">
+          <summary className="inline-flex min-h-9 cursor-pointer items-center gap-1 font-medium text-foreground">
+            <ChevronDown aria-hidden="true" className="size-3.5 transition-transform group-open:rotate-180" />So richtest du sie ein
+          </summary>
+          <p className="mt-2">
+            Für Privatpersonen kostenlos über <strong>Enable Banking</strong>: Auf enablebanking.com eine App registrieren, eigene Konten verknüpfen
+            und dann <code className="rounded bg-muted px-1">ENABLEBANKING_APP_ID</code> sowie <code className="rounded bg-muted px-1">ENABLEBANKING_PRIVATE_KEY_PATH</code> in
+            {" "}<code className="rounded bg-muted px-1">.env.local</code> eintragen (Anleitung in der README). Alternativ mit Firmenvertrag:
+            {" "}<code className="rounded bg-muted px-1">XS2A_API_KEY</code> von Tink. Danach Finanzblick neu starten.
+          </p>
+        </details>
       </div>
     ) : <FinancialData>
       <div className="space-y-4">
-        {status.connections.length > 0 && <ul className="space-y-3">
-          {status.connections.map((connection) => {
+        {connections.length === 0 && <div className="flex flex-col items-center rounded-2xl border border-dashed border-border/80 px-4 py-8 text-center">
+          <span aria-hidden="true" className="mb-3 flex size-11 items-center justify-center rounded-2xl bg-accent-muted text-primary"><Landmark className="size-5" /></span>
+          <p className="text-sm font-medium">Noch keine Bank verbunden</p>
+          <p className="mt-1 max-w-xs text-xs text-muted-foreground">Neue Umsätze kommen dann automatisch, ohne CSV-Export.</p>
+          <Button size="sm" variant="outline" className="mt-4" onClick={() => setAdding(true)}><Plus aria-hidden="true" className="size-4" />Bank hinzufügen</Button>
+        </div>}
+        {connections.length > 0 && <ul className="space-y-3">
+          {connections.map((connection) => {
             const name = connection.bankName ?? connection.bic ?? "Bank";
             const accounts = status.accounts.filter((entry) => entry.connectionId === connection.id);
             const main = accounts.find((entry) => entry.label === "Persönliches Konto") ?? accounts.find((entry) => entry.pocket === "Persönliches Konto") ?? accounts[0];
             const others = accounts.filter((entry) => entry !== main && entry.balance !== 0);
             const open = expanded[connection.id] === true;
             const consent = connection.consentValidUntil?.slice(0, 10) ?? null;
-            const expiresSoon = consent !== null && consent <= new Date(Date.parse(`${state.settings.asOf}T00:00:00Z`) + 14 * 86_400_000).toISOString().slice(0, 10);
-            return <li key={connection.id} className="rounded-2xl border border-border/70 bg-muted/15 p-4">
-              <div className="flex items-start gap-3">
-                <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-sm font-semibold text-primary">{name.slice(0, 2).toUpperCase()}</span>
+            const daysLeft = consent === null ? null : Math.round((Date.parse(`${consent}T00:00:00Z`) - asOf) / 86_400_000);
+            const expiresSoon = daysLeft !== null && daysLeft <= 14;
+            const paused = connection.syncActive === false;
+            const renew = () => void start({ action: "renew", connection: connection.id });
+            return <li key={connection.id} className="overflow-hidden rounded-2xl border border-border/70 bg-background/40">
+              <div className="flex items-center gap-3 p-4">
+                <BankLogo bank={name} country={connection.country ?? country} size="lg" />
                 <div className="min-w-0 flex-1">
-                  <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">{name}{connection.testmode && <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">Testmodus</span>}</p>
-                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    {connection.syncActive === false ? `Abruf pausiert${connection.message ? `: ${connection.message}` : ""}` : "Automatischer Abruf aktiv"}
-                    {consent && <> · Freigabe bis {dateLabel(consent)}</>}
-                    {connection.lastSynced && <> · geprüft {new Date(connection.lastSynced).toLocaleString("de-AT", { dateStyle: "short", timeStyle: "short" })}</>}
+                  <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 break-words text-sm font-semibold">{name}</span>
+                    {paused ? <Badge variant="destructive">Pausiert</Badge>
+                      : expiresSoon ? <Badge variant="warning">{daysLeft <= 0 ? "Freigabe abgelaufen" : `Freigabe endet in ${daysLeft} ${daysLeft === 1 ? "Tag" : "Tagen"}`}</Badge>
+                        : <Badge variant="success">Aktiv</Badge>}
+                    {connection.testmode && <Badge variant="outline">Testmodus</Badge>}
                   </p>
-                  {expiresSoon && <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">Die Bankfreigabe läuft bald ab – bitte erneuern.</p>}
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {paused && connection.message ? connection.message : [
+                      consent && `Freigabe bis ${dateLabel(consent)}`,
+                      connection.lastSynced && `geprüft ${ago(Date.parse(connection.lastSynced))}`,
+                    ].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
-                <div className="flex shrink-0 gap-1">
-                  <Button size="icon" variant={expiresSoon ? "outline" : "ghost"} disabled={busy !== null} aria-label={`${name}: Freigabe erneuern`} title="Freigabe erneuern" onClick={() => void start({ action: "renew", connection: connection.id })}><RotateCcw aria-hidden="true" className="size-4" /></Button>
-                  <Button size="icon" variant="ghost" disabled={busy !== null} aria-label={`${name} trennen`} title="Bank trennen" onClick={() => void remove(connection.id, name)}><Trash2 aria-hidden="true" className="size-4" /></Button>
-                </div>
+                {(expiresSoon || paused) && <Button size="sm" variant="outline" className="max-sm:hidden" disabled={busy !== null}
+                  aria-label={`${name}: Freigabe erneuern`} onClick={renew}><RotateCcw aria-hidden="true" className="size-4" />Erneuern</Button>}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="icon" variant="ghost" className="size-11 shrink-0 text-muted-foreground" disabled={busy !== null} aria-label={`${name}: Aktionen`}>
+                      <MoreHorizontal aria-hidden="true" className="size-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={renew}><RotateCcw />Freigabe erneuern</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-destructive data-[highlighted]:bg-destructive/10" onSelect={() => setRemoving({ id: connection.id, name })}>
+                      <Trash2 />Trennen
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
-              {!main && <p role="status" className="mt-3 flex items-start gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-                <span aria-hidden="true" className="mt-1 size-2 shrink-0 rounded-full bg-amber-500" />
-                <span>Keine Konten abrufbar – {connection.syncActive === false ? connection.message ?? "Freigabe nicht aktiv." : connection.message ?? "die Bank hat bei der Freigabe kein Konto geteilt."}</span>
+              {!main && <p role="status" className="mx-4 mb-4 flex items-start gap-2 rounded-xl bg-warning-soft px-3 py-2 text-xs text-warning">
+                <span aria-hidden="true" className="mt-1 size-2 shrink-0 rounded-full bg-warning" />
+                <span>Keine Konten abrufbar – {paused ? connection.message ?? "Freigabe nicht aktiv." : connection.message ?? "die Bank hat bei der Freigabe kein Konto geteilt."}</span>
               </p>}
-              {main && <ul className="mt-3 divide-y divide-border/60 rounded-xl border border-border/60 bg-background/40">
+              {main && <ul className="divide-y divide-border/60 border-t border-border/60">
                 {[main, ...(open ? others : [])].map((entry) => <Tooltip key={entry.id} className="w-72 max-w-[90vw]" label={<AccountSyncInfo entry={entry} connection={connection} lastSync={status.lastSync} lastError={status.lastError} />}>
-                  <li tabIndex={0} className="flex min-h-12 cursor-default items-center justify-between gap-3 px-3 py-2.5 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
+                  <li tabIndex={0} className="flex min-h-14 cursor-default items-center justify-between gap-3 px-4 py-2.5 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                     <span className="flex min-w-0 items-center">
                       <SyncDot state={syncState(entry, connection)} />
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-medium">{entry.label}</span>
-                        <span className="block truncate text-xs text-muted-foreground">{entry.iban && <span className="tabular-nums">{entry.iban} · </span>}→ {entry.pocket ?? entry.bank}</span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {entry.iban && <span className="tabular-nums">{maskIban(entry.iban)} · </span>}→ {entry.pocket ?? entry.bank}
+                        </span>
                       </span>
                     </span>
                     {entry.balance !== null && <span className="shrink-0 text-sm font-semibold tabular-nums">{currency(entry.balance)}</span>}
                   </li>
                 </Tooltip>)}
                 {others.length > 0 && <li>
-                  <button type="button" aria-expanded={open} className="flex w-full items-center gap-1 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground" onClick={() => setExpanded((current) => ({ ...current, [connection.id]: !open }))}>
+                  <button type="button" aria-expanded={open} className="flex min-h-11 w-full items-center gap-1 px-4 text-xs font-medium text-muted-foreground hover:text-foreground" onClick={() => setExpanded((current) => ({ ...current, [connection.id]: !open }))}>
                     <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
                     {open ? "Weniger anzeigen" : `${others.length} ${others.length === 1 ? "weiteres Konto" : "weitere Konten"}`}
                   </button>
@@ -263,35 +306,27 @@ export function BankConnections() {
             </li>;
           })}
         </ul>}
-        <form className="grid gap-3 rounded-2xl border border-dashed border-border/80 p-4 sm:grid-cols-[8rem_1fr_auto] sm:items-end" onSubmit={(event) => {
-          event.preventDefault(); if (!bicValid || !aspspValid) return;
-          void start(enableBanking ? { action: "connect", country, aspsp } : { action: "connect", country, ...(normalizedBic ? { bic: normalizedBic } : {}) });
-        }}>
-          <label className="text-xs font-medium">Land
-            <select aria-label="Land der Bank" className="mt-2 h-11 w-full rounded-md border border-input bg-background/50 px-3 text-sm" value={country} onChange={(event) => { setCountry(event.target.value); setAspsp(""); }}>
-              <option value="AT">Österreich</option><option value="DE">Deutschland</option>
-            </select>
-          </label>
-          {enableBanking ? <label className="text-xs font-medium">Bank {banks === null && "(wird geladen …)"}
-            <Input aria-label="Bank auswählen" aria-invalid={aspsp !== "" && !aspspValid} list="bank-choices" className="mt-2 h-11 bg-background/50" placeholder="Bank suchen, z. B. Raiffeisen" maxLength={200} value={aspsp} onChange={(event) => setAspsp(event.target.value)} />
-            <datalist id="bank-choices">{(banks ?? []).map((bank) => <option key={bank.name} value={bank.name} />)}</datalist>
-          </label> : <label className="text-xs font-medium">BIC (optional – sonst im Fenster suchen)
-            <Input aria-label="BIC der Bank" aria-invalid={!bicValid} className="mt-2 h-11 bg-background/50 uppercase" placeholder="z. B. RZKTAT2K" maxLength={14} value={bic} onChange={(event) => setBic(event.target.value)} />
-          </label>}
-          <Button type="submit" className="h-11" disabled={busy !== null || !bicValid || !aspspValid}>
-            {busy === "connect" ? <Loader2 aria-hidden="true" className="size-4 animate-spin" /> : <Link2 aria-hidden="true" className="size-4" />}Bank verbinden
-          </Button>
-        </form>
-        <p className="text-xs leading-relaxed text-muted-foreground">
-          {enableBanking
-            ? "Du wirst zur Anmeldeseite deiner Bank weitergeleitet und kommst danach automatisch zurück – Finanzblick sieht deine Zugangsdaten nie."
-            : "Die Anmeldung läuft direkt im gesicherten Fenster der Bank-Schnittstelle –             Finanzblick sieht deine Zugangsdaten nie."}{" "}
-          Bereits per CSV importierte Tage werden übersprungen, doppelte Buchungen erkannt.
-          {status.lastSync && <> Letzter Abruf: {new Date(status.lastSync).toLocaleString("de-AT")}{status.lastSyncRows !== null && ` (${status.lastSyncRows} Umsätze)`}.</>}
-        </p>
+        {status.lastSync && <p className="text-xs text-muted-foreground">
+          Zuletzt abgerufen {ago(status.lastSync)}{status.lastSyncRows !== null && ` · ${status.lastSyncRows} Umsätze`}
+        </p>}
         {status.lastError && <p role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">Letzter Abruf fehlgeschlagen: {status.lastError}</p>}
       </div>
     </FinancialData>}
+    {configured && <AddBankDialog open={adding} onOpenChange={setAdding} provider={enableBanking ? "enablebanking" : "xs2a"}
+      country={country} onCountryChange={setCountry} banks={banks} busy={busy === "connect"}
+      onConnect={(choice) => void start({ action: "connect", country, ...choice })} />}
+    <Dialog open={removing !== null} onOpenChange={(next) => { if (!next) setRemoving(null); }}>
+      <DialogContent variant="confirmation">
+        <DialogHeader>
+          <DialogTitle>{removing?.name} trennen?</DialogTitle>
+          <DialogDescription>Neue Umsätze kommen dann nicht mehr automatisch. Bereits importierte Umsätze bleiben erhalten.</DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild><Button variant="outline">Abbrechen</Button></DialogClose>
+          <Button variant="destructive" onClick={() => { if (removing) void remove(removing.id); }}>Trennen</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     <Dialog open={wizard !== null} onOpenChange={(open) => { if (!open) setWizard(null); }}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
@@ -302,6 +337,12 @@ export function BankConnections() {
       </DialogContent>
     </Dialog>
   </SettingsSection>;
+}
+
+/** "AT61 1904 3002 3457 3201" → "AT61 •••• 3201". */
+function maskIban(iban: string) {
+  const compact = iban.replace(/\s/g, "");
+  return compact.length > 8 ? `${compact.slice(0, 4)} •••• ${compact.slice(-4)}` : iban;
 }
 
 type BankAccountEntry = BankStatus["accounts"][number];

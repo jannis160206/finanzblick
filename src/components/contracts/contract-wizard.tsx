@@ -2,6 +2,7 @@
 
 import { useDeferredValue, useMemo, useState, type ReactNode } from "react";
 import { AlertTriangle, CalendarClock, Check, ChevronDown, ListChecks, Search, Sparkles, Wand2 } from "lucide-react";
+import { BankLogo } from "@/components/bank-logo";
 import { CategorySelect } from "@/components/category-select";
 import { contractTypeIcon } from "@/components/contracts/contract-visuals";
 import { FinancialData } from "@/components/financial-data";
@@ -539,6 +540,7 @@ function BookingGroup({ title, items, selectedSet, owners, onSelect }: {
                   <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                     <span className="shrink-0 tabular-nums">{dateLabel(candidate.row.date)}</span>
                     <span aria-hidden="true">·</span>
+                    <BankLogo bank={candidate.row.bank} size="xs" />
                     <FinancialData as="span" className="truncate">{candidate.account}</FinancialData>
                   </span>
                   {owner && <Badge variant="warning" className="mt-1 max-w-full"><span className="truncate">Gehört zu {owner}</span></Badge>}

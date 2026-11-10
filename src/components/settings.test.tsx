@@ -15,7 +15,7 @@ vi.mock("./finance-provider", () => ({ useFinance: vi.fn(), useFinanceRestoratio
 vi.mock("./seasonal-theme-provider", () => ({ useSeasonalTheme: () => seasonal }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 
-beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
+beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); window.history.replaceState(null, "", "/einstellungen"); });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 function mount(page: "settings" | "savings" = "settings") {
@@ -36,11 +36,13 @@ function mount(page: "settings" | "savings" = "settings") {
   return (): AppState => current;
 }
 
+const openCategory = (name: string) => fireEvent.click(within(screen.getByRole("navigation", { name: "Einstellungsbereiche" })).getByRole("link", { name: new RegExp(`^${name}`) }));
+
 it("keeps each redesigned setting grouped under its accessible heading and preserves the anchors", () => {
   mount();
-  for (const [title, id] of [["Erscheinungsbild", "jahreszeit"], ["Sicherung", "sicherung"]]) {
-    expect(screen.getByRole("region", { name: title }).id).toBe(id);
-  }
+  expect(screen.getByRole("region", { name: "Erscheinungsbild" }).id).toBe("jahreszeit");
+  openCategory("Daten");
+  expect(screen.getByRole("region", { name: "Sicherung" }).id).toBe("sicherung");
   expect(screen.queryByRole("region", { name: "Sparziele" })).toBeNull();
   expect(screen.queryByRole("region", { name: "Trade Republic" })).toBeNull();
   cleanup();
@@ -49,24 +51,35 @@ it("keeps each redesigned setting grouped under its accessible heading and prese
     expect(screen.getByRole("region", { name: title }).id).toBe(id);
   }
   cleanup();
+  window.history.replaceState(null, "", "/einstellungen");
   mount();
   expect(screen.getByRole("radiogroup", { name: "Akzentfarben" }).querySelectorAll("input")).toHaveLength(6);
   expect(screen.getByLabelText("Eigene Akzentfarbe")).toBeTruthy();
+  openCategory("Daten");
   expect(screen.getByRole("button", { name: "Exportieren" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "Wiederherstellen" })).toBeTruthy();
 });
 
-it("groups the settings in a navigation and filters them by search without unmounting", async () => {
+it("shows one category at a time, opens deep links and searches across categories without unmounting", async () => {
+  window.history.replaceState(null, "", "/einstellungen#sichtschutz");
   mount();
   const nav = within(screen.getByRole("navigation", { name: "Einstellungsbereiche" }));
   expect(nav.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
-    ["#jahreszeit", "#klaenge", "#benachrichtigungen", "#sichtschutz", "#sicherung", "#gefahrenzone"],
+    ["?bereich=darstellung", "?bereich=privatsphaere", "?bereich=daten"],
   );
+  await vi.waitFor(() => expect(screen.getByRole("region", { name: "Sicherheitsmodus" })).toBeTruthy());
+  expect(nav.getByRole("link", { name: /^Mitteilungen & Privatsphäre/ }).getAttribute("aria-current")).toBe("page");
+  expect(screen.queryByRole("region", { name: "Erscheinungsbild" })).toBeNull();
+  openCategory("Daten");
+  expect(window.location.search).toBe("?bereich=daten");
   expect(screen.getByRole("region", { name: "Gefahrenzone" }).textContent).toContain("Alle Buchungen entfernen");
+  expect(screen.queryByRole("region", { name: "Sicherheitsmodus" })).toBeNull();
+  openCategory("Darstellung");
   expect(screen.getByRole("region", { name: "Klänge" })).toBeTruthy();
   const search = screen.getByRole("searchbox", { name: "Einstellungen durchsuchen" });
   fireEvent.change(search, { target: { value: "backup" } });
-  await vi.waitFor(() => expect(nav.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(["#sicherung", "#gefahrenzone"]));
+  await vi.waitFor(() => expect(screen.getByRole("region", { name: "Sicherung" })).toBeTruthy());
+  expect(screen.getByRole("region", { name: "Gefahrenzone" })).toBeTruthy();
   expect(screen.queryByRole("region", { name: "Erscheinungsbild" })).toBeNull();
   expect(document.getElementById("jahreszeit")).not.toBeNull();
   fireEvent.change(search, { target: { value: "xyzunbekannt" } });

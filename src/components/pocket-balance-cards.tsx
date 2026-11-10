@@ -2,6 +2,7 @@
 
 import type { Ref } from "react";
 import { Pencil } from "lucide-react";
+import { BankLogo } from "@/components/bank-logo";
 import { Button } from "@/components/ui/button";
 import { pocketColors, pocketIcons } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
@@ -56,8 +57,9 @@ export function PocketBalanceCards({
               </span>
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-sm font-medium">{pocket}</h3>
-                <FinancialData as="p" className="mt-0.5 truncate text-2xs text-muted-foreground">
-                  {bank} · <span>{source}</span>
+                <FinancialData as="p" className="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                  <BankLogo bank={bank} size="xs" />
+                  <span className="truncate">{bank} · <span>{source}</span></span>
                 </FinancialData>
               </div>
               <FinancialData
@@ -111,7 +113,7 @@ export function EverydayPocketBalances({ state }: { state: AppState }) {
       className="min-w-0 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5"
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Revolut · Alltagspockets</h2>
+        <h2 className="flex items-center gap-2 text-sm font-semibold"><BankLogo bank="Revolut" size="sm" />Revolut · Alltagspockets</h2>
         <span className="text-xs text-muted-foreground">Auszugssalden</span>
       </div>
       {known.length ? (
