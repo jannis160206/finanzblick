@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, type ComponentProps, type ReactNode } from "react";
+import { createContext, useContext, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { AnimatePresence } from "motion/react";
 import { XIcon, type LucideIcon } from "lucide-react";
 import { Dialog as DialogPrimitive } from "radix-ui";
@@ -11,6 +11,7 @@ import { useNativeSelectBoundary } from "@/components/ui/use-native-select-bound
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { cn } from "@/lib/utils";
 import { SheetSurface } from "./animated-sheet";
+import { useScrollableFocus } from "./use-scrollable-focus";
 import { MotionBox, contentVariants, exitTween, itemVariants, motionAvailable, staggerVariants, useMotionMode, type MotionMode } from "./motion";
 
 export type PremiumDialogSize = "sm" | "md" | "lg" | "xl";
@@ -206,8 +207,11 @@ export function PremiumDialogHeader({ title, description, icon: Icon, className,
   );
 }
 
-export function PremiumDialogBody({ className, ...props }: ComponentProps<"div">) {
-  return <div data-slot="dialog-body" className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 sm:px-8", className)} {...props} />;
+export function PremiumDialogBody({ className, ...props }: Omit<ComponentProps<"div">, "ref">) {
+  const body = useRef<HTMLDivElement>(null);
+  const focus = useScrollableFocus(body);
+  return <div ref={body} data-slot="dialog-body" tabIndex={focus.tabIndex}
+    className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-6 sm:px-8", focus.className, className)} {...props} />;
 }
 
 export function PremiumDialogFooter({ className, children }: { className?: string; children: ReactNode }) {

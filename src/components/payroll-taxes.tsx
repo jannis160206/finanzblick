@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, FileUp, ReceiptText } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipImportPanel } from "@/components/payslip-import";
@@ -16,6 +16,7 @@ import { employerPayslips } from "@/lib/payroll-overview";
 import { payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 
 const scopeKey = (year: number, employer: string) => `${year}|${payrollEmployerKey(employer)}`;
+const noPayslips: Payslip[] = [];
 
 function PayrollWorkspace() {
   const { state } = useFinance();
@@ -25,7 +26,7 @@ function PayrollWorkspace() {
   const [selectedEmployer, setSelectedEmployer] = useState("");
   // The chosen month only applies to the year and employer it was picked for; otherwise the latest payslip leads.
   const [focus, setFocus] = useState<{ scope: string; month: number } | null>(null);
-  const payslips = state.payslips ?? [];
+  const payslips = state.payslips ?? noPayslips;
   const employers = [
     ...new Map(
       payslips
@@ -40,8 +41,10 @@ function PayrollWorkspace() {
     ) ??
     employers[0] ??
     "";
-  const view = payrollPresentation(payslips, year, employer, state.settings.asOf);
-  const entries = employerPayslips(payslips, year, employer);
+  const asOf = state.settings.asOf;
+  // The analysis only depends on the payslips; picking another month must not recompute it.
+  const view = useMemo(() => payrollPresentation(payslips, year, employer, asOf), [payslips, year, employer, asOf]);
+  const entries = useMemo(() => employerPayslips(payslips, year, employer), [payslips, year, employer]);
   const scope = scopeKey(year, employer);
   const focusEntry =
     (focus?.scope === scope

@@ -8,6 +8,7 @@ import { DialogClose } from "@/components/ui/dialog-base";
 import { useCompactLayout } from "@/components/ui/use-compact-layout";
 import { cn } from "@/lib/utils";
 import { MotionBox, stepVariants } from "./motion";
+import { useScrollableFocus } from "./use-scrollable-focus";
 import { usePremiumDialog } from "./premium-dialog";
 
 export type DialogStepProps = {
@@ -65,6 +66,7 @@ export function DialogSteps({
   const [direction, setDirection] = useState(1);
   const [reached, setReached] = useState(() => editing ? steps.length - 1 : Math.max(0, steps.findIndex((step) => step.id === initialStep)));
   const body = useRef<HTMLDivElement>(null);
+  const bodyFocus = useScrollableFocus(body);
   const liveId = useId();
   const current = steps[Math.min(index, steps.length - 1)];
   const last = index >= steps.length - 1;
@@ -134,7 +136,8 @@ export function DialogSteps({
   return (
     <form noValidate onSubmit={submit} className={cn("flex min-h-0 flex-1 flex-col", className)} data-layout={layout}>
       {stepped && <StepIndicator steps={steps} index={index} reached={reached} editing={editing} onSelect={goTo} />}
-      <div ref={body} data-slot="dialog-body" className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-6 pb-6 sm:px-8">
+      <div ref={body} data-slot="dialog-body" tabIndex={bodyFocus.tabIndex}
+        className={cn("relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-6 pb-6 sm:px-8", bodyFocus.className)}>
         {stepped && current ? (
           <AnimatePresence mode="wait" initial={false} custom={direction}>
             <MotionBox key={current.id} mode={motion} custom={direction} variants={stepVariants(motion)} initial="enter" animate="center" exit="leave"
