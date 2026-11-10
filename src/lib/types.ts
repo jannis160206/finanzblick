@@ -502,7 +502,7 @@ export const assistantWhatIfSchema = z.object({
 export type AssistantWhatIf = z.infer<typeof assistantWhatIfSchema>;
 // Calculated result cards (answers, briefing, coach, depot, tax); every number comes from code.
 export const assistantCardSchema = z.object({
-  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes", "loan", "review", "forecast", "whatif", "cancel", "why"]),
+  kind: z.enum(["answer", "briefing", "check", "coach", "depot", "tax", "homeoffice", "homeoffice_result", "rule", "memory", "changes", "loan", "review", "forecast", "whatif", "cancel", "why", "contracts", "insights", "context"]),
   title: z.string().max(200),
   total: z.number().finite().optional(),
   lines: z.array(assistantLineSchema).max(40),
@@ -515,6 +515,8 @@ export const assistantCardSchema = z.object({
   // Kündigungshilfe: ready letter text with placeholders and public comparison/cancellation links.
   letter: z.string().max(3000).optional(),
   links: z.array(z.object({ label: z.string().max(80), url: z.string().url().max(300).regex(/^https:\/\//) }).strict()).max(4).optional(),
+  // The page inside the app where the answer can be checked or changed.
+  page: z.object({ label: z.string().max(60), href: z.string().max(200).regex(/^\/(?!\/)[\w\-/?=&%.]*$/) }).strict().optional(),
 }).strict();
 export type AssistantCard = z.infer<typeof assistantCardSchema>;
 export const assistantChangeSchema = z.object({
@@ -696,6 +698,13 @@ export const contractOverrideSchema = z.object({
 );
 export type ContractOverride = z.infer<typeof contractOverrideSchema>;
 export const MAX_CONTRACTS = 500;
+// Proactive hints the user dismissed; synced so they stay away on every device.
+export const dismissedInsightSchema = z.object({
+  id: z.string().trim().min(1).max(300),
+  at: z.number().int().nonnegative(),
+}).strict();
+export type DismissedInsight = z.infer<typeof dismissedInsightSchema>;
+export const MAX_DISMISSED_INSIGHTS = 300;
 export const appStateSchema = z.object({
   version: z.literal(1),
   payslips: z.array(payslipSchema).max(240).refine(
@@ -728,6 +737,7 @@ export const appStateSchema = z.object({
     (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,
     "Sparziele müssen eindeutige IDs haben",
   ).optional(),
+  dismissedInsights: z.array(dismissedInsightSchema).max(MAX_DISMISSED_INSIGHTS).optional(),
   contracts: z.array(contractOverrideSchema).max(MAX_CONTRACTS).refine(
     (entries) => new Set(entries.map((entry) => entry.id)).size === entries.length,
     "Verträge müssen eindeutige IDs haben.",

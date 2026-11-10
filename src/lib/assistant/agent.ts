@@ -26,11 +26,18 @@ import { whatIfAnswer } from "./whatif-answer";
 import { parseBudgetPlan } from "./budget-plan";
 import { bookingFilter, cleanupPlan, filterLabel, hasFilter, matchesFilter, merchantRows, resolveMerchants } from "./cleanup";
 import { monthReview, netWorthAnswer, refundAnswer, securityCheck, sharedAnswer } from "./essentials";
+import { contextAnswer, contractsAnswer, insightsAnswer, trendAnswer, trendQuestion } from "./copilot";
+import type { AssistantPageContext } from "@/lib/assistant-context";
+import type { CopilotInsight } from "@/lib/copilot-insights";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[] };
 type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot;
-  knowledge?: { found: AssistantKnowledge[]; fresh?: string[]; offline?: boolean } };
+  knowledge?: { found: AssistantKnowledge[]; fresh?: string[]; offline?: boolean };
+  /** What the user is looking at (route, filters, selection); stays in the browser. */
+  page?: AssistantPageContext | null;
+  /** Proactive hints already computed for the dashboard. */
+  insights?: CopilotInsight[] };
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const plannedTotal = (item: PlannedOneOff) => item.total ?? Math.round(item.amount * item.installments * 100) / 100;
@@ -355,6 +362,10 @@ function help(): AgentResult {
     { label: "Leisten oder nicht", detail: "„Geht sich ein Fernseher um 900 € aus?“" },
     { label: "Konten und Amex", detail: "„Was muss ich noch auf Amex Rückzahlung überweisen?“" },
     { label: "Bestellungen", detail: "„Welche Bestellungen sind noch offen?“, „Was muss ich bei Klarna noch zahlen?“ – erkannt aus Gmail" },
+    { label: "Was fällt dir auf?", detail: "Knappes Monatsende, Budgets, Fristen, Preiserhöhungen, Sparziele, Doppelbuchungen – auch als Hinweise in der Übersicht" },
+    { label: "Verträge & Abos", detail: "„Welche Abos habe ich?“, „Wann läuft Netflix aus?“, „Was kostet mich Spotify im Jahr?“" },
+    { label: "Frei verfügbar", detail: "„Wie viel kann ich noch ausgeben?“, „Wie viel bleibt am Monatsende?“" },
+    { label: "Diese Ansicht", detail: "„Was ist mit den angezeigten Buchungen?“, „Fass die ausgewählten Buchungen zusammen“" },
     { label: "Monats-Puls", detail: "„Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“ – mit echtem Kontostand" },
     { label: "Monatsbudget", detail: "„Was bleibt mir diesen Monat übrig?“" },
     { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 € und schieb es auf Juli“, „Zahl das Pickerl vom Sparkonto“, „Puffer immer 500 €“" },
@@ -424,6 +435,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "forecast": return forecastAnswer(state, dashboard, asOf);
     case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
     case "pulse": {
+      if (trendQuestion(text.toLowerCase())) return trendAnswer(state, asOf);
       const pulse = pulseAnswer(state, dashboard, asOf, text);
       const topUp = giroTopUp(state, dashboard, asOf);
       if (!topUp) return pulse;
@@ -445,6 +457,9 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "shared": return sharedAnswer(state, asOf);
     case "networth": return netWorthAnswer(state, dashboard);
     case "refunds": return refundAnswer(state, text, asOf);
+    case "contracts": return contractsAnswer(state, text, asOf, () => answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage)), context.page);
+    case "context": return contextAnswer(state, text, context.page);
+    case "insights": return insightsAnswer(state, dashboard, asOf, context.insights);
     case "budget_plan": {
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;

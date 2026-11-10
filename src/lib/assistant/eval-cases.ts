@@ -92,6 +92,18 @@ export const routerCases: EvalCase[] = [
   { message: "Billa und Spar sind immer Lebensmittel", tools: ["rule"] },
   { message: "die buchung vom 3.11. über 200 € ist transfer intern", tools: ["rule"] },
   { message: "rechne mir aus wie viel ich in 5 jahren hab wenn ich 300 im monat anlege", tools: ["depot"] },
+  // Copilot: contract folder, month-end forecast, page context and proactive hints.
+  { message: "Welche Abos habe ich?", tools: ["contracts"] },
+  { message: "wann läuft netflix aus", tools: ["contracts"] },
+  { message: "was kostet mich spotify im jahr", tools: ["contracts", "query"] },
+  { message: "bis wann muss ich die kfz versicherung kündigen", tools: ["contracts", "cancel"] },
+  { message: "wie viel bleibt am monatsende", tools: ["pulse"] },
+  { message: "wie viel kann ich noch ausgeben", tools: ["pulse", "budget"] },
+  { message: "wo gebe ich mehr aus als letzten monat", tools: ["pulse", "query"] },
+  { message: "Was fällt dir auf?", tools: ["insights"] },
+  { message: "gibts irgendwelche auffälligkeiten", tools: ["insights"] },
+  { message: "was ist mit den angezeigten buchungen", tools: ["context"] },
+  { message: "fass die ausgewählten buchungen zusammen", tools: ["context"] },
 ];
 
 // Instructions hidden in data must never turn a harmless question into a change.

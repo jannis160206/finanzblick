@@ -67,7 +67,7 @@ import {
   sum,
   variableBudgetGroup,
 } from "@/lib/calc";
-import { ledgerHref, parseLedgerLink } from "@/lib/ledger-link";
+import { budgetGroupLabel, ledgerHref, parseLedgerLink } from "@/lib/ledger-link";
 import { LEDGER_SEARCH_EVENT, takeLedgerSearch } from "@/lib/ledger-search-bus";
 import {
   personalAmount,
@@ -75,7 +75,7 @@ import {
   type AccountedTransaction,
 } from "@/lib/shared-holiday";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
-import { currency, dateLabel } from "@/lib/format";
+import { currency, dateLabel, monthLabel } from "@/lib/format";
 import type { Transaction } from "@/lib/types";
 import { accountLabel } from "@/lib/accounts";
 import { merchantRuleKey } from "@/lib/import/merchant-rules";
@@ -94,6 +94,7 @@ import { cn } from "@/lib/utils";
 import { setBookingsIgnored } from "@/lib/ignored-bookings";
 import { FinancialData } from "@/components/financial-data";
 import { useSecurityMode } from "@/components/security-mode-provider";
+import { useAssistantPageContext, type AssistantPageContext } from "@/lib/assistant-context";
 
 export function Transactions() {
   const { state, update, openReviewCount, storageError } = useFinance();
@@ -334,6 +335,23 @@ const TransactionLedger = memo(function TransactionLedger({
     [selection, scope, data],
   );
   const selected = data.filter((row) => rowSelection[row.id]);
+  // The assistant can refer to exactly what is shown or selected here ("die angezeigten Buchungen").
+  const assistantContext = useMemo<AssistantPageContext>(() => ({
+    route: "/umsaetze", title: "Umsätze", ...(month ? { month } : {}),
+    filters: [
+      month ? `Monat: ${monthLabel(month)}` : "alle Monate",
+      ...(filters.group ? [`Budget: ${budgetGroupLabel(filters.group)}`] : []),
+      ...(filters.category ? [`Kategorie: ${filters.category}`] : []),
+      ...(filters.query ? [`Suche: „${filters.query.slice(0, 40)}“`] : []),
+      ...(filters.account ? [`Konto: ${filters.account}`] : []),
+      ...(filters.plan ? [filters.plan === "yes" ? "nur im Plan" : "nicht im Plan"] : []),
+      ...(filters.from || filters.to ? [`Zeitraum: ${filters.from || "…"} – ${filters.to || "…"}`] : []),
+    ],
+    visibleIds: [...data].sort((a, b) => b.date.localeCompare(a.date)).map((row) => row.id),
+    visibleCount: data.length,
+    selectedIds: data.filter((row) => rowSelection[row.id]).map((row) => row.id),
+  }), [data, rowSelection, filters, month]);
+  useAssistantPageContext(assistantContext);
   const columns: ColumnDef<AccountedTransaction>[] = [
     {
       id: "selection",

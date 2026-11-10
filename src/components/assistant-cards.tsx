@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Brain, Check, ChevronDown, Copy, Download, ExternalLink, Globe, History, ListChecks, Mail, Printer, Undo2, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Brain, Check, ChevronDown, Copy, Download, ExternalLink, Globe, History, ListChecks, Mail, Printer, Undo2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AssistantChartView } from "@/components/assistant-chart";
 import { WhatIfCard } from "@/components/whatif-card";
@@ -11,6 +12,7 @@ import { canonicalCategory } from "@/lib/categories";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { downloadTaxFolder, taxFolder } from "@/lib/tax-folder";
 import { ruleText } from "@/lib/assistant/funds";
+import { closeAssistant } from "@/lib/assistant-bus";
 import type { AccountRule, AppState, AssistantAlias, AssistantCard, AssistantChangeLog, AssistantGap, AssistantKnowledge, AssistantMemory, AssistantMessage, Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +27,7 @@ const kindLabel: Record<AssistantCard["kind"], string> = {
   homeoffice: "Home-Office-Rechner", homeoffice_result: "Home-Office · Arbeitnehmerveranlagung",
   rule: "Regel-Vorschau", memory: "Gedächtnis", changes: "Änderungen", loan: "Kreditrechner", review: "Jahresrückblick",
   cancel: "Kündigungshilfe", why: "Warum diese Kategorie?", forecast: "Kontoprognose", whatif: "Was wäre wenn",
+  contracts: "Verträge & Abos", insights: "Hinweise", context: "Diese Ansicht",
 };
 
 function Bookings({ ids, transactions }: { ids: string[]; transactions: Map<string, Transaction> }) {
@@ -102,6 +105,9 @@ export function ResultCard({ card, state, embedded, onResult }: { card: Assistan
       {card.links.map((link) => <li key={link.url}><a href={link.url} target="_blank" rel="noreferrer noopener"
         className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border/70 px-3 text-xs font-medium text-primary hover:bg-muted"><ExternalLink aria-hidden="true" className="size-3.5" />{link.label}</a></li>)}
     </ul>}
+    {card.page && <Link href={card.page.href} onClick={() => closeAssistant()}
+      className="mt-3 inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-border/70 px-3 text-xs font-medium text-primary hover:bg-muted">
+      <ArrowRight aria-hidden="true" className="size-3.5" />{card.page.label}</Link>}
     {card.kind === "tax" && card.year && <TaxFolderDownload state={state} year={card.year} />}
     {card.note && <p className="mt-3 text-xs leading-relaxed text-muted-foreground"><NoteText text={card.note} /></p>}
   </article>;

@@ -24,6 +24,9 @@ import { applyOperations, OperationError, recordChange, recordCreation, undoChan
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { changingTools, conversationRoute, evidenceText } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
+import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
+import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
+import { currentNavItem } from "@/components/shell/navigation";
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
 import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
 import { resolveFollowUp } from "@/lib/assistant/followup";
@@ -69,6 +72,9 @@ const followUps: Partial<Record<AssistantTool, string[]>> = {
   memory: ["Merk dir: Puffer immer 500 €"],
   changes: ["Mach das rückgängig"],
   explain: ["Wie funktionieren die Sparziele?", "Wie funktioniert der Import?"],
+  contracts: ["Welche Verträge kann ich kündigen?", "Was fällt dir auf?"],
+  context: ["Was fällt dir auf?", "Wo gebe ich mehr aus als letzten Monat?"],
+  insights: ["Wie viel kann ich noch ausgeben?", "Welche Abos habe ich?"],
 };
 const thinkingSteps = ["Lese deine Nachricht", "Suche die passenden Daten", "Rechne nach", "Formuliere die Antwort"];
 const sameDay = (at: number, now: number) => new Date(at).toDateString() === new Date(now).toDateString();
@@ -85,6 +91,14 @@ const listMonths = (months: string[]) => {
   return `Im ${text}${months.length > 4 ? ` und ${months.length - 4} weiteren Monaten` : ""}`;
 };
 const newId = () => crypto.randomUUID();
+// What the user is looking at; pages add filters and selections, otherwise the route is enough.
+function pageContext(): AssistantPageContext | null {
+  const published = currentAssistantContext();
+  if (published) return published;
+  if (typeof window === "undefined") return null;
+  const route = window.location.pathname;
+  return { route, title: currentNavItem(route)?.label ?? "Finanzblick" };
+}
 const timestamp = () => Date.now();
 
 function previewText(draft: AssistantDraft) {
@@ -113,8 +127,9 @@ const monthDiff = (from: string, to: string) => {
 };
 const monthEnd = (month: string) => `${month}-${String(lastDay(month)).padStart(2, "0")}`;
 
-export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number } } = {}) {
+export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number; send?: boolean } } = {}) {
   const { state, dashboard, update, storageError, ready } = useFinance();
+  const extras = useDashboardExtras();
   const messages = state.assistantChat ?? [];
   const [input, setInput] = useState(prompt?.text ?? "");
   // A question started from a booking, budget or category lands in the input, ready to send.
@@ -127,6 +142,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     if (!prompt?.text) return;
     requestAnimationFrame(() => inputRef.current?.focus());
   }, [prompt?.text, prompt?.at]);
+  // "Mehr dazu" on a hint asks right away; if the chat is busy, the question simply stays in the input.
+  const autoSent = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!prompt?.send || !prompt.text || !ready || storageError || autoSent.current === prompt.at) return;
+    autoSent.current = prompt.at;
+    void send(undefined, prompt.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prompt?.at, prompt?.send, ready, storageError]);
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState<string>();
   const [editing, setEditing] = useState<string>();
@@ -487,7 +510,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const market = tool === "market" || tool === "depot" ? await loadMarket(work) : undefined;
       const knowledge = tool === "knowledge" && !knowledgeListQuestion(work.toLowerCase()) ? await loadKnowledge(work, [...goals, ...planned]) : undefined;
       try {
-        result = executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge });
+        result = executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge,
+          page: pageContext(), insights: extras?.copilot });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }

@@ -3,6 +3,7 @@ import { currency, dateLabel } from "@/lib/format";
 import { pocketKey } from "@/lib/goals";
 import { detectSubscriptions, forecastMonth, ledger } from "@/lib/insights";
 import type { AppState, AssistantCard } from "@/lib/types";
+import { monthEndForecast } from "@/lib/month-forecast";
 import { buildForecastInput, GIRO, projectAccounts } from "./forecast";
 
 type Line = AssistantCard["lines"][number];
@@ -21,6 +22,11 @@ export const pulseQuestion = (lower: string) =>
   /wie (?:läuft|laeuft|steht) (?:es um )?(?:mein|der|dieser|den) monat|wie (?:schaut|sieht) (?:mein|der|dieser) monat (?:bisher|bis jetzt|gerade|aktuell)/.test(lower) ||
   /(?:bin|liege|lieg) ich (?:\S+ ){0,3}(?:im|über|ueber|unter) (?:dem |meinem )?(?:rahmen|plan|budget|limit)\b/.test(lower) ||
   /(?:gehalt|lohn) (?:\S+ ){0,2}(?:schon )?(?:da|gekommen|eingegangen|drauf|überwiesen|ueberwiesen|eingelangt)\b|wann kommt (?:mein |das )?(?:gehalt|lohn)/.test(lower) ||
+  /\bmonatsende\b|\bende des monats\b/.test(lower) && /bleib|übrig|uebrig|\bhab|stand|frei|ausgeben|reicht|minus|knapp/.test(lower) &&
+    !/^(?:warum|wieso|weshalb)\b|\bimmer\b|\bjedes mal\b/.test(lower) ||
+  /frei verfügbar|frei verfuegbar/.test(lower) ||
+  /\bwo (?:gebe|geb|gab|habe|hab) ich (?:\S+ ){0,3}mehr (?:geld )?(?:\S+ )?als (?:im |letzten |vorigen |im letzten |im vorigen )?(?:monat|vormonat)\b|\bwo (?:sind|waren) (?:meine |die )?ausgaben (?:\S+ )?gestiegen\b/.test(lower) ||
+  /^wie ?viel (?:kann|darf) ich (?:jetzt |diesen monat )?noch ausgeben\??$/.test(lower) ||
   /wo (?:gebe|geb) ich (?:\S+ ){0,2}(?:zu viel|mehr (?:geld )?(?:aus )?als (?:sonst|üblich|ueblich|normal))/.test(lower) ||
   /was (?:kommt|geht) (?:diesen monat |bis zum gehalt |heuer )?noch (?:weg|ab|runter|vom konto)|welche (?:fixkosten|abbuchungen|zahlungen|lastschriften) (?:kommen|stehen|fehlen) (?:diesen monat )?noch/.test(lower);
 
@@ -103,6 +109,7 @@ export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string
   const budgetLeft = round(budgetTotal - pace.reduce((sum, row) => sum + row.actual, 0));
   const budgetPerDay = round(Math.max(0, budgetLeft) / daysLeft);
   const safe = safeToSpend(state, dashboard, today);
+  const monthEnd = monthEndForecast(state, dashboard, today);
   const salary = salaryStatus(state, today);
   const missing = dashboard.missingFixed.map((label) => ({ label, amount: fixedAmount(state, label, month) })).filter((item) => item.amount > 0);
   const savingsDue = dashboard.monthlyFunding.filter((item) => !item.done).map((item) => ({ name: item.name, open: round(Math.max(0, item.amount - item.transferred)) }))
@@ -116,6 +123,8 @@ export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string
       detail: safe && safe.perDay < budgetPerDay ? `pro Tag bis ${dateLabel(safe.until)} – dein Konto begrenzt, nicht das Budget` : `pro Tag, ${daysLeft} Tage bis Monatsende` },
     { label: "Alltagsbudget übrig", value: budgetLeft, tone: budgetLeft >= 0 ? "info" : "bad", detail: `${currency(budgetTotal)} geplant für Essen, Tanken, Freizeit & Co.` },
   ];
+  if (monthEnd.status === "ok") lines.push({ label: "Frei bis Monatsende", value: monthEnd.free, tone: monthEnd.free >= 0 ? "info" : "bad",
+    detail: `≈ ${currency(monthEnd.perDay)} pro Tag · am ${dateLabel(monthEnd.monthEnd)} voraussichtlich ${currency(monthEnd.endBalance)} inkl. geplanter Alltagsausgaben` });
   if (safe) lines.push({ label: "Frei auf dem Konto bis zum Gehalt", value: safe.free, tone: safe.free >= 0 ? "info" : "bad",
     detail: `tiefster Stand ${currency(safe.lowest)} nach Fixkosten, Amex und Sparraten${safe.buffer ? `, minus Puffer ${currency(safe.buffer)}` : ""}${safe.asOf ? ` · Kontostand vom ${dateLabel(safe.asOf)}` : ""}` });
   for (const row of pace.filter((item) => item.status !== "ok"))
@@ -159,10 +168,17 @@ export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string
     const largest = [...grouped].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, amount]) => `${label} ${currency(amount)}`).join(", ");
     parts.splice(due, 1);
     parts.unshift(`Noch abgebucht werden diesen Monat ${missing.length === 1 ? missing[0].label : `${missing.length} Fixkosten`} (${currency(round(missing.reduce((sum, item) => sum + item.amount, 0)))})${missing.length > 1 ? `, die größten: ${largest}` : ""}.`);
+  } else if (/monatsende|ende des monats|frei verfügbar|frei verfuegbar/.test(asked) || /noch ausgeben/.test(asked) && !/heute|pro tag|am tag|täglich|gehalt/.test(asked)) {
+    // The month-end view replaces the opening sentence, so a shortfall is not stated twice.
+    parts.splice(0, 1, monthEnd.status !== "ok"
+      ? "Für eine Monatsende-Prognose fehlt mir ein aktueller Girokonto-Stand – dazu habe ich keine ausreichenden Daten. Importiere einen Kontoauszug oder sag mir z. B. „Merk dir: Girokonto 1.500 €“."
+      : monthEnd.free < 0
+        ? `Bis zum ${dateLabel(monthEnd.monthEnd)} fehlen voraussichtlich ${currency(-monthEnd.free)} – der tiefste Stand ist am ${dateLabel(monthEnd.lowestCommitted.date)}.`
+        : `Bis Monatsende sind ${currency(monthEnd.free)} frei verfügbar – rund ${currency(monthEnd.perDay)} pro Tag. Am ${dateLabel(monthEnd.monthEnd)} stehst du voraussichtlich bei ${currency(monthEnd.endBalance)}, wenn das Alltagsbudget wie geplant ausgegeben wird.`);
   } else if (perDay <= 0 && /heute|pro tag|am tag|täglich|ausgeben/.test(asked)) parts.unshift("Heute ist eigentlich nichts mehr frei.");
   return {
     text: parts.join(" "),
-    card: { kind: "answer", title: "Monats-Puls", total: perDay, month, lines: lines.slice(0, 40),
+    card: { kind: "answer", title: "Monats-Puls", total: perDay, month, lines: lines.slice(0, 40), page: { label: "Prognose in der Übersicht", href: "/" },
       note: (safe ? "„Heute frei“ = kleinerer Wert aus Alltagsbudget pro Resttag und Kontostand bis zum Gehalt (nach Fixkosten, Amex-Abbuchung, Sparraten und geplanten Ausgaben)."
         : "„Heute frei“ = Alltagsbudget pro Resttag. Mit verbundenem Girokonto rechne ich zusätzlich mit dem echten Kontostand.").slice(0, 400) },
     suggestions: ["Wird mein Konto knapp?", "Wo kann ich sparen?", "Was bleibt mir diesen Monat?"],

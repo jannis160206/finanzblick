@@ -15,6 +15,7 @@ import { SegmentedControl } from "@/components/ui/segmented-control";
 import { ContractCancelDialog, ContractDetailDialog, ContractEditDialog, type ContractAction, type ContractPatch } from "@/components/contracts/contract-dialogs";
 import { ContractMark, contractTypeLabel, contractTypeOrder, contractTypeTone } from "@/components/contracts/contract-visuals";
 import { askAssistant } from "@/lib/assistant-bus";
+import { useAssistantPageContext, type AssistantPageContext } from "@/lib/assistant-context";
 import { merchantLogoBookingId, merchantLogoName } from "@/lib/automation/merchant-mark-name";
 import { round } from "@/lib/calc";
 import {
@@ -58,6 +59,8 @@ export function ContractsPage() {
   const [editing, setEditing] = useState<{ contract: Contract | null } | null>(null);
   const [cancelling, setCancelling] = useState<Contract | null>(null);
   const disabled = !ready || !!storageError;
+  const assistantContext = useMemo<AssistantPageContext>(() => ({ route: "/vertraege", title: "Verträge", ...(detailId ? { contractId: detailId } : {}) }), [detailId]);
+  useAssistantPageContext(assistantContext);
 
   const review = contracts.filter((contract) => contract.status === "review");
   const running = contracts.filter((contract) => contract.status === "active" || (contract.status === "cancelled" && isRunning(contract, today)));

@@ -7,7 +7,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import dynamic from "next/dynamic";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSecurityMode } from "@/components/security-mode-provider";
-import { ASK_ASSISTANT_EVENT } from "@/lib/assistant-bus";
+import { ASK_ASSISTANT_EVENT, CLOSE_ASSISTANT_EVENT, assistantRequest } from "@/lib/assistant-bus";
+import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
+import { importantInsights } from "@/lib/copilot-insights";
 
 const FinanceAssistant = dynamic(() => import("@/components/finance-assistant").then((module) => module.FinanceAssistant), {
   ssr: false,
@@ -25,11 +27,18 @@ const FinanceAssistant = dynamic(() => import("@/components/finance-assistant").
 export function AssistantLauncher() {
   const security = useSecurityMode();
   const [open, setOpen] = useState(false);
-  const [prompt, setPrompt] = useState<{ text: string; at: number }>();
+  const [prompt, setPrompt] = useState<{ text: string; at: number; send?: boolean }>();
+  const insights = useDashboardExtras()?.copilot;
+  const hints = insights ? importantInsights(insights).length : 0;
+  useEffect(() => {
+    const close = () => setOpen(false);
+    window.addEventListener(CLOSE_ASSISTANT_EVENT, close);
+    return () => window.removeEventListener(CLOSE_ASSISTANT_EVENT, close);
+  }, []);
   useEffect(() => {
     const ask = (event: Event) => {
-      const text = (event as CustomEvent<string>).detail ?? "";
-      if (text) setPrompt({ text, at: Date.now() });
+      const request = assistantRequest((event as CustomEvent<unknown>).detail);
+      if (request.text) setPrompt({ text: request.text, at: Date.now(), ...(request.send ? { send: true } : {}) });
       setOpen(true);
     };
     window.addEventListener(ASK_ASSISTANT_EVENT, ask);
@@ -48,9 +57,13 @@ export function AssistantLauncher() {
   }, []);
   return <>
     {!open && <Button type="button" onClick={() => setOpen(true)} disabled={!security.ready || security.locked}
-      aria-label="Finanz-Assistent öffnen" title="Finanz-Assistent"
+      aria-label={hints ? `Finanz-Assistent öffnen, ${hints} ${hints === 1 ? "wichtiger Hinweis" : "wichtige Hinweise"}` : "Finanz-Assistent öffnen"} title="Finanz-Assistent"
       className="assistant-launcher fixed right-4 bottom-[calc(var(--shell-bottom-bar)+var(--safe-bottom)+0.75rem)] z-40 h-12 gap-2 rounded-full px-4 shadow-overlay md:right-6 md:bottom-6">
       <MessageSquareText aria-hidden="true" className="size-5" /><span className="hidden sm:inline">Assistent</span>
+      {hints > 0 && !security.locked && <span aria-hidden="true" data-testid="assistant-hint-badge"
+        className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-2xs font-semibold tabular-nums text-white ring-2 ring-background">
+        {hints > 9 ? "9+" : hints}
+      </span>}
     </Button>}
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent variant="panel" aria-describedby="assistant-panel-description">

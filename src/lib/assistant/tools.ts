@@ -17,6 +17,7 @@ import { whatIfQuestion } from "./whatif";
 import { whyQuestion } from "./why";
 import { allCategories } from "@/lib/categories";
 import { cleanupQuestion } from "./cleanup";
+import { contextQuestion, contractsQuestion, insightsQuestion } from "./copilot-questions";
 import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
 
 // Everything the assistant can do. The model may only pick one of these names.
@@ -24,7 +25,7 @@ export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
-  "security", "month_review", "shared", "networth", "refunds", "cleanup",
+  "security", "month_review", "shared", "networth", "refunds", "cleanup", "contracts", "context", "insights",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -76,6 +77,9 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   shared: "geteilte Kosten mit Raphael: was er noch schuldet und was erledigt ist (z. B. „Was schuldet mir Raphael?“)",
   networth: "Vermögen und Nettovermögen über alle Konten und dessen Entwicklung über die Monate (z. B. „Wie hat sich mein Vermögen entwickelt?“)",
   refunds: "Rückerstattungen und Gutschriften von Händlern, z. B. nach Retoure (z. B. „Ist die Rückerstattung von Amazon schon da?“)",
+  contracts: "Vertragsordner: erkannte und eigene Verträge und Abos auflisten, einzelne Verträge mit Betrag, Jahreskosten, nächster Abbuchung, Kündigungsfrist und Preisänderung (z. B. „Welche Abos habe ich?“, „Wann läuft Netflix aus?“, „Was kostet mich Spotify im Jahr?“); Kündigen selbst ist cancel",
+  context: "die gerade angezeigten oder ausgewählten Buchungen der aktuellen Seite auswerten: Summe, Top-Kategorien und Händler, mögliche Doppelbuchungen, unklare Kategorien (z. B. „Was ist mit den angezeigten Buchungen?“, „Fass die ausgewählten Buchungen zusammen“)",
+  insights: "proaktive Hinweise: knappes Monatsende, Budgetüberschreitungen, Kündigungsfristen, Preiserhöhungen, Sparziele in Gefahr, Doppelbuchungen, ungewöhnliche Ausgaben, unklare Kategorien (z. B. „Was fällt dir auf?“, „Gibt es Auffälligkeiten?“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
@@ -189,6 +193,9 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (sharedQuestion(lower) && !known) return "shared";
   if (refundQuestion(lower)) return "refunds";
   if (netWorthQuestion(lower)) return "networth";
+  if (insightsQuestion(lower)) return "insights";
+  if (contextQuestion(lower)) return "context";
+  if (contractsQuestion(lower) && !known) return "contracts";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir (?:\S+ ){0,3}gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
