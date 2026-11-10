@@ -5,13 +5,18 @@ import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { MERCHANT_LOGOS_CHANGED } from "@/components/merchant-marks-provider";
 import type { AiReviewDecision } from "@/lib/ai/apply-review-decisions";
-import { applyAndCount, autoAssignAndCount, autoAssignOpenReviews, webContextFor } from "@/lib/ai/auto-assign";
+import { applyAndCount, autoAssignAndCount, autoAssignOpenReviews, webContextFor, type AutoAssignResult } from "@/lib/ai/auto-assign";
 import type { AiCategorization } from "@/lib/ai/categorize";
 import { decideReviewWithEvidence, industryContext, industryLookupName } from "@/lib/ai/evidence";
 import type { Industry } from "@/lib/ai/industry";
 import { aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "@/lib/ai/review-candidates";
 import { recordAiSuggestions, type AiSuggestionEntry } from "@/lib/ai/suggestions";
 import { pendingWebLookups, recordWebCategories, webHabits, type WebTarget } from "@/lib/ai/web-categories";
+import { runFinanceTask, type AssignPreview } from "@/lib/finance-worker";
+import type { AppState } from "@/lib/types";
+
+const assignPreview = (base: AppState, outcome: AutoAssignResult): AssignPreview =>
+  outcome.state === base ? { changed: false, applied: outcome.applied } : { changed: true, state: outcome.state, applied: outcome.applied };
 
 const STATUS_INTERVAL_MS = 60_000;
 const WEB_BATCH = 8;
@@ -91,11 +96,18 @@ export function AiReviewAssistant() {
   useEffect(() => {
     if (!ready || storageError || !openKey) return;
     const base = latest.current;
-    const preview = autoAssignOpenReviews(base);
-    if (preview.state === base) return;
-    update((current) => current === base ? preview.state : autoAssignOpenReviews(current).state);
-    const done = preview.applied.length;
-    if (done) toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
+    let cancelled = false;
+    const apply = (preview: AssignPreview) => {
+      if (cancelled || !preview.changed) return;
+      update((current) => current === base ? preview.state : autoAssignOpenReviews(current).state);
+      const done = preview.applied.length;
+      if (done) toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
+    };
+    // The evidence check scans the whole ledger; a worker keeps the page responsive while it runs.
+    const offThread = runFinanceTask<AssignPreview>({ kind: "autoAssign", state: base });
+    if (offThread) void offThread.then(apply, () => apply(assignPreview(base, autoAssignOpenReviews(base))));
+    else apply(assignPreview(base, autoAssignOpenReviews(base)));
+    return () => { cancelled = true; };
   }, [ready, storageError, openKey, update]);
 
   // Unknown shops are looked up on the internet (OpenStreetMap shop type, Wikidata, website) and remembered;
@@ -119,10 +131,14 @@ export function AiReviewAssistant() {
         });
         if (!found.length) return;
         const base = latest.current;
-        const preview = autoAssignAndCount(recordWebCategories(base, found));
-        update((current) => current === base ? preview.state : autoAssignAndCount(recordWebCategories(current, found)).state);
+        const now = Date.now();
+        const preview = await (runFinanceTask<AssignPreview>({ kind: "webAssign", state: base, found, now })?.catch(() => null) ?? null)
+          ?? assignPreview(base, autoAssignAndCount(recordWebCategories(base, found, now)));
+        if (signal.aborted) return;
+        const next = preview.changed ? preview.state : base;
+        update((current) => current === base ? next : autoAssignAndCount(recordWebCategories(current, found)).state);
         webTotals.current += preview.applied.length;
-        if (!pendingWebLookups(preview.state, 1, webAttempted.current).length && webTotals.current) {
+        if (!pendingWebLookups(next, 1, webAttempted.current).length && webTotals.current) {
           const done = webTotals.current;
           toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Internet-Recherche zugeordnet`, {
             description: "Geschäftstyp aus OpenStreetMap, Wikidata oder der Händler-Webseite.",

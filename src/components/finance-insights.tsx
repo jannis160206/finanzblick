@@ -3,12 +3,13 @@
 import { useMemo, useState } from "react";
 import { CopyX, Sparkles, TrendingUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useFinance } from "@/components/finance-provider";
+import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
+import { Skeleton } from "@/components/ui/skeleton";
 import { FinancialData } from "@/components/financial-data";
 import { SectionHeading } from "@/components/finance-ui";
 import { type SummaryFacts } from "@/lib/ai/summary";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { financeInsights, type FinanceInsights as Insights } from "@/lib/insights";
+import type { FinanceInsights as Insights } from "@/lib/insights";
 import { cn } from "@/lib/utils";
 
 export function summaryFacts(insights: Insights): SummaryFacts {
@@ -41,8 +42,12 @@ function shortSummary(facts: SummaryFacts) {
 }
 
 export function FinanceInsightsPanel() {
-  const { state } = useFinance();
-  const insights = useMemo(() => financeInsights(state), [state]);
+  const insights = useDashboardExtras()?.insights;
+  if (!insights) return <Skeleton className="mb-4 min-h-48 rounded-2xl border border-border/60" />;
+  return <InsightsContent insights={insights} />;
+}
+
+function InsightsContent({ insights }: { insights: Insights }) {
   const facts = useMemo(() => summaryFacts(insights), [insights]);
   const [written, setWritten] = useState<{ key: string; text: string; source: "KI" | "Regel" }>();
   const [busy, setBusy] = useState(false);

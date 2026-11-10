@@ -1,34 +1,20 @@
 "use client";
 
-import { useDeferredValue, useMemo } from "react";
 import Link from "next/link";
 import { ArrowRight, CalendarClock, FileText, Sparkles, TrendingUp } from "lucide-react";
-import { useFinance } from "@/components/finance-provider";
+import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
 import { FinancialData } from "@/components/financial-data";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { addDays, contractChargesBetween, contractReminders, contractSummary, detectContracts } from "@/lib/contracts";
 import { currency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const dayMonth = (date: string) => `${Number(date.slice(8, 10))}.${Number(date.slice(5, 7))}.`;
 
 export function ContractsCard({ className }: { className?: string }) {
-  const { state } = useFinance();
-  // Detection scans the whole ledger; running it after the first paint keeps the key figures fast.
-  const deferred = useDeferredValue<typeof state | null>(state, null);
-  const data = useMemo(() => {
-    if (!deferred) return null;
-    const today = deferred.settings.asOf;
-    const contracts = detectContracts(deferred, today);
-    return {
-      summary: contractSummary(contracts, today),
-      upcoming: contractChargesBetween(contracts, today, addDays(today, 30), today).slice(0, 3),
-      reminder: contractReminders(contracts, today).find((item) => item.kind !== "missed"),
-      empty: !contracts.some((contract) => contract.status !== "ignored"),
-    };
-  }, [deferred]);
+  // Detection scans the whole ledger; it runs off the main thread after the first paint.
+  const data = useDashboardExtras()?.contracts;
   if (!data) return <Skeleton className={cn("min-h-72 rounded-2xl border border-border/60", className)} />;
   const { summary, upcoming, reminder, empty } = data;
   return (

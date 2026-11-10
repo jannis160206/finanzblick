@@ -131,6 +131,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
   );
 
   const items = useMemo(() => {
+    if (!open) return [];
     const close = () => onOpenChange(false);
     const go = (href: string) => () => { close(); router.push(href); };
     const darkMode = (resolvedTheme ?? theme) === "dark";
@@ -206,7 +207,7 @@ export function GlobalSearch({ open, onOpenChange }: { open: boolean; onOpenChan
       }
     }
     return groupOrder.flatMap((group) => found.filter((item) => item.group === group).slice(0, groupLimit[group]));
-  }, [words, trimmed, locked, workspace, pathname, router, onOpenChange, resolvedTheme, theme, setTheme, security, state.savingsGoals, ledger]);
+  }, [open, words, trimmed, locked, workspace, pathname, router, onOpenChange, resolvedTheme, theme, setTheme, security, state.savingsGoals, ledger]);
 
   const selected = Math.min(active, Math.max(items.length - 1, 0));
   const activeItem = items[selected];

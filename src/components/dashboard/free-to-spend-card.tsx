@@ -1,15 +1,14 @@
 "use client";
 
-import { useDeferredValue, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { ChevronDown, MessageSquareText, WalletCards } from "lucide-react";
-import { useFinance } from "@/components/finance-provider";
+import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
 import { FinancialData } from "@/components/financial-data";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { askAssistant } from "@/lib/assistant-bus";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
-import { monthEndForecast, type MonthEndForecast } from "@/lib/month-forecast";
+import type { MonthEndForecast } from "@/lib/month-forecast";
 import { cn } from "@/lib/utils";
 
 const MonthForecastChart = dynamic(() => import("@/components/charts/month-forecast-chart"), {
@@ -23,15 +22,9 @@ const dayMonth = (date: string) => `${Number(date.slice(8, 10))}.${Number(date.s
 const monthName = (month: string) => monthLabel(month).replace(/\s\d{4}$/, "");
 
 export function FreeToSpendCard({ className }: { className?: string }) {
-  const { state, dashboard, ready } = useFinance();
-  // The projection walks every remaining day; it is computed after the first paint.
-  const deferredState = useDeferredValue<typeof state | null>(state, null);
-  const deferredDashboard = useDeferredValue<typeof dashboard | null>(dashboard, null);
-  const forecast = useMemo(
-    () => deferredState && deferredDashboard ? monthEndForecast(deferredState, deferredDashboard, deferredState.settings.asOf) : null,
-    [deferredState, deferredDashboard],
-  );
-  if (!forecast || !ready) return <Skeleton className={cn("min-h-64 rounded-3xl border border-border/60", className)} />;
+  // The projection walks every remaining day; it runs off the main thread after the first paint.
+  const forecast = useDashboardExtras()?.forecast;
+  if (!forecast) return <Skeleton className={cn("min-h-64 rounded-3xl border border-border/60", className)} />;
   if (forecast.status === "unknown") return <UnknownBalance month={forecast.month} className={className} />;
   return <FreeToSpend forecast={forecast} className={className} />;
 }

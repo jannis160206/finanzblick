@@ -1,6 +1,5 @@
 "use client";
 
-import { useDeferredValue, useMemo } from "react";
 import Link from "next/link";
 import {
   ArrowDownLeft,
@@ -26,7 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FinanceInsightsPanel } from "@/components/finance-insights";
 import { bankPocketBalance, physicalPocketBalances } from "@/lib/goals";
 import { round, sum } from "@/lib/calc";
-import { netWorthHistory } from "@/lib/net-worth";
+import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
 import { StackedBar } from "@/components/stacked-bar";
 import { BudgetProgressCard } from "@/components/dashboard/budget-progress-card";
 import { NetWorthCard } from "@/components/dashboard/net-worth-card";
@@ -43,13 +42,8 @@ export function Overview() {
   const { state, dashboard: d } = useFinance();
   const incompleteAssets = Object.values(physicalPocketBalances(state, d.actual)).some((balance) => balance.amount === null);
   const reserves = sum(pocketNames.map((pocket) => bankPocketBalance(state, pocket, d.actual) ?? 0));
-  // Net worth history is CPU-heavy; computing it after the first paint keeps the key figures fast.
-  const deferredState = useDeferredValue<typeof state | null>(state, null);
-  const deferredDashboard = useDeferredValue<typeof d | null>(d, null);
-  const netWorth = useMemo(
-    () => (deferredState && deferredDashboard ? netWorthHistory(deferredState, deferredDashboard) : null),
-    [deferredState, deferredDashboard],
-  );
+  // Net worth history is CPU-heavy; it is computed off the main thread after the first paint.
+  const netWorth = useDashboardExtras()?.netWorth ?? null;
   const positive = d.current.surplus >= 0;
   const surplusKpi = {
     label: "Überschuss · Plan",

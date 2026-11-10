@@ -21,6 +21,23 @@ function storage(id = "alice") {
 }
 
 describe("account finance persistence", () => {
+  it("starts from a server-rendered snapshot without requesting it again", async () => {
+    const server = changed("server");
+    const request = vi.fn();
+    vi.stubGlobal("fetch", request);
+    const { controller } = storage();
+    expect(await controller.load({ state: server, revision: 4 })).toEqual(server);
+    expect(request).not.toHaveBeenCalled();
+    expect(cached()).toMatchObject({ revision: 4, pending: false });
+  });
+  it("keeps pending device changes when the server-rendered snapshot is newer", async () => {
+    const local = changed("local");
+    localStorage.setItem(accountStorageKey("alice"), JSON.stringify({ state: local, revision: 2, pending: true }));
+    vi.stubGlobal("fetch", vi.fn());
+    const { controller } = storage();
+    expect(await controller.load({ state: changed("server"), revision: 3 })).toEqual(local);
+    expect(controller.error).not.toBeNull();
+  });
   it("does not duplicate large booking/review/receipt data in the persisted baseline", async () => {
     const base = changed("shared");
     base.transactions = Array.from({ length: 3_062 }, (_, id) => ({ ...base.transactions[0],

@@ -176,15 +176,16 @@ export class AccountFinanceStorage {
     return result.data;
   }
 
-  load(): Promise<AppState | null> {
+  /** `initial` is the server-rendered snapshot; it replaces the first request, the merge rules stay the same. */
+  load(initial?: z.infer<typeof financeSnapshotSchema>): Promise<AppState | null> {
     if (this.loading) return this.loading;
-    const promise = this.loadInitial();
+    const promise = this.loadInitial(initial);
     this.loading = promise;
     void promise.then(() => { this.loading = undefined; }, () => { this.loading = undefined; });
     return promise;
   }
 
-  private async loadInitial(): Promise<AppState | null> {
+  private async loadInitial(initial?: z.infer<typeof financeSnapshotSchema>): Promise<AppState | null> {
     if (this.busy) throw new FinanceStorageError("Die Synchronisierung läuft bereits.");
     this.busy = true;
     try {
@@ -195,7 +196,7 @@ export class AccountFinanceStorage {
         ? { revision: local.revision, state: local.baseState } : undefined;
       let remote: z.infer<typeof financeSnapshotSchema>;
       try {
-        remote = await this.request("GET");
+        remote = initial ?? await this.request("GET");
       } catch (error) {
         local = this.cache;
         if (!(error instanceof FinanceStorageError) || error instanceof AccountSessionError || !local) throw error;

@@ -38,7 +38,7 @@ export function AppShell({
   initialWarning?: string;
 }) {
   const pathname = usePathname();
-  const { ready, storageError, retrySave, openReviewCount } = useFinance();
+  const { ready, preloaded, storageError, retrySave, openReviewCount } = useFinance();
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
@@ -97,8 +97,11 @@ export function AppShell({
                 {initialWarning}
               </p>
             )}
-            {ready ? (
-              <PageTransition>{children}</PageTransition>
+            {ready || preloaded ? (
+              // Server-rendered figures are visible at once but stay read-only until the working state has loaded.
+              <div inert={!ready} aria-busy={!ready} className="contents">
+                <PageTransition>{children}</PageTransition>
+              </div>
             ) : (
               <PageSkeleton label="Finanzdaten werden geladen …" />
             )}

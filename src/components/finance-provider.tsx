@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
@@ -14,7 +15,7 @@ import {
 } from "react";
 import { toast, Toaster } from "sonner";
 import { useDocumentTheme } from "@/components/ui/use-document-theme";
-import { actualPockets, calculateDashboard, synchronizeGoals, type Dashboard } from "@/lib/calc";
+import { calculateDashboard, type Dashboard } from "@/lib/calc";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import {
   commitStatementImport,
@@ -25,12 +26,9 @@ import {
   type ImportMetadata,
 } from "@/lib/import/review";
 import { localToday, refreshPlanning, synchronizePlan } from "@/lib/planning";
-import { restoreLegacySourceCategories } from "@/lib/legacy-source";
 import { approveReviewedBooking } from "@/lib/import/approve-review";
 import { assignAfterImport } from "@/lib/ai/auto-assign";
 import { useSecurityMode } from "@/components/security-mode-provider";
-import { initializePlannedOneOffs } from "@/lib/planned-one-offs";
-import { initializeMotorcycleGoal } from "@/lib/goals";
 import { FixedPlanCapacityError } from "@/lib/fixed-plan";
 import { FINANCE_STORAGE_KEY, FinanceStorage, FinanceStorageError, financeStorageMessage } from "@/lib/finance-storage";
 import { amexBalanceRecoveryResponseSchema, needsAmexBalanceRecovery, recoverAmexBalance, type AmexBalanceRecovery } from "@/lib/import/amex-balance-recovery";
@@ -40,6 +38,8 @@ import { sameFinanceData } from "@/lib/account-finance-merge";
 import { AccountWorkspaceContext } from "@/components/account-context";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { AutomationContext } from "@/components/automation-context";
+import { prepareLoadedState } from "@/lib/finance-hydrate";
+import { runFinanceTask, type PreparedState, type SettlePreview } from "@/lib/finance-worker";
 import { automationEventSchema, type AutomationEvent } from "@/lib/automation/schema";
 
 function FinanceNotifications() {
@@ -78,6 +78,8 @@ type Action =
   | {
       type: "hydrate";
       data: AppState;
+      /** Already normalized off the main thread by prepareLoadedState. */
+      prepared?: boolean;
       reference?: AppState;
       error?: string;
       cause?: unknown;
@@ -151,11 +153,9 @@ function reducer(store: Store, action: Action | AppendAction): Store {
       if (action.type === "restore" && action.expected !== store.data)
         return { ...store, restoration: { id: action.id, error: "Der Finanzstand wurde zwischenzeitlich geändert. Bitte die Vorschau erneut bestätigen." } };
       try {
-        const data = refreshPlanning(
-          queueLedgerReview(initializePlannedOneOffs(restoreLegacySourceCategories(action.data, action.type === "hydrate" ? action.reference : undefined))),
-        );
         return {
-          data: appStateSchema.parse(synchronizeGoals(initializeMotorcycleGoal(data, actualPockets(data).Motorrad))),
+          data: action.type === "hydrate" && action.prepared ? action.data
+            : prepareLoadedState(action.data, action.type === "hydrate" ? action.reference : undefined),
           ready: true,
           error: action.type === "hydrate" ? action.error ?? null : null,
           errorCause: action.type === "hydrate" ? action.cause : undefined,
@@ -203,6 +203,8 @@ type FinanceContextValue = {
   dashboard: Dashboard;
   openReviewCount: number;
   ready: boolean;
+  /** The state shown before `ready` is the stored server state and may already be displayed (read-only). */
+  preloaded?: boolean;
   saved: boolean;
   storageError: string | null;
   synchronizing?: boolean;
@@ -223,21 +225,41 @@ const FinanceContext = createContext<FinanceContextValue | null>(null);
 type FinanceRestoration = (state: AppState, expected: AppState) => Promise<void>;
 const FinanceRestorationContext = createContext<FinanceRestoration | null>(null);
 
+// Dashboards already computed elsewhere (server render, worker) for exactly this state object.
+const knownDashboards = new WeakMap<AppState, Dashboard>();
+
+// The worker returns null when unavailable or failing; the reducer then prepares on the main thread as before.
+async function prepareOffMainThread(data: AppState): Promise<AppState | null> {
+  const prepared = await (runFinanceTask<PreparedState>({ kind: "prepare", data })?.catch(() => null) ?? null);
+  if (!prepared) return null;
+  // Keeping the loaded object when nothing changed lets every state-keyed cache stay valid.
+  const state = prepared.unchanged ? data : prepared.state;
+  if (!knownDashboards.has(state)) knownDashboards.set(state, prepared.dashboard);
+  return state;
+}
+
 function createDashboardGetter(state: AppState) {
   // Keep each lazy result bound to its state, including across save-status renders.
-  let dashboard: Dashboard | undefined;
+  let dashboard: Dashboard | undefined = knownDashboards.get(state);
   return () => (dashboard ??= calculateDashboard(state));
 }
 
 export function FinanceProvider({
   initialState,
+  initialRevision,
+  initialDashboard,
   children,
   account,
 }: {
   initialState: AppState;
+  /** Revision of a server-rendered account state; the first load then needs no extra request. */
+  initialRevision?: number;
+  /** The server's dashboard for `initialState`, so hydration renders without recomputing it. */
+  initialDashboard?: Dashboard;
   children: ReactNode;
   account?: AccountUser;
 }) {
+  if (initialDashboard && !knownDashboards.has(initialState)) knownDashboards.set(initialState, initialDashboard);
   const settled = useRef(false);
   const [store, dispatch] = useReducer(reducer, {
     data: initialState,
@@ -387,9 +409,13 @@ export function FinanceProvider({
     let polling = false;
     async function hydrateAccount() {
       try {
-        const data = await cloud!.load();
+        const data = await cloud!.load(initialRevision === undefined ? undefined : { state: accountInitial, revision: initialRevision });
         if (!active) return;
-        dispatch({ type: "hydrate", data: data ?? accountInitial, error: cloud!.error?.message, cause: cloud!.error });
+        const loaded = data ?? accountInitial;
+        const prepared = await prepareOffMainThread(loaded);
+        if (!active) return;
+        // Server-rendered figures are already visible, so the switch to the working state may render in slices.
+        startTransition(() => dispatch({ type: "hydrate", data: prepared ?? loaded, prepared: !!prepared, error: cloud!.error?.message, cause: cloud!.error }));
       } catch (error) {
         if (!active) return;
         dispatch({ type: "hydrate", data: cloud!.cachedState ?? accountInitial, blocked: true });
@@ -443,7 +469,7 @@ export function FinanceProvider({
       window.removeEventListener("online", refresh);
       window.removeEventListener("beforeunload", beforeUnload);
     };
-  }, [cloud, handleCloudError, accountInitial, reconcileAccount]);
+  }, [cloud, handleCloudError, accountInitial, initialRevision, reconcileAccount]);
   useEffect(() => {
     if (!account || !cloud) return;
     const source = new EventSource(`/api/statements/events?account=${encodeURIComponent(account.id)}`);
@@ -495,10 +521,20 @@ export function FinanceProvider({
     if (!store.ready || store.blocked || store.error || settled.current) return;
     if (!store.data.reviewQueue?.length) return;
     settled.current = true;
-    void import("@/lib/automation/settle-open").then(({ settleOpenReviews }) => {
+    const base = store.data;
+    const onMainThread = () => void import("@/lib/automation/settle-open").then(({ settleOpenReviews }) => {
       dispatch({ type: "update", updater: settleOpenReviews });
     });
-  }, [store.ready, store.blocked, store.error, store.data.reviewQueue]);
+    // Usually nothing closes; checking in the worker keeps that common case off the main thread.
+    const offThread = runFinanceTask<SettlePreview>({ kind: "settle", state: base });
+    if (!offThread) return onMainThread();
+    void offThread.then((preview) => {
+      if (!preview.changed) return;
+      void import("@/lib/automation/settle-open").then(({ settleOpenReviews }) => {
+        dispatch({ type: "update", updater: (current) => current === base ? preview.state : settleOpenReviews(current) });
+      });
+    }, onMainThread);
+  }, [store.ready, store.blocked, store.error, store.data]);
   useEffect(() => {
     if (!store.ready || store.blocked || store.saved) return;
     try {
@@ -573,6 +609,7 @@ export function FinanceProvider({
     },
     openReviewCount: openReviewCount(store.data.reviewQueue ?? []),
     ready: store.ready,
+    preloaded: initialRevision !== undefined,
     saved: store.saved,
     storageError: store.error,
     synchronizing,
