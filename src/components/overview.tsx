@@ -32,6 +32,7 @@ import { BudgetProgressCard } from "@/components/dashboard/budget-progress-card"
 import { NetWorthCard } from "@/components/dashboard/net-worth-card";
 import { GoalsCard } from "@/components/dashboard/goals-card";
 import { ContractsCard } from "@/components/dashboard/contracts-card";
+import { FreeToSpendCard } from "@/components/dashboard/free-to-spend-card";
 
 const CategoryDonut = dynamic(() => import("@/components/category-donut").then((module) => module.CategoryDonut), {
   ssr: false,
@@ -149,6 +150,7 @@ export function Overview() {
           })}
         </div>
       </div>
+      <FreeToSpendCard className="mb-4" />
       <div className="mb-4 empty:hidden"><PlannedOneOffLines /></div>
       <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-12">
         <BudgetProgressCard className="xl:col-span-7" />
