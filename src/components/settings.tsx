@@ -26,6 +26,7 @@ import { SecurityModeSettings } from "@/components/security-mode-settings";
 import { FinancialData } from "@/components/financial-data";
 import { BankConnections } from "@/components/bank-connections";
 import { MailConnection } from "@/components/mail-connection";
+import { DriveConnection } from "@/components/drive-connection";
 import { PayslipPasswordSettings } from "@/components/payslip-password-settings";
 import { latestTRBalance } from "@/lib/calc";
 import { currency, dateLabel, percent } from "@/lib/format";
@@ -158,6 +159,7 @@ export function Settings() {
     profil: <AccountProfileSettings />,
     bankverbindung: <BankConnections />,
     email: <MailConnection />,
+    "google-drive": <DriveConnection />,
     "pdf-passwort": <PayslipPasswordSettings />,
     jahreszeit: <SettingsSection id="jahreszeit" title="Erscheinungsbild" icon={Palette}>
       <ThemePicker preference={saved} suggested={suggestedTheme} onChoose={chooseTheme} />

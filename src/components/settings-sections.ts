@@ -3,6 +3,7 @@ import {
   Building2,
   DatabaseBackup,
   FileLock2,
+  FolderSync,
   KeyRound,
   Landmark,
   Mail,
@@ -25,6 +26,7 @@ export const settingsGroups: SettingsGroup[] = [
   { id: "verbindungen", label: "Banken & Verbindungen", icon: Landmark, items: [
     { id: "bankverbindung", label: "Bankkonten", icon: Building2, keywords: "bank psd2 enable banking abruf freigabe erneuern konto verbinden logo", account: true },
     { id: "email", label: "E-Mail-Bestellungen", icon: Mail, keywords: "gmail mail bestellung klarna paypal amazon rechnung app-passwort", account: true },
+    { id: "google-drive", label: "Google Drive", icon: FolderSync, keywords: "google drive ordner amex abrechnungen lohnzettel import automatisch verbinden", account: true },
   ] },
   { id: "darstellung", label: "Darstellung", icon: Palette, items: [
     { id: "jahreszeit", label: "Erscheinungsbild", icon: Palette, keywords: "thema theme farbe akzent saison dunkel bewegung animation design" },
