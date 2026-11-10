@@ -7,6 +7,7 @@ import { useFinance } from "@/components/finance-provider";
 import { usePayslipUpload, type PayslipBatchResult } from "@/components/payslip-upload";
 import { useSecurityMode } from "@/components/security-mode-provider";
 import { accountRequest } from "@/lib/account-request";
+import { navigate } from "@/lib/browser-navigation";
 import type { DriveInboxItem } from "@/lib/drive/inbox";
 
 export const DRIVE_INBOX_EVENT = "finanzblick:drive-inbox";
@@ -20,6 +21,21 @@ export function requestDriveInbox() {
 }
 
 const pdfName = (name: string) => (/\.pdf$/i.test(name) ? name : `${name}.pdf`);
+const EXPIRED_NOTICE_KEY = "finanzblick.drive-expired-notice";
+
+/** Once per browser session: Google ended the approval, so nothing new arrives until the user reconnects. */
+function noticeExpired() {
+  try {
+    if (sessionStorage.getItem(EXPIRED_NOTICE_KEY)) return;
+    sessionStorage.setItem(EXPIRED_NOTICE_KEY, "1");
+  } catch {
+    // Without session storage the notice may repeat; that is acceptable.
+  }
+  toast.warning("Google-Drive-Freigabe abgelaufen", {
+    description: "Neue Abrechnungen werden erst nach erneutem Verbinden gelesen.",
+    action: { label: "Verbinden", onClick: () => navigate("/einstellungen?bereich=verbindungen#google-drive") },
+  });
+}
 
 /**
  * Reads payslips that the server fetched from the Drive folder "Abrechnungen" with the regular payslip import
@@ -44,7 +60,8 @@ export function DriveInbox() {
       accountRequest(`/api/drive/inbox/${encodeURIComponent(id)}`, user, { method: "POST", json: { outcome, ...(note ? { note } : {}) } }).catch(() => null);
 
     async function round(): Promise<boolean> {
-      const { items } = await accountRequest<{ items: DriveInboxItem[] }>("/api/drive/inbox", user);
+      const { items, expired } = await accountRequest<{ items: DriveInboxItem[]; expired?: boolean }>("/api/drive/inbox", user);
+      if (expired) noticeExpired();
       const batch = items.slice(0, BATCH_SIZE);
       if (!batch.length || cancelled) return false;
       const files: File[] = [];

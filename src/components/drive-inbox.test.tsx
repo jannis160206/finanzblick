@@ -16,11 +16,15 @@ vi.mock("@/lib/import/payslip", () => ({ parsePayslipPdf: fixture.parse, Payslip
 vi.mock("@/components/finance-provider", () => ({
   useFinance: () => ({ state: fixture.state, ready: fixture.ready, update: (updater: (state: AppState) => AppState) => { fixture.state = updater(fixture.state); }, storageError: null }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
+vi.mock("sonner", () => ({ toast }));
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/browser-navigation", () => ({ navigate }));
 
 const october: Payslip = { year: 2026, month: 10, employer: "Musterbetrieb GmbH", regularGross: 3000, specialGross: 0, monthlyPayroll: true };
 const workspace: AccountWorkspace = { user: { id: "own-account", username: "synthetic", role: "admin" }, loadServer: async () => {} };
 let inbox: { id: string; name: string; size: number; addedAt: number }[];
+let expired: boolean;
 let missing: Set<string>;
 const reports: { id: string; body: unknown }[] = [];
 const names: string[] = [];
@@ -43,12 +47,14 @@ beforeEach(() => {
   fixture.ready = true;
   fixture.parse.mockReset();
   inbox = [];
+  expired = false;
+  sessionStorage.clear();
   missing = new Set();
   reports.length = 0;
   names.length = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
     expect(new Headers(init.headers).get("X-Finanzblick-Account")).toBe("own-account");
-    if (url === "/api/drive/inbox") return Response.json({ items: inbox });
+    if (url === "/api/drive/inbox") return Response.json({ items: inbox, ...(expired ? { expired: true } : {}) });
     const id = decodeURIComponent(url.split("/").at(-1) ?? "");
     if (init.method === "POST") {
       reports.push({ id, body: JSON.parse(String(init.body)) });
@@ -60,7 +66,7 @@ beforeEach(() => {
   }));
   fixture.parse.mockImplementation(async () => ({ drafts: [], issues: [] }));
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 function renderInbox(account: AccountWorkspace | null = workspace) {
   return render(
@@ -108,4 +114,18 @@ it("stays idle without an account or before the finances have loaded", async () 
   renderInbox();
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(fetch).not.toHaveBeenCalledWith("/api/drive/inbox", expect.anything());
+});
+
+it("tells once per session that the Google approval has ended and links to reconnecting", async () => {
+  expired = true;
+  const first = renderInbox();
+  await waitFor(() => expect(toast.warning).toHaveBeenCalledOnce());
+  const [title, options] = toast.warning.mock.calls[0] as [string, { action: { label: string; onClick: () => void } }];
+  expect(title).toBe("Google-Drive-Freigabe abgelaufen");
+  options.action.onClick();
+  expect(navigate).toHaveBeenCalledWith("/einstellungen?bereich=verbindungen#google-drive");
+  first.unmount();
+  renderInbox();
+  await waitFor(() => expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === "/api/drive/inbox")).toHaveLength(2));
+  expect(toast.warning).toHaveBeenCalledOnce();
 });

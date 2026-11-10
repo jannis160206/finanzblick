@@ -13,6 +13,7 @@ const outcomeSchema = z.object({ outcome: z.enum(["imported", "skipped", "failed
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }): Promise<Response> {
   try {
     const { database, user } = await driveRequestContext(request);
+    database.consumeRateLimit(`drive-inbox:${user.id}`, 600, 60_000);
     const id = idSchema.parse((await params).id);
     const file = await readInboxFile(database, user.id, id);
     if (!file) throw new AccountError(404, "Datei nicht mehr vorhanden.");
@@ -35,6 +36,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const { config, database, user } = await driveRequestContext(request);
     requireMutationOrigin(request, config);
+    database.consumeRateLimit(`drive-inbox:${user.id}`, 600, 60_000);
     const id = idSchema.parse((await params).id);
     const { outcome, note } = outcomeSchema.parse(await readJsonBody(request, 1024));
     await recordInboxOutcome(database, user.id, id, outcome, note);

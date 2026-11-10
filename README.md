@@ -222,7 +222,7 @@ GOOGLE_CLIENT_SECRET="…"
 # FINANZBLICK_SECRET_KEY=…
 ```
 
-**Mit Google verbinden** startet die Google-Anmeldung (OAuth mit `state` und PKCE, Rückkehr über `/api/auth/callback/google` nur für das angemeldete Konto). Refresh- und Access-Token liegen verschlüsselt in `secrets/<id>.json`, der Status in `drive-links/<id>.json` (beides 0600 neben der Datenbank). **Trennen** widerruft die Freigabe bei Google und löscht beides. Einschränkungen von Google: Im **Testmodus** laufen Freigaben nach **7 Tagen** ab – der Bereich zeigt dann „Freigabe abgelaufen“ und **Erneut verbinden**. Weiterleitungs-URIs dürfen keine öffentliche IP-Adresse sein; auf einem Server braucht es dafür eine Domain.
+**Mit Google verbinden** startet die Google-Anmeldung (OAuth mit `state` und PKCE, Rückkehr über `/api/auth/callback/google` nur für das angemeldete Konto). Refresh- und Access-Token liegen verschlüsselt in `secrets/<id>.json`, der Status in `drive-links/<id>.json` (beides 0600 neben der Datenbank). **Trennen** widerruft die Freigabe bei Google und löscht beides. Einschränkungen von Google: Im **Testmodus** laufen Freigaben nach **7 Tagen** ab – der Bereich zeigt dann „Freigabe abgelaufen“ und **Erneut verbinden**, zusätzlich erscheint einmal pro Sitzung ein Hinweis in der App. Weiterleitungs-URIs dürfen keine öffentliche IP-Adresse sein; auf einem Server braucht es dafür eine Domain.
 
 **Ordner-Abfrage.** Der Statement-Worker prüft verbundene Konten im Hintergrund (Takt 15 Minuten, je Konto stündlich, bei Rückstau früher); **Jetzt prüfen** startet sofort einen Abruf. Gelesen werden die direkten Dateien der Ordner mit exakt diesem Namen (nicht im Papierkorb, max. 20 MB, Google-Docs-Formate und Unterordner werden ignoriert):
 

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSecretKeyCache } from "@/lib/server/secrets";
 import { addInboxItem, listInbox } from "@/lib/drive/inbox";
-import { readDriveLink, saveDriveConnection } from "@/lib/drive/store";
+import { markDriveLink, readDriveLink, saveDriveConnection } from "@/lib/drive/store";
 import { syncDrive } from "@/lib/drive/sync";
 import type { AccountDatabase } from "@/lib/server/database";
 
@@ -120,6 +120,15 @@ describe("/api/drive/inbox", () => {
     expect(await listInbox(host, "alice")).toEqual([]);
     expect((await readDriveLink(host, "alice"))?.processed?.[0]).toMatchObject({ id: "slip-0001", outcome: "skipped", note: "Passwort fehlt." });
     expect((await fileRoute(new Request(`${origin}/api/drive/inbox/slip-0001`, { headers: headers() }), params("slip-0001"))).status).toBe(404);
+  });
+
+  it("reports an ended Google approval with the list and limits file requests", async () => {
+    await syncDrive(host as unknown as AccountDatabase, "alice", { clientId: "c", clientSecret: "s", redirectUri: `${origin}/api/auth/callback/google` });
+    await markDriveLink(host, "alice", (link) => ({ ...link, expired: true }));
+    const list = await (await listRoute(new Request(`${origin}/api/drive/inbox`, { headers: headers() }))).json() as { items: unknown[]; expired?: boolean };
+    expect(list).toMatchObject({ expired: true, items: [expect.objectContaining({ id: "slip-0001" })] });
+    await fileRoute(new Request(`${origin}/api/drive/inbox/slip-0001`, { headers: headers() }), params("slip-0001"));
+    expect(mocks.rateLimit).toHaveBeenCalledWith("drive-inbox:alice", 600, 60_000);
   });
 
   it("rejects path tricks, foreign origins and other accounts", async () => {

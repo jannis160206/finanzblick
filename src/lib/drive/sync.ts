@@ -195,9 +195,14 @@ export function startDriveAutoSync(database: AccountDatabase, signal: AbortSigna
         try {
           const result = await syncDrive(database, userId, oauth);
           const added = driveFolderKinds.reduce((sum, kind) => sum + result.folders[kind].added, 0);
-          console.info(`Google Drive: ${added} neue Datei(en) übernommen${result.backlog ? ", weitere folgen" : ""}.`);
+          const failed = driveFolderKinds.reduce((sum, kind) => sum + result.folders[kind].failed, 0);
+          if (added || failed || result.backlog)
+            console.info(`Google Drive: ${added} neue Datei(en) übernommen${failed ? `, ${failed} fehlgeschlagen` : ""}${result.backlog ? ", weitere folgen" : ""}.`);
         } catch (error) {
-          console.warn("Google Drive: Abruf fehlgeschlagen:", error instanceof Error ? error.message : "unbekannt");
+          // Messages only, never file names or tokens.
+          if (error instanceof DriveAuthError && error.kind === "expired")
+            console.warn("Google Drive: Freigabe abgelaufen – in den Einstellungen erneut verbinden.");
+          else console.warn("Google Drive: Abruf fehlgeschlagen:", error instanceof Error ? error.message : "unbekannt");
         }
       }
     } finally {
