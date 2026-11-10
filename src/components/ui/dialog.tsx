@@ -9,25 +9,43 @@ import { Button, DialogFooterButtonContext } from "@/components/ui/button"
 import { useSecurityMode } from "@/components/security-mode-provider"
 import { useNativeSelectBoundary } from "@/components/ui/use-native-select-boundary"
 
+type DialogState = {
+  /** Effective open state after the privacy lock. */
+  open: boolean
+  locked: boolean
+  /** Closes like a dismissal (Escape, outside click), including the privacy-lock guard. */
+  requestClose: () => void
+}
+const DialogStateContext = React.createContext<DialogState | null>(null)
+
+function useDialogState() {
+  return React.useContext(DialogStateContext)
+}
+
 function Dialog({
   open,
   defaultOpen = false,
   onOpenChange,
   allowWhenLocked = false,
+  children,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root> & { allowWhenLocked?: boolean }) {
   const { locked } = useSecurityMode()
   const [internalOpen, setInternalOpen] = React.useState(defaultOpen)
+  const effectiveOpen = (allowWhenLocked || !locked) && (open ?? internalOpen)
+  const change = (next: boolean) => {
+    // CSS locks synchronously, before React updates the event closure.
+    if (!allowWhenLocked && (locked || document.documentElement.dataset.securityMode === "locked")) return
+    setInternalOpen(next); onOpenChange?.(next)
+  }
   return <DialogPrimitive.Root
     data-slot="dialog"
-    open={(allowWhenLocked || !locked) && (open ?? internalOpen)}
-    onOpenChange={(next) => {
-      // CSS locks synchronously, before React updates the event closure.
-      if (!allowWhenLocked && (locked || document.documentElement.dataset.securityMode === "locked")) return
-      setInternalOpen(next); onOpenChange?.(next)
-    }}
+    open={effectiveOpen}
+    onOpenChange={change}
     {...props}
-  />
+  >
+    <DialogStateContext.Provider value={{ open: effectiveOpen, locked, requestClose: () => change(false) }}>{children}</DialogStateContext.Provider>
+  </DialogPrimitive.Root>
 }
 
 function DialogTrigger({
@@ -205,6 +223,7 @@ function DialogDescription({
 }
 
 export {
+  useDialogState,
   Dialog,
   DialogBody,
   DialogClose,

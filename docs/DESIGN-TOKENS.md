@@ -178,3 +178,15 @@ Geändert in M3: `--chart-3` Violett (`#7c3aed` / dunkel `#a78bfa`) statt Amber 
 | `useDocumentTheme` | `ui/use-document-theme.ts` | Aktuelles Farbschema für Toasts ohne `next-themes`-Kontext |
 
 Button: neue Variante `soft` (Akzentfläche), Hover-Schatten `shadow-raised`, Outline auf `bg-card`. Dialog, Popover, Dropdown und Tooltip nutzen die Schatten-Tokens. Toasts (`sonner`) folgen dem Farbschema und liegen über der Safe-Area.
+
+## Premium-Dialoge (`src/components/ui/premium-dialog/`)
+
+| Baustein | Verhalten |
+|---|---|
+| `PremiumDialogContent` | ≥ 768 px zentriertes Modal (`sm` 28 rem, `md` 36 rem, `lg` 44 rem, `xl` 56 rem, mit `preview` ab 1024 px zweispaltig), darunter Bottom Sheet. Feder stiffness 300 / damping 28 (Sheet 30), Ausblenden 150 ms. `dirty` fragt vor dem Verwerfen (Escape, Klick daneben, Wischen). Sicherheitsmodus wie `Dialog`. |
+| Bottom Sheet | Griff und Kopfbereich ziehbar, `snapPoints` als Anteil der Fensterhöhe; Bewegung per `transform`, die Höhe wechselt erst im Ruhezustand (Footer bleibt sichtbar). Schließen unter 60 % der kleinsten Höhe oder bei schnellem Wischen. Griff per Tastatur (Pfeiltasten). Safe-Area unten, Bildschirmtastatur über `visualViewport`. |
+| `DialogSteps` / `DialogStep` | `mode` `auto` (Schritte, wenn das Formular nicht passt oder auf dem Handy), `always`, `never`; Validierung je Schritt, Fokus aufs erste fehlerhafte Feld, feste Dialoghöhe je Größe, `editing` = alle Schritte frei anwählbar. |
+| `Field`, `MoneyField`, `ChoiceCards`, `ToggleRow` | Label/Hinweis/Fehler mit ARIA verknüpft, Fehler animiert; Beträge im de-AT-Format; Auswahlkarten als Radiogruppe mit Pfeiltasten; Schalter mit `role="switch"`. |
+| `DialogSkeleton`, `DialogEmpty` | Ladezustand und Leerzustand innerhalb eines Dialogs. |
+
+Bewegung: `full` (Federn, gestaffelte Inhalte 35 ms), `reduced` (nur Opacity 120 ms; System- **und** App-Einstellung), `none` (Tests: sofortiges Ein-/Aushängen).
