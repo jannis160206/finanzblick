@@ -665,6 +665,37 @@ export const assistantChangeLogSchema = z.object({
 }).strict();
 export type AssistantChangeLog = z.infer<typeof assistantChangeLogSchema>;
 export const MAX_ASSISTANT_CHANGES = 200;
+export const contractIntervals = ["monthly", "quarterly", "halfyearly", "yearly"] as const;
+export const contractIntervalSchema = z.enum(contractIntervals);
+export type ContractInterval = z.infer<typeof contractIntervalSchema>;
+export const contractNoticeSchema = z.object({
+  value: z.number().int().min(1).max(730),
+  unit: z.enum(["days", "weeks", "months"]),
+}).strict();
+export type ContractNotice = z.infer<typeof contractNoticeSchema>;
+// The user's decisions about a detected or manually added contract; detection itself is recomputed from bookings.
+export const contractOverrideSchema = z.object({
+  id: z.string().trim().min(1).max(300),
+  status: z.enum(["confirmed", "ignored", "cancelled"]).optional(),
+  manual: z.boolean().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  category: categorySchema.optional(),
+  amount: z.number().finite().positive().max(1_000_000).optional(),
+  interval: contractIntervalSchema.optional(),
+  nextDate: dateSchema.optional(),
+  notice: contractNoticeSchema.optional(),
+  termEnd: dateSchema.optional(),
+  autoRenew: z.boolean().optional(),
+  renewalMonths: z.number().int().min(1).max(60).optional(),
+  cancelledAt: dateSchema.optional(),
+  note: z.string().trim().max(500).optional(),
+  updatedAt: z.number().int().nonnegative(),
+}).strict().refine(
+  (entry) => !entry.manual || (!!entry.name && entry.amount !== undefined && !!entry.interval && !!entry.nextDate),
+  "Ein manueller Vertrag braucht Name, Betrag, Intervall und nächsten Termin.",
+);
+export type ContractOverride = z.infer<typeof contractOverrideSchema>;
+export const MAX_CONTRACTS = 500;
 export const appStateSchema = z.object({
   version: z.literal(1),
   payslips: z.array(payslipSchema).max(240).refine(
@@ -696,6 +727,10 @@ export const appStateSchema = z.object({
   savingsGoals: z.array(savingsGoalSchema).max(50).refine(
     (goals) => new Set(goals.map((goal) => goal.id)).size === goals.length,
     "Sparziele müssen eindeutige IDs haben",
+  ).optional(),
+  contracts: z.array(contractOverrideSchema).max(MAX_CONTRACTS).refine(
+    (entries) => new Set(entries.map((entry) => entry.id)).size === entries.length,
+    "Verträge müssen eindeutige IDs haben.",
   ).optional(),
   pocketOpeningBalances: z.array(pocketOpeningBalanceSchema).max(10_000).optional(),
   bikeOnlyGoalApplied: z.boolean().optional(),

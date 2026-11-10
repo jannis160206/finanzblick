@@ -61,6 +61,19 @@ describe("notification events", () => {
     expect(events.filter((item) => item.id.startsWith("salary:"))).toHaveLength(1);
   });
 
+  it("reports contract deadlines within 30 days and recent price increases once", () => {
+    const charges = ["2026-05-03", "2026-06-03", "2026-07-03", "2026-08-03", "2026-09-03"].map((date, index) =>
+      row(date, "Streamflix Abo", index < 4 ? -9.99 : -12.99, "Abonnements"));
+    const state = appStateSchema.parse({
+      ...stateWith(charges),
+      contracts: [{ id: "streamflix", status: "confirmed", notice: { value: 2, unit: "weeks" }, updatedAt: 1 }],
+    });
+    const events = detect(state, { largeDebitThreshold: 1000 }).filter((event) => event.id.startsWith("contract-"));
+    expect(events.map((event) => event.id)).toEqual(["contract-price:streamflix:2026-09-03", "contract-deadline:streamflix:2026-10-20"]);
+    expect(events.every((event) => event.url === "/vertraege")).toBe(true);
+    expect(events[0].title).toBe("Preiserhöhung: Streamflix Abo");
+  });
+
   it("returns nothing without relevant bookings", () => {
     expect(detect(stateWith([]))).toEqual([]);
   });

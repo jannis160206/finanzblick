@@ -11,6 +11,7 @@ const pages = [
   { path: "/umsaetze", heading: "Umsätze" },
   { path: "/budget", heading: "Budget" },
   { path: "/sparen", heading: "Sparen" },
+  { path: "/vertraege", heading: "Verträge" },
   { path: "/einstellungen", heading: "Einstellungen" },
 ] as const;
 const blocking = new Set(["critical", "serious"]);

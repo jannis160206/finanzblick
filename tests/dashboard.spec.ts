@@ -85,6 +85,7 @@ test("all six screens render without runtime errors and theme persists", async (
     ["/umsaetze", "Umsätze"],
     ["/budget", "Budget"],
     ["/sparen", "Sparen"],
+    ["/vertraege", "Verträge"],
     ["/gehalt-steuern", "Gehalt & Steuern"],
     ["/einstellungen", "Einstellungen"],
   ]) {

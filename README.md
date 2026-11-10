@@ -18,15 +18,16 @@ http://127.0.0.1:3000
 
 ## Aufbau
 
-Fünf Seiten plus Einstellungen:
+Sechs Seiten plus Einstellungen:
 
 - **Übersicht**: unverändert wie bisher (Überschuss, Kennzahlen, Monatsverteilung, Geplant, Pockets, Sparziele, Einblicke, die nächsten 90 Tage und Diagramme).
 - **Umsätze**: die Buchungsliste mit Prüfung, **Sammel-Korrekturen** (gleiche Händler mit offener Prüfung gemeinsam zuordnen), sauberen Händlernamen (z. B. „AMZNPRIME DE*BT15Q46J4“ → „Amazon Prime“, der Originaltext steht im Tooltip) und **Tags** (z. B. „Malaga 2026“) über mehrere Kategorien hinweg. Tags vergibt man über die Auswahl → **Tag vergeben**. Die Suche nach `#tag` filtert danach; die Tag-Leiste zeigt Summen je Tag. Tags werden in der Excel-Sicherung (Spalte **Tags**) mitgesichert.
 - **Budget** (früher Monate und Budgetdetails): Ansicht Monat mit Plan, Ist und Rest sowie Budget-Vorschlägen (z. B. „Restaurants 3 Monate über Plan, Lebensmittel drunter → umschichten?“), Ansicht Jahr mit ◀ Jahr ▶. Mehrfache gleichnamige Fixkosten erscheinen gebündelt und aufklappbar („Amazon (6)“).
 - **Sparen** (früher Pockets, Sparziele und Trade-Republic-Zinsen): Pockets, **Nettovermögen** über alle Konten inklusive Depot als Verlauf, Sparziele und TR-Zinsen.
+- **Verträge** (`/vertraege`): digitaler Vertragsordner. Wiederkehrende Abbuchungen (gleicher Händler, ähnlicher Betrag, monatlich, vierteljährlich, halbjährlich oder jährlich) und Fixkosten erscheinen automatisch; neu erkannte lassen sich bestätigen oder ausblenden, alle bearbeiten, als gekündigt markieren oder von Hand anlegen. Mit eingetragener Kündigungsfrist und Mindestlaufzeit nennt Finanzblick den letzten Kündigungstag und erinnert 30 Tage vorher; Preiserhöhungen werden hervorgehoben. **Kündigung vorbereiten** öffnet den Assistenten. Entscheidungen werden im Finanzstand gespeichert (Feld `contracts`, keine Schemaänderung).
 - **Gehalt & Steuern**: Jahressechstel, Prämien-Spielraum und Steuerbeispiel unter **Details**, Abrechnungen eingeklappt.
 
-**Importieren** (Kopfzeile) ist der einzige Import: CSV/Excel-Kontoauszüge, Lohnzettel-PDFs und Screenshots werden automatisch erkannt. Der **Assistent** ist ein Button unten rechts auf jeder Seite; Fragen lassen sich direkt aus einem Budget-Vorschlag stellen. Die alten Adressen `/monate`, `/plan`, `/pockets` und `/assistent` leiten weiter. Als installierte App (PWA) meldet Finanzblick nach Freigabe unter **Einstellungen → Benachrichtigungen**, wenn ein Budget überschritten ist, eine große Abbuchung eingeht oder das Gehalt eingegangen ist.
+**Importieren** (Kopfzeile) ist der einzige Import: CSV/Excel-Kontoauszüge, Lohnzettel-PDFs und Screenshots werden automatisch erkannt. Der **Assistent** ist ein Button unten rechts auf jeder Seite; Fragen lassen sich direkt aus einem Budget-Vorschlag stellen. Die alten Adressen `/monate`, `/plan`, `/pockets` und `/assistent` leiten weiter. Als installierte App (PWA) meldet Finanzblick nach Freigabe unter **Einstellungen → Benachrichtigungen**, wenn ein Budget überschritten ist, eine große Abbuchung eingeht, das Gehalt eingegangen ist, eine Kündigungsfrist in den nächsten 30 Tagen endet oder ein Vertrag teurer geworden ist.
 
 ## Speicherung
 

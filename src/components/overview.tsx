@@ -31,6 +31,7 @@ import { StackedBar } from "@/components/stacked-bar";
 import { BudgetProgressCard } from "@/components/dashboard/budget-progress-card";
 import { NetWorthCard } from "@/components/dashboard/net-worth-card";
 import { GoalsCard } from "@/components/dashboard/goals-card";
+import { ContractsCard } from "@/components/dashboard/contracts-card";
 
 const CategoryDonut = dynamic(() => import("@/components/category-donut").then((module) => module.CategoryDonut), {
   ssr: false,
@@ -154,7 +155,8 @@ export function Overview() {
         {netWorth
           ? <NetWorthCard points={netWorth} className="xl:col-span-5" />
           : <Skeleton className="min-h-80 rounded-2xl border border-border/60 xl:col-span-5" />}
-        <GoalsCard className="md:col-span-2 xl:col-span-12" />
+        <GoalsCard compact className="xl:col-span-7" />
+        <ContractsCard className="xl:col-span-5" />
       </div>
       <FinanceInsightsPanel />
       <Card as="section" aria-labelledby="overview-spending-title" className="min-w-0">

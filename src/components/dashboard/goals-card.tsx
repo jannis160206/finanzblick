@@ -12,7 +12,7 @@ import { goalBalanceStatus, savingsGoals } from "@/lib/goals";
 import { currency, dateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-export function GoalsCard({ className }: { className?: string }) {
+export function GoalsCard({ className, compact = false }: { className?: string; compact?: boolean }) {
   const { state, dashboard } = useFinance();
   const goals = [...savingsGoals(state)]
     .sort((a, b) => Number(!!a.completedAt) - Number(!!b.completedAt) || a.date.localeCompare(b.date))
@@ -29,7 +29,7 @@ export function GoalsCard({ className }: { className?: string }) {
       </CardHeader>
       <CardContent className="pt-3">
         {goals.length ? (
-          <FinancialData as="ul" className="grid gap-x-8 gap-y-6 sm:grid-cols-2 xl:grid-cols-4">
+          <FinancialData as="ul" className={cn("grid gap-x-8 gap-y-6 sm:grid-cols-2", !compact && "xl:grid-cols-4")}>
             {goals.map((goal, index) => {
               const basis = goalBalanceStatus(state, goal, dashboard.actual);
               const balance = basis.amount;

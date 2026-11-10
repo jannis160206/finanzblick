@@ -1,4 +1,5 @@
 import { actualBookings, classify, monthKey, round, type Dashboard } from "@/lib/calc";
+import { contractReminders, detectContracts } from "@/lib/contracts";
 import { currency } from "@/lib/format";
 import { ledgerHref } from "@/lib/ledger-link";
 import type { AppState } from "@/lib/types";
@@ -53,6 +54,10 @@ export function detectNotificationEvents(
       body: `${classify(row).merchant || row.description} · ${row.date.split("-").reverse().join(".")}`,
       url: ledgerHref({ month: monthKey(row.date) }),
     });
+  }
+  for (const reminder of contractReminders(detectContracts(state, options.asOf), options.asOf)) {
+    if (reminder.kind === "missed") continue;
+    events.push({ id: `contract-${reminder.id}`, title: reminder.title, body: reminder.body, url: "/vertraege" });
   }
   return events;
 }

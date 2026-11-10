@@ -1,5 +1,6 @@
 import { round } from "@/lib/calc";
 import { canonicalCategory } from "@/lib/categories";
+import { contractNotice, contractTypeOf, contractTypeRules, type ContractType } from "@/lib/contract-types";
 import { currency, dateLabel } from "@/lib/format";
 import { detectSubscriptions, ledger, type Subscription } from "@/lib/insights";
 import type { AppState, AssistantCard } from "@/lib/types";
@@ -16,39 +17,10 @@ export const cancelQuestion = (lower: string) =>
 const listQuestion = (lower: string) =>
   /welche (?:vertr(?:ä|ae)ge|abos?|abonnements)|was kann ich k(?:ü|ue)ndigen|alle (?:vertr(?:ä|ae)ge|abos)|k(?:ü|ue)ndbar/.test(lower);
 
-export type ContractType = "streaming" | "mobile" | "internet" | "insurance" | "energy" | "gym" | "software" | "other";
-const typeRules: [ContractType, RegExp][] = [
-  ["streaming", /netflix|spotify|disney|dazn|sky\b|wow\b|joyn|paramount|apple tv|youtube|amazon prime|prime video|audible|deezer|tidal|crunchyroll|magenta tv/],
-  ["mobile", /handy|mobil|spusu|\bhot\b|hofer telekom|\bdrei\b|\b3\b|magenta|\ba1\b|yesss|bob\b|georg|educom|lidl connect|tele2/],
-  ["internet", /internet|breitband|glasfaser|kabel|liwest|salzburg ag|upc|wlan/],
-  ["insurance", /versicherung|uniqa|generali|allianz|wiener städtische|wiener staedtische|grawe|donau|zürich|zuerich|helvetia|merkur|ergo|muki|haftpflicht|kasko/],
-  ["energy", /strom|gas|energie|verbund|wien energie|evn|kelag|energie ag|tiwag|vkw|illwerke|e-control|maxenergy|go green/],
-  ["gym", /fitness|gym|mcfit|clever fit|john harris|injoy|holmes place|urban sports|fitinn|fit inn/],
-  ["software", /apple|icloud|google one|microsoft|office 365|adobe|dropbox|chatgpt|openai|1password|nordvpn|canva|duolingo|github/],
-];
-const typeOf = (subscription: Subscription): ContractType => {
-  const text = subscription.merchant.toLowerCase();
-  const category = canonicalCategory(subscription.category);
-  const hit = typeRules.find(([, pattern]) => pattern.test(text));
-  if (hit) return hit[0];
-  if (category === "Versicherungen") return "insurance";
-  if (category === "Telefon & Internet") return "mobile";
-  if (category === "Energie & Nebenkosten") return "energy";
-  if (category === "Abonnements") return "streaming";
-  return "other";
-};
-
-// Generic consumer-law information for Austria; deliberately phrased as "meist", never as legal advice.
-const notice: Record<ContractType, { label: string; text: string; days: number }> = {
-  streaming: { label: "Streaming/Abo", text: "Meist monatlich kündbar, wirkt zum Ende des bezahlten Zeitraums.", days: 3 },
-  mobile: { label: "Handy", text: "Meist 1 Monat Kündigungsfrist, frühestens nach Ablauf der Mindestvertragsdauer (oft 12–24 Monate).", days: 35 },
-  internet: { label: "Internet", text: "Meist 1 Monat Kündigungsfrist, frühestens nach Ablauf der Mindestvertragsdauer.", days: 35 },
-  insurance: { label: "Versicherung", text: "Meist zum Ende der Versicherungsperiode mit 1 Monat Frist (§ 8 VersVG); nach 3 Jahren Laufzeit jährlich kündbar.", days: 40 },
-  energy: { label: "Strom/Gas", text: "Haushalte können meist mit 2 Wochen Frist wechseln; der neue Anbieter erledigt die Kündigung oft für dich.", days: 14 },
-  gym: { label: "Fitnessstudio", text: "Frist laut Vertrag – meist 1 bis 3 Monate, oft erst nach der Mindestlaufzeit.", days: 95 },
-  software: { label: "Software/Cloud", text: "Meist monatlich oder zum Ende der Jahreslaufzeit kündbar.", days: 7 },
-  other: { label: "Vertrag", text: "Frist laut Vertrag oder AGB prüfen.", days: 35 },
-};
+export type { ContractType } from "@/lib/contract-types";
+const typeRules = contractTypeRules;
+const notice = contractNotice;
+const typeOf = (subscription: Subscription): ContractType => contractTypeOf(subscription.merchant, subscription.category);
 
 const providers: [RegExp, Link][] = [
   [/netflix/, { label: "Netflix kündigen", url: "https://www.netflix.com/cancelplan" }],
