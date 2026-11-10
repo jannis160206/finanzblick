@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { isAccountMode, type AccountConfig } from "@/lib/server/config";
 import { AccountError } from "@/lib/server/errors";
-import { requestSessionToken } from "@/lib/server/http";
+import { accountErrorResponse, jsonResponse, requestSessionToken } from "@/lib/server/http";
 import { getAccountRuntime } from "@/lib/server/runtime";
 import { masterKey, openSecret, sealSecret } from "@/lib/server/secrets";
 import { dirname } from "node:path";
-import { CALLBACK_PATH, driveOAuthConfig } from "./oauth";
+import { DriveApiError } from "./client";
+import { CALLBACK_PATH, DriveAuthError, driveOAuthConfig } from "./oauth";
 
 const STATE_CONTEXT = "finanzblick:google-oauth-state";
 const STATE_SECONDS = 600;
@@ -66,3 +67,10 @@ export function readStateCookie(request: Request): string | null {
 }
 
 export const STATE_TTL_MS = STATE_SECONDS * 1000;
+
+/** Google answers become readable messages: an ended grant asks to reconnect, Drive outages are a gateway error. */
+export function driveErrorResponse(error: unknown): Response {
+  if (error instanceof DriveAuthError) return jsonResponse({ error: error.message }, 409);
+  if (error instanceof DriveApiError) return jsonResponse({ error: error.message }, 502);
+  return accountErrorResponse(error);
+}

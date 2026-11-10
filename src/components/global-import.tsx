@@ -53,7 +53,7 @@ export function GlobalImport() {
       if (statements.length) {
         router.push("/umsaetze");
         if (payslips.length) toast.info(`${payslips.length} Lohnabrechnung(en) erkannt`, {
-          description: "Sie werden eingelesen, sobald du „Gehalt & Steuern“ öffnest.",
+          description: "Sie werden im Hintergrund eingelesen.",
           action: { label: "Öffnen", onClick: () => router.push("/gehalt-steuern") },
         });
       } else router.push("/gehalt-steuern");

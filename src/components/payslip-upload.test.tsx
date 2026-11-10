@@ -3,7 +3,8 @@ import { useState } from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AccountWorkspaceContext, type AccountWorkspace } from "@/components/account-context";
-import { PayslipUploadButton, PayslipUploadProvider } from "@/components/payslip-upload";
+import { PayslipUploadButton, PayslipUploadProvider, usePayslipUpload, type PayslipBatchResult } from "@/components/payslip-upload";
+import { toast } from "sonner";
 import { createSeed } from "@/lib/seed";
 import type { Payslip } from "@/lib/payslip-schema";
 import type { AppState } from "@/lib/types";
@@ -52,10 +53,27 @@ function Harness() {
   );
 }
 
-function select(name = "januar.pdf") {
+function pdf(name: string) {
   const file = new File(["%PDF-synthetic"], name, { type: "application/pdf" });
   Object.defineProperty(file, "arrayBuffer", { value: async () => new ArrayBuffer(8) });
-  fireEvent.change(screen.getByLabelText("Lohnabrechnungen als PDF auswählen"), { target: { files: [file] } });
+  return file;
+}
+
+function select(name = "januar.pdf") {
+  fireEvent.change(screen.getByLabelText("Lohnabrechnungen als PDF auswählen"), { target: { files: [pdf(name)] } });
+}
+
+function DriveReader({ names, onSettled }: { names: string[]; onSettled: (result: PayslipBatchResult) => void }) {
+  const { readFiles } = usePayslipUpload();
+  return <button type="button" onClick={() => readFiles(names.map(pdf), { source: "Google Drive", background: true, onSettled })}>Drive lesen</button>;
+}
+
+function DriveHarness({ names, onSettled }: { names: string[]; onSettled: (result: PayslipBatchResult) => void }) {
+  return (
+    <AccountWorkspaceContext value={workspace}>
+      <PayslipUploadProvider><DriveReader names={names} onSettled={onSettled} /></PayslipUploadProvider>
+    </AccountWorkspaceContext>
+  );
 }
 
 it("opens a protected PDF with the stored password without asking", async () => {
@@ -94,4 +112,44 @@ it("asks when the stored password does not fit and stores the new one only on re
   expect(await screen.findByText("Importiert: 1/2026")).toBeTruthy();
   await waitFor(() => expect(puts).toEqual([{ password: "neu-456" }]));
   expect(JSON.stringify(fixture.state)).not.toContain("neu-456");
+});
+
+it("reports every file of an automatic read and names its source", async () => {
+  fixture.parse.mockResolvedValueOnce({ drafts: [january], issues: [] })
+    .mockResolvedValueOnce({ drafts: [], issues: ["Keine Lohnabrechnung"] })
+    .mockRejectedValueOnce(new fixture.PasswordError("locked"));
+  const settled = vi.fn();
+  render(<DriveHarness names={["januar.pdf", "steuerbescheid.pdf", "februar.pdf"]} onSettled={settled} />);
+  fireEvent.click(screen.getByRole("button", { name: "Drive lesen" }));
+  const dialog = within(await screen.findByRole("dialog", { name: "Geschützte Abrechnung" }));
+  expect(dialog.getByText(/^Neu aus Google Drive\. Gib das PDF-Passwort ein/)).toBeTruthy();
+  fireEvent.click(dialog.getByRole("button", { name: "Überspringen" }));
+  await waitFor(() => expect(settled).toHaveBeenCalledOnce());
+  expect(settled.mock.calls[0][0]).toMatchObject({
+    files: [{ outcome: "imported" }, { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }, { outcome: "skipped", note: "Passwort fehlt." }],
+  });
+  expect(vi.mocked(toast.success)).toHaveBeenLastCalledWith(expect.stringMatching(/^Google Drive: 1 Abrechnung\(en\) automatisch übernommen\./));
+  expect(fixture.state.payslips).toEqual([january]);
+});
+
+it("lets automatic reads wait while a manual upload is still open", async () => {
+  fixture.parse.mockRejectedValueOnce(new fixture.PasswordError("locked"));
+  const settled = vi.fn();
+  render(<DriveHarness names={["februar.pdf"]} onSettled={settled} />);
+  select();
+  await screen.findByRole("dialog", { name: "Geschützte Abrechnung" });
+  fireEvent.click(screen.getByRole("button", { name: "Drive lesen", hidden: true }));
+  expect(settled).toHaveBeenCalledWith({ files: [], busy: true, message: "Ein Import läuft bereits." });
+  expect(fixture.parse).toHaveBeenCalledOnce();
+});
+
+it("keeps an automatic read for later when a manual upload replaces it", async () => {
+  fixture.parse.mockRejectedValueOnce(new fixture.PasswordError("locked")).mockResolvedValueOnce({ drafts: [january], issues: [] });
+  const settled = vi.fn();
+  render(<DriveHarness names={["februar.pdf"]} onSettled={settled} />);
+  fireEvent.click(screen.getByRole("button", { name: "Drive lesen" }));
+  await screen.findByRole("dialog", { name: "Geschützte Abrechnung" });
+  select();
+  expect(settled).toHaveBeenCalledWith({ files: [], busy: true, message: "Durch einen neuen Import ersetzt." });
+  await waitFor(() => expect(fixture.state.payslips).toEqual([january]));
 });

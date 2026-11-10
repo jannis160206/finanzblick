@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ReceiptText } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipImportPanel } from "@/components/payslip-import";
-import { PayslipUploadButton, PayslipUploadProvider } from "@/components/payslip-upload";
+import { EnsurePayslipUpload, PayslipUploadButton, usePayslipImported } from "@/components/payslip-upload";
 import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { PayrollCoverage, PayrollResults } from "@/components/payroll-results";
@@ -55,13 +55,14 @@ function PayrollWorkspace() {
   const previousEntry = focusIndex > 0 ? entries[focusIndex - 1] : undefined;
   const nextEntry = focusIndex >= 0 ? entries[focusIndex + 1] : undefined;
   const selectMonth = (month: number) => setFocus({ scope, month });
+  usePayslipImported((entry) => {
+    setYear(entry.year);
+    setSelectedEmployer(entry.employer);
+    setFocus({ scope: scopeKey(entry.year, entry.employer), month: entry.month });
+  });
 
   return (
-    <PayslipUploadProvider onImported={(entry) => {
-      setYear(entry.year);
-      setSelectedEmployer(entry.employer);
-      setFocus({ scope: scopeKey(entry.year, entry.employer), month: entry.month });
-    }}>
+    <>
       <PageHeading title="Gehalt & Steuern">
         <div
           className="flex flex-wrap items-end gap-2 sm:gap-3"
@@ -187,14 +188,14 @@ function PayrollWorkspace() {
         <PayslipImportPanel year={year} employer={employer} />
         <TaxFolderPanel year={year} />
       </div>
-    </PayslipUploadProvider>
+    </>
   );
 }
 
 export function PayrollTaxes() {
   const { ready } = useFinance();
   return ready ? (
-    <PayrollWorkspace />
+    <EnsurePayslipUpload><PayrollWorkspace /></EnsurePayslipUpload>
   ) : (
     <p role="status" className="text-sm text-muted-foreground">
       Lohnabrechnungen werden geladen …

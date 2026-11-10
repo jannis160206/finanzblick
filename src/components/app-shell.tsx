@@ -28,6 +28,8 @@ import { AppHeader } from "@/components/shell/app-header";
 import { BottomNav } from "@/components/shell/bottom-nav";
 import { GlobalSearch } from "@/components/shell/global-search";
 import { MotionProvider } from "@/components/motion/motion-provider";
+import { PayslipUploadProvider } from "@/components/payslip-upload";
+import { DriveInbox } from "@/components/drive-inbox";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 
 export function AppShell({
@@ -49,6 +51,8 @@ export function AppShell({
   const { motionReduced } = useSeasonalTheme();
   return (
     <MotionProvider reduced={motionReduced === true}>
+    <PayslipUploadProvider>
+    <DriveInbox />
     <div className="app-shell min-h-screen">
       <SeasonalScene />
       <a
@@ -140,6 +144,7 @@ export function AppShell({
         </DialogContent>
       </Dialog>
     </div>
+    </PayslipUploadProvider>
     </MotionProvider>
   );
 }

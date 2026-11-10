@@ -76,3 +76,68 @@ it("reports the result of the Google redirect once and removes it from the addre
   expect(window.location.search).toBe("?bereich=verbindungen");
   expect(toast.error).toHaveBeenCalledOnce();
 });
+
+it("shows both folders, recent files and checks on request", async () => {
+  status = {
+    configured: true, connected: true, email: "alice@example.test", connectedAt: 1, lastSync: Date.UTC(2026, 10, 9, 8), retryable: 1, inbox: 2,
+    folders: { payslips: { id: "folder-payslips", name: "Abrechnungen", lastCount: 12 } },
+    notes: ["Ordner „AMEX Abrechnungen“ nicht gefunden."],
+    recent: [{ kind: "payslips", name: "Lohnzettel Oktober.pdf", at: Date.UTC(2026, 10, 9, 8), outcome: "skipped", note: "Passwort fehlt." }],
+  };
+  const posted: unknown[] = [];
+  const inboxWakeups = vi.fn();
+  window.addEventListener("finanzblick:drive-inbox", inboxWakeups);
+  vi.mocked(fetch).mockImplementation(async (url, init = {}) => {
+    if (init.method === "POST") {
+      posted.push(JSON.parse(String(init.body)));
+      status = { ...status, retryable: 0 };
+      return Response.json({ result: { folders: { amex: { added: 0 }, payslips: { added: 3 } }, backlog: false, notes: [] }, status });
+    }
+    return Response.json(status);
+  });
+  mount();
+  const section = within(screen.getByRole("region", { name: "Google Drive" }));
+  const folders = within(await section.findByRole("list", { name: "Ordner in Google Drive" }));
+  expect(folders.getByText("AMEX Abrechnungen")).toBeTruthy();
+  expect(folders.getByText("Nicht gefunden")).toBeTruthy();
+  expect(folders.getByText("12 Dateien")).toBeTruthy();
+  expect(section.getByText("Ordner „AMEX Abrechnungen“ nicht gefunden.")).toBeTruthy();
+  expect(section.getByText("2 Lohnzettel warten auf das Einlesen.")).toBeTruthy();
+  const recent = within(section.getByRole("list", { name: "Zuletzt verarbeitete Dateien" }));
+  expect(recent.getByText("Übersprungen")).toBeTruthy();
+  expect(recent.getByText(/Passwort fehlt\./)).toBeTruthy();
+
+  fireEvent.click(section.getByRole("button", { name: "Erneut versuchen" }));
+  await waitFor(() => expect(posted).toEqual([{ action: "retry" }]));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("3 neue Dateien aus Google Drive"));
+  expect(section.queryByRole("button", { name: "Erneut versuchen" })).toBeNull();
+  expect(inboxWakeups).toHaveBeenCalledOnce();
+
+  fireEvent.click(section.getByRole("button", { name: "Jetzt prüfen" }));
+  await waitFor(() => expect(posted).toEqual([{ action: "retry" }, { action: "sync" }]));
+  window.removeEventListener("finanzblick:drive-inbox", inboxWakeups);
+});
+
+it("lets the user pick one of several folders with the same name", async () => {
+  status = {
+    configured: true, connected: true, connectedAt: 1, lastSync: 2,
+    folders: { payslips: { id: "folder-newer", name: "Abrechnungen", lastCount: 1, choices: [
+      { id: "folder-newer", name: "Abrechnungen", modified: "2026-11-01T10:00:00Z" },
+      { id: "folder-older", name: "Abrechnungen", modified: "2026-01-05T10:00:00Z" },
+    ] } },
+  };
+  const posted: unknown[] = [];
+  vi.mocked(fetch).mockImplementation(async (url, init = {}) => {
+    if (init.method === "POST") {
+      posted.push(JSON.parse(String(init.body)));
+      return Response.json({ result: { folders: { amex: { added: 0 }, payslips: { added: 0 } }, backlog: false, notes: [] }, status });
+    }
+    return Response.json(status);
+  });
+  mount();
+  const select = await screen.findByRole("combobox", { name: "Ordner „Abrechnungen“ wählen" });
+  expect((select as HTMLSelectElement).value).toBe("");
+  fireEvent.change(select, { target: { value: "folder-older" } });
+  await waitFor(() => expect(posted).toEqual([{ action: "folder", kind: "payslips", id: "folder-older" }]));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Keine neuen Dateien in Google Drive"));
+});

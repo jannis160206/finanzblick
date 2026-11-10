@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { FileLock2, FileUp, LoaderCircle, LockKeyhole } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
@@ -42,7 +42,19 @@ export function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncom
 }
 
 type LockedFile = { file: File; index: number; wrong: boolean };
-type PasswordPrompt = { files: File[]; results: (PayslipImport | null)[]; locked: LockedFile[]; storedFailed: boolean };
+type PasswordPrompt = { files: File[]; results: (PayslipImport | null)[]; locked: LockedFile[]; storedFailed: boolean; source?: string };
+
+export type PayslipFileOutcome = { outcome: "imported" | "skipped" | "failed"; note?: string };
+/** One entry per file of a read; `busy` means nothing was read because another import is still open. */
+export type PayslipBatchResult = { files: PayslipFileOutcome[]; busy?: boolean; message: string };
+export type PayslipReadOptions = {
+  onSettled?: (result: PayslipBatchResult) => void;
+  /** Shown in the password dialog and the result message, e.g. "Google Drive". */
+  source?: string;
+  /** Automatic reads wait instead of replacing an open password or replacement dialog. */
+  background?: boolean;
+};
+type Batch = { size: number; skipped: Set<number>; unrecognized: Set<number>; source?: string; onSettled?: (result: PayslipBatchResult) => void };
 
 type PayslipUploadValue = {
   busy: boolean;
@@ -51,8 +63,9 @@ type PayslipUploadValue = {
   notice: string;
   report: PayslipImport | null;
   openPicker: () => void;
-  readFiles: (files: File[]) => void;
+  readFiles: (files: File[], options?: PayslipReadOptions) => void;
   setMessage: (message: { error?: string; notice?: string }) => void;
+  subscribe: (listener: (entry: Payslip) => void) => () => void;
 };
 
 const PayslipUploadContext = createContext<PayslipUploadValue | null>(null);
@@ -63,9 +76,22 @@ export function usePayslipUpload(): PayslipUploadValue {
   return value;
 }
 
-/** Reads payslip PDFs from the upload button and the central import, asks for passwords only when a file needs one. */
-export function PayslipUploadProvider({ onImported, children }: { onImported: (entry: Payslip) => void; children: ReactNode }) {
-  const { state, update, storageError } = useFinance();
+/** Calls the listener with the newest imported payslip, e.g. to show its month. */
+export function usePayslipImported(listener: (entry: Payslip) => void) {
+  const { subscribe } = usePayslipUpload();
+  const latest = useRef(listener);
+  useEffect(() => { latest.current = listener; });
+  useEffect(() => subscribe((entry) => latest.current(entry)), [subscribe]);
+}
+
+/** Uses the app-wide upload provider and creates a local one where none exists (isolated rendering, tests). */
+export function EnsurePayslipUpload({ children }: { children: ReactNode }) {
+  return useContext(PayslipUploadContext) ? <>{children}</> : <PayslipUploadProvider>{children}</PayslipUploadProvider>;
+}
+
+/** Reads payslip PDFs from the upload button, the central import and Google Drive; asks for passwords only when a file needs one. */
+export function PayslipUploadProvider({ onImported, children }: { onImported?: (entry: Payslip) => void; children: ReactNode }) {
+  const { state, update, storageError, ready } = useFinance();
   const passwordStore = usePayslipPasswordStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -77,10 +103,29 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
   const inFlight = useRef(false);
   const request = useRef(0);
   const live = useRef({ state, update, storageError, onImported });
+  const batch = useRef<Batch | null>(null);
+  const [listeners] = useState(() => new Set<(entry: Payslip) => void>());
+  const subscribe = useCallback((listener: (entry: Payslip) => void) => {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  }, [listeners]);
   const mutate = usePayslipMutation(state, update);
   useEffect(() => { live.current = { state, update, storageError, onImported }; }, [state, update, storageError, onImported]);
   useEffect(() => () => { request.current++; }, []);
-  useImportInbox("payslip", !storageError, (files) => { void readFiles(files); });
+  useImportInbox("payslip", ready !== false && !storageError, (files) => { void readFiles(files); });
+
+  function settle(outcome: "imported" | "skipped" | "failed", message: string) {
+    const current = batch.current;
+    batch.current = null;
+    if (!current?.onSettled) return;
+    current.onSettled({
+      message,
+      files: Array.from({ length: current.size }, (_, index): PayslipFileOutcome =>
+        current.skipped.has(index) ? { outcome: "skipped", note: "Passwort fehlt." }
+          : current.unrecognized.has(index) && outcome !== "failed" ? { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }
+            : outcome === "imported" ? { outcome } : { outcome, note: message }),
+    });
+  }
 
   function storeEntries(entries: Payslip[], allowReplace: boolean, review?: PayslipReview, extra = "") {
     const currentFinance = live.current;
@@ -110,29 +155,34 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
             : forecast),
       };
     }, () => {
-      currentFinance.onImported(entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0]);
+      const newest = entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0];
+      currentFinance.onImported?.(newest);
+      for (const listener of listeners) listener(newest);
       const stored = merged.changed.length
         ? `${merged.changed.length} Abrechnung(en) automatisch übernommen.`
         : "Abrechnungen bereits vorhanden – nicht doppelt übernommen.";
-      const message = [stored, payslipIncomeMessage(synced), extra].filter(Boolean).join(" ");
+      const source = batch.current?.source;
+      const message = [source ? `${source}:` : "", stored, payslipIncomeMessage(synced), extra].filter(Boolean).join(" ");
       setNotice(message);
       toast.success(message);
       setReplacement(null);
       setError("");
-    }, (cause) => setError(cause.message));
+      settle("imported", message);
+    }, (cause) => { setError(cause.message); settle("failed", cause.message); });
   }
 
   function finish(files: File[], results: (PayslipImport | null)[], skipped = 0) {
     const combined: PayslipImport = { drafts: [], issues: [] };
     results.forEach((parsed, fileIndex) => {
       if (!parsed) return;
+      if (!parsed.drafts.length) batch.current?.unrecognized.add(fileIndex);
       combined.drafts.push(...parsed.drafts);
       combined.issues.push(...[...new Set(parsed.issues)].map((issue) => `Datei ${fileIndex + 1}: ${issue}`));
     });
     if (combined.drafts.length > 240) throw new Error("Max. 240 Lohnabrechnungen je Import.");
     const skippedNote = skipped ? `${skipped} von ${files.length} Datei(en) ohne Passwort übersprungen.` : "";
     if (!combined.drafts.length) {
-      if (skipped === files.length) { setNotice("Import abgebrochen – keine Datei geöffnet."); return; }
+      if (skipped === files.length) { setNotice("Import abgebrochen – keine Datei geöffnet."); settle("skipped", "Passwort fehlt."); return; }
       throw new Error("Keine Lohnabrechnung erkannt. Vollständige Original-PDF mit lesbarem Text nötig.");
     }
     setReport(combined);
@@ -142,6 +192,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
     });
     if (!entries.length) {
       setError(["Keine Abrechnung übernommen; siehe Importhinweise.", skippedNote].filter(Boolean).join(" "));
+      settle("failed", "Nicht vollständig erkannt.");
       return;
     }
     try {
@@ -153,19 +204,22 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
     } catch (cause) {
       if (!isPayslipMutationRejection(cause)) throw cause;
       setError(cause.message);
+      settle("failed", cause.message);
     }
   }
 
   async function run(task: (current: number) => Promise<void>) {
     if (inFlight.current) return;
-    if (live.current.storageError) { setError(live.current.storageError); return; }
+    if (live.current.storageError) { setError(live.current.storageError); settle("failed", live.current.storageError); return; }
     inFlight.current = true;
     setBusy(true);
     const current = ++request.current;
     try {
       await task(current);
     } catch (cause) {
-      if (current === request.current) setError(cause instanceof Error ? cause.message : "Die PDF konnte nicht gelesen werden.");
+      const message = cause instanceof Error ? cause.message : "Die PDF konnte nicht gelesen werden.";
+      if (current === request.current) setError(message);
+      settle("failed", message);
     } finally {
       inFlight.current = false;
       if (current === request.current) setBusy(false);
@@ -173,10 +227,18 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
     }
   }
 
-  async function readFiles(files: File[]) {
-    if (inFlight.current) return;
+  async function readFiles(files: File[], options: PayslipReadOptions = {}) {
+    if (inFlight.current || (options.background && batch.current)) {
+      options.onSettled?.({ files: [], busy: true, message: "Ein Import läuft bereits." });
+      return;
+    }
+    const replaced = batch.current;
+    batch.current = { size: files.length, skipped: new Set(), unrecognized: new Set(), source: options.source, onSettled: options.onSettled };
+    replaced?.onSettled?.({ files: [], busy: true, message: "Durch einen neuen Import ersetzt." });
     if (!files.length || files.length > MAX_FILES || files.some((file) => !/\.pdf$/i.test(file.name))) {
-      setError(`Bitte 1 bis ${MAX_FILES} PDF-Lohnabrechnungen auswählen.`);
+      const message = `Bitte 1 bis ${MAX_FILES} PDF-Lohnabrechnungen auswählen.`;
+      setError(message);
+      settle("failed", message);
       return;
     }
     setError("");
@@ -214,7 +276,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
           }
         }
       }
-      if (locked.length) setPrompt({ files, results, locked, storedFailed });
+      if (locked.length) setPrompt({ files, results, locked, storedFailed, ...(options.source ? { source: options.source } : {}) });
       else finish(files, results);
     });
   }
@@ -250,11 +312,21 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
     const pending = prompt;
     setPrompt(null);
     if (!pending) return;
+    for (const entry of pending.locked) batch.current?.skipped.add(entry.index);
     try {
       finish(pending.files, pending.results, pending.locked.length);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Die PDF konnte nicht gelesen werden.");
+      const message = cause instanceof Error ? cause.message : "Die PDF konnte nicht gelesen werden.";
+      setError(message);
+      settle("failed", message);
     }
+  }
+
+  function cancelReplacement() {
+    setReplacement(null);
+    setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert.");
+    setError("");
+    settle("skipped", "Ersetzen abgebrochen.");
   }
 
   const value: PayslipUploadValue = {
@@ -264,11 +336,12 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
     notice,
     report,
     openPicker: () => fileInput.current?.click(),
-    readFiles: (files) => { void readFiles(files); },
+    readFiles: (files, options) => { void readFiles(files, options); },
     setMessage: (message) => {
       if (message.error !== undefined) setError(message.error);
       if (message.notice !== undefined) setNotice(message.notice);
     },
+    subscribe,
   };
 
   return (
@@ -279,9 +352,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
         onChange={(event) => { if (event.target.files?.length) void readFiles(Array.from(event.target.files)); }} />
       <PayslipPasswordDialog prompt={prompt} busy={busy} store={passwordStore}
         onUnlock={(passwords, remember) => { void unlock(passwords, remember); }} onSkip={skipLocked} />
-      <Dialog open={!!replacement} onOpenChange={(open) => {
-        if (!open) { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }
-      }}>
+      <Dialog open={!!replacement} onOpenChange={(open) => { if (!open) cancelReplacement(); }}>
         <DialogContent variant="confirmation">
           <DialogHeader>
             <DialogTitle>Gespeicherte Abrechnungen ersetzen?</DialogTitle>
@@ -295,7 +366,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported: (e
             {(error || storageError) && <p role="alert" className="text-sm text-destructive">{storageError || error}</p>}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setReplacement(null); setNotice("Ersetzen abgebrochen. Gespeicherte Abrechnungen unverändert."); setError(""); }}>Abbrechen</Button>
+            <Button variant="outline" onClick={cancelReplacement}>Abbrechen</Button>
             <Button disabled={!!storageError} onClick={() => {
               if (!replacement) return;
               try {
@@ -353,7 +424,8 @@ function PasswordForm({ prompt, busy, store, onUnlock }: { prompt: PasswordPromp
   return (
     <PremiumDialogContent size="sm" financial={false}>
       <PremiumDialogHeader icon={LockKeyhole} title={title}
-        description={prompt.storedFailed ? `Das gespeicherte PDF-Passwort passt nicht zu ${many ? "diesen Dateien" : "dieser Datei"}.` : `Gib das PDF-Passwort ein, um ${many ? "die Dateien" : "die Datei"} zu öffnen.`} />
+        description={[prompt.source ? `Neu aus ${prompt.source}.` : "",
+          prompt.storedFailed ? `Das gespeicherte PDF-Passwort passt nicht zu ${many ? "diesen Dateien" : "dieser Datei"}.` : `Gib das PDF-Passwort ein, um ${many ? "die Dateien" : "die Datei"} zu öffnen.`].filter(Boolean).join(" ")} />
       <form className="flex min-h-0 flex-1 flex-col" noValidate onSubmit={(event) => {
         event.preventDefault();
         if (!ready || busy) return;

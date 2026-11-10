@@ -241,4 +241,51 @@ test.describe("account mode", () => {
       await expect(dialog).toBeHidden();
     });
   }
+
+  for (const [width, theme] of [[375, "dark"], [1440, "light"]] as const) {
+    test(`Google Drive shows both folders, recent files and checks on request at ${width}px (${theme})`, async ({ page }) => {
+      let drive = {
+        configured: true, connected: true, email: "jannis@example.test", connectedAt: now - 5 * 86_400_000, lastSync: now - 40 * 60_000, retryable: 1, inbox: 0,
+        redirectUri: "http://127.0.0.1:3000/api/auth/callback/google",
+        folders: {
+          amex: { id: "folder-amex", name: "AMEX Abrechnungen", lastCount: 14 },
+          payslips: { id: "folder-newer", name: "Abrechnungen", lastCount: 22, choices: [
+            { id: "folder-newer", name: "Abrechnungen", modified: "2026-10-01T08:00:00Z" },
+            { id: "folder-older", name: "Abrechnungen", modified: "2025-02-11T08:00:00Z" },
+          ] },
+        },
+        notes: ["Mehrere Ordner „Abrechnungen“ – bitte einen wählen. Bis dahin wird der zuletzt geänderte gelesen."],
+        recent: [
+          { kind: "payslips", name: "Lohnzettel_Oktober_2026.pdf", at: now - 40 * 60_000, outcome: "imported" },
+          { kind: "amex", name: "Amex_Kontoauszug_Oktober_2026.pdf", at: now - 40 * 60_000, outcome: "queued" },
+          { kind: "payslips", name: "Lohnzettel_September_2026.pdf", at: now - 26 * 3_600_000, outcome: "skipped", note: "Passwort fehlt." },
+        ],
+      };
+      const posted: unknown[] = [];
+      await page.route(/\/api\/drive(\?.*)?$/, async (route) => {
+        if (route.request().method() !== "POST") return route.fulfill({ json: drive });
+        posted.push(route.request().postDataJSON());
+        drive = { ...drive, retryable: 0, lastSync: now };
+        return route.fulfill({ json: { result: { folders: { amex: { added: 0 }, payslips: { added: 2 } }, backlog: false, notes: [] }, status: drive } });
+      });
+      await page.route("**/api/drive/inbox", (route) => route.fulfill({ json: { items: [] } }));
+      await prepare(page, width, theme);
+      await signIn(page);
+      await page.goto("/einstellungen?bereich=verbindungen#google-drive");
+      const section = page.getByRole("region", { name: "Google Drive" });
+      await expect(section.getByText("jannis@example.test")).toBeVisible();
+      const folders = section.getByRole("list", { name: "Ordner in Google Drive" });
+      await expect(folders.getByText("14 Dateien")).toBeVisible();
+      await expect(folders.getByRole("combobox", { name: "Ordner „Abrechnungen“ wählen" })).toHaveValue("");
+      await section.getByText("Zuletzt verarbeitet").click();
+      await expect(section.getByRole("list", { name: "Zuletzt verarbeitete Dateien" }).getByText("Übersprungen")).toBeVisible();
+      await settled(page, theme);
+      await axe(page);
+
+      await section.getByRole("button", { name: "Jetzt prüfen" }).click();
+      await expect(page.getByText("2 neue Dateien aus Google Drive")).toBeVisible();
+      expect(posted).toEqual([{ action: "sync" }]);
+      await expect(section.getByRole("button", { name: "Erneut versuchen" })).toHaveCount(0);
+    });
+  }
 });

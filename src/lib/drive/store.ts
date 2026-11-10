@@ -10,11 +10,16 @@ type Host = { path: string };
 export const driveFolderKinds = ["amex", "payslips"] as const;
 export type DriveFolderKind = (typeof driveFolderKinds)[number];
 
+const folderChoiceSchema = z.object({ id: z.string().max(200), name: z.string().max(200), modified: z.string().max(40).optional() });
 const folderSchema = z.object({
   id: z.string().max(200),
   name: z.string().max(200),
   lastCount: z.number().int().nonnegative().optional(),
+  /** Chosen by the user among several folders with the same name. */
+  pinned: z.boolean().optional(),
+  choices: z.array(folderChoiceSchema).max(10).optional(),
 });
+export type DriveFolderChoice = z.infer<typeof folderChoiceSchema>;
 const processedSchema = z.object({
   id: z.string().max(200),
   kind: z.enum(driveFolderKinds),
@@ -24,6 +29,7 @@ const processedSchema = z.object({
   at: z.number().int().nonnegative(),
   outcome: z.enum(["queued", "inbox", "imported", "skipped", "failed"]),
   note: z.string().max(300).optional(),
+  attempts: z.number().int().nonnegative().max(100).optional(),
 });
 export type DriveProcessed = z.infer<typeof processedSchema>;
 
@@ -34,6 +40,8 @@ const linkSchema = z.object({
   expired: z.boolean().optional(),
   lastSync: z.number().int().nonnegative().optional(),
   lastError: z.string().max(500).optional(),
+  backlog: z.boolean().optional(),
+  notes: z.array(z.string().max(300)).max(10).optional(),
   folders: z.object({ amex: folderSchema.optional(), payslips: folderSchema.optional() }).optional(),
   processed: z.array(processedSchema).max(5000).optional(),
 });
@@ -126,6 +134,14 @@ export async function markDriveLink(host: Host, userId: string, change: (link: D
   });
 }
 
+/** Drops an access token that Google rejected, so the next request refreshes it. */
+export async function forgetAccessToken(host: Host, userId: string): Promise<void> {
+  await withDriveLock(userId, async () => {
+    const tokens = await readTokens(host, userId);
+    if (tokens) await writeTokens(host, userId, { refreshToken: tokens.refreshToken });
+  });
+}
+
 /** A valid access token, refreshed shortly before expiry; an expired refresh token marks the connection as expired. */
 export async function driveAccessToken(host: Host, userId: string, config: DriveOAuthConfig, fetcher: Fetcher = fetch, now = Date.now()): Promise<string> {
   const tokens = await readTokens(host, userId);
@@ -152,8 +168,14 @@ export type DriveStatus = {
   connectedAt?: number;
   lastSync?: number;
   lastError?: string;
-  folders?: Partial<Record<DriveFolderKind, { name: string; lastCount?: number }>>;
+  folders?: Partial<Record<DriveFolderKind, z.infer<typeof folderSchema>>>;
+  notes?: string[];
   recent?: Omit<DriveProcessed, "id" | "md5" | "modified">[];
+  backlog?: boolean;
+  /** Payslips waiting for the browser to read them. */
+  inbox?: number;
+  /** Files that were skipped or failed and can be fetched again. */
+  retryable?: number;
 };
 
 export async function driveStatus(host: Host, userId: string, config: DriveOAuthConfig | null): Promise<DriveStatus> {
@@ -168,7 +190,10 @@ export async function driveStatus(host: Host, userId: string, config: DriveOAuth
     connectedAt: link.connectedAt,
     ...(link.lastSync ? { lastSync: link.lastSync } : {}),
     ...(link.lastError ? { lastError: link.lastError } : {}),
-    ...(link.folders ? { folders: Object.fromEntries(Object.entries(link.folders).map(([kind, folder]) => [kind, { name: folder.name, lastCount: folder.lastCount }])) } : {}),
+    ...(link.backlog ? { backlog: true } : {}),
+    retryable: (link.processed ?? []).filter((entry) => entry.outcome === "skipped" || entry.outcome === "failed").length,
+    ...(link.folders ? { folders: link.folders } : {}),
+    ...(link.notes?.length ? { notes: link.notes } : {}),
     recent: (link.processed ?? []).slice(-8).reverse().map(({ kind, name, at, outcome, note }) => ({ kind, name, at, outcome, ...(note ? { note } : {}) })),
   };
 }
