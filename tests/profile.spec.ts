@@ -26,11 +26,14 @@ test("desktop profile is bottom-left and opens the existing settings cleanly", a
   await expect(page.getByRole("heading", { name: "Profil & Einstellungen" })).toBeVisible();
   await expect(page.locator("#profil").getByRole("heading", { name: "admin" })).toBeVisible();
   await expect(profile.getByRole("link", { name: "Einstellungen", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByRole("heading", { name: "Erscheinungsbild", exact: true })).toBeVisible();
   if (process.env.FINANZBLICK_PROFILE_ARTIFACTS)
     await page.screenshot({ path: join(process.env.FINANZBLICK_PROFILE_ARTIFACTS, "profile-desktop.png") });
-  await page.locator("#profil").getByRole("link", { name: "Erscheinungsbild" }).click();
-  await expect(page).toHaveURL(/#jahreszeit$/);
+  // Settings are grouped into categories: the profile opens "Konto", appearance lives under "Darstellung".
+  await page.getByRole("navigation", { name: "Einstellungsbereiche" }).getByRole("link", { name: /^Darstellung/ }).click();
+  await expect(page).toHaveURL(/bereich=darstellung/);
+  await expect(page.locator("#profil")).toBeHidden();
+  await page.goto("/einstellungen#jahreszeit");
+  await expect(page.getByRole("heading", { name: "Erscheinungsbild", exact: true })).toBeVisible();
   const appearance = await page.getByRole("heading", { name: "Erscheinungsbild", exact: true }).boundingBox();
   expect(appearance!.y).toBeGreaterThanOrEqual(76);
   await page.setViewportSize({ width: 1280, height: 600 });
