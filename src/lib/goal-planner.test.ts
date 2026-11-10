@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { calculateDashboard, monthsForYear } from "./calc";
-import { allocateGoals, goalExtraIncome, goalPocketConflicts, GOAL_SURPLUS, pocketKey, SAVINGS_FLOOR, vacationSavingPaused } from "./goals";
-import { forgoneInterest, planGoal, withGoalPlan, type PlanInput } from "./goal-planner";
+import { accountKeep, allocateGoals, goalExtraIncome, goalPocketConflicts, GOAL_SURPLUS, pocketKey, SAVINGS_FLOOR, vacationSavingPaused } from "./goals";
+import { forgoneInterest, goalPlanningContext, planGoal, sourceAllowed, usableAmount, withGoalPlan, withGoalSettings, type PlanInput } from "./goal-planner";
 import { createSeed } from "./seed";
-import { emptyPockets, type SavingsGoal } from "./types";
+import { appStateSchema, emptyPockets, type SavingsGoal } from "./types";
 import { monthlyVariableBudget } from "./variable-budgets";
 
 // The allocation before goal plans existed, kept verbatim as the reference for goals without a plan.
@@ -44,7 +44,7 @@ const months = (from: string, count: number) => Array.from({ length: count }, (_
 });
 
 describe("allocation with and without goal plans", () => {
-  it("allocates goals without a plan exactly like before", () => {
+  it("allocates goals without a plan exactly like before (savings rate 0: only the floor)", () => {
     const next = random(7);
     const pick = <T,>(items: T[]) => items[Math.floor(next() * items.length)];
     for (let round = 0; round < 400; round++) {
@@ -61,7 +61,7 @@ describe("allocation with and without goal plans", () => {
       const balances = Object.fromEntries(goals.map((goal) => [goal.id, next() < 0.15 ? null : Math.round(next() * 5000)]));
       const surplus = Math.round((next() * 3000 - 300) * 100) / 100;
       const month = pick(["2026-09", "2026-10", "2026-11", "2027-03", "2027-06"]);
-      expect(allocateGoals(surplus, goals, balances, month)).toEqual(legacyAllocate(surplus, goals, balances, month));
+      expect(allocateGoals(surplus, goals, balances, month, 0)).toEqual(legacyAllocate(surplus, goals, balances, month));
     }
   });
 
@@ -145,9 +145,21 @@ describe("goal planner", () => {
     expect(fast.continuation).toEqual({ monthly: 500, from: "2027-05", to: "2027-07" });
     expect(fast.reached).toBe("2027-07");
   });
+
+  it("keeps the reserve of each month's free surplus on the Girokonto when planning as fast as possible", () => {
+    const fast = planGoal(base({ goalMonth: undefined, need: 1700, reserve: 0.15 }));
+    expect(amounts(fast.rows)).toEqual([425, 425, 425, 425]);
+    expect(fast.reached).toBe("2027-02");
+    const odd = planGoal(base({ goalMonth: undefined, need: 1000, reserve: 0.15, capacity: { ...base().capacity, "2026-11": 820 } }));
+    expect(amounts(odd.rows)[0]).toBe(697);
+    expect(planGoal(base({ goalMonth: undefined, need: 6000, reserve: 0.2 })).continuation).toEqual({ monthly: 400, from: "2027-05", to: "2028-01" });
+    expect(amounts(planGoal(base({ goalMonth: undefined, need: 1700, reserve: 0.9 })).rows)).toEqual([250, 250, 250, 250, 250, 250]);
+    // With a due date the plan may use the whole free surplus.
+    expect(amounts(planGoal(base({ need: 3000, reserve: 0.15 })).rows)).toEqual([500, 500, 500, 500, 500, 500]);
+  });
 });
 
-describe("Trade Republic as an exception", () => {
+describe("Trade Republic (Notgroschen) used last", () => {
   it("covers only what surplus and other pockets leave open, in the goal month", () => {
     const capacity = Object.fromEntries(months("2026-11", 6).map((month) => [month, 100]));
     const result = planGoal(base({ need: 1500, capacity, accounts: [{ id: "Notgroschen", available: 4000, late: true }, { id: "Sparkonto", available: 200 }] }));
@@ -239,5 +251,76 @@ describe("goal plans in the month plan", () => {
     expect(december.goalRates.kamera).toBe(250);
     expect(november.end.Sparkonto).toBeCloseTo(2000 + november.rates.Sparkonto - 600, 2);
     expect(dashboard.timeline.find((row) => row.month === "2027-02")!.goalEnd.kamera).toBeCloseTo(1500, 2);
+  });
+});
+
+describe("planning context", () => {
+  const all = [...monthsForYear(2026), ...monthsForYear(2027)];
+  function contextState() {
+    const state = createSeed();
+    state.settings = { ...state.settings, baselineDate: "2026-11-01", asOf: "2026-11-05", emergencyTarget: 6000,
+      balances: { ...emptyPockets(), Sparkonto: 2000, Notgroschen: 8000, Urlaub: 900, Motorrad: 500 } };
+    state.financeRows = [
+      { id: "income-salary", label: "Gehalt", kind: "income", values: Object.fromEntries(all.map((month) => [month, 2000])) },
+      { id: "income-side", label: "Nebenjob", kind: "income", values: Object.fromEntries(all.map((month) => [month, monthlyVariableBudget(month).total])) },
+    ];
+    state.transactions = [];
+    state.months = {};
+    state.savingsGoals = [];
+    return state;
+  }
+
+  it("offers only the Sparkonto and the Notgroschen once, minus what is kept there", () => {
+    const state = contextState();
+    const context = goalPlanningContext(state, calculateDashboard(state), state.settings.asOf);
+    expect(context.sources.map((source) => source.id)).toEqual([GOAL_SURPLUS, "Sparkonto", "Notgroschen"]);
+    const [, sparkonto, notgroschen] = context.sources;
+    expect(sparkonto).toMatchObject({ label: "Sparkonto", available: 2000, keep: 0, balance: 2000 });
+    expect(sparkonto.late).toBeUndefined();
+    expect(notgroschen).toMatchObject({ label: "Notgroschen", available: 8000, keep: 6000, late: true });
+    expect(usableAmount(notgroschen)).toBe(2000);
+    expect(usableAmount(notgroschen, 8500)).toBe(0);
+    expect(context.forecast).toEqual({});
+
+    state.settings.accountKeep = { Sparkonto: 500, Notgroschen: 1000 };
+    state.trBalances = [{ date: "2026-11-01", balance: 9000 }];
+    const kept = goalPlanningContext(state, calculateDashboard(state), state.settings.asOf);
+    expect(kept.sources[1].keep).toBe(500);
+    expect(kept.sources[2]).toMatchObject({ label: "Trade Republic · Notgroschen", bank: "Trade Republic", available: 9000, keep: 1000, late: true });
+    expect(kept.sources[2].rate).toBeGreaterThan(0);
+  });
+
+  it("adds the salary forecast to the free surplus and takes the savings rate of it too", () => {
+    const state = contextState();
+    state.payslips = Array.from({ length: 10 }, (_, index) => ({
+      year: 2026 as const, month: index + 1, employer: "Musterbetrieb GmbH", monthlyPayroll: true, baseSalary: 2800,
+      regularGross: 2800, regularSv: 500, regularTax: 300, specialGross: 0, netPay: 2000,
+    }));
+    const context = goalPlanningContext(state, calculateDashboard(state), state.settings.asOf);
+    const special = context.forecast["2026-12"];
+    expect(special).toBeGreaterThan(1500);
+    expect(context.forecast["2027-01"]).toBeUndefined();
+    expect(context.capacity["2026-12"]).toBe(Math.floor(2000 + special - Math.round((2000 + special) * 0.1)));
+    expect(context.capacity["2027-01"]).toBe(1800);
+    state.settings.savingsRate = 0.3;
+    const saving = goalPlanningContext(state, calculateDashboard(state), state.settings.asOf);
+    expect(saving.capacity["2027-01"]).toBe(1400);
+  });
+
+  it("allows every pocket except the goal's own and stores the dialog's settings within their limits", () => {
+    const pocket = { id: "Sparkonto", label: "Sparkonto", kind: "pocket" as const, available: 100 };
+    expect(sourceAllowed(pocket, "Kamera")).toBe(true);
+    expect(sourceAllowed(pocket, "Sparen")).toBe(false);
+    expect(sourceAllowed({ id: GOAL_SURPLUS, label: "Girokonto", kind: "surplus", available: 0 }, "Giro")).toBe(true);
+    const settings = createSeed().settings;
+    expect(withGoalSettings(settings, undefined)).toBe(settings);
+    expect(withGoalSettings({ ...settings, accountKeep: { Sparkonto: 100 } }, { asapReserve: 0.9, savingsRate: 0.2, accountKeep: { Notgroschen: 3000, Giro: 50 } }))
+      .toMatchObject({ asapReserve: 0.5, savingsRate: 0.2, accountKeep: { Sparkonto: 100, Notgroschen: 3000 } });
+    expect(appStateSchema.shape.settings.safeParse({ ...settings, accountKeep: { Girokonto: 10 } }).success).toBe(false);
+    expect(appStateSchema.shape.settings.safeParse({ ...settings, savingsRate: 0.6 }).success).toBe(false);
+    expect(appStateSchema.shape.settings.safeParse({ ...settings, asapReserve: 0.15, savingsRate: 0.1, accountKeep: { Notgroschen: 6000 } }).success).toBe(true);
+    expect(accountKeep(settings, "Notgroschen")).toBe(settings.emergencyTarget);
+    expect(accountKeep({ ...settings, accountKeep: { notgroschen: 0 } }, "Notgroschen")).toBe(0);
+    expect(accountKeep(settings, "Sparen")).toBe(0);
   });
 });

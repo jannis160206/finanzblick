@@ -1,6 +1,6 @@
 import type { Dashboard } from "@/lib/calc";
-import { currency, dateLabel } from "@/lib/format";
-import { SAVINGS_FLOOR, savingsGoals } from "@/lib/goals";
+import { currency, dateLabel, percent } from "@/lib/format";
+import { DEFAULT_ASAP_RESERVE, DEFAULT_SAVINGS_RATE, SAVINGS_FLOOR, savingsGoals } from "@/lib/goals";
 import type { AppState, AssistantCard } from "@/lib/types";
 
 type Line = AssistantCard["lines"][number];
@@ -27,7 +27,8 @@ const topics: Topic[] = [
   {
     id: "goals", title: "Sparziele", page: "Pockets", test: /sparziel|\bziele?\b|sparrate|extra|zusätzlich|aussetz|startkapital|anspar/,
     about: [
-      `Jeden Monat geht zuerst ein Grundbetrag von ${currency(SAVINGS_FLOOR)} aufs Sparkonto. Danach bekommen die Sparziele ihren Anteil, das mit dem frühesten Datum zuerst.`,
+      `Jeden Monat geht zuerst der Sparanteil aufs Sparkonto (Standard ${percent(DEFAULT_SAVINGS_RATE)} des Überschusses, mindestens ${currency(SAVINGS_FLOOR)}). Danach bekommen die Sparziele ihren Anteil, das mit dem frühesten Datum zuerst.`,
+      `Bei „So schnell wie möglich“ bleibt eine Reserve auf dem Konto (Standard ${percent(DEFAULT_ASAP_RESERVE)} des freien Betrags). Guthaben auf Sparkonto oder Trade Republic fließt nur einmalig und nur über dem Behalten-Betrag ins Ziel.`,
       "Ein Ziel mit fester Monatsrate bekommt höchstens diese Rate. Ein Ziel ohne feste Rate wird automatisch aus dem Überschuss befüllt.",
       "Extra-Beträge kommen zusätzlich zur Rate dazu, z. B. die ersten 2 Monate je 60 € vom Sparkonto. Kommt das Geld von einem Pocket, wird es dort als Entnahme eingeplant.",
       "Einzelne Monate lassen sich aussetzen. Ist ein Ziel erreicht, markierst du es als erreicht.",
@@ -100,7 +101,7 @@ const topics: Topic[] = [
   },
   {
     id: "settings", title: "Einstellungen", page: "Einstellungen", test: /einstell|stichtag|zinss?atz|zinsen|startstand|startstände/,
-    about: ["In den Einstellungen legst du Stichtag, Startstände der Pockets, Zielbeträge und Zinssätze fest. Die Zielbeträge kann ich auch per Chat ändern."],
+    about: ["In den Einstellungen legst du Stichtag, Startstände der Pockets und Zielbeträge fest. Den Trade-Republic-Zinssatz liest Finanzblick aus den Zinsgutschriften der Bank. Die Zielbeträge kann ich auch per Chat ändern."],
     live: (state) => [{ label: "Stichtag", detail: dateLabel(state.settings.asOf) }],
     say: ["Setz das Notgroschen-Ziel auf 10.000 €"],
   },

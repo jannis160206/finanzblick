@@ -18,15 +18,15 @@ import {
   statementFingerprint,
 } from "@/lib/import/identity";
 import { isLunchTime, statementTime } from "@/lib/holidays-at-kaernten";
-import { allocateGoals, corePocket, goalBalance, goalBalanceStatus, goalExtraIncome, goalProjectionBalances, physicalAssetTotal, physicalPocketBalances, physicalProjectionTotal, pocketKey, savingsGoals, transferMatches } from "@/lib/goals";
+import { allocateGoals, corePocket, goalBalance, goalBalanceStatus, goalExtraIncome, goalProjectionBalances, physicalAssetTotal, physicalPocketBalances, physicalProjectionTotal, pocketKey, savingsGoals, savingsRate, transferMatches } from "@/lib/goals";
 import { isSharedHoliday, isTravelMerchant, isRaphaelPayment, personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
-import { hasRecurringFuelEvidence, merchantPurposeSourceCategory, recurringAmazonCategory, recurringLunchCategory, unnamedFuelPurpose } from "@/lib/recurring-purpose";
+import { hasRecurringFuelEvidence, merchantPurposeSourceCategory, recurringAmazonCategory, recurringLunchCategory, revolutLunchMerchant, unnamedFuelPurpose } from "@/lib/recurring-purpose";
 import { ambiguousMerchant, merchantKeyText, recoverMerchant, unresolvedTerminal } from "@/lib/import/merchant-description";
 import { earlySpecialSalary, isTTSPayroll, payrollCategory, payrollText, reconcilePayrollSources } from "@/lib/payroll";
 import { reconcileLeasingSources } from "@/lib/leasing";
 import { amazonMerchant, groceryMerchant, knownMerchantCategory, canonicalCategory, groupedContractCategories, isTravelCategory } from "@/lib/categories";
 import { monthlyVariableBudget, variableBudgetId, variableBudgetValue, type VariableBudgetId } from "@/lib/variable-budgets";
-import { hasManualCategory } from "@/lib/manual-category";
+import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
 import { categoryParts } from "@/lib/splits";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
@@ -35,6 +35,7 @@ import { isDutyFreePurchase } from "@/lib/booking-purpose";
 import { applyNamedTransfer, isNamedTransfer, revolutSavingsTransferAmount } from "@/lib/transfers";
 import { bankOperation, bankTransferPurpose } from "@/lib/bank-operation";
 import { planningMonths } from "@/lib/planning-range";
+import { trInterestRate } from "@/lib/tr-interest";
 
 export const round = (value: number) =>
   Math.round((value + Number.EPSILON) * 100) / 100;
@@ -124,6 +125,8 @@ export function savingsPocket(account: string | null): Pocket | null {
 }
 type ClassifyInput = Parameters<typeof classifyUncached>[0];
 type Classification = ReturnType<typeof classifyUncached>;
+// Set by accountHolidayRanges on would-be lunch bookings inside a stored vacation: no lunch rule applies then.
+type VacationMarker = { vacationDay?: boolean };
 const classificationCache = new WeakMap<object, { fields: Map<string, unknown>; result: Classification }>();
 const sameFields = (fields: Map<string, unknown>, entries: [string, unknown][]) =>
   fields.size === entries.length && entries.every(([key, value]) => fields.has(key) && Object.is(fields.get(key), value));
@@ -142,7 +145,8 @@ function classifyUncached(
     Transaction,
     "description" | "amount" | "category" | "pocket" | "includeInPlan"
   > &
-    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias" | "automaticCategoryEvidence" | "ignored">>,
+    Partial<Pick<AccountedTransaction, "bank" | "categoryOverride" | "manualCategory" | "fixedCost" | "sourceCategory" | "date" | "time" | "holidayReimbursementFor" | "sharedRepaymentFor" | "holidayRange" | "sharedWithRaphael" | "rawDescription" | "rawDetails" | "merchantAlias" | "automaticCategoryEvidence" | "ignored" | "reviewed">> &
+    VacationMarker,
 ) : ReturnType<typeof classifyCounted> & { ignored?: true } {
   if (!transaction.ignored) return classifyCounted(transaction);
   // Ignored bookings keep their category and pocket (balances stay correct) but count like
@@ -194,8 +198,9 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
       ? transaction.category : bankTransferPurpose(transaction) ?? operation.category)
     : operation?.category;
   const known = operationCategory ?? knownMerchantCategory(sourceText, amount) ?? amexMerchantCategory({ ...recovered, description, amount });
+  const vacation = transaction.vacationDay === true;
   const lunchPurpose = known !== "Prüfen"
-    ? recurringLunchCategory(description, transaction.date, amount)
+    ? recurringLunchCategory(description, transaction.date, amount, vacation)
     : undefined;
   const forcedLunch = lunchPurpose === "Mittagessen";
   const sharedHoliday = isSharedHoliday(transaction);
@@ -210,7 +215,7 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
   const isCardSettlement = /(?:amex|american express).*(?:abrechnung|sammel|ausgleich|rückzahlung|ruckzahlung)/i.test(sourceText) ||
     (/raiffeisen|revolut/i.test(transaction.bank ?? "") && /\bamex\b|american express|AT\s*20\s*1910\s*0000\s*1019\s*5000/i.test(sourceText) && !/monatsgeb|mitgliedsgeb/i.test(sourceText));
   let lunchAllowed: boolean | undefined;
-  const allowsLunch = () => lunchAllowed ??= isLunchTime(transaction.date, transaction.time ?? statementTime(transaction.rawDescription, transaction.description, ...(transaction.rawDetails ?? [])));
+  const allowsLunch = () => lunchAllowed ??= !vacation && isLunchTime(transaction.date, transaction.time ?? statementTime(transaction.rawDescription, transaction.description, ...(transaction.rawDetails ?? [])));
   const isRoundUp =
     /auszahlung bei pocket/i.test(description) &&
     absolute < 2;
@@ -230,6 +235,11 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
     transaction.category === "Transfer intern" ||
     /transfer intern/i.test(transaction.sourceCategory ?? "")));
   const detectedTransfer = !forcedLunch && !sharedHoliday && !reimbursement && (isRoundUp || (isInternal && !isAmazon));
+  // Automatic choices only: manual and learned categories (override without automatic evidence) keep winning.
+  const revolutLunch = !operation && amount < 0 && known !== "Prüfen" && !detectedTransfer && !isAmazon &&
+    !hasCategoryChoice(transaction) && (!transaction.categoryOverride || !!transaction.automaticCategoryEvidence) &&
+    revolutLunchMerchant(transaction.bank, description, transaction.merchantAlias) && allowsLunch();
+  const ruleLunch = forcedLunch || revolutLunch;
   let category: Category = transaction.category;
   if (operationCategory) category = operationCategory;
   else if (isAmazon) category = "Shopping";
@@ -249,7 +259,7 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
     !(isAmazon && /Transfer/.test(transaction.category))
   )
     category = transaction.category;
-  if (category === "Mittagessen" && !forcedLunch && !allowsLunch())
+  if (category === "Mittagessen" && !ruleLunch && !allowsLunch())
     category = lunchPurpose ?? (groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen");
   if (/\btrafik\b/i.test(description)) category = "Shopping";
   if (!operation && (isAmazon || recurringAmazonCategory(description))) category = recurringAmazonCategory(description) ?? "Shopping";
@@ -262,14 +272,14 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
   if (payroll && !detectedTransfer &&
     (!transaction.categoryOverride || ["Gehalt", "Rufbereitschaft", "Einkommen"].includes(transaction.category)))
     category = payroll;
-  if (forcedLunch) category = "Mittagessen";
+  if (ruleLunch) category = "Mittagessen";
   else if (lunchPurpose && category === "Mittagessen") category = lunchPurpose;
   if (operation?.kind === "interest") category = operation.category;
   if (detectedTransfer) category = "Transfer intern";
   category = canonicalCategory(category);
   // Sharing changes the amount, not the purpose of the purchase. Travel stays
   // travel even when an older merchant rule calls a hotel/grocer everyday spend.
-  if (!detectedTransfer && !forcedLunch &&
+  if (!detectedTransfer && !ruleLunch &&
     !dutyFreeShopping &&
     !(transaction.fixedCost !== false && fixedCategories.includes(category)) &&
     !isFixedExpense({ amount, category, fixedCost: transaction.fixedCost }) &&
@@ -417,19 +427,21 @@ const holidayMerchantKey = (row: Transaction) => merchantKeyText(recoverMerchant
 export function accountHolidayRanges(rows: AccountedTransaction[], ranges: HolidayRange[] = [], asOf = "9999-12-31"): AccountedTransaction[] {
   const inside = (date: string) => ranges.some((range) => date >= range.from && date <= range.to);
   const clean = rows.map((row) => {
-    if (!("holidayRange" in row)) return row;
-    const copy = { ...row };
+    if (!("holidayRange" in row) && !("vacationDay" in row)) return row;
+    const copy: AccountedTransaction & VacationMarker = { ...row };
     delete copy.holidayRange;
+    delete copy.vacationDay;
     return copy;
   });
   if (!ranges.length) return clean;
   const home = new Set(clean.filter((row) => row.amount < 0 && row.date <= asOf && !inside(row.date) &&
     !classify(row).isTransfer && !isTravelCategory(classify(row).category) && !unresolvedTerminal(row.description)).map(holidayMerchantKey));
   return clean.map((row) => {
+    if (hasManualCategory(row) || row.amount >= 0 || !inside(row.date)) return row;
     const result = classify(row);
-    if (hasManualCategory(row) || row.amount >= 0 || !inside(row.date) || result.isTransfer || result.isAmazon ||
-      result.isFixedCost || isIncomeCategory(result.category) || home.has(holidayMerchantKey(row))) return row;
-    return { ...row, holidayRange: true };
+    const marked: AccountedTransaction & VacationMarker = result.category === "Mittagessen" ? { ...row, vacationDay: true } : row;
+    if (result.isTransfer || result.isAmazon || result.isFixedCost || isIncomeCategory(result.category) || home.has(holidayMerchantKey(row))) return marked;
+    return { ...marked, holidayRange: true };
   });
 }
 
@@ -536,6 +548,7 @@ export function monthlyInterest(
   previousEnd: number,
   month: string,
   settings: Settings,
+  paidRate?: number,
 ) {
   if (month < monthKey(settings.interestStart) || previousEnd <= 0) return 0;
   const days = daysInMonth(month);
@@ -546,7 +559,7 @@ export function monthlyInterest(
       : 1;
   let effectiveRate = 0;
   for (let day = startDay; day <= days; day++) {
-    const historicalRate = settings.interestRates
+    const historicalRate = paidRate ?? settings.interestRates
       ?.filter(
         (item) => item.date <= `${month}-${String(day).padStart(2, "0")}`,
       )
@@ -939,6 +952,9 @@ export function calculateDashboard(state: AppState) {
   const totalsForMonth = (month: string) => calculateMonthTotals(state, month, plan, bookings, actuals, plannedOneOffs, amex);
   const actual = actualPockets(state);
   const currentMonth = monthKey(state.settings.asOf);
+  const trRate = trInterestRate(state);
+  // From the current month on, the rate Trade Republic actually paid; earlier months keep the stored rate history.
+  const creditedRate = trRate?.source === "credits" ? trRate.rate : undefined;
   const savingsTransferred = revolutSavingsTransferAmount(state.transactions, currentMonth, state.settings.asOf);
   const baselineMonth = monthKey(state.settings.baselineDate);
   const historicalOpening = state.months["2026-01"]?.openingBalances;
@@ -973,7 +989,7 @@ export function calculateDashboard(state: AppState) {
       if (latestPocketSnapshot(state, pocket, snapshotDate) && month > currentMonth)
         movement[pocket] = revolutMovement(state, pocket, from, monthEnd);
     }
-    const interest = available ? monthlyInterest(month === currentMonth && latestTRBalance(state, snapshotDate) ? latestTRBalance(state, snapshotDate)!.balance : start.Notgroschen, month, state.settings) : 0;
+    const interest = available ? monthlyInterest(month === currentMonth && latestTRBalance(state, snapshotDate) ? latestTRBalance(state, snapshotDate)!.balance : start.Notgroschen, month, state.settings, month >= currentMonth ? creditedRate : undefined) : 0;
     let projectedGoals = goalProjectionBalances(goals, projectedPhysical);
     if (month === currentMonth) projectedGoals = Object.fromEntries(goals.map((goal) => [
       goal.id, projectedGoals[goal.id] === null ? null :
@@ -987,7 +1003,8 @@ export function calculateDashboard(state: AppState) {
     }
     // Preserve goal instructions, but fund savings only from surplus after purchases.
     const funded = allocateGoals(historical ? 0 : totals.surplus + totals.plannedOneOffs - totals.goalExtras,
-      goals.map((goal) => ({ ...goal, completedAt: goal.completedAt ?? projectedCompletions.get(goal.id) })), projectedGoals, month);
+      goals.map((goal) => ({ ...goal, completedAt: goal.completedAt ?? projectedCompletions.get(goal.id) })), projectedGoals, month,
+      savingsRate(state.settings));
     const allocation = { ...funded, goals: Object.fromEntries(goals.map((goal) => [goal.id, funded.goals[goal.id] ?? 0])) };
     const remaining = round(totals.surplus - sum(Object.values(allocation.goals)));
     const savings = allocationBlocked ? 0 : Math.min(allocation.savings, Math.max(0, remaining));

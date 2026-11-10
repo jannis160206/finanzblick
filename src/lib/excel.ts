@@ -48,6 +48,9 @@ const workbookMetadataSchema = appStateSchema.omit({
 }).extend({
   interestRates: settingsSchema.shape.interestRates,
   unknownBalances: settingsSchema.shape.unknownBalances,
+  asapReserve: settingsSchema.shape.asapReserve,
+  savingsRate: settingsSchema.shape.savingsRate,
+  accountKeep: settingsSchema.shape.accountKeep,
 });
 export type ImportResult = {
   state: AppState;
@@ -620,10 +623,13 @@ export async function parseWorkbook(
       if (!parsedMetadata.success) throw new Error(
         `Ungültige Sicherungsmetadaten: ${parsedMetadata.error.issues.slice(0, 3).map((issue) => issue.message).join("; ")}`,
       );
-      const { interestRates, unknownBalances, ...stateMetadata } = parsedMetadata.data;
+      const { interestRates, unknownBalances, asapReserve, savingsRate, accountKeep, ...stateMetadata } = parsedMetadata.data;
       Object.assign(state, stateMetadata);
       if (interestRates !== undefined) state.settings.interestRates = interestRates;
       if (unknownBalances !== undefined) state.settings.unknownBalances = unknownBalances;
+      if (asapReserve !== undefined) state.settings.asapReserve = asapReserve;
+      if (savingsRate !== undefined) state.settings.savingsRate = savingsRate;
+      if (accountKeep !== undefined) state.settings.accountKeep = accountKeep;
     }
     if (dashboard && text(dashboard.getCell("E1")) === "metadata-v1" &&
       metadataCount !== numeric(dashboard.getCell("F1")))
@@ -656,8 +662,10 @@ export async function parseWorkbook(
   };
 }
 
+// Planning settings of the savings goal dialog travel in the metadata, not as sheet rows.
+type SheetSetting = Exclude<keyof Settings, "balances" | "interestRates" | "unknownBalances" | "asapReserve" | "savingsRate" | "accountKeep">;
 const settingLabels: Record<
-  Exclude<keyof Settings, "balances" | "interestRates" | "unknownBalances">,
+  SheetSetting,
   string
 > = {
   asOf: "Stichtag",
@@ -691,7 +699,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
       key,
       label,
       state.settings[
-        key as Exclude<keyof Settings, "balances" | "interestRates" | "unknownBalances">
+        key as SheetSetting
       ],
     ]);
   dashboard.addRow([]);
@@ -956,6 +964,7 @@ export async function exportWorkbook(state: AppState): Promise<ArrayBuffer> {
   }
   const metadata = workbookMetadataSchema.parse({
     ...state, interestRates: state.settings.interestRates, unknownBalances: state.settings.unknownBalances,
+    asapReserve: state.settings.asapReserve, savingsRate: state.settings.savingsRate, accountKeep: state.settings.accountKeep,
   });
   if (Object.keys(metadata).length) {
     const automation = workbook.addWorksheet("Import-Abgleich", {

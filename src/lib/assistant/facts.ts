@@ -2,6 +2,7 @@ import { addMonths, latestTRBalance, round, type Dashboard } from "@/lib/calc";
 import { financeInsights, ledger } from "@/lib/insights";
 import { currency } from "@/lib/format";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
+import { trInterestRate } from "@/lib/tr-interest";
 import type { AppState } from "@/lib/types";
 import { balances } from "./accounts";
 import { budgetPace, safeToSpend, salaryStatus, unusualCategories } from "./pulse";
@@ -40,7 +41,7 @@ export function assistantFacts(state: AppState, dashboard: Dashboard, today: str
   const insights = financeInsights(state, today);
   let giro: ReturnType<typeof accountForecast>["giro"] | undefined;
   try { giro = accountForecast(state, dashboard, today).giro; } catch { giro = undefined; }
-  const interest = state.settings.interestRates?.at(-1);
+  const interest = trInterestRate(state, today);
   const tr = latestTRBalance(state, today);
   const row = dashboard.current;
   const known = balances(state, dashboard);

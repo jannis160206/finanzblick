@@ -1,7 +1,26 @@
 import { isRevolutMainAccount } from "@/lib/accounts";
-import { pocketNames, type AppState, type Pocket, type PocketOpeningBalance, type SavingsGoal } from "@/lib/types";
+import { pocketNames, type AppState, type Pocket, type PocketOpeningBalance, type SavingsGoal, type Settings } from "@/lib/types";
 
 export const SAVINGS_FLOOR = 180;
+export const DEFAULT_SAVINGS_RATE = 0.1;
+export const DEFAULT_ASAP_RESERVE = 0.15;
+export const MAX_PLAN_SHARE = 0.5;
+const planShare = (value: number | undefined, fallback: number) =>
+  Math.min(MAX_PLAN_SHARE, Math.max(0, value !== undefined && Number.isFinite(value) ? value : fallback));
+export const savingsRate = (settings: Pick<Settings, "savingsRate">) => planShare(settings.savingsRate, DEFAULT_SAVINGS_RATE);
+export const asapReserve = (settings: Pick<Settings, "asapReserve">) => planShare(settings.asapReserve, DEFAULT_ASAP_RESERVE);
+
+/** Reserved for the Sparkonto before any goal: the savings rate of the positive surplus in whole euros, at least the floor. */
+export function savingsShare(surplus: number, rate = DEFAULT_SAVINGS_RATE): number {
+  return Math.max(SAVINGS_FLOOR, Math.round(Math.max(0, surplus) * planShare(rate, DEFAULT_SAVINGS_RATE)));
+}
+
+/** What the user keeps on an account; the rest may fund a goal once. Default: the Notgroschen target on the Notgroschen. */
+export function accountKeep(settings: Pick<Settings, "accountKeep" | "emergencyTarget">, account: string): number {
+  const saved = Object.entries(settings.accountKeep ?? {}).find(([key]) => pocketKey(key) === pocketKey(account))?.[1];
+  if (saved !== undefined) return Math.max(0, saved);
+  return corePocket(account) === "Notgroschen" ? Math.max(0, settings.emergencyTarget) : 0;
+}
 export const vacationSavingPaused = (month: string) => month >= "2026-10" && month < "2027-03";
 const cents = (amount: number) => Math.round(Math.max(0, amount) * 100);
 export const everydayPocketNames = ["Mittagessen", "Lebensmittel", "Entertainment & Haushalt", "Tanken"] as const;
@@ -214,9 +233,11 @@ export function plannedSurplusCents(goal: SavingsGoal, month: string): number | 
     .reduce((total, row) => total + cents(row.amount), 0);
 }
 
-export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: Record<string, number | null>, month: string) {
+/** Splits the month's surplus: the Sparkonto share first (savings rate, at least the floor), then goals by date, the rest to Urlaub. */
+export function allocateGoals(surplus: number, goals: SavingsGoal[], balances: Record<string, number | null>, month: string,
+  rate = DEFAULT_SAVINGS_RATE) {
   let remaining = cents(surplus);
-  const savings = Math.min(remaining, cents(SAVINGS_FLOOR));
+  const savings = Math.min(remaining, cents(savingsShare(surplus, rate)));
   remaining -= savings;
   const funding: Record<string, number> = {};
   const conflicts = goalPocketConflicts(goals);

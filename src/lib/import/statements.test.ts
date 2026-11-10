@@ -223,7 +223,7 @@ describe("classification uses the existing engine", () => {
     ["BIPA", -25, "Mittagessen"],
     ["Trafik", -8, "Shopping"],
     ["INTERSPAR", -10, "Mittagessen"],
-    ["SPAR", -10.01, "Lebensmittel"],
+    ["SPAR", -10.01, "Mittagessen"],
     ["dm drogerie", -4, "Drogerie"],
     ["Burgschenke", -20, "Restaurants"],
     ["BANKOMAT", -20, "Körperpflege"],

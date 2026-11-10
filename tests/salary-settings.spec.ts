@@ -150,7 +150,7 @@ test.describe("browser mode", () => {
   });
 
   for (const [width, theme] of [[375, "light"], [1440, "dark"]] as const) {
-    test(`savings goal includes Trade Republic only as a deliberate exception at ${width}px (${theme})`, async ({ page }) => {
+    test(`savings goal uses Trade Republic above its keep amount, last and as late as possible at ${width}px (${theme})`, async ({ page }) => {
       const state = pocketFixture();
       state.trBalances = [{ date: "2026-10-09", balance: 9000 }];
       state.settings.emergencyTarget = 2000;
@@ -165,12 +165,14 @@ test.describe("browser mode", () => {
       await expect(dialog.getByRole("group", { name: "Startkapital" })).toBeVisible();
       await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
       const tr = dialog.getByRole("listitem").filter({ hasText: "Trade Republic · Notgroschen" });
-      await expect(tr.getByLabel("Mindestens behalten")).toHaveCount(0);
-      await tr.getByRole("switch", { name: "Als Ausnahme einbeziehen" }).click();
-      await expect(tr.getByLabel("Mindestens behalten")).toHaveValue("2.000,00");
+      await expect(dialog.getByText(/Kontoregel/)).toHaveCount(0);
+      await expect(tr.getByLabel("Behalten auf Trade Republic · Notgroschen", { exact: true })).toHaveValue("2.000,00");
+      await tr.getByText("Trade Republic · Notgroschen", { exact: true }).click();
+      await expect(tr.getByRole("checkbox")).toBeChecked();
       await settled(page, theme);
       await dialog.getByRole("button", { name: "Weiter", exact: true }).click();
       const plan = dialog.getByRole("group", { name: "Verteilung" });
+      await expect(plan.getByLabel("Sparanteil", { exact: true })).toHaveValue("10");
       await expect(plan.getByLabel(/^Betrag .+, Trade Republic$/)).toHaveValue("7.000,00");
       await expect(plan.getByLabel("Monat Trade Republic")).toBeVisible();
       await settled(page, theme);

@@ -168,80 +168,42 @@ test("settings contain only rare controls and save actions only appear after cha
   await expect(page.getByText(/Round-up/)).toHaveCount(0);
 });
 
-test("TR settings deduplicate and sort rates without overwriting newer balances and dates", async ({
+test("Trade Republic on the savings page is read-only and follows the stored data", async ({
   page,
 }) => {
-  await page.goto("/einstellungen");
+  await page.goto("/sparen");
   const initial = await stored(page);
-  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveValue("2.25");
-  await page.getByLabel("TR Kontostand", { exact: true }).fill("5500");
-  await page.getByLabel("TR Standdatum").fill("2026-09-12");
-  await page.getByLabel("Zinssatz p.a.", { exact: true }).fill("3.5");
+  const card = page.getByRole("region", { name: "Trade Republic", exact: true });
+  await expect(card).toContainText("2,25 %");
+  await expect(card).toContainText("zuletzt gespeichert");
+  await expect(card.getByRole("link", { name: "Trade Republic unter Banken & Verbindungen verbinden" }))
+    .toHaveAttribute("href", "/einstellungen#bankverbindung");
+  await expect(card.locator("input, select, form")).toHaveCount(0);
+  await expect(page.getByLabel("TR Kontostand", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveCount(0);
 
-  // Another tab updates hidden fields while this form still has old defaults.
-  await page.clock.setFixedTime(new Date("2026-09-13T12:00:00Z"));
-  const latestSettings = {
-    ...initial.settings,
-    asOf: "2026-09-13",
-    baselineDate: "2026-09-10",
-    balances: { Notgroschen: 6123.45, Urlaub: 2100, Sparkonto: 3200, Motorrad: 400 },
-    interestRates: [
-      { date: "2026-01-01", rate: 0.0225 },
-      { date: "2026-06-01", rate: 0.0275 },
-      { date: "2026-09-12", rate: 0.03 },
-      { date: "2026-09-13", rate: 0.04 },
-    ],
+  // A bank sync in another tab delivers the balance; the card follows without any input.
+  const latest = {
+    ...initial,
+    settings: { ...initial.settings, interestRates: [{ date: "2026-01-01", rate: 0.0225 }, { date: "2026-09-01", rate: 0.04 }] },
+    trBalances: [{ date: "2026-09-10", balance: 6123.45 }],
   };
   await page.evaluate(
     ({ key, state }) => {
       localStorage.setItem(key, JSON.stringify(state));
-      window.dispatchEvent(
-        new StorageEvent("storage", {
-          key,
-          newValue: JSON.stringify(state),
-        }),
-      );
+      window.dispatchEvent(new StorageEvent("storage", { key, newValue: JSON.stringify(state) }));
     },
-    { key, state: { ...initial, settings: latestSettings, trBalances: [{ date: "2026-09-13", balance: 6123.45 }] } },
+    { key, state: latest },
   );
-  await expect
-    .poll(async () => (await stored(page)).settings)
-    .toMatchObject(latestSettings);
-  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveValue(
-    "3.5",
-  );
-
-  await page.getByRole("button", { name: "Trade Republic speichern" }).click();
-  await expect(
-    page.getByRole("button", { name: "Trade Republic speichern" }),
-  ).toHaveCount(0);
-  const expectedSettings = {
-    ...latestSettings,
-    interestRates: [
-      { date: "2026-01-01", rate: 0.0225 },
-      { date: "2026-06-01", rate: 0.0275 },
-      { date: "2026-09-12", rate: 0.035 },
-      { date: "2026-09-13", rate: 0.04 },
-    ],
-  };
-  expect((await stored(page)).settings).toEqual(expectedSettings);
+  await expect(card).toContainText("6.123,45");
+  await expect(card).toContainText("4 %");
+  await expect(card.getByRole("link")).toHaveCount(0);
   await page.reload();
-  const restored = await stored(page);
-  expect(restored.settings).toEqual(expectedSettings);
-  expect(restored.trBalances).toEqual(expect.arrayContaining([
-    { date: "2026-09-12", balance: 5500 },
-    { date: "2026-09-13", balance: 6123.45 },
-  ]));
-  expect(restored.trBalances).toHaveLength(2);
-  await expect(page.getByLabel("TR Standdatum")).toHaveValue("2026-09-13");
-  await expect(page.getByLabel("TR Kontostand", { exact: true })).toHaveValue("6123.45");
-  await expect(page.getByLabel("Zinssatz p.a.", { exact: true })).toHaveValue("4");
-  await expect(
-    page.getByRole("button", { name: "Trade Republic speichern" }),
-  ).toHaveCount(0);
+  expect((await stored(page)).trBalances).toEqual(latest.trBalances);
+  await expect(card).toContainText("6.123,45");
 });
 
-test("TR manual balance wins across reload and Revolut names remain read-only and separate", async ({
+test("Trade Republic has no manual balance entry and Revolut names remain read-only and separate", async ({
   page,
 }) => {
   await page.goto("/umsaetze");
@@ -267,21 +229,11 @@ test("TR manual balance wins across reload and Revolut names remain read-only an
   await expect(everyday).toContainText("40,00");
   await expect(everyday.locator("input, select, form")).toHaveCount(0);
   await expect(page.locator("form:visible")).toHaveCount(0);
-  await page.getByRole("button", { name: "Kontostand aktualisieren", exact: true }).click();
-  await page.getByLabel("TR Kontostand", { exact: true }).fill("6.123,45");
-  await page.getByLabel("TR Kontostand", { exact: true }).press("Tab");
-  await page.getByLabel("TR Standdatum").fill("2026-09-12");
-  await page.getByRole("button", { name: "Kontostand speichern" }).click();
-  await expect(page.getByLabel("Notgroschen Kontostand")).toContainText(
-    "6.123,45",
-  );
-  expect((await stored(page)).trBalances).toEqual([
-    { date: "2026-09-12", balance: 6123.45 },
-  ]);
-  await page.clock.setFixedTime(new Date("2026-10-12T12:00:00Z"));
+  await expect(page.getByRole("button", { name: "Kontostand aktualisieren", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("TR Kontostand", { exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByLabel("Notgroschen Kontostand")).toContainText(
-    "6.123,45",
+    "5.000,00",
   );
   await expect(page.locator("form:visible")).toHaveCount(0);
 });

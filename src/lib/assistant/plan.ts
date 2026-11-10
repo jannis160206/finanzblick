@@ -1,7 +1,7 @@
 import { addMonths, calculateMonthTotals, round, sum, type Dashboard } from "@/lib/calc";
 import { planningEndMonth } from "@/lib/planning-range";
 import { monthLabel } from "@/lib/format";
-import { allocateGoals, bankPocketBalance, corePocket, goalExtraIncome, pocketKey, SAVINGS_FLOOR, savingsGoals } from "@/lib/goals";
+import { allocateGoals, bankPocketBalance, corePocket, goalExtraIncome, pocketKey, savingsGoals, savingsRate, savingsShare } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { plannedOneOffSchema, savingsGoalSchema, type AppState, type AssistantDraft, type AssistantOperation, type PlannedOneOff, type Pocket, type SavingsGoal } from "@/lib/types";
 import { lastDay } from "./intent";
@@ -12,7 +12,9 @@ export type MonthBasis = {
   allocationInput: number;
   goalRates: Record<string, number>;
   goalExtras: Record<string, number>;
-  // What is left after fixed costs, budgets, planned purchases, goal rates and the savings buffer.
+  // Reserved for the Sparkonto first: the savings rate of the surplus, at least the savings floor.
+  savings: number;
+  // What is left after fixed costs, budgets, planned purchases, goal rates and the Sparkonto share.
   free: number;
 };
 
@@ -27,17 +29,20 @@ export function planningHorizon(dashboard: Dashboard): string {
   return dashboard.timeline.at(-1)?.month ?? dashboard.currentMonth;
 }
 
-export function monthBasis(state: AppState, dashboard: Dashboard, month: string): MonthBasis | undefined {
+/** `extraIncome`: income not (yet) in the budget, e.g. the salary forecast; the Sparkonto share grows with it. */
+export function monthBasis(state: AppState, dashboard: Dashboard, month: string, extraIncome = 0): MonthBasis | undefined {
   if (month < dashboard.currentMonth || month > planningHorizon(dashboard)) return undefined;
   const goals = dashboard.goals;
   const row = dashboard.timeline.find((item) => item.month === month);
   const totals = row ?? calculateMonthTotals(state, month, { currentMonth: dashboard.currentMonth });
   const goalRates = row?.goalRates ?? {};
   const goalExtras = Object.fromEntries(goals.map((goal) => [goal.id, goalExtraIncome(goal, month)]));
-  const remaining = round(totals.surplus - sum(Object.values(goalRates)));
+  const surplus = round(totals.surplus + extraIncome);
+  const allocationInput = round(totals.surplus + extraIncome + totals.plannedOneOffs - totals.goalExtras);
+  const savings = savingsShare(allocationInput, savingsRate(state.settings));
   return {
-    month, surplus: totals.surplus, allocationInput: round(totals.surplus + totals.plannedOneOffs - totals.goalExtras),
-    goalRates, goalExtras, free: round(remaining - SAVINGS_FLOOR),
+    month, surplus, allocationInput, goalRates, goalExtras, savings,
+    free: round(surplus - sum(Object.values(goalRates)) - savings),
   };
 }
 
@@ -155,7 +160,7 @@ function simulateGoal(state: AppState, dashboard: Dashboard, goal: SavingsGoal) 
     if (!basis) break;
     checkedUntil = month;
     const balances = { ...goalBalancesBefore(dashboard, month), [goal.id]: balance };
-    const after = allocateGoals(basis.allocationInput, [...existing, goal], balances, month).goals;
+    const after = allocateGoals(basis.allocationInput, [...existing, goal], balances, month, savingsRate(state.settings)).goals;
     const rate = after[goal.id] ?? 0;
     if (rate + 0.5 < (goal.funding?.monthly ?? 0) && balance + rate + 0.5 < goal.target) shortMonths.push(month);
     funded += rate;

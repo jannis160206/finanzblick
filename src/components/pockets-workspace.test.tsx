@@ -6,7 +6,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -54,14 +53,6 @@ function mount(initialState = pocketFixture()) {
 }
 function disclosure(title: string) {
   fireEvent.click(screen.getByText(title, { exact: true }));
-}
-function editor() {
-  fireEvent.click(
-    screen.getByRole("button", { name: "Kontostand aktualisieren" }),
-  );
-  return within(
-    screen.getByRole("dialog", { name: "Kontostand aktualisieren" }),
-  );
 }
 
 it("shows actual balances and source dates without presenting goal opening credits as bank cash", () => {
@@ -254,177 +245,9 @@ it("defaults both detail years to the current planning year", () => {
   expect(screen.getByLabelText("Prognosejahr")).toHaveProperty("value", "2027");
 });
 
-it("does not write TR drafts on cancel, Escape or close", () => {
-  const view = mount();
-  const initial = view.read().state;
-  let dialog = editor();
-  fireEvent.change(dialog.getByLabelText("TR Kontostand"), {
-    target: { value: "6.123,45" },
-  });
-  expect(view.read().state).toBe(initial);
-  fireEvent.click(dialog.getByRole("button", { name: "Abbrechen" }));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  dialog = editor();
-  fireEvent.change(dialog.getByLabelText("TR Kontostand"), {
-    target: { value: "8000" },
-  });
-  fireEvent.keyDown(document, { key: "Escape" });
-  expect(screen.queryByRole("dialog")).toBeNull();
-  dialog = editor();
-  fireEvent.click(dialog.getByRole("button", { name: "Schließen" }));
-  expect(view.read().state).toBe(initial);
-});
-
-it("confirms a German amount without a prior blur, replaces that date and survives reload", async () => {
-  const view = mount();
-  const initial = view.read().state;
-  const dialog = editor();
-  fireEvent.change(dialog.getByLabelText("TR Kontostand"), {
-    target: { value: "6.123,45" },
-  });
-  fireEvent.change(dialog.getByLabelText("TR Standdatum"), {
-    target: { value: "2026-10-02" },
-  });
-  fireEvent.click(dialog.getByRole("button", { name: "Kontostand speichern" }));
-  expect(screen.queryByRole("dialog")).toBeNull();
-  expect(screen.getByLabelText("Notgroschen Kontostand").textContent).toBe(
-    currency(6123.45),
-  );
-  const saved = view.read().state;
-  expect(saved.trBalances).toHaveLength(2);
-  expect(
-    saved.trBalances?.find((row) => row.date === "2026-10-02")?.balance,
-  ).toBe(6123.45);
-  expect(
-    saved.trBalances?.find((row) => row.date === "2026-10-09")?.balance,
-  ).toBe(6200);
-  expect(saved.settings).toEqual(initial.settings);
-  expect(saved.transactions).toEqual(initial.transactions);
-  expect(saved.financeRows).toEqual(initial.financeRows);
-  expect(saved.savingsGoals).toEqual(initial.savingsGoals);
-  await waitFor(() => expect(view.read().saved).toBe(true));
-  view.unmount();
-  const restored = mount();
-  expect(restored.read().state.trBalances).toEqual(saved.trBalances);
-  expect(screen.getByLabelText("Notgroschen Kontostand").textContent).toBe(
-    currency(6123.45),
-  );
-});
-
-it.each(["", "-1", "1,234", "12x", "1.000.000.000,01"])(
-  "blocks the invalid TR amount %j rather than saving an old or zero value",
-  (value) => {
-    const view = mount();
-    const initial = view.read().state;
-    const dialog = editor();
-    fireEvent.change(dialog.getByLabelText("TR Kontostand"), {
-      target: { value },
-    });
-    expect(
-      dialog.getByRole("button", { name: "Kontostand speichern" }),
-    ).toHaveProperty("disabled", true);
-    expect(dialog.getByRole("alert").textContent).toContain("Gültigen Betrag");
-    expect(view.read().state).toBe(initial);
-  },
-);
-
-it("blocks future dates and accepts a deliberate zero balance", () => {
-  const view = mount();
-  const initial = view.read().state;
-  const dialog = editor();
-  fireEvent.change(dialog.getByLabelText("TR Standdatum"), {
-    target: { value: "2026-10-09" },
-  });
-  expect(
-    dialog.getByRole("button", { name: "Kontostand speichern" }),
-  ).toHaveProperty("disabled", true);
-  expect(dialog.getByRole("alert").textContent).toContain("Gültiges Datum");
-  expect(view.read().state).toBe(initial);
-  fireEvent.change(dialog.getByLabelText("TR Standdatum"), {
-    target: { value: "2026-10-08" },
-  });
-  fireEvent.change(dialog.getByLabelText("TR Kontostand"), {
-    target: { value: "0" },
-  });
-  fireEvent.click(dialog.getByRole("button", { name: "Kontostand speichern" }));
-  expect(screen.getByLabelText("Notgroschen Kontostand").textContent).toBe(
-    currency(0),
-  );
-});
-
-it("blocks a stale TR dialog without overwriting a newer balance from another update", () => {
-  const view = mount();
-  const dialog = editor();
-  fireEvent.change(dialog.getByLabelText("TR Kontostand"), {
-    target: { value: "1234" },
-  });
-
-  act(() =>
-    view.read().update((state) => ({
-      ...state,
-      trBalances: [
-        ...(state.trBalances ?? []),
-        { date: "2026-10-08", balance: 7800 },
-      ],
-    })),
-  );
-  expect(dialog.getByRole("alert").textContent).toContain(
-    "inzwischen geändert",
-  );
-  expect(
-    dialog.getByRole("button", { name: "Kontostand speichern" }),
-  ).toHaveProperty("disabled", true);
-  expect(
-    view.read().state.trBalances?.find((row) => row.date === "2026-10-08")
-      ?.balance,
-  ).toBe(7800);
-});
-
-it("surfaces the TR history limit but permits replacing an existing date", () => {
-  const state = pocketFixture();
-  state.trBalances = Array.from({ length: 10000 }, () => ({
-    date: "2026-10-02",
-    balance: 5000,
-  }));
-  const view = mount(state);
-  const dialog = editor();
-  expect(dialog.getByRole("alert").textContent).toContain("10.000 Kontostände");
-  expect(
-    dialog.getByRole("button", { name: "Kontostand speichern" }),
-  ).toHaveProperty("disabled", true);
-  fireEvent.change(dialog.getByLabelText("TR Standdatum"), {
-    target: { value: "2026-10-02" },
-  });
-  fireEvent.click(dialog.getByRole("button", { name: "Kontostand speichern" }));
-  expect(view.read().state.trBalances).toEqual([
-    { date: "2026-10-02", balance: 5000 },
-  ]);
-});
-
-it("keeps detail filters readable but blocks TR writes when browser persistence fails", async () => {
-  const view = mount();
-  const dialog = editor();
-  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-    throw new DOMException("Full", "QuotaExceededError");
-  });
-  act(() =>
-    view.read().update((state) => ({
-      ...state,
-      settings: {
-        ...state.settings,
-        savingsTarget: state.settings.savingsTarget + 1,
-      },
-    })),
-  );
-  await waitFor(() => expect(view.read().storageError).toBeTruthy());
-  expect(
-    dialog.getByRole("button", { name: "Kontostand speichern" }),
-  ).toHaveProperty("disabled", true);
-  expect(dialog.getByRole("alert")).toBeTruthy();
-  fireEvent.click(dialog.getByRole("button", { name: "Abbrechen" }));
-  await waitFor(() =>
-    expect(document.activeElement).toBe(
-      screen.getByRole("link", { name: "Sparziele" }),
-    ),
-  );
+it("offers no manual Trade Republic balance entry", () => {
+  mount();
+  expect(screen.queryByRole("button", { name: "Kontostand aktualisieren" })).toBeNull();
+  expect(screen.queryByLabelText("TR Kontostand")).toBeNull();
+  expect(screen.getByLabelText("Notgroschen Kontostand").textContent).toBe(currency(5000));
 });

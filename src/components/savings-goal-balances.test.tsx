@@ -169,7 +169,7 @@ describe("observed and unknown goal UI", () => {
     state.settings.unknownBalances = ["Sparkonto"];
     const dashboard = calculateDashboard(state);
     render(<>
-      <PocketBalanceCards state={state} actual={dashboard.actual} disabled={false} editRef={null} onEdit={vi.fn()} />
+      <PocketBalanceCards state={state} actual={dashboard.actual} />
       <PocketForecast state={state} dashboard={dashboard} />
     </>);
     expect(screen.getByLabelText("Sparkonto Kontostand").textContent).toBe("Kontostand unbekannt");
@@ -181,7 +181,7 @@ describe("observed and unknown goal UI", () => {
     const state = fixture();
     state.savingsGoals = [{ ...goal("Motorrad"), openingBalance: { date: "2026-10-01", amount: 2445 } }];
     const dashboard = calculateDashboard(state);
-    render(<PocketBalanceCards state={state} actual={dashboard.actual} disabled={false} editRef={null} onEdit={vi.fn()} />);
+    render(<PocketBalanceCards state={state} actual={dashboard.actual} />);
     expect(screen.getByLabelText("Motorrad Kontostand").textContent).toBe(currency(0));
   });
 
@@ -192,7 +192,7 @@ describe("observed and unknown goal UI", () => {
     const dashboard = calculateDashboard(state);
     expect(dashboard.physical.motorrad).toMatchObject({ status: "known", source: "opening", amount: 2445 });
     expect(dashboard.totalAssets).toBe(2445);
-    render(<PocketBalanceCards state={state} actual={dashboard.actual} disabled={false} editRef={null} onEdit={vi.fn()} />);
+    render(<PocketBalanceCards state={state} actual={dashboard.actual} />);
     expect(screen.getByLabelText("Motorrad Kontostand").textContent).toBe("Kontostand unbekannt");
   });
 

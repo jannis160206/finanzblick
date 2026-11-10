@@ -193,10 +193,12 @@ test("real clicks, keyboard activation and switches play quietly; hover, typing 
   expect((await probe(page)).contexts).toBe(0);
   const theme = page.getByRole("button", { name: "Farbschema wechseln" });
   await theme.hover();
-  const balance = page.getByRole("spinbutton", { name: "TR Kontostand" });
-  await balance.fill("-1");
+  const search = page.getByRole("searchbox", { name: "Einstellungen durchsuchen" });
+  await search.fill("-1");
+  await search.fill("");
   const disabled = page.getByRole("button", {
-    name: "Trade Republic speichern",
+    name: "Automatisch (Saison)",
+    exact: true,
   });
   await expect(disabled).toBeDisabled();
   await disabled.click({ force: true });

@@ -1,9 +1,6 @@
 "use client";
 
-import type { Ref } from "react";
-import { Pencil } from "lucide-react";
 import { BankLogo } from "@/components/bank-logo";
-import { Button } from "@/components/ui/button";
 import { pocketColors, pocketIcons } from "@/components/finance-ui";
 import { FinancialData } from "@/components/financial-data";
 import { latestPocketSnapshot, latestTRBalance } from "@/lib/calc";
@@ -15,15 +12,9 @@ import { bankPocketBalance, everydayPocketNames, physicalPocketBalance } from "@
 export function PocketBalanceCards({
   state,
   actual,
-  disabled,
-  editRef,
-  onEdit,
 }: {
   state: AppState;
   actual: PocketAmounts;
-  disabled: boolean;
-  editRef: Ref<HTMLButtonElement>;
-  onEdit: () => void;
 }) {
   return (
     <ul className="min-w-0 divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
@@ -73,20 +64,6 @@ export function PocketBalanceCards({
               >
                 {bankBalance === null ? "Kontostand unbekannt" : currency(bankBalance)}
               </FinancialData>
-              {pocket === "Notgroschen" && (
-                <Button
-                  ref={editRef}
-                  variant="ghost"
-                  size="icon"
-                  className="-mr-2 size-10 shrink-0 text-muted-foreground"
-                  aria-label="Kontostand aktualisieren"
-                  title="Kontostand aktualisieren"
-                  disabled={disabled}
-                  onClick={onEdit}
-                >
-                  <Pencil className="size-4" aria-hidden="true" />
-                </Button>
-              )}
             </article>
           </li>
         );

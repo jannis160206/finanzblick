@@ -172,75 +172,23 @@ for (const width of [1440, 390, 320]) {
 }
 
 for (const width of [1440, 390]) {
-  test(`TR confirmation, cancellation, validation and reload work at ${width}px`, async ({
+  test(`Trade Republic is read-only and shows the bank balance at ${width}px`, async ({
     page,
-  }, testInfo) => {
+  }) => {
     await page.setViewportSize({ width, height: 1000 });
     const initial = await open(page);
-    const edit = page.getByRole("button", {
-      name: "Kontostand aktualisieren",
-      exact: true,
-    });
-    await edit.click();
-    let dialog = page.getByRole("dialog", {
-      name: "Kontostand aktualisieren",
-      exact: true,
-    });
-    await dialog.getByLabel("TR Kontostand", { exact: true }).fill("6.123,45");
-    expect((await snapshot(page)).state).toEqual(initial);
-    await dialog
-      .getByRole("button", { name: "Abbrechen", exact: true })
-      .click();
-    await expect(dialog).toHaveCount(0);
-    await expect(edit).toBeFocused();
-    await edit.click();
-    dialog = page.getByRole("dialog", {
-      name: "Kontostand aktualisieren",
-      exact: true,
-    });
-    const amount = dialog.getByLabel("TR Kontostand", { exact: true });
-    await amount.fill("1,234");
     await expect(
-      dialog.getByRole("button", { name: "Kontostand speichern" }),
-    ).toBeDisabled();
-    await expect(dialog.getByRole("alert")).toContainText("Gültigen Betrag");
-    await amount.fill("6.123,45");
-    await dialog.getByLabel("TR Standdatum").fill("2026-10-09");
-    await expect(
-      dialog.getByRole("button", { name: "Kontostand speichern" }),
-    ).toBeDisabled();
-    await expect(dialog.getByRole("alert")).toContainText("Gültiges Datum");
-    expect((await snapshot(page)).state).toEqual(initial);
-    await dialog.getByLabel("TR Standdatum").fill("2026-10-08");
-    await page.screenshot({
-      path: testInfo.outputPath(`tr-dialog-${width}.png`),
-    });
-    await amount.press("Enter");
-    await expect(dialog).toHaveCount(0);
-    await expect(edit).toBeFocused();
-    await expect
-      .poll(
-        async () =>
-          (await snapshot(page)).state.trBalances?.find(
-            (row) => row.date === "2026-10-08",
-          )?.balance,
-      )
-      .toBe(6123.45);
+      page.getByRole("button", { name: "Kontostand aktualisieren", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.getByLabel("TR Kontostand", { exact: true })).toHaveCount(0);
     await expect(
       page.getByLabel("Notgroschen Kontostand", { exact: true }),
-    ).toHaveText(currency(6123.45));
-    const saved = (await snapshot(page)).state;
-    expect(saved.settings).toEqual(initial.settings);
-    expect(saved.transactions).toEqual(initial.transactions);
-    expect(saved.financeRows).toEqual(initial.financeRows);
-    expect(saved.savingsGoals).toEqual(initial.savingsGoals);
-    expect(saved.pocketSnapshots).toEqual(initial.pocketSnapshots);
-    await page.reload();
-    await unlock(page);
-    await expect(
-      page.getByLabel("Notgroschen Kontostand", { exact: true }),
-    ).toHaveText(currency(6123.45));
+    ).toHaveText(currency(5000));
+    const card = page.getByRole("region", { name: "Trade Republic", exact: true });
+    await expect(card).toContainText(currency(5000));
+    await expect(card.getByRole("textbox")).toHaveCount(0);
     await noOverflow(page);
+    expect((await snapshot(page)).state).toEqual(initial);
   });
 }
 

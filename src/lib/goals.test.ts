@@ -42,9 +42,24 @@ describe("automatic savings floor and goals", () => {
   });
   it.each([-100, 0, 0.01, 175, 180, 200, 1000, 10000])("always protects Sparkonto for surplus %s", (surplus) => {
     const split = allocateGoals(surplus, [goal("Motorrad")], { Motorrad: 0 }, "2026-09");
-    expect(split.savings).toBe(Math.min(180, Math.max(0, surplus)));
+    // The savings rate (10 %) only exceeds the 180 € floor above 1.800 € surplus.
+    expect(split.savings).toBe(Math.min(Math.max(180, Math.round(surplus * 0.1)), Math.max(0, surplus)));
     expect(split.savings + split.goals.Motorrad + split.vacation).toBeCloseTo(Math.max(0, surplus), 2);
     if (surplus <= 180) expect(split.goals.Motorrad).toBe(0);
+  });
+  it("reserves the savings rate of the surplus for the Sparkonto before any goal, at least the floor", () => {
+    expect(allocateGoals(3000, [goal("Kamera", 9000)], { Kamera: 0 }, "2026-09")).toEqual({ savings: 300, goals: { Kamera: 2700 }, vacation: 0 });
+    expect(allocateGoals(3000, [goal("Kamera", 9000)], { Kamera: 0 }, "2026-09", 0.2)).toMatchObject({ savings: 600, goals: { Kamera: 2400 } });
+    expect(allocateGoals(1000, [goal("Kamera", 9000)], { Kamera: 0 }, "2026-09", 0.5)).toMatchObject({ savings: 500, goals: { Kamera: 500 } });
+    expect(allocateGoals(1000, [goal("Kamera", 9000)], { Kamera: 0 }, "2026-09", 0)).toMatchObject({ savings: 180, goals: { Kamera: 820 } });
+    expect(allocateGoals(3000, [goal("Kamera", 9000)], { Kamera: 0 }, "2026-09", 0.9)).toMatchObject({ savings: 1500 });
+  });
+  it("uses the configured savings rate in the dashboard's Sparempfehlung", () => {
+    const state = stateFor(4000);
+    state.savingsGoals = [];
+    expect(calculateDashboard(state).monthlyFunding.find((item) => item.id === "savings")?.amount).toBe(400);
+    state.settings.savingsRate = 0.25;
+    expect(calculateDashboard(state).monthlyFunding.find((item) => item.id === "savings")?.amount).toBe(1000);
   });
   it("fills in deadline order, caps targets and sends the remainder to Urlaub", () => {
     const goals = [goal("Later", 500, "2027-05-01"), goal("Sooner", 300, "2026-10-01")];

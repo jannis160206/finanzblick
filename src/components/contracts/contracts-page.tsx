@@ -22,6 +22,7 @@ import { round } from "@/lib/calc";
 import {
   addDays,
   contractChargesBetween,
+  contractPatch,
   contractReminders,
   contractSummary,
   daysBetween,
@@ -94,7 +95,7 @@ export function ContractsPage() {
   function change(contract: Contract, patch: ContractPatch, message: string) {
     if (disabled) return;
     const previous = state.contracts?.find((entry) => entry.id === contract.id);
-    update((current) => ({ ...current, contracts: upsertContractOverride(current.contracts, contract.id, patch) }));
+    update((current) => ({ ...current, contracts: upsertContractOverride(current.contracts, contract.id, contractPatch(contract, patch)) }));
     toast.success(message, {
       action: { label: "Rückgängig", onClick: () => update((current) => withOverride(current, contract.id, previous)) },
     });
@@ -237,7 +238,7 @@ export function ContractsPage() {
           disabled={disabled} storageError={storageError} onClose={closeEditor}
           onSave={(patch) => {
             const id = editing.contract?.id ?? `manual:${crypto.randomUUID()}`;
-            update((current) => ({ ...current, contracts: upsertContractOverride(current.contracts, id, patch) }));
+            update((current) => ({ ...current, contracts: upsertContractOverride(current.contracts, id, contractPatch(editing.contract, patch)) }));
             closeEditor();
             toast.success(editing.contract ? "Vertrag gespeichert" : "Vertrag hinzugefügt");
           }} />

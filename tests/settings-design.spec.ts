@@ -50,19 +50,6 @@ for (const width of [1440, 390]) {
     await appearance.getByRole("button", { name: "Automatisch (Saison)" }).click();
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", "christmas");
 
-    const tr = page.getByRole("region", { name: "Trade Republic", exact: true });
-    await tr.getByLabel("TR Kontostand").fill("1234.50");
-    await tr.getByRole("button", { name: "Abbrechen" }).click();
-    await expect(tr.getByLabel("TR Kontostand")).toHaveValue("0");
-    await tr.getByLabel("TR Kontostand").fill("1234.50");
-    await tr.getByLabel("Zinssatz p.a.").fill("2.5");
-    await tr.getByRole("button", { name: "Trade Republic speichern" }).click();
-    await expect(page.getByText("Synchronisiert", { exact: true })).toBeAttached();
-    await page.reload();
-    await showSettings(page);
-    await expect(tr.getByLabel("TR Kontostand")).toHaveValue("1234.5");
-    await expect(tr.getByLabel("Zinssatz p.a.")).toHaveValue("2.5");
-
     await page.getByRole("button", { name: "Sparziel hinzufügen" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Name", { exact: true }).fill(`Kamera ${width}`);
@@ -101,8 +88,6 @@ for (const width of [1440, 390]) {
     await appearance.getByRole("radio", { name: "Mint" }).check();
     await appearance.getByRole("checkbox", { name: "Bewegung reduzieren" }).uncheck();
     await appearance.getByRole("button", { name: "Einstellungen speichern" }).click();
-    await tr.getByLabel("TR Kontostand").fill("0");
-    await tr.getByRole("button", { name: "Trade Republic speichern" }).click();
     await expect(page.getByText("Synchronisiert", { exact: true })).toBeAttached();
     expect(errors).toEqual([]);
   });

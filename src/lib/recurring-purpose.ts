@@ -14,6 +14,7 @@ export function recurringLunchCategory(
   description: string,
   date: string | undefined,
   amount: number,
+  vacation = false,
 ): Category | undefined {
   if (amount >= 0 || description.length > 1024 || !date) return;
   const text = merchantText(description).toLocaleLowerCase("de-AT");
@@ -26,7 +27,15 @@ export function recurringLunchCategory(
     parsed.toISOString().slice(0, 10) !== date
   )
     return;
-  return isWorkingDay(date) ? "Mittagessen" : bipa ? "Drogerie" : "Restaurants";
+  return isWorkingDay(date) && !vacation ? "Mittagessen" : bipa ? "Drogerie" : "Restaurants";
+}
+
+const revolutLunchPlaces = /\b(?:mensa|mensen|wiener\s*reuther|bipa|billa|(?:inter|euro)?spar)\b/i;
+
+/** Revolut card payments at these places are lunch when they fall into the lunch break, whatever the amount. */
+export function revolutLunchMerchant(bank: string | undefined, ...texts: (string | undefined)[]): boolean {
+  return /^revolut$/i.test(bank?.trim() ?? "") &&
+    texts.some((text) => !!text && text.length <= 1024 && revolutLunchPlaces.test(text));
 }
 
 export function recurringAmazonCategory(

@@ -67,7 +67,7 @@ test("personal accent previews immediately, discards and persists without changi
   page.on("pageerror", (error) => errors.push(error.message));
   await settings(page);
   const before = await stored(page);
-  const input = page.getByLabel("TR Kontostand", { exact: true });
+  const input = page.getByRole("searchbox", { name: "Einstellungen durchsuchen" });
   const yellow = await input.evaluate(
     (el) => getComputedStyle(el).backgroundColor,
   );
@@ -83,7 +83,7 @@ test("personal accent previews immediately, discards and persists without changi
   );
   expect((await stored(page)).seasonalTheme).toBeUndefined();
   await page.getByRole("button", { name: "Verwerfen" }).click();
-  await expect(input).toHaveValue(String(before.settings.balances.Notgroschen));
+  await expect(input).toHaveValue("");
   await accent(page, "#b57edc");
   const after = await save(page);
   expect(after.seasonalTheme).toEqual({
@@ -289,9 +289,16 @@ test("another tab's accent survives saving unrelated financial fields", async ({
   await expect
     .poll(async () => (await palette(page))["--primary"])
     .toBe("#60a5fa");
-  await page.getByLabel("TR Kontostand", { exact: true }).fill("9200");
-  await page.getByRole("button", { name: "Trade Republic speichern", exact: true }).click();
+  await page.getByRole("link", { name: "Umsätze", exact: true }).click();
+  await page.getByRole("button", { name: "Urlaub", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Von", { exact: true }).fill("2026-07-01");
+  await dialog.getByLabel("Bis", { exact: true }).fill("2026-07-05");
+  await dialog.getByRole("button", { name: "Zeitraum speichern" }).click();
+  await expect.poll(async () => (await stored(page)).holidayRanges?.length).toBe(1);
   const after = await stored(page);
   expect(after.seasonalTheme).toEqual(preference);
+  await dialog.getByRole("button", { name: "Fertig" }).click();
+  await page.getByRole("link", { name: "Einstellungen", exact: true }).click();
   await expect(page.getByLabel("Eigene Akzentfarbe")).toHaveValue("#60a5fa");
 });

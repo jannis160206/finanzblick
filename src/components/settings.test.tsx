@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { Settings, TradeRepublicSettings } from "./settings";
+import { Settings } from "./settings";
+import { TradeRepublicCard } from "./trade-republic-card";
 import { SavingsGoals } from "./savings-goals";
 import { InteractionSoundsProvider } from "./interaction-sounds";
 import { useFinance } from "./finance-provider";
@@ -30,7 +31,7 @@ function mount(page: "settings" | "savings" = "settings") {
       ready: true, saved: true, storageError: null, openReviewCount: 0,
       retrySave: vi.fn(), appendStatements: vi.fn(), statementImport: undefined,
     });
-    return <InteractionSoundsProvider>{page === "settings" ? <Settings /> : <><SavingsGoals /><TradeRepublicSettings /></>}</InteractionSoundsProvider>;
+    return <InteractionSoundsProvider>{page === "settings" ? <Settings /> : <><SavingsGoals /><TradeRepublicCard /></>}</InteractionSoundsProvider>;
   }
   render(<Harness />);
   return (): AppState => current;
@@ -109,36 +110,6 @@ it("persists only the confirmed appearance preferences", () => {
   fireEvent.click(screen.getByRole("button", { name: "Einstellungen speichern" }));
   expect(read()).toEqual({ ...before, seasonalTheme: { mode: "auto", theme: "default", accentColor: "#a78bfa" } });
   expect(screen.queryByRole("button", { name: "Einstellungen speichern" })).toBeNull();
-});
-
-it("discards a Trade Republic draft and only persists an explicitly confirmed balance and rate", () => {
-  const read = mount("savings");
-  const before = structuredClone(read());
-  const tr = within(screen.getByRole("region", { name: "Trade Republic" }));
-  fireEvent.change(tr.getByLabelText("TR Kontostand"), { target: { value: "1250" } });
-  expect(read()).toEqual(before);
-  fireEvent.click(tr.getByRole("button", { name: "Abbrechen" }));
-  expect((tr.getByLabelText("TR Kontostand") as HTMLInputElement).value).toBe("0");
-  fireEvent.change(tr.getByLabelText("TR Kontostand"), { target: { value: "1250" } });
-  fireEvent.change(tr.getByLabelText("Zinssatz p.a."), { target: { value: "2.5" } });
-  fireEvent.click(tr.getByRole("button", { name: "Trade Republic speichern" }));
-  expect(read().trBalances).toEqual([{ date: "2026-10-07", balance: 1250 }]);
-  expect(read().settings.interestRates).toContainEqual({ date: "2026-10-07", rate: 0.025 });
-  expect(read().settings.balances).toEqual(before.settings.balances);
-  expect(read().financeRows).toEqual(before.financeRows);
-  expect(read().savingsGoals).toEqual(before.savingsGoals);
-});
-
-it("keeps invalid or future-dated Trade Republic drafts unsaved", () => {
-  const read = mount("savings");
-  const before = structuredClone(read());
-  const tr = within(screen.getByRole("region", { name: "Trade Republic" }));
-  fireEvent.change(tr.getByLabelText("TR Standdatum"), { target: { value: "2026-10-08" } });
-  expect((tr.getByRole("button", { name: "Trade Republic speichern" }) as HTMLButtonElement).disabled).toBe(true);
-  fireEvent.change(tr.getByLabelText("TR Standdatum"), { target: { value: "2026-10-07" } });
-  fireEvent.change(tr.getByLabelText("Zinssatz p.a."), { target: { value: "101" } });
-  expect((tr.getByRole("button", { name: "Trade Republic speichern" }) as HTMLButtonElement).disabled).toBe(true);
-  expect(read()).toEqual(before);
 });
 
 it("applies a chosen theme immediately, keeps it, and resets to the automatic suggestion", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, DatabaseBackup, Landmark, Palette, Save, Search, TriangleAlert, Volume2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, DatabaseBackup, Palette, Save, Search, TriangleAlert, Volume2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -28,59 +28,9 @@ import { BankConnections } from "@/components/bank-connections";
 import { MailConnection } from "@/components/mail-connection";
 import { DriveConnection } from "@/components/drive-connection";
 import { PayslipPasswordSettings } from "@/components/payslip-password-settings";
-import { latestTRBalance } from "@/lib/calc";
-import { currency, dateLabel, percent } from "@/lib/format";
-import { seasonalPreferenceSchema, trBalanceSchema } from "@/lib/types";
+import { seasonalPreferenceSchema } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { defaultSeasonalPreference, type SeasonalPreference } from "@/lib/seasonal-theme";
-
-export function TradeRepublicSettings() {
-  const { state, update } = useFinance();
-  const latest = latestTRBalance(state);
-  const savedDate = latest?.date ?? state.settings.asOf;
-  const savedBalance = latest?.balance ?? state.settings.balances.Notgroschen;
-  const savedRate = state.settings.interestRates?.filter((entry) => entry.date <= state.settings.asOf).sort((a, b) => b.date.localeCompare(a.date))[0]?.rate
-    ?? (state.settings.asOf < state.settings.rateChangeDate ? state.settings.oldRate : state.settings.newRate);
-  const [draft, setDraft] = useState<{ balance: string; date: string; rate: string } | null>(null);
-  const initial = { balance: String(savedBalance), date: savedDate, rate: String(Number((savedRate * 100).toFixed(6))) };
-  const value = draft ?? initial;
-  const valid = value.balance !== "" && value.rate !== "" && trBalanceSchema.safeParse({ balance: Number(value.balance), date: value.date }).success &&
-    value.date <= state.settings.asOf && Number.isFinite(Number(value.rate)) && Number(value.rate) >= 0 && Number(value.rate) <= 100;
-  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(initial);
-  return <SettingsSection id="tr-zinsen" title="Trade Republic" description="Notgroschen und Jahreszins." icon={Landmark}>
-    <FinancialData as="dl" className="mb-6 grid gap-4 rounded-2xl border border-border/70 bg-muted/15 p-4 sm:grid-cols-3 sm:p-5">
-      <div><dt className="text-xs text-muted-foreground">Gespeicherter Kontostand</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{currency(savedBalance)}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">Zinssatz p.a.</dt><dd className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{percent(savedRate)}</dd></div>
-      <div><dt className="text-xs text-muted-foreground">Stand vom</dt><dd className="mt-2 text-lg font-medium tabular-nums">{dateLabel(savedDate)}</dd></div>
-    </FinancialData>
-    <FinancialData>
-    <form className="space-y-4" onSubmit={(event) => {
-      event.preventDefault(); if (!valid) return;
-      update((current) => {
-        const history = current.settings.interestRates ?? [
-          { date: "2026-01-01", rate: current.settings.oldRate },
-          { date: current.settings.rateChangeDate, rate: current.settings.newRate },
-        ];
-        return { ...current,
-          trBalances: [...(current.trBalances ?? []).filter((entry) => entry.date !== value.date), { date: value.date, balance: Number(value.balance) }],
-          settings: { ...current.settings, interestRates: [...new Map([...history, { date: value.date, rate: Number(value.rate) / 100 }].map((entry) => [entry.date, entry])).values()].sort((a, b) => a.date.localeCompare(b.date)) },
-        };
-      });
-      setDraft(null); toast.success("Trade Republic gespeichert");
-    }}>
-      <div className="grid gap-3 sm:grid-cols-3">
-        <label className="text-xs font-medium">Kontostand (€)<Input aria-label="TR Kontostand" className="mt-2 h-11 bg-background/50" type="number" min="0" max="1000000000" step="0.01" value={value.balance} onChange={(event) => setDraft({ ...value, balance: event.target.value })} required /></label>
-        <label className="min-w-0 text-xs font-medium">Datum<Input aria-label="TR Standdatum" className="mt-2 h-11 min-w-0 bg-background/50" type="date" max={state.settings.asOf} value={value.date} onChange={(event) => setDraft({ ...value, date: event.target.value })} required /></label>
-        <label className="text-xs font-medium">Zinssatz p.a.<Input aria-label="Zinssatz p.a." className="mt-2 h-11 bg-background/50" type="number" min="0" max="100" step="0.01" value={value.rate} onChange={(event) => setDraft({ ...value, rate: event.target.value })} required /></label>
-      </div>
-      {dirty && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/15 bg-primary/5 p-3">
-        <p className="text-xs text-muted-foreground">Noch nicht gespeichert.</p>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" type="button" size="sm" onClick={() => setDraft(null)}>Abbrechen</Button><Button type="submit" size="sm" disabled={!valid}><Save aria-hidden="true" className="size-4" />Trade Republic speichern</Button></div>
-      </div>}
-    </form>
-    </FinancialData>
-  </SettingsSection>;
-}
 
 export function Settings() {
   const workspace = useAccountWorkspace();

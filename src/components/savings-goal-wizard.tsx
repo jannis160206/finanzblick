@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Ban, Check, Lock, RotateCcw, TriangleAlert } from "lucide-react";
+import { useId, useMemo, useState } from "react";
+import { Ban, Check, Lock, RotateCcw, TrendingUp, TriangleAlert } from "lucide-react";
 import { BankLogo } from "@/components/bank-logo";
 import { FinancialData } from "@/components/financial-data";
 import { Button } from "@/components/ui/button";
+import { InfoTip } from "@/components/ui/info-tip";
 import { Input } from "@/components/ui/input";
 import {
   ChoiceCards, DialogStep, DialogSteps, Field, MoneyField, PremiumDialog, PremiumDialogContent, PremiumDialogHeader, ToggleRow,
@@ -12,12 +13,14 @@ import {
 } from "@/components/ui/premium-dialog";
 import { daysInMonth, round, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel, percent } from "@/lib/format";
-import { forgoneInterest, GOAL_SURPLUS, goalPlanningContext, planGoal, sourceAllowed, type PlanResult, type PlanSource } from "@/lib/goal-planner";
-import { pocketKey } from "@/lib/goals";
+import {
+  forgoneInterest, GOAL_SURPLUS, goalPlanningContext, planGoal, sourceAllowed, usableAmount, type GoalSettings, type PlanResult, type PlanSource,
+} from "@/lib/goal-planner";
+import { asapReserve, MAX_PLAN_SHARE, pocketKey, SAVINGS_FLOOR, savingsRate } from "@/lib/goals";
 import type { AppState, GoalPlanRow, SavingsGoal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export type GoalSave = { goal: SavingsGoal; opening: number };
+export type GoalSave = { goal: SavingsGoal; opening: number; settings?: GoalSettings };
 
 export type SavingsGoalWizardProps = {
   open: boolean;
@@ -46,18 +49,23 @@ type Form = {
   monthly: string;
   locked: GoalPlanRow[];
   excludedMonths: string[];
-  /** Trade Republic (Notgroschen) included for this goal despite its account rule. */
-  exception: boolean;
-  keep: string;
+  /** What stays on each one-time account, as typed; saved as a global setting. */
+  keeps: Record<string, string>;
+  /** As fast as possible: share of the free surplus that stays on the Girokonto. */
+  reserve: number;
+  /** Share of the surplus that always goes to the Sparkonto. */
+  savingsRate: number;
 };
 
 type ErrorKey = "name" | "target" | "date" | "startAmount" | "sources" | "monthly";
 type Errors = Partial<Record<ErrorKey, string>>;
+type Source = PlanSource & { allowed: boolean; usable: number };
 
 const ON_POCKET = "pocket";
 const isDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 const monthEnd = (month: string) => `${month}-${String(daysInMonth(month)).padStart(2, "0")}`;
 const reservedNames = ["sparkonto", "urlaub", "notgroschen", "giro", "girokonto"];
+const keepOf = (text: string | undefined) => Math.max(0, moneyValue(text ?? "") ?? 0);
 
 const stepFields: Record<string, ErrorKey[]> = {
   goal: ["name", "target", "date"],
@@ -77,34 +85,45 @@ export default function SavingsGoalWizard(props: SavingsGoalWizardProps) {
 
 function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storageError, onCloseAutoFocus, onSave }: SavingsGoalWizardProps) {
   const today = state.settings.asOf;
-  const context = useMemo(() => goalPlanningContext(state, dashboard, today, isNew ? undefined : goal), [state, dashboard, today, goal, isNew]);
+  const savedRate = savingsRate(state.settings);
+  const baseContext = useMemo(() => goalPlanningContext(state, dashboard, today, isNew ? undefined : goal), [state, dashboard, today, goal, isNew]);
   const [initial] = useState<Form>(() => {
     const plan = goal.funding?.plan;
     const start = goal.start;
     const excludedAccounts = new Set(goal.funding?.excluded?.accounts ?? []);
-    const exceptional = context.sources.find((source) => source.exception);
-    const saved = goal.funding?.exceptions?.find((entry) => entry.account === exceptional?.id);
+    const chosen = new Set([...goal.funding?.exceptions ?? [], ...plan ?? []].map((entry) => pocketKey(entry.account)));
+    const goalPocket = goal.pocket || goal.name;
+    const ownKeep = (id: string) => Object.keys(state.settings.accountKeep ?? {}).some((key) => pocketKey(key) === pocketKey(id));
     return {
       name: goal.name,
       target: goal.target ? moneyText(goal.target) : "",
       date: isNew ? "" : goal.date,
       asap: !!goal.asap,
       startAmount: start ? moneyText(start.amount) : "",
-      startSource: start?.account ?? (context.balance === null ? ON_POCKET : GOAL_SURPLUS),
+      startSource: start?.account ?? (baseContext.balance === null ? ON_POCKET : GOAL_SURPLUS),
+      // The Notgroschen is only used when it was chosen for this goal (also as an exception of an earlier version).
       sources: plan
-        ? context.sources.filter((source) => !excludedAccounts.has(source.id) &&
-          (sourceAllowed(source, goal.name, goal.pocket || goal.name) || (!!source.exception && !!saved))).map((source) => source.id)
+        ? baseContext.sources.filter((source) => sourceAllowed(source, goalPocket) && !excludedAccounts.has(source.id) &&
+          (!source.late || chosen.has(pocketKey(source.id)))).map((source) => source.id)
         : [GOAL_SURPLUS],
       auto: isNew || !!goal.funding?.auto,
       monthly: goal.funding ? moneyText(goal.funding.monthly) : "",
       locked: plan?.filter((row) => row.locked && !(start && row.account === start.account && row.amount === start.amount && row.month === start.date.slice(0, 7))) ?? [],
       excludedMonths: goal.funding?.excluded?.months ?? [],
-      exception: !!saved,
-      keep: moneyText(saved?.keep ?? exceptional?.keep ?? 0),
+      keeps: Object.fromEntries(baseContext.sources.filter((source) => source.kind === "pocket").map((source) => {
+        const earlier = goal.funding?.exceptions?.find((entry) => pocketKey(entry.account) === pocketKey(source.id))?.keep;
+        return [source.id, moneyText(ownKeep(source.id) ? source.keep ?? 0 : earlier ?? source.keep ?? 0)];
+      })),
+      reserve: asapReserve(state.settings),
+      savingsRate: savedRate,
     };
   });
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState<Errors>({});
+  // The savings rate changes how much of each month is free for the goal.
+  const context = useMemo(() => form.savingsRate === savedRate ? baseContext
+    : goalPlanningContext({ ...state, settings: { ...state.settings, savingsRate: form.savingsRate } }, dashboard, today, isNew ? undefined : goal),
+  [form.savingsRate, savedRate, baseContext, state, dashboard, today, goal, isNew]);
 
   const name = form.name.trim();
   const pocket = goal.pocket || name;
@@ -114,14 +133,10 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
   const balance = context.balance ?? 0;
   const need = round(Math.max(0, (target ?? 0) - balance - startOnPocket));
   const goalMonth = form.asap || !isDate(form.date) ? undefined : form.date.slice(0, 7);
-  const ruleName = name || goal.name;
-  const keep = Math.max(0, moneyValue(form.keep) ?? 0);
-  const sources = useMemo(() => context.sources.map((source) => ({
-    ...source, allowed: sourceAllowed(source, ruleName, pocket) || (!!source.exception && form.exception),
-  })), [context.sources, ruleName, pocket, form.exception]);
-  // What a source can give: an exception account keeps its minimum.
-  const room = (source: PlanSource) => source.kind === "surplus" ? context.capacity[context.months[0]] ?? 0
-    : Math.max(0, source.available - (source.exception ? keep : 0));
+  const sources = useMemo<Source[]>(() => context.sources.map((source) => ({
+    ...source, allowed: sourceAllowed(source, pocket), usable: usableAmount(source, keepOf(form.keeps[source.id])),
+  })), [context.sources, pocket, form.keeps]);
+  const room = (source: Source) => source.kind === "surplus" ? context.capacity[context.months[0]] ?? 0 : source.usable;
   const selected = useMemo(() => sources.filter((source) => source.allowed && form.sources.includes(source.id)), [sources, form.sources]);
   const firstMonth = context.months[0];
   const startRow = useMemo<GoalPlanRow | undefined>(() => startAmount > 0 && form.startSource !== ON_POCKET && firstMonth
@@ -129,25 +144,26 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
   const plan = useMemo<PlanResult>(() => planGoal({
     need, months: context.months, goalMonth, capacity: context.capacity, continuation: context.continuation,
     accounts: selected.filter((source) => source.kind === "pocket")
-      .sort((a, b) => Number(a.id === "Notgroschen") - Number(b.id === "Notgroschen") || b.available - a.available)
+      .sort((a, b) => Number(!!a.late) - Number(!!b.late) || b.usable - a.usable)
       .map((source) => ({
-        id: source.id, late: !!source.exception,
-        available: Math.max(0, source.available - (source.exception ? keep : 0) - (startRow?.account === source.id ? startRow.amount : 0)),
+        id: source.id, late: !!source.late,
+        available: Math.max(0, source.usable - (startRow?.account === source.id ? startRow.amount : 0)),
       })),
     surplus: selected.some((source) => source.id === GOAL_SURPLUS),
     // An edited start-capital row replaces the one from the start step.
     locked: [...startRow && !form.locked.some((row) => row.month === startRow.month && row.account === startRow.account) ? [startRow] : [], ...form.locked],
     excludedMonths: form.excludedMonths,
-  }), [need, context, goalMonth, selected, startRow, form.locked, form.excludedMonths, keep]);
+    reserve: form.reserve,
+  }), [need, context, goalMonth, selected, startRow, form.locked, form.excludedMonths, form.reserve]);
   const fastest = useMemo(() => goalMonth && plan.missing > 0 ? planGoal({
     need, months: context.months, capacity: context.capacity, continuation: context.continuation,
-    accounts: selected.filter((source) => source.kind === "pocket")
-      .map((source) => ({ id: source.id, late: !!source.exception, available: Math.max(0, source.available - (source.exception ? keep : 0)) })),
+    accounts: selected.filter((source) => source.kind === "pocket").map((source) => ({ id: source.id, late: !!source.late, available: source.usable })),
     surplus: selected.some((source) => source.id === GOAL_SURPLUS), locked: startRow ? [startRow] : [], excludedMonths: form.excludedMonths,
-  }).reached : undefined, [goalMonth, plan.missing, need, context, selected, startRow, form.excludedMonths, keep]);
+  }).reached : undefined, [goalMonth, plan.missing, need, context, selected, startRow, form.excludedMonths]);
   const labels = useMemo(() => Object.fromEntries(context.sources.map((source) => [source.id, {
     label: source.kind === "surplus" ? "Girokonto" : source.bank === "Trade Republic" ? "Trade Republic" : source.label, bank: source.bank,
   }])), [context.sources]);
+  const late = sources.find((source) => source.late);
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
   function patch(update: Partial<Form>, cleared: ErrorKey[] = []) {
@@ -176,7 +192,8 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
       const free = source ? room(source) : 0;
       if (start > free + 0.005) found.startAmount = `Vom ${labels[form.startSource]?.label ?? form.startSource} sind jetzt nur ${currency(free)} frei.`;
     }
-    if (form.auto && !selected.length) found.sources = "Bitte mindestens ein Konto auswählen.";
+    if (Object.values(form.keeps).some((text) => text.trim() && (moneyValue(text) ?? -1) < 0)) found.sources = "Bitte gültige Behalten-Beträge eingeben.";
+    else if (form.auto && !selected.length) found.sources = "Bitte mindestens ein Konto auswählen.";
     if (!form.auto && form.monthly.trim() && (moneyValue(form.monthly) === null || moneyValue(form.monthly)! < 0)) found.monthly = "Bitte eine gültige Monatsrate eingeben.";
     return found;
   }
@@ -189,6 +206,17 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
     return !Object.keys(relevant).length;
   }
 
+  function changedSettings(): GoalSettings | undefined {
+    const settings: GoalSettings = {};
+    if (form.reserve !== asapReserve(state.settings)) settings.asapReserve = form.reserve;
+    if (form.savingsRate !== savedRate) settings.savingsRate = form.savingsRate;
+    // Compared with the saved setting, so a minimum kept by an earlier version becomes the global keep amount.
+    const saved = (id: string) => baseContext.sources.find((source) => source.id === id)?.keep ?? 0;
+    const keeps = Object.entries(form.keeps).filter(([id, text]) => keepOf(text) !== saved(id));
+    if (keeps.length) settings.accountKeep = Object.fromEntries(keeps.map(([id, text]) => [id, round(keepOf(text))]));
+    return Object.keys(settings).length ? settings : undefined;
+  }
+
   function complete() {
     if (disabled || target === null) return;
     const value: SavingsGoal = { ...goal, name, pocket, target, date: form.asap ? monthEnd(plan.reached ?? context.months.at(-1)!) : form.date };
@@ -199,8 +227,7 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
       const until = (form.asap ? plan.reached ?? horizon : goalMonth ?? horizon);
       const surplusRows = plan.rows.filter((row) => row.account === GOAL_SURPLUS && row.amount > 0);
       const monthly = plan.continuation?.monthly ?? (surplusRows.length ? Math.round(surplusRows.reduce((sum, row) => sum + row.amount, 0) / surplusRows.length) : 0);
-      const exception = form.exception ? sources.find((source) => source.exception) : undefined;
-      const excludedAccounts = sources.filter((source) => source.allowed && !source.exception && !form.sources.includes(source.id)).map((source) => source.id);
+      const excludedAccounts = sources.filter((source) => source.allowed && !form.sources.includes(source.id)).map((source) => source.id);
       value.funding = {
         monthly, extras: { ...goal.funding?.extras ?? {} },
         ...(goal.funding?.paused ? { paused: goal.funding.paused } : {}),
@@ -211,7 +238,8 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
           ...(excludedAccounts.length ? { accounts: excludedAccounts } : {}),
         } } : {}),
         auto: true,
-        ...(exception && form.sources.includes(exception.id) ? { exceptions: [{ account: exception.id, keep }] } : {}),
+        // The Notgroschen is never chosen by default; this records that it was chosen for this goal.
+        ...(late && form.sources.includes(late.id) ? { exceptions: [{ account: late.id }] } : {}),
       };
       if (startRow && startRow.account !== GOAL_SURPLUS) value.start = { amount: startRow.amount, account: startRow.account, date: today };
       else delete value.start;
@@ -223,7 +251,8 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
       else value.funding = { monthly: monthly ?? 0, extras: { ...goal.funding?.extras ?? {} }, ...(goal.funding?.paused ? { paused: goal.funding.paused } : {}) };
       delete value.start;
     }
-    onSave({ goal: value, opening: startOnPocket });
+    const settings = changedSettings();
+    onSave({ goal: value, opening: startOnPocket, ...(settings ? { settings } : {}) });
   }
 
   const startOptions: ChoiceOption<string>[] = [
@@ -232,13 +261,14 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
       const free = room(source);
       return {
         value: source.id, label: source.kind === "surplus" ? "Vom Girokonto" : `Vom ${labels[source.id]?.label ?? source.label}`,
-        description: source.kind === "surplus" ? "aus dem Überschuss dieses Monats" : source.exception ? "Ausnahme · Umbuchung diesen Monat" : "Umbuchung diesen Monat",
+        description: source.kind === "surplus" ? "aus dem Überschuss dieses Monats" : "Umbuchung diesen Monat",
         meta: <FinancialData as="span">{free > 0 ? `${currency(free)} frei` : "diesen Monat nichts frei"}</FinancialData>,
         disabled: free <= 0 && form.startSource !== source.id,
       };
     }),
   ];
   const title = isNew ? "Sparziel hinzufügen" : "Sparziel bearbeiten";
+  const shownMonths = context.months.filter((month) => month <= (goalMonth ?? plan.reached ?? context.months.at(-1)!));
 
   return (
     <PremiumDialogContent size="lg" dirty={dirty} onCloseAutoFocus={onCloseAutoFocus}>
@@ -255,7 +285,7 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
             <MoneyField value={form.target} onValueChange={(value) => patch({ target: value }, ["target", "startAmount"])} />
           </Field>
           <ToggleRow checked={form.asap} onCheckedChange={(asap) => patch({ asap }, ["date"])}
-            label="So schnell wie möglich" description="Finanzblick plant mit dem vollen freien Betrag und berechnet das Datum." />
+            label="So schnell wie möglich" description="Plant mit dem freien Betrag abzüglich Reserve und berechnet das Datum." />
           {!form.asap && (
             <Field label="Zieldatum" error={errors.date}>
               <Input type="date" value={form.date} min={today} className="sm:max-w-56" onChange={(event) => patch({ date: event.target.value }, ["date"])} />
@@ -278,26 +308,29 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
           )}
         </DialogStep>
         <DialogStep id="sources" title="Konten" validate={() => check("sources")}>
-          <SourcePicker sources={sources} selected={form.sources} error={errors.sources} months={context.months.length}
-            exception={form.exception} keep={form.keep} onKeep={(value) => patch({ keep: value })}
-            onException={(id, on) => patch({ exception: on, sources: on ? [...new Set([...form.sources, id])] : form.sources.filter((item) => item !== id),
-              ...(!on && form.startSource === id ? { startSource: initial.startSource === id ? GOAL_SURPLUS : initial.startSource } : {}) }, ["sources", "startAmount"])}
+          <SourcePicker sources={sources} selected={form.sources} error={errors.sources} months={context.months.length} keeps={form.keeps}
+            onKeep={(id, value) => patch({ keeps: { ...form.keeps, [id]: value } }, ["sources", "startAmount"])}
             onToggle={(id, on) => patch({ sources: on ? [...new Set([...form.sources, id])] : form.sources.filter((item) => item !== id) }, ["sources"])} />
         </DialogStep>
         <DialogStep id="plan" title="Verteilung" validate={() => check("plan")}>
           <ToggleRow checked={form.auto} onCheckedChange={(auto) => patch({ auto }, ["monthly", "sources"])}
             label="Automatisch planen" description="Verteilt den Rest auf Monate und Konten – mit Fixkosten, Verträgen, Einnahmen und der aktuellen Prognose." />
+          <PlanShares savingsRate={form.savingsRate} reserve={form.asap && form.auto ? form.reserve : undefined}
+            onSavingsRate={(savingsRate) => patch({ savingsRate })} onReserve={(reserve) => patch({ reserve })} />
           {form.auto ? (
-            <PlanEditor plan={plan} need={need} goalMonth={goalMonth} asap={form.asap} fastest={fastest} excludedMonths={form.excludedMonths}
-              labels={labels} months={context.months.filter((month) => month <= (goalMonth ?? plan.reached ?? context.months.at(-1)!))}
-              startKey={startRow ? `${startRow.month}-${startRow.account}` : undefined}
-              rate={sources.find((source) => source.exception)?.rate} endMonth={goalMonth ?? plan.reached}
-              onMove={(row, month) => patch({ locked: [...form.locked.filter((item) => item.month !== row.month || item.account !== row.account), { month, account: row.account, amount: row.amount, locked: true }] })}
-              onAmount={(row, amount) => patch({ locked: [...form.locked.filter((item) => item.month !== row.month || item.account !== row.account), { month: row.month, account: row.account, amount, locked: true }] })}
-              onReset={(row) => patch({ locked: form.locked.filter((item) => item.month !== row.month || item.account !== row.account) })}
-              onExclude={(month) => patch({ excludedMonths: [...new Set([...form.excludedMonths, month])], locked: form.locked.filter((item) => item.month !== month) })}
-              onInclude={(month) => patch({ excludedMonths: form.excludedMonths.filter((item) => item !== month) })}
-              onMoveDate={(month) => patch({ date: monthEnd(month) }, ["date"])} />
+            <>
+              <ForecastHint forecast={context.forecast} months={shownMonths} />
+              <PlanEditor plan={plan} need={need} goalMonth={goalMonth} asap={form.asap} fastest={fastest} excludedMonths={form.excludedMonths}
+                labels={labels} months={shownMonths}
+                startKey={startRow ? `${startRow.month}-${startRow.account}` : undefined}
+                rate={late?.rate} endMonth={goalMonth ?? plan.reached}
+                onMove={(row, month) => patch({ locked: [...form.locked.filter((item) => item.month !== row.month || item.account !== row.account), { month, account: row.account, amount: row.amount, locked: true }] })}
+                onAmount={(row, amount) => patch({ locked: [...form.locked.filter((item) => item.month !== row.month || item.account !== row.account), { month: row.month, account: row.account, amount, locked: true }] })}
+                onReset={(row) => patch({ locked: form.locked.filter((item) => item.month !== row.month || item.account !== row.account) })}
+                onExclude={(month) => patch({ excludedMonths: [...new Set([...form.excludedMonths, month])], locked: form.locked.filter((item) => item.month !== month) })}
+                onInclude={(month) => patch({ excludedMonths: form.excludedMonths.filter((item) => item !== month) })}
+                onMoveDate={(month) => patch({ date: monthEnd(month) }, ["date"])} />
+            </>
           ) : (
             <>
               <Field label="Monatliche Rate" optional error={errors.monthly}
@@ -319,38 +352,37 @@ function WizardSurface({ goal, isNew, goals, state, dashboard, disabled, storage
         <DialogStep id="overview" title="Übersicht">
           <GoalOverview name={name || "Neues Ziel"} target={target ?? 0} saved={round(balance + startOnPocket)} plan={form.auto ? plan : null}
             date={form.asap ? plan.reached && monthEnd(plan.reached) : isDate(form.date) ? form.date : undefined} asap={form.asap}
-            monthly={moneyValue(form.monthly)} months={context.months.filter((month) => month <= (goalMonth ?? plan.reached ?? context.months.at(-1)!))}
-            excludedMonths={form.excludedMonths} exceptionAccount={form.exception ? sources.find((source) => source.exception)?.id : undefined} />
+            monthly={moneyValue(form.monthly)} months={shownMonths} excludedMonths={form.excludedMonths}
+            lateAccount={late && form.sources.includes(late.id) ? { id: late.id, label: labels[late.id]?.label ?? late.label } : undefined} />
         </DialogStep>
       </DialogSteps>
     </PremiumDialogContent>
   );
 }
 
-function SourcePicker({ sources, selected, error, months, exception, keep, onKeep, onException, onToggle }: {
-  sources: (PlanSource & { allowed: boolean })[];
+function SourcePicker({ sources, selected, error, months, keeps, onKeep, onToggle }: {
+  sources: Source[];
   selected: string[];
   error?: string;
   months: number;
-  exception: boolean;
-  keep: string;
-  onKeep: (value: string) => void;
-  onException: (id: string, on: boolean) => void;
+  keeps: Record<string, string>;
+  onKeep: (id: string, value: string) => void;
   onToggle: (id: string, on: boolean) => void;
 }) {
   return (
     <>
-      <p className="text-sm leading-relaxed text-muted-foreground">Woher darf das Geld kommen? Der Monatsüberschuss zuerst, Guthaben nur, wenn er nicht reicht.</p>
+      <p className="text-sm leading-relaxed text-muted-foreground">Erst der Monatsüberschuss, Guthaben nur einmalig und nur, was über dem Behalten-Betrag liegt.</p>
       {error && <p role="alert" className="text-xs font-medium text-destructive">{error}</p>}
       <ul className="space-y-2">
         {sources.map((source) => {
-          if (source.exception) return <ExceptionSource key={source.id} source={source} on={exception} keep={keep} onKeep={onKeep} onChange={(on) => onException(source.id, on)} />;
           const checked = source.allowed && selected.includes(source.id);
+          const note = source.kind === "surplus" ? `frei in den nächsten ${months} Monaten`
+            : [source.late ? "zuletzt und so spät wie möglich" : "einmalige Umbuchung", source.rate ? `${percent(source.rate)} Zinsen` : ""].filter(Boolean).join(" · ");
           return (
-            <li key={source.id}>
-              <label className={cn("grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl border px-4 py-3 transition-colors",
-                source.allowed ? "cursor-pointer hover:bg-muted/40" : "cursor-not-allowed opacity-60",
-                checked ? "border-primary/60 bg-accent-muted/40" : "border-border/70")}>
+            <li key={source.id} className={cn("rounded-2xl border transition-colors", checked ? "border-primary/60 bg-accent-muted/40" : "border-border/70",
+              !source.allowed && "opacity-60")}>
+              <label className={cn("grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-2xl px-4 py-3 transition-colors",
+                source.allowed ? "cursor-pointer hover:bg-muted/40" : "cursor-not-allowed")}>
                 <input type="checkbox" className="peer sr-only" checked={checked} disabled={!source.allowed}
                   onChange={(event) => onToggle(source.id, event.target.checked)} />
                 <span aria-hidden="true" className={cn("flex size-5 items-center justify-center rounded-md border border-input bg-background transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-1 peer-focus-visible:ring-offset-background",
@@ -358,19 +390,36 @@ function SourcePicker({ sources, selected, error, months, exception, keep, onKee
                   {checked && <Check className="size-3.5" strokeWidth={3} />}
                 </span>
                 <span className="min-w-0">
-                  <span className="block text-sm font-medium">{source.kind === "surplus" ? "Girokonto · Monatsüberschuss" : source.label}</span>
-                  <span className="block text-xs text-muted-foreground">
-                    {source.allowed
-                      ? source.kind === "surplus" ? `frei in den nächsten ${months} Monaten`
-                        : source.detail && /vorgemerkt/.test(source.detail) ? source.detail : "einmalige Umbuchung"
-                      : ruleNote(source)}
+                  <span className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                    {source.bank && <BankLogo bank={source.bank} size="xs" />}
+                    <span className="truncate">{source.kind === "surplus" ? "Girokonto · Monatsüberschuss" : source.label}</span>
                   </span>
+                  <span className="block text-xs text-muted-foreground">
+                    {source.allowed ? note : "Pocket dieses Ziels"}
+                  </span>
+                  {source.kind === "pocket" && (
+                    <FinancialData as="span" className="block text-xs text-muted-foreground tabular-nums">
+                      Saldo {currency(source.balance ?? source.available)}{source.detail && /vorgemerkt/.test(source.detail) ? ` · ${source.detail}` : ""}
+                    </FinancialData>
+                  )}
                 </span>
                 <FinancialData as="span" className="text-right">
-                  <span className="block text-sm font-semibold tabular-nums">{currency(source.kind === "surplus" ? source.perMonth ?? 0 : source.available)}</span>
+                  <span className="block text-sm font-semibold tabular-nums">{currency(source.kind === "surplus" ? source.perMonth ?? 0 : source.usable)}</span>
                   <span className="block text-2xs text-muted-foreground">{source.kind === "surplus" ? "Ø pro Monat" : "verfügbar"}</span>
                 </FinancialData>
               </label>
+              {source.kind === "pocket" && (
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-border/60 px-4 py-2.5">
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                    Behalten
+                    <InfoTip label={`Behalten auf ${source.label}`} className="pointer-coarse:size-11">Bleibt immer auf dem Konto. Nur was darüber liegt, darf einmalig ins Ziel – gilt für alle Sparziele.</InfoTip>
+                  </span>
+                  <FinancialData className="w-36">
+                    <MoneyField aria-label={`Behalten auf ${source.label}`} className="h-11" value={keeps[source.id] ?? ""}
+                      onValueChange={(value) => onKeep(source.id, value)} />
+                  </FinancialData>
+                </div>
+              )}
             </li>
           );
         })}
@@ -379,47 +428,52 @@ function SourcePicker({ sources, selected, error, months, exception, keep, onKee
   );
 }
 
-const ruleNote = (source: PlanSource) =>
-  source.use === "never" ? "Kontoregel: nie angreifen" : `Kontoregel: nur für ${source.purposes.join(", ") || source.label}`;
+const shareOptions = (value: number) => [...new Set([...Array.from({ length: 11 }, (_, index) => index * 5), Math.round(value * 100)])]
+  .filter((option) => option >= 0 && option <= MAX_PLAN_SHARE * 100).sort((a, b) => a - b);
 
-/** Trade Republic: blocked by the Notgroschen rule, usable for this goal only as a deliberate exception. */
-function ExceptionSource({ source, on, keep, onKeep, onChange }: {
-  source: PlanSource; on: boolean; keep: string; onKeep: (value: string) => void; onChange: (on: boolean) => void;
-}) {
-  const kept = Math.max(0, moneyValue(keep) ?? 0);
-  const usable = Math.max(0, source.available - kept);
+function ShareSelect({ label, value, info, onChange }: { label: string; value: number; info: string; onChange: (value: number) => void }) {
+  const id = useId();
   return (
-    <li className={cn("rounded-2xl border transition-colors", on ? "border-primary/60 bg-accent-muted/40" : "border-border/70")}>
-      <div className="grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3">
-        <BankLogo bank={source.bank} size="md" />
-        <span className="min-w-0">
-          <span className="block text-sm font-medium">{source.label}</span>
-          <span className="block text-xs text-muted-foreground">
-            {on ? "Ausnahme · wird zuletzt und so spät wie möglich genutzt" : ruleNote(source)}
-            {source.rate ? ` · ${percent(source.rate)} Zinsen` : ""}
-          </span>
-        </span>
-        <FinancialData as="span" className="text-right">
-          <span className="block text-sm font-semibold tabular-nums">{currency(on ? usable : source.available)}</span>
-          <span className="block text-2xs text-muted-foreground">{on ? "verplanbar" : "Guthaben"}</span>
+    <div className="flex items-center gap-1.5">
+      <label htmlFor={id} className="text-sm text-muted-foreground">{label}</label>
+      <select id={id} className="select-input h-11 w-24 tabular-nums" value={Math.round(value * 100)}
+        onChange={(event) => onChange(Number(event.target.value) / 100)}>
+        {shareOptions(value).map((option) => <option key={option} value={option}>{percent(option / 100)}</option>)}
+      </select>
+      <InfoTip label={label} className="pointer-coarse:size-11">{info}</InfoTip>
+    </div>
+  );
+}
+
+/** Savings rate (always) and the as-fast-as-possible reserve; both are global settings saved with the goal. */
+function PlanShares({ savingsRate, reserve, onSavingsRate, onReserve }: {
+  savingsRate: number; reserve?: number; onSavingsRate: (value: number) => void; onReserve: (value: number) => void;
+}) {
+  return (
+    <div role="group" aria-label="Anteile vom Überschuss" className="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-2xl border border-border/70 bg-background/40 px-4 py-1.5">
+      <ShareSelect label="Sparanteil" value={savingsRate} onChange={onSavingsRate}
+        info={`Geht jeden Monat zuerst aufs Sparkonto – mindestens ${currency(SAVINGS_FLOOR)} – und steht dem Ziel nicht zur Verfügung.`} />
+      {reserve !== undefined && (
+        <ShareSelect label="Reserve" value={reserve} onChange={onReserve}
+          info="Bleibt bei „So schnell wie möglich“ jeden Monat vom freien Betrag am Girokonto." />
+      )}
+    </div>
+  );
+}
+
+/** Income from the salary forecast that the plan already counts but the budget does not have yet. */
+function ForecastHint({ forecast, months }: { forecast: Record<string, number>; months: string[] }) {
+  const entries = months.filter((month) => forecast[month]).sort((a, b) => Math.abs(forecast[b]) - Math.abs(forecast[a])).slice(0, 3).sort();
+  if (!entries.length) return null;
+  return (
+    <p className="flex items-start gap-2 text-xs text-muted-foreground">
+      <TrendingUp aria-hidden="true" className="mt-px size-3.5 shrink-0 text-primary" />
+      <span>Gehaltsprognose eingerechnet (noch nicht im Budget):{" "}
+        <FinancialData as="span" className="tabular-nums">
+          {entries.map((month) => `${monthLabel(month, true)} ${forecast[month] > 0 ? "+" : ""}${currency(forecast[month])}`).join(", ")}
         </FinancialData>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 border-t border-border/60 px-4 py-3">
-        <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)}
-          className="group inline-flex min-h-11 items-center gap-3 rounded-lg text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-          <span aria-hidden="true" className={cn("relative inline-flex h-6 w-10 shrink-0 rounded-full transition-colors", on ? "bg-primary" : "bg-muted-foreground/30")}>
-            <span className={cn("absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform duration-200", on && "translate-x-4")} />
-          </span>
-          Als Ausnahme einbeziehen
-        </button>
-        {on && (
-          <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            Mindestens behalten
-            <MoneyField aria-label="Mindestens behalten" className="h-9 w-32" value={keep} onValueChange={onKeep} />
-          </label>
-        )}
-      </div>
-    </li>
+      </span>
+    </p>
   );
 }
 
@@ -430,7 +484,7 @@ function PlanEditor({ plan, need, goalMonth, asap, fastest, excludedMonths, labe
   months: string[];
   /** The start-capital row stays in the first month. */
   startKey?: string;
-  /** Interest rate of the exception account, for the hint on earlier transfers. */
+  /** Interest rate of the Trade Republic account, for the hint on earlier transfers. */
   rate?: number;
   endMonth?: string;
   onMove: (row: GoalPlanRow, month: string) => void;
@@ -579,31 +633,34 @@ function AmountCell({ amount, label, onCommit }: { amount: number; label: string
   );
 }
 
-function GoalOverview({ name, target, saved, plan, date, asap, monthly, months, excludedMonths, exceptionAccount }: {
+function GoalOverview({ name, target, saved, plan, date, asap, monthly, months, excludedMonths, lateAccount }: {
   name: string; target: number; saved: number; plan: PlanResult | null; date?: string; asap: boolean; monthly: number | null;
-  months: string[]; excludedMonths: string[]; exceptionAccount?: string;
+  months: string[]; excludedMonths: string[];
+  /** The Notgroschen / Trade Republic, shown as its own part when the plan uses it. */
+  lateAccount?: { id: string; label: string };
 }) {
-  const transfers = plan ? round(plan.rows.filter((row) => row.account !== GOAL_SURPLUS && row.account !== exceptionAccount).reduce((sum, row) => sum + row.amount, 0)) : 0;
-  const exceptional = plan && exceptionAccount ? round(plan.rows.filter((row) => row.account === exceptionAccount).reduce((sum, row) => sum + row.amount, 0)) : 0;
+  const lateId = lateAccount?.id;
+  const transfers = plan ? round(plan.rows.filter((row) => row.account !== GOAL_SURPLUS && row.account !== lateId).reduce((sum, row) => sum + row.amount, 0)) : 0;
+  const fromLate = plan && lateId ? round(plan.rows.filter((row) => row.account === lateId).reduce((sum, row) => sum + row.amount, 0)) : 0;
   const rates = plan ? round(plan.rows.filter((row) => row.account === GOAL_SURPLUS).reduce((sum, row) => sum + row.amount, 0)) : 0;
   const later = plan?.continuation ? round(plan.continuation.monthly * (monthsBetween(plan.continuation.from, plan.continuation.to) + 1)) : 0;
-  const scale = Math.max(target, saved + transfers + exceptional + rates + later, 1);
+  const scale = Math.max(target, saved + transfers + fromLate + rates + later, 1);
   const parts = [
     { label: "Vorhanden", value: saved, className: "bg-primary" },
     { label: "Umbuchungen", value: transfers, className: "bg-chart-2" },
-    { label: "Trade Republic", value: exceptional, className: "bg-chart-4" },
+    { label: lateAccount?.label ?? "", value: fromLate, className: "bg-chart-4" },
     { label: "Monatsraten", value: rates, className: "bg-primary/45" },
     { label: "Danach", value: later, className: "bg-primary/20" },
   ].filter((part) => part.value > 0);
   const byMonth = plan ? [...new Set([...months, ...plan.rows.map((row) => row.month)])].sort().map((month) => ({
     month,
     surplus: plan.rows.filter((row) => row.month === month && row.account === GOAL_SURPLUS).reduce((sum, row) => sum + row.amount, 0),
-    pockets: plan.rows.filter((row) => row.month === month && row.account !== GOAL_SURPLUS && row.account !== exceptionAccount).reduce((sum, row) => sum + row.amount, 0),
-    exception: plan.rows.filter((row) => row.month === month && row.account === exceptionAccount).reduce((sum, row) => sum + row.amount, 0),
+    pockets: plan.rows.filter((row) => row.month === month && row.account !== GOAL_SURPLUS && row.account !== lateId).reduce((sum, row) => sum + row.amount, 0),
+    late: plan.rows.filter((row) => row.month === month && row.account === lateId).reduce((sum, row) => sum + row.amount, 0),
   })) : [];
-  const peak = Math.max(1, ...byMonth.map((entry) => entry.surplus + entry.pockets + entry.exception));
+  const peak = Math.max(1, ...byMonth.map((entry) => entry.surplus + entry.pockets + entry.late));
   const funded = byMonth.filter((entry) => entry.surplus > 0);
-  const covered = round(saved + transfers + exceptional + rates + later);
+  const covered = round(saved + transfers + fromLate + rates + later);
   return (
     <div className="space-y-6">
       <div className="space-y-3">
@@ -628,12 +685,12 @@ function GoalOverview({ name, target, saved, plan, date, asap, monthly, months, 
           <h4 className="text-xs font-medium text-muted-foreground">Geplante Einzahlungen</h4>
           <div aria-hidden="true" className="flex h-28 items-end gap-1 rounded-2xl border border-border/70 px-3 pt-3 pb-2">
             {byMonth.map((entry) => {
-              const amount = entry.surplus + entry.pockets + entry.exception;
+              const amount = entry.surplus + entry.pockets + entry.late;
               return (
                 <div key={entry.month} className="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-1">
                   {amount > 0 ? (
                     <div className="flex w-full max-w-6 flex-col justify-end overflow-hidden rounded-t-md" style={{ height: `${Math.max(4, amount / peak * 100)}%` }}>
-                      {entry.exception > 0 && <span className="w-full bg-chart-4" style={{ height: `${entry.exception / amount * 100}%` }} />}
+                      {entry.late > 0 && <span className="w-full bg-chart-4" style={{ height: `${entry.late / amount * 100}%` }} />}
                       {entry.pockets > 0 && <span className="w-full bg-chart-2" style={{ height: `${entry.pockets / amount * 100}%` }} />}
                       {entry.surplus > 0 && <span className="w-full flex-1 bg-primary/70" />}
                     </div>

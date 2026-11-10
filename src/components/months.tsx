@@ -28,10 +28,12 @@ import type { FinanceRow } from "@/lib/types";
 import { normalizeSearch } from "@/lib/transaction-tools";
 import { cn } from "@/lib/utils";
 
-export function Months({ title = "Monate", initialView, monthExtras }: {
+export function Months({ title = "Monate", initialView, monthExtras, actions }: {
   title?: string;
   initialView?: MonthPlanView;
   monthExtras?: ReactNode;
+  /** Page actions beside the heading, e.g. "Budget aktualisieren". */
+  actions?: ReactNode;
 } = {}) {
   const { state, dashboard, update, storageError } = useFinance();
   const compact = useCompactLayout();
@@ -116,7 +118,7 @@ export function Months({ title = "Monate", initialView, monthExtras }: {
   }
   return (
     <>
-      <PageHeading title={title} />
+      <PageHeading title={title}>{actions}</PageHeading>
       <section
         aria-label={`Planübersicht ${periodLabel}`}
         className="mb-5 overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"

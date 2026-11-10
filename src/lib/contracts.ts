@@ -11,6 +11,7 @@ import type { AppState, ContractInterval, ContractMatch, ContractNotice, Contrac
 export type ContractStatus = "review" | "active" | "cancelled" | "ignored";
 export type ContractSource = "detected" | "fixed" | "manual";
 export type ContractCharge = { id: string; date: string; amount: number };
+export type ContractSnapshot = NonNullable<ContractOverride["snapshot"]>;
 
 export type Contract = {
   id: string;
@@ -41,6 +42,8 @@ export type Contract = {
   missed: boolean;
   edited: boolean;
   booking?: Transaction;
+  /** Brand, amount and rhythm of a detected series; stored with a decision so it survives id changes. */
+  snapshot?: ContractSnapshot;
 };
 
 export type ContractReminder = {
@@ -195,8 +198,14 @@ const merchantName = (row: Transaction) => row.merchantAlias?.trim() || row.desc
 const accountName = (row: Transaction) => row.pocket ? `${row.bank} · ${row.pocket}` : row.bank;
 
 type Draft = Omit<Contract, "status" | "deadline" | "effectiveEnd" | "edited" | "autoRenew" | "renewalMonths" | "missed"> & { stale: boolean };
+// Ids a detected series may have carried before: the old "brand#<first amount in cent>" and the rhythm-and-amount id.
+type DraftAliases = Map<Draft, { legacy: string; series: string }>;
 
-function detectFromBookings(state: AppState, today: string): Draft[] {
+// Bands 20 % wide: two separately detected series (amounts more than 25 % apart) rarely share one.
+const amountBand = (amount: number) => Math.round(Math.log(Math.max(amount, 0.01)) / Math.log(1.2));
+const seriesId = (brand: string, interval: ContractInterval, amount: number) => `${brand}#${interval}-${amountBand(amount)}`;
+
+function detectFromBookings(state: AppState, today: string): { drafts: Draft[]; aliases: DraftAliases } {
   const groups = new Map<string, Charge[]>();
   for (const { row, category } of ledger(state)) {
     if (row.amount >= 0 || row.ignored || row.date > today || everydayCategories.has(category)) continue;
@@ -205,6 +214,7 @@ function detectFromBookings(state: AppState, today: string): Draft[] {
     groups.set(brand, [...(groups.get(brand) ?? []), { row, category, amount: Math.abs(row.amount) }]);
   }
   const drafts: Draft[] = [];
+  const aliases: DraftAliases = new Map();
   for (const [brand, entries] of groups) {
     entries.sort((a, b) => a.row.date.localeCompare(b.row.date) || a.row.id.localeCompare(b.row.id));
     const found: { run: Charge[]; interval: ContractInterval }[] = [];
@@ -232,8 +242,9 @@ function detectFromBookings(state: AppState, today: string): Draft[] {
         (stable ? 0.1 : 0) + (contractish ? 0.1 : 0),
       ));
       const name = merchantName(latest.row);
-      drafts.push({
-        id: primary.run === run ? brand : `${brand}#${Math.round(run[0].amount * 100)}`,
+      const series = seriesId(brand, interval, median(amounts));
+      const draft: Draft = {
+        id: primary.run === run ? brand : series,
         name, category: latest.category, type: contractTypeOf(name, latest.category), source: "detected",
         amount: round(latest.amount), interval,
         monthly: monthlyEquivalent(latest.amount, interval), yearly: yearlyCost(latest.amount, interval),
@@ -241,11 +252,14 @@ function detectFromBookings(state: AppState, today: string): Draft[] {
         charges: run.slice(-24).reverse().map((entry) => ({ id: entry.row.id, date: entry.row.date, amount: round(entry.amount) })),
         ...(() => { const change = priceChangeOf(amounts, latest.row.date); return change ? { priceChange: change } : {}; })(),
         confidence, booking: latest.row,
+        snapshot: { brand, amount: round(latest.amount), interval },
         stale: daysBetween(nextDate, today) > graceDays[interval],
-      });
+      };
+      drafts.push(draft);
+      aliases.set(draft, { legacy: `${brand}#${Math.round(run[0].amount * 100)}`, series });
     }
   }
-  return drafts;
+  return { drafts, aliases };
 }
 
 function rowInterval(row: FinanceRow, month: string): ContractInterval {
@@ -453,10 +467,70 @@ function applyRules(state: AppState, drafts: Draft[], overrides: ContractOverrid
   });
 }
 
+const SNAPSHOT_TOLERANCE = 0.2;
+const legacyBrand = (id: string) => id.split("#")[0];
+
+// Relative distance of the series to the remembered amount, or undefined when it is another series.
+function snapshotDistance(draft: Draft, snapshot: ContractSnapshot) {
+  if (draft.snapshot?.brand !== snapshot.brand || draft.interval !== snapshot.interval || snapshot.amount <= 0) return undefined;
+  const distance = Math.min(...[draft.amount, ...draft.charges.map((charge) => charge.amount)]
+    .map((amount) => Math.abs(amount - snapshot.amount) / snapshot.amount));
+  return distance <= SNAPSHOT_TOLERANCE + 1e-9 ? distance : undefined;
+}
+
+/**
+ * Ties every decision to at most one detected series, so a decision survives price changes and new ids but never
+ * covers a second series of the same merchant: exact id (if it still fits the snapshot), then the snapshot (same
+ * brand and rhythm, amount within 20 %), then – for older decisions without snapshot – the brand when exactly one
+ * series of it is still undecided. Bound series take the decision's id; the others get an id no decision uses.
+ */
+function bindDecisions(drafts: Draft[], aliases: DraftAliases, overrides: ContractOverride[]) {
+  const decisions = overrides.filter((entry) => !entry.manual && !entry.id.startsWith("fixed:") && !entry.id.startsWith("manual:"));
+  const bound = new Map<Draft, ContractOverride>();
+  const used = new Set<ContractOverride>();
+  const free = (draft: Draft) => !bound.has(draft);
+  const fits = (draft: Draft, override: ContractOverride) => !override.snapshot || snapshotDistance(draft, override.snapshot) !== undefined;
+  const bind = (draft: Draft, override: ContractOverride) => { bound.set(draft, override); used.add(override); };
+  for (const sameId of [(draft: Draft) => draft.id, (draft: Draft) => aliases.get(draft)?.legacy]) {
+    for (const override of decisions) {
+      if (used.has(override)) continue;
+      const draft = drafts.find((item) => free(item) && sameId(item) === override.id && fits(item, override));
+      if (draft) bind(draft, override);
+    }
+  }
+  const pairs = decisions.flatMap((override) => {
+    if (used.has(override) || !override.snapshot) return [];
+    const snapshot = override.snapshot;
+    return drafts.flatMap((draft) => {
+      const distance = free(draft) ? snapshotDistance(draft, snapshot) : undefined;
+      return distance === undefined ? [] : [{ draft, override, distance }];
+    });
+  }).sort((a, b) => a.distance - b.distance || b.override.updatedAt - a.override.updatedAt);
+  for (const { draft, override } of pairs) if (free(draft) && !used.has(override)) bind(draft, override);
+  const legacy = decisions.filter((entry) => !used.has(entry) && !entry.snapshot);
+  for (const brand of new Set(legacy.map((entry) => legacyBrand(entry.id)))) {
+    const open = drafts.filter((draft) => free(draft) && draft.snapshot?.brand === brand);
+    // Several old decisions for one brand come from re-deciding a reappearing suggestion; the latest counts.
+    const latest = legacy.filter((entry) => legacyBrand(entry.id) === brand).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (open.length === 1) bind(open[0], latest);
+  }
+  const taken = new Set(overrides.map((entry) => entry.id));
+  for (const [draft, override] of bound) draft.id = override.id;
+  for (const draft of drafts) {
+    if (bound.has(draft)) continue;
+    const base = taken.has(draft.id) ? aliases.get(draft)?.series ?? draft.id : draft.id;
+    let id = base;
+    for (let index = 2; taken.has(id); index++) id = `${base}~${index}`;
+    draft.id = id;
+    taken.add(id);
+  }
+}
+
 /** Every recurring payment as a contract: detected from bookings, taken from the fixed-cost plan or added by hand. */
 export function detectContracts(state: AppState, today: string): Contract[] {
   const overrides = new Map((state.contracts ?? []).map((entry) => [entry.id, entry]));
-  const detected = detectFromBookings(state, today);
+  const { drafts: detected, aliases } = detectFromBookings(state, today);
+  bindDecisions(detected, aliases, state.contracts ?? []);
   const fixed = detectFromFixedRows(state, detected, today);
   const manual = (state.contracts ?? []).flatMap((entry) => manualDraft(entry, today) ?? []);
   const drafts = applyRules(state, [...detected, ...fixed, ...manual], state.contracts ?? [], today);
@@ -527,6 +601,11 @@ export function contractReminders(contracts: Contract[], today: string, horizon 
 }
 
 export const typicalNotice = (contract: Pick<Contract, "type">) => contractNotice[contract.type];
+
+/** A change to a contract; for a detected series it also remembers the series, so the decision keeps finding it. */
+export function contractPatch<T extends Partial<Omit<ContractOverride, "id" | "updatedAt">>>(contract: Pick<Contract, "snapshot"> | null | undefined, patch: T): T {
+  return contract?.snapshot ? { ...patch, snapshot: contract.snapshot } : patch;
+}
 
 export function upsertContractOverride(current: ContractOverride[] | undefined, id: string, patch: Partial<Omit<ContractOverride, "id" | "updatedAt">>, at = Date.now()): ContractOverride[] {
   const list = current ?? [];

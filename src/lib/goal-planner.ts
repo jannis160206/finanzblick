@@ -1,43 +1,48 @@
 import { addMonths, type Dashboard } from "@/lib/calc";
-import { accountsWithRules, servesPurpose } from "@/lib/assistant/funds";
+import { accountsWithRules } from "@/lib/assistant/funds";
 import { monthBasis, planningHorizon } from "@/lib/assistant/plan";
-import { corePocket, GOAL_SURPLUS, goalBalanceStatus, pocketKey } from "@/lib/goals";
+import { budgetCorrections, correctionDelta } from "@/lib/budget-corrections";
+import { accountKeep, corePocket, GOAL_SURPLUS, goalBalanceStatus, MAX_PLAN_SHARE, pocketKey } from "@/lib/goals";
 import { monthEndForecast } from "@/lib/month-forecast";
-import { emptyMonth, pocketNames, type AccountRule, type AppState, type GoalPlanRow, type MonthInput, type Pocket, type SavingsGoal } from "@/lib/types";
+import { emptyMonth, pocketNames, type AppState, type GoalPlanRow, type MonthInput, type Pocket, type SavingsGoal, type Settings } from "@/lib/types";
+import { trInterestRate } from "@/lib/tr-interest";
 
 export { GOAL_SURPLUS };
+
+/** Accounts whose balance may fund a goal once (above what the user keeps there); Urlaub and Motorrad stay earmarked. */
+export const ONE_TIME_SOURCES: readonly Pocket[] = ["Sparkonto", "Notgroschen"];
 
 /** Where money for a goal can come from: the monthly surplus or the balance of another pocket. */
 export type PlanSource = {
   id: string;
   label: string;
   kind: "surplus" | "pocket";
-  /** Surplus: total over the planning months; pocket: what can be moved once. */
+  /** Surplus: total over the planning months; pocket: balance minus planned withdrawals (before the keep amount). */
   available: number;
   perMonth?: number;
   /** Bank behind the account, for its logo (e.g. "Trade Republic"). */
   bank?: string;
-  /** Blocked by its account rule but may be included for one goal as a deliberate exception. */
-  exception?: boolean;
+  /** Used last and as late as possible (the Notgroschen / Trade Republic). */
+  late?: boolean;
   /** Interest rate p.a. the balance earns (Trade Republic). */
   rate?: number;
-  /** Suggested minimum to keep on the account when it is used as an exception. */
+  /** What the user keeps on the account (global setting); only the rest may be used. */
   keep?: number;
   balance?: number;
-  use: AccountRule["use"];
-  purposes: string[];
   detail?: string;
 };
 
 export type PlanningContext = {
   months: string[];
-  /** Free surplus per month after fixed costs, budgets, planned purchases, other goals and the savings floor. */
+  /** Free surplus per month after fixed costs, budgets, planned purchases, other goals and the Sparkonto share. */
   capacity: Record<string, number>;
   /** Free surplus per month assumed after the planning horizon. */
   continuation: number;
   sources: PlanSource[];
   /** Current balance of the goal's pocket; null when it is not known. */
   balance: number | null;
+  /** Income from the salary forecast that is not in the budget yet, per month (included in the capacity). */
+  forecast: Record<string, number>;
 };
 
 export type PlanInput = {
@@ -52,6 +57,8 @@ export type PlanInput = {
   surplus: boolean;
   locked: GoalPlanRow[];
   excludedMonths: string[];
+  /** As fast as possible: share of each month's free surplus that stays on the Girokonto (0–0.5). */
+  reserve?: number;
 };
 
 export type PlanResult = {
@@ -73,9 +80,9 @@ const byMonth = (a: GoalPlanRow, b: GoalPlanRow) =>
 /**
  * Distributes what is still missing over the months and accounts. With a due month the surplus rate is kept as even as
  * possible (months with less room get less, the rest is spread evenly); pockets only fill a remaining gap, as one
- * transfer in the first month. As fast as possible uses the selected pockets first and then the full surplus.
- * Late accounts (Trade Republic) only cover what is still missing after that, in the last month needed.
- * Locked rows stay as they are and are never topped up.
+ * transfer in the first month. As fast as possible uses the selected pockets first and then the free surplus minus the
+ * reserve that stays on the Girokonto. Late accounts (Trade Republic) only cover what is still missing after that, in
+ * the last month needed. Locked rows stay as they are and are never topped up.
  */
 export function planGoal(input: PlanInput): PlanResult {
   const excluded = new Set(input.excludedMonths);
@@ -87,7 +94,9 @@ export function planGoal(input: PlanInput): PlanResult {
   let need = total - locked.reduce((sum, row) => sum + cents(row.amount), 0);
   const lockedSurplus = new Set(locked.filter((row) => row.account === GOAL_SURPLUS).map((row) => row.month));
   const lockedAccounts = new Set(locked.filter((row) => row.account !== GOAL_SURPLUS).map((row) => row.account));
-  const surplusCap = (month: string) => input.surplus && !lockedSurplus.has(month) ? euroFloor(input.capacity[month] ?? 0) : 0;
+  const usable = 1 - (input.goalMonth ? 0 : Math.min(0.5, Math.max(0, input.reserve ?? 0)));
+  const share = (value: number) => Math.round(value * usable * 100) / 100;
+  const surplusCap = (month: string) => input.surplus && !lockedSurplus.has(month) ? euroFloor(share(input.capacity[month] ?? 0)) : 0;
   const accounts = input.accounts.filter((account) => !lockedAccounts.has(account.id))
     .map((account) => ({ id: account.id, cap: euroFloor(account.available), late: !!account.late }));
   const early = accounts.filter((account) => !account.late);
@@ -115,7 +124,7 @@ export function planGoal(input: PlanInput): PlanResult {
       need -= take;
     }
   };
-  const continuationCap = input.surplus ? euroFloor(input.continuation) : 0;
+  const continuationCap = input.surplus ? euroFloor(share(input.continuation)) : 0;
   let continuation: PlanResult["continuation"];
 
   if (need > 0 && !input.goalMonth) {
@@ -200,7 +209,11 @@ const futureTransfers = (goal: SavingsGoal | undefined, from: string) => {
   return result;
 };
 
-/** Monthly room, sources and the goal's balance, as the dialog needs them; an existing goal's own rates count as free. */
+/**
+ * Monthly room, sources and the goal's balance, as the dialog needs them; an existing goal's own rates count as free.
+ * The room includes the salary forecast (special payments, raises) where the budget does not have it yet, and the
+ * Sparkonto share (savings rate) grows with that income.
+ */
 export function goalPlanningContext(state: AppState, dashboard: Dashboard, today: string, goal?: SavingsGoal): PlanningContext {
   const current = dashboard.currentMonth;
   const horizon = planningHorizon(dashboard);
@@ -208,9 +221,13 @@ export function goalPlanningContext(state: AppState, dashboard: Dashboard, today
   for (let month = current; month <= horizon && months.length < 36; month = addMonths(month, 1)) months.push(month);
   const existing = goal ? dashboard.goals.find((item) => item.id === goal.id) : undefined;
   const forecast = monthEndForecast(state, dashboard, today);
+  const delta = correctionDelta(budgetCorrections(state));
+  const income: Record<string, number> = {};
   const capacity: Record<string, number> = {};
   for (const month of months) {
-    const basis = monthBasis(state, dashboard, month);
+    const extra = Math.abs(delta[month] ?? 0) >= 1 ? delta[month] : 0;
+    if (extra) income[month] = extra;
+    const basis = monthBasis(state, dashboard, month, extra);
     const own = existing && basis ? Math.max(0, (basis.goalRates[existing.id] ?? 0) - (basis.goalExtras[existing.id] ?? 0)) : 0;
     let free = basis ? basis.free + own : 0;
     if (month === current && forecast.status === "ok") free = Math.min(free, forecast.free + own);
@@ -225,28 +242,28 @@ export function goalPlanningContext(state: AppState, dashboard: Dashboard, today
   const total = months.reduce((sum, month) => sum + capacity[month], 0);
   const sources: PlanSource[] = [{
     id: GOAL_SURPLUS, label: "Girokonto", kind: "surplus", available: total,
-    perMonth: months.length ? Math.floor(total / months.length) : 0, use: "any", purposes: [],
+    perMonth: months.length ? Math.floor(total / months.length) : 0,
   }];
-  for (const account of accountsWithRules(state, dashboard, today)) {
-    const pocket = corePocket(account.name);
-    if (!pocket || sources.some((source) => source.id === pocket)) continue;
+  const accounts = accountsWithRules(state, dashboard, today);
+  for (const pocket of ONE_TIME_SOURCES) {
+    const account = accounts.find((item) => corePocket(item.name) === pocket);
+    if (!account) continue;
     const available = Math.max(0, Math.floor(account.available - (reserved.get(pocket) ?? 0) + (own.get(pocket) ?? 0)));
     // The Notgroschen is the Trade Republic account once its balance comes from there.
     const tradeRepublic = pocket === "Notgroschen" && !!state.trBalances?.length;
     sources.push({
       id: pocket, label: tradeRepublic ? "Trade Republic · Notgroschen" : pocket, kind: "pocket", available, balance: account.balance,
-      use: account.use, purposes: account.purposes,
+      keep: accountKeep(state.settings, pocket),
       ...(account.detail ? { detail: account.detail } : {}),
-      ...(tradeRepublic ? { bank: "Trade Republic", exception: true, rate: interestRate(state, today), keep: state.settings.emergencyTarget } : {}),
+      ...(pocket === "Notgroschen" ? { late: true } : {}),
+      ...(tradeRepublic ? { bank: "Trade Republic", rate: interestRate(state, today) } : {}),
     });
   }
   const balance = existing ? goalBalanceStatus(state, existing, dashboard.actual).amount : null;
-  return { months, capacity, continuation: capacity[horizon] ?? 0, sources, balance };
+  return { months, capacity, continuation: capacity[horizon] ?? 0, sources, balance, forecast: income };
 }
 
-const interestRate = (state: AppState, today: string) =>
-  state.settings.interestRates?.filter((entry) => entry.date <= today).sort((a, b) => b.date.localeCompare(a.date))[0]?.rate
-    ?? (today < state.settings.rateChangeDate ? state.settings.oldRate : state.settings.newRate);
+const interestRate = (state: AppState, today: string) => trInterestRate(state, today)?.rate;
 
 /** Interest the money would still earn on the account between the transfer month and the goal month (after 27,5 % KESt). */
 export function forgoneInterest(amount: number, rate: number | undefined, transferMonth: string, goalMonth: string) {
@@ -254,10 +271,27 @@ export function forgoneInterest(amount: number, rate: number | undefined, transf
   return Math.round(amount * rate * monthDiff(transferMonth, goalMonth) / 12 * (1 - 0.275) * 100) / 100;
 }
 
-/** Whether the user's account rules allow using the source for this goal. */
-export function sourceAllowed(source: PlanSource, goalName: string, goalPocket: string) {
-  if (source.kind === "pocket" && pocketKey(source.id) === pocketKey(goalPocket)) return false;
-  return source.use === "any" || (source.use === "only" && servesPurpose(source.purposes, goalName));
+/** A pocket can fund any goal except the one saving on that pocket. */
+export function sourceAllowed(source: PlanSource, goalPocket: string) {
+  return source.kind === "surplus" || pocketKey(source.id) !== pocketKey(goalPocket);
+}
+
+/** What a pocket can give once: available balance minus what the user keeps there. */
+export const usableAmount = (source: PlanSource, keep = source.keep ?? 0) =>
+  source.kind === "surplus" ? source.available : Math.max(0, Math.floor(source.available - Math.max(0, keep)));
+
+/** Global planning settings the goal dialog edits: reserve, savings rate and keep amounts per account. */
+export type GoalSettings = Partial<Pick<Settings, "asapReserve" | "savingsRate" | "accountKeep">>;
+
+export function withGoalSettings(settings: Settings, patch: GoalSettings | undefined): Settings {
+  if (!patch) return settings;
+  const keeps = Object.entries(patch.accountKeep ?? {}).filter(([account]) => !/^giro(?:konto)?$/i.test(account.trim()));
+  return {
+    ...settings,
+    ...(patch.asapReserve !== undefined ? { asapReserve: Math.min(MAX_PLAN_SHARE, Math.max(0, patch.asapReserve)) } : {}),
+    ...(patch.savingsRate !== undefined ? { savingsRate: Math.min(MAX_PLAN_SHARE, Math.max(0, patch.savingsRate)) } : {}),
+    ...(keeps.length ? { accountKeep: { ...settings.accountKeep, ...Object.fromEntries(keeps.map(([account, amount]) => [account, Math.max(0, amount)])) } } : {}),
+  };
 }
 
 /**

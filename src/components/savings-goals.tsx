@@ -13,7 +13,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import type { GoalSave } from "@/components/savings-goal-wizard";
 import type { SavingsGoal } from "@/lib/types";
 import { goalBalanceStatus, pocketKey, preserveGoalOpeningBalances, savingsGoals, vacationSavingPaused } from "@/lib/goals";
-import { withGoalPlan } from "@/lib/goal-planner";
+import { withGoalPlan, withGoalSettings } from "@/lib/goal-planner";
 import { currency, dateLabel } from "@/lib/format";
 
 const SavingsGoalWizard = dynamic(() => import("@/components/savings-goal-wizard"), { ssr: false });
@@ -33,7 +33,7 @@ export function SavingsGoals() {
     setEditing((current) => ({ goal: { ...goal }, isNew: origin === "add", open: true, session: (current?.session ?? 0) + 1 }));
   }
   const closeEditor = () => setEditing((current) => current && { ...current, open: false });
-  function save({ goal, opening }: GoalSave) {
+  function save({ goal, opening, settings }: GoalSave) {
     if (storageError || !editing) return;
     const value = { ...goal };
     const status = goalBalanceStatus(state, value, dashboard.actual);
@@ -42,9 +42,10 @@ export function SavingsGoals() {
     if (editing.isNew && status.status === "unknown" && !value.openingBalance) value.openingBalance = { date: state.settings.asOf, amount: opening };
     update((current) => {
       const booked = withGoalPlan(current, value, savingsGoals(current).find((item) => item.id === value.id));
+      const planning = withGoalSettings(current.settings, settings);
       return { ...preserveGoalOpeningBalances(current), months: booked.months,
         savingsGoals: [...savingsGoals(current).filter((item) => item.id !== value.id), booked.goal],
-        settings: pocketKey(booked.goal.pocket) === "motorrad" ? { ...current.settings, bikeTarget: booked.goal.target, bikePurchaseDate: booked.goal.date } : current.settings,
+        settings: pocketKey(booked.goal.pocket) === "motorrad" ? { ...planning, bikeTarget: booked.goal.target, bikePurchaseDate: booked.goal.date } : planning,
       };
     });
     closeEditor();

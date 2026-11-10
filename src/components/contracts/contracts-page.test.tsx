@@ -53,7 +53,18 @@ it("lists newly detected subscriptions for review and stores the confirmation", 
   expect(within(review).getByText("Streamflix Abo")).toBeTruthy();
   fireEvent.click(within(review).getByRole("button", { name: "Streamflix Abo als Vertrag bestätigen" }));
   expect(update).toHaveBeenCalledTimes(1);
-  expect(current().contracts).toEqual([expect.objectContaining({ status: "confirmed" })]);
+  expect(current().contracts).toEqual([expect.objectContaining({ status: "confirmed", snapshot: { brand: "streamflix", amount: 12.99, interval: "monthly" } })]);
+});
+
+it("does not suggest a decided subscription again after its price changed", () => {
+  const { current } = mount(stateWith());
+  render(<ContractsPage />);
+  fireEvent.click(screen.getByRole("button", { name: "Streamflix Abo ist kein Vertrag" }));
+  cleanup();
+  const raised = [...current().transactions, charge("flix-10", "2026-10-03", "Streamflix Abo", -14.99, "Abonnements")];
+  mount({ ...current(), transactions: raised, settings: { ...current().settings, asOf: "2026-10-05" } });
+  render(<ContractsPage />);
+  expect(screen.queryByRole("region", { name: "Neu erkannt" })).toBeNull();
 });
 
 it("hides a detection the user marks as no contract", () => {

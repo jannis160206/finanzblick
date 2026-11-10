@@ -5,7 +5,7 @@ import SavingsGoalWizard from "./savings-goal-wizard";
 import { calculateDashboard, monthsForYear } from "@/lib/calc";
 import { GOAL_SURPLUS } from "@/lib/goals";
 import { createSeed } from "@/lib/seed";
-import { emptyPockets, type AppState } from "@/lib/types";
+import { emptyPockets, type AppState, type SavingsGoal } from "@/lib/types";
 import { monthlyVariableBudget } from "@/lib/variable-budgets";
 
 vi.mock("@/components/security-mode-provider", () => ({ useSecurityMode: () => ({ locked: false }) }));
@@ -109,7 +109,32 @@ describe("savings goal wizard", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("includes Trade Republic only as a deliberate exception, keeps the minimum and transfers as late as possible", async () => {
+  it("keeps the reserve and the savings rate out of the plan and stores both when they change", async () => {
+    const { onSave, dialog } = open();
+    fireEvent.change(dialog.getByLabelText("Name"), { target: { value: "Reise" } });
+    fireEvent.change(dialog.getByLabelText("Zielbetrag"), { target: { value: "2000" } });
+    fireEvent.click(dialog.getByRole("switch", { name: /So schnell wie möglich/ }));
+    for (const step of ["Startkapital", "Konten", "Verteilung"]) {
+      fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+      await screen.findByRole("group", { name: step });
+    }
+    const plan = screen.getByRole("group", { name: "Verteilung" });
+    const november = () => (within(plan).getByLabelText("Betrag November 2026, Girokonto") as HTMLInputElement).value;
+    expect((within(plan).getByLabelText("Reserve") as HTMLSelectElement).value).toBe("15");
+    expect((within(plan).getByLabelText("Sparanteil") as HTMLSelectElement).value).toBe("10");
+    expect(november()).toBe("697,00");
+    fireEvent.change(within(plan).getByLabelText("Reserve"), { target: { value: "0" } });
+    expect(november()).toBe("820,00");
+    fireEvent.change(within(plan).getByLabelText("Sparanteil"), { target: { value: "50" } });
+    expect(november()).toBe("500,00");
+    expect(screen.getByText(/Ziel erreicht voraussichtlich im/).textContent).toContain("Februar 2027");
+    fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
+    await screen.findByRole("group", { name: "Übersicht" });
+    fireEvent.click(dialog.getByRole("button", { name: "Sparziel anlegen" }));
+    expect(onSave.mock.calls[0][0]).toMatchObject({ goal: { asap: true, date: "2027-02-28" }, settings: { asapReserve: 0, savingsRate: 0.5 } });
+  });
+
+  it("offers the Sparkonto and Trade Republic once above the keep amount and uses Trade Republic last and as late as possible", async () => {
     const state = fixture();
     state.trBalances = [{ date: "2026-11-01", balance: 5000 }];
     state.settings.emergencyTarget = 1000;
@@ -121,29 +146,41 @@ describe("savings goal wizard", () => {
     await screen.findByRole("group", { name: "Startkapital" });
     fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
     const sources = await screen.findByRole("group", { name: "Konten" });
+    expect(within(sources).queryByText(/Kontoregel/)).toBeNull();
+    expect(within(sources).queryByRole("switch")).toBeNull();
+    expect(within(sources).getAllByRole("checkbox").map((box) => box.closest("li")?.textContent?.match(/Girokonto|Sparkonto|Trade Republic/)?.[0]))
+      .toEqual(["Girokonto", "Sparkonto", "Trade Republic"]);
+    expect(within(sources).queryByLabelText(/Behalten auf Girokonto/)).toBeNull();
+    expect((within(sources).getByLabelText("Behalten auf Sparkonto") as HTMLInputElement).value).toBe("0,00");
     const tr = within(within(sources).getByText("Trade Republic · Notgroschen").closest("li") as HTMLElement);
-    expect(tr.getByText(/Kontoregel: nur für Notfälle/)).toBeTruthy();
-    fireEvent.click(tr.getByRole("switch", { name: "Als Ausnahme einbeziehen" }));
-    expect((tr.getByLabelText("Mindestens behalten") as HTMLInputElement).value).toBe("1.000,00");
-    expect(tr.getByText("verplanbar")).toBeTruthy();
+    const keep = tr.getByLabelText("Behalten auf Trade Republic · Notgroschen") as HTMLInputElement;
+    expect(keep.value).toBe("1.000,00");
+    expect(tr.getByText(/^Saldo 5\.000,00\s€$/)).toBeTruthy();
+    expect(tr.getByText(/^4\.000,00\s€$/)).toBeTruthy();
+    fireEvent.change(keep, { target: { value: "1500" } });
+    expect(tr.getByText(/^3\.500,00\s€$/)).toBeTruthy();
+    fireEvent.click(tr.getByRole("checkbox"));
     fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
 
     const plan = await screen.findByRole("group", { name: "Verteilung" });
-    expect((within(plan).getByLabelText("Betrag März 2027, Trade Republic") as HTMLInputElement).value).toBe("4.000,00");
+    expect(within(plan).queryByLabelText("Reserve")).toBeNull();
+    expect((within(plan).getByLabelText("Betrag März 2027, Trade Republic") as HTMLInputElement).value).toBe("3.500,00");
     expect(within(plan).getByText(/bis dahin laufen die Zinsen weiter/)).toBeTruthy();
     fireEvent.change(within(plan).getByLabelText("Monat Trade Republic"), { target: { value: "2027-01" } });
     expect(within(plan).getByText(/weniger Zinsen als zum Zieltermin/)).toBeTruthy();
     fireEvent.click(dialog.getByRole("button", { name: "Weiter" }));
-    await screen.findByRole("group", { name: "Übersicht" });
+    const overview = await screen.findByRole("group", { name: "Übersicht" });
+    expect(within(overview).getByText(/^Trade Republic/)).toBeTruthy();
     fireEvent.click(dialog.getByRole("button", { name: "Sparziel anlegen" }));
 
-    const { goal } = onSave.mock.calls[0][0];
-    expect(goal.funding.exceptions).toEqual([{ account: "Notgroschen", keep: 1000 }]);
-    expect(goal.funding.plan).toContainEqual({ month: "2027-01", account: "Notgroschen", amount: 4000, locked: true });
-    expect(goal.funding.excluded?.accounts ?? []).not.toContain("Notgroschen");
+    const { goal, settings } = onSave.mock.calls[0][0];
+    expect(goal.funding.exceptions).toEqual([{ account: "Notgroschen" }]);
+    expect(goal.funding.plan).toContainEqual({ month: "2027-01", account: "Notgroschen", amount: 3500, locked: true });
+    expect(goal.funding.excluded.accounts).toEqual(["Sparkonto"]);
+    expect(settings).toEqual({ accountKeep: { Notgroschen: 1500 } });
   });
 
-  it("leaves Trade Republic out without the exception", async () => {
+  it("leaves Trade Republic and the Sparkonto out unless they are chosen", async () => {
     const state = fixture();
     state.trBalances = [{ date: "2026-11-01", balance: 5000 }];
     const { onSave, dialog } = open(state);
@@ -155,8 +192,33 @@ describe("savings goal wizard", () => {
       await screen.findByRole("group", { name: step });
     }
     fireEvent.click(dialog.getByRole("button", { name: "Sparziel anlegen" }));
-    const { goal } = onSave.mock.calls[0][0];
+    const { goal, settings } = onSave.mock.calls[0][0];
     expect(goal.funding.exceptions).toBeUndefined();
-    expect(goal.funding.plan.some((row: { account: string }) => row.account === "Notgroschen")).toBe(false);
+    expect(goal.funding.excluded.accounts).toEqual(["Sparkonto", "Notgroschen"]);
+    expect(goal.funding.plan.some((row: { account: string }) => row.account !== GOAL_SURPLUS)).toBe(false);
+    expect(settings).toBeUndefined();
+  });
+
+  it("keeps Trade Republic chosen for a goal saved with the earlier exception and its minimum as keep amount", async () => {
+    const state = fixture();
+    state.trBalances = [{ date: "2026-11-01", balance: 5000 }];
+    const goal: SavingsGoal = {
+      id: "auto", name: "Auto", pocket: "Auto", target: 9000, date: "2027-03-31",
+      funding: { monthly: 820, extras: {}, auto: true, window: { from: "2026-11", to: "2027-03" },
+        plan: [{ month: "2026-11", account: GOAL_SURPLUS, amount: 820 }], exceptions: [{ account: "Notgroschen", keep: 2500 }] },
+    };
+    const onSave = vi.fn();
+    render(<SavingsGoalWizard open isNew={false} goal={goal} goals={[goal]} state={state} dashboard={calculateDashboard(state)}
+      disabled={false} storageError={null} onClose={vi.fn()} onSave={onSave} />);
+    const dialog = within(screen.getByRole("dialog", { name: "Sparziel bearbeiten" }));
+    fireEvent.click(dialog.getByRole("button", { name: /3\. Konten/ }));
+    const sources = await screen.findByRole("group", { name: "Konten" });
+    const tr = within(within(sources).getByText("Trade Republic · Notgroschen").closest("li") as HTMLElement);
+    expect((tr.getByRole("checkbox") as HTMLInputElement).checked).toBe(true);
+    expect((tr.getByLabelText("Behalten auf Trade Republic · Notgroschen") as HTMLInputElement).value).toBe("2.500,00");
+    expect((within(sources).getByRole("checkbox", { name: /Sparkonto/ }) as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(dialog.getByRole("button", { name: "Speichern" }));
+    expect(onSave.mock.calls[0][0].settings).toEqual({ accountKeep: { Notgroschen: 2500 } });
+    expect(onSave.mock.calls[0][0].goal.funding.exceptions).toEqual([{ account: "Notgroschen" }]);
   });
 });

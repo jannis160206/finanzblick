@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Pockets } from "@/components/pockets";
 import { SavingsGoals } from "@/components/savings-goals";
-import { TradeRepublicSettings } from "@/components/settings";
+import { TradeRepublicCard } from "@/components/trade-republic-card";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { MonthlyFunding } from "@/components/monthly-funding";
@@ -67,7 +67,7 @@ export function SavingsPage() {
       <NetWorthPanel />
       <div className="mt-5 space-y-5">
         <SavingsGoals />
-        <TradeRepublicSettings />
+        <TradeRepublicCard />
       </div>
     </>
   );

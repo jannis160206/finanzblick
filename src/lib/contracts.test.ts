@@ -6,6 +6,7 @@ import {
   cancellationWindow,
   contractCandidates,
   contractChargesBetween,
+  contractPatch,
   contractReminders,
   contractRuleMatches,
   contractSummary,
@@ -113,6 +114,80 @@ describe("contract overrides", () => {
     const first = upsertContractOverride(undefined, "a", { status: "confirmed" }, 1);
     const second = upsertContractOverride(first, "a", { note: "Kundennr. 4711" }, 2);
     expect(second).toEqual([{ id: "a", status: "confirmed", note: "Kundennr. 4711", updatedAt: 2 }]);
+  });
+});
+
+describe("decided suggestions stay decided", () => {
+  const decide = (state: AppState, today: string, amount: number, status: "confirmed" | "ignored", at = 1) => {
+    const contract = detectContracts(state, today).find((item) => item.amount === amount)!;
+    return upsertContractOverride(state.contracts, contract.id, contractPatch(contract, { status }), at);
+  };
+  const statusOf = (contracts: ReturnType<typeof detectContracts>, amount: number) => contracts.find((item) => item.amount === amount)?.status;
+  const review = (contracts: ReturnType<typeof detectContracts>) => contracts.filter((item) => item.status === "review");
+
+  it("stores what the series looked like with the decision", () => {
+    const state = stateWith(series("Streamflix Abo", [9.99, 9.99, 9.99], monthsFrom("2026-05-15", 3)));
+    const contracts = decide(state, "2026-08-01", 9.99, "confirmed");
+    expect(contracts).toEqual([{ id: "streamflix", status: "confirmed", snapshot: { brand: "streamflix", amount: 9.99, interval: "monthly" }, updatedAt: 1 }]);
+    expect(appStateSchema.safeParse({ ...state, contracts }).success).toBe(true);
+  });
+
+  it("keeps a decision when a price change gives the series a new id", () => {
+    const main = series("Gymflex Club", [30, 30, 30, 30, 30, 30, 30, 30], monthsFrom("2026-01-03", 8), "Sport & Fitness");
+    const before = [...main, ...series("Gymflex Club", [7.99, 7.99, 7.99], monthsFrom("2026-02-20", 3), "Sport & Fitness")];
+    const contracts = decide(stateWith(before), "2026-05-01", 7.99, "ignored");
+    const after = [...before, ...series("Gymflex Club", [9.19, 9.19, 9.19], monthsFrom("2026-06-20", 3), "Sport & Fitness")];
+    const fresh = detectContracts(stateWith(after), "2026-09-01").find((item) => item.amount === 9.19)!;
+    expect(fresh.id).not.toBe(contracts[0].id);
+    const result = detectContracts(stateWith(after, { contracts }), "2026-09-01");
+    expect(statusOf(result, 9.19)).toBe("ignored");
+    expect(result.find((item) => item.amount === 9.19)!.id).toBe(contracts[0].id);
+    expect(review(result).map((item) => item.amount)).toEqual([30]);
+  });
+
+  it("follows the decisions when the main and the side series swap", () => {
+    const yearly = series("Cloudbox Speicher", [5.99, 5.99, 5.99, 5.99], monthsFrom("2026-01-05", 4));
+    const family = series("Cloudbox Speicher", [19.99, 19.99, 19.99], monthsFrom("2026-02-18", 3));
+    let state = stateWith([...yearly, ...family]);
+    state = { ...state, contracts: decide(state, "2026-05-01", 5.99, "confirmed", 1) };
+    state = { ...state, contracts: decide(state, "2026-05-01", 19.99, "ignored", 2) };
+    expect(state.contracts!.map((entry) => entry.id)[0]).toBe("cloudbox");
+    const later = [...yearly, ...family, ...series("Cloudbox Speicher", [19.99, 19.99, 19.99], monthsFrom("2026-05-18", 3))];
+    expect(detectContracts(stateWith(later), "2026-08-01").find((item) => item.amount === 19.99)!.id).toBe("cloudbox");
+    const result = detectContracts({ ...state, transactions: later }, "2026-08-01");
+    expect(statusOf(result, 5.99)).toBe("active");
+    expect(statusOf(result, 19.99)).toBe("ignored");
+    expect(review(result)).toEqual([]);
+    expect(new Set(result.map((item) => item.id)).size).toBe(result.length);
+  });
+
+  it("applies decisions saved before snapshots existed", () => {
+    const charges = series("Ratenkauf Shop", [30, 30, 30], monthsFrom("2026-05-05", 3), "Shopping");
+    const legacy = [{ id: "ratenkauf#3000", status: "ignored" as const, updatedAt: 1 }];
+    const exact = detectContracts(stateWith([...charges, ...series("Ratenkauf Shop", [90, 90, 90, 90], monthsFrom("2026-04-20", 4), "Shopping")], { contracts: legacy }), "2026-08-01");
+    expect(statusOf(exact, 30)).toBe("ignored");
+    expect(statusOf(exact, 90)).toBe("review");
+    const renamed = [{ id: "ratenkauf#2999", status: "confirmed" as const, updatedAt: 1 }];
+    expect(statusOf(detectContracts(stateWith(charges, { contracts: renamed }), "2026-08-01"), 30)).toBe("active");
+    const primary = [{ id: "ratenkauf", status: "confirmed" as const, updatedAt: 1 }];
+    expect(statusOf(detectContracts(stateWith(charges, { contracts: primary }), "2026-08-01"), 30)).toBe("active");
+    const repeated = [{ id: "ratenkauf#2899", status: "confirmed" as const, updatedAt: 1 }, { id: "ratenkauf#2950", status: "ignored" as const, updatedAt: 2 }];
+    expect(statusOf(detectContracts(stateWith(charges, { contracts: repeated }), "2026-08-01"), 30)).toBe("ignored");
+  });
+
+  it("keeps parallel series of one merchant apart", () => {
+    const small = series("Streamflix Abo", [4.99, 4.99, 4.99, 4.99], monthsFrom("2026-04-03", 4));
+    const large = series("Streamflix Abo", [17.99, 17.99, 17.99], monthsFrom("2026-05-21", 3));
+    const snapshot = { brand: "streamflix", amount: 4.99, interval: "monthly" as const };
+    const decided = detectContracts(stateWith([...small, ...large], { contracts: [{ id: "streamflix#old", status: "confirmed", snapshot, updatedAt: 1 }] }), "2026-08-01");
+    expect(statusOf(decided, 4.99)).toBe("active");
+    expect(statusOf(decided, 17.99)).toBe("review");
+    const legacy = detectContracts(stateWith([...small, ...large], { contracts: [{ id: "streamflix#1234", status: "ignored", updatedAt: 1 }] }), "2026-08-01");
+    expect(review(legacy).map((item) => item.amount).sort((a, b) => a - b)).toEqual([4.99, 17.99]);
+    const mismatch = detectContracts(stateWith([...small, ...large], { contracts: [{ id: "streamflix", status: "ignored", snapshot: { ...snapshot, amount: 17.99 }, updatedAt: 1 }] }), "2026-08-01");
+    expect(statusOf(mismatch, 17.99)).toBe("ignored");
+    expect(statusOf(mismatch, 4.99)).toBe("review");
+    expect(mismatch.find((item) => item.amount === 4.99)!.id).not.toBe("streamflix");
   });
 });
 

@@ -325,6 +325,16 @@ export const settingsSchema = z
     interestRates: z
       .array(z.object({ date: dateSchema, rate: z.number().min(0).max(1) }))
       .optional(),
+    // Savings goal "as fast as possible": share of each month's free surplus that stays on the Girokonto (default 15 %).
+    asapReserve: z.number().min(0).max(0.5).optional(),
+    // Share of the positive monthly surplus that always goes to the Sparkonto, at least the savings floor (default 10 %).
+    savingsRate: z.number().min(0).max(0.5).optional(),
+    // Amount kept on an account (pocket name, never the Girokonto); only the rest may fund a savings goal once.
+    accountKeep: z.record(z.string().trim().min(1).max(100), moneySchema.nonnegative())
+      .refine((keeps) => Object.keys(keeps).length <= 20, "Höchstens 20 Behalten-Beträge.")
+      .refine((keeps) => Object.keys(keeps).every((key) => !/^giro(?:konto)?$/i.test(key.trim())),
+        "Für das Girokonto gibt es keinen Behalten-Betrag.")
+      .optional(),
   })
   .refine((value) => value.asOf >= value.baselineDate, {
     message: "Stichtag darf nicht vor dem Ist-Datum liegen",
@@ -727,6 +737,12 @@ export const contractOverrideSchema = z.object({
   bookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
   excludedBookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
   match: contractMatchSchema.optional(),
+  // The detected series at the time of the decision, so the decision still finds it after its id changed.
+  snapshot: z.object({
+    brand: z.string().trim().min(1).max(300),
+    amount: z.number().finite().nonnegative().max(1_000_000_000),
+    interval: contractIntervalSchema,
+  }).strict().optional(),
   updatedAt: z.number().int().nonnegative(),
 }).strict().refine(
   (entry) => !entry.manual || (!!entry.name && entry.amount !== undefined && !!entry.interval && !!entry.nextDate),
