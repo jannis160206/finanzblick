@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { AlertTriangle, CalendarClock, Check, ChevronRight, CircleHelp, EyeOff, FileText, Plus, Sparkles, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
@@ -12,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { ContractCancelDialog, ContractDetailDialog, ContractEditDialog, type ContractAction, type ContractPatch } from "@/components/contracts/contract-dialogs";
+import { ContractCancelDialog, ContractDetailDialog, type ContractAction, type ContractPatch } from "@/components/contracts/contract-dialogs";
 import { ContractMark, contractTypeLabel, contractTypeOrder, contractTypeTone } from "@/components/contracts/contract-visuals";
 import { askAssistant } from "@/lib/assistant-bus";
 import { useAssistantPageContext, type AssistantPageContext } from "@/lib/assistant-context";
@@ -42,6 +43,8 @@ const editedKeys = ["name", "category", "amount", "interval", "nextDate", "notic
 const shortMonth = new Intl.DateTimeFormat("de-AT", { month: "short", timeZone: "UTC" });
 const monthOf = (date: string) => shortMonth.format(new Date(`${date}T00:00:00Z`)).replace(".", "");
 
+const ContractWizard = dynamic(() => import("@/components/contracts/contract-wizard"), { ssr: false });
+
 function withOverride(state: AppState, id: string, entry: ContractOverride | undefined): AppState {
   const rest = (state.contracts ?? []).filter((item) => item.id !== id);
   return { ...state, contracts: entry ? [...rest, entry] : rest };
@@ -56,9 +59,11 @@ export function ContractsPage() {
   const upcoming = useMemo(() => contractChargesBetween(contracts, today, addDays(today, 30), today), [contracts, today]);
   const [view, setView] = useState<View>("running");
   const [detailId, setDetailId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<{ contract: Contract | null } | null>(null);
+  const [editing, setEditing] = useState<{ contract: Contract | null; open: boolean; session: number } | null>(null);
   const [cancelling, setCancelling] = useState<Contract | null>(null);
   const disabled = !ready || !!storageError;
+  const openEditor = (contract: Contract | null) => setEditing((current) => ({ contract, open: true, session: (current?.session ?? 0) + 1 }));
+  const closeEditor = () => setEditing((current) => current && { ...current, open: false });
   const assistantContext = useMemo<AssistantPageContext>(() => ({ route: "/vertraege", title: "Verträge", ...(detailId ? { contractId: detailId } : {}) }), [detailId]);
   useAssistantPageContext(assistantContext);
 
@@ -103,7 +108,7 @@ export function ContractsPage() {
       case "reactivate": return change(contract, { status: "confirmed", cancelledAt: undefined }, `${contract.name} wieder aktiv`);
       case "reset": return change(contract, Object.fromEntries(editedKeys.map((key) => [key, undefined])), "Änderungen verworfen");
       case "cancel": return setCancelling(contract);
-      case "edit": setDetailId(null); return setEditing({ contract });
+      case "edit": setDetailId(null); return openEditor(contract);
       case "prepare": setDetailId(null); return askAssistant(`Kündige ${contract.name}`);
       case "remove": {
         if (disabled) return;
@@ -121,7 +126,7 @@ export function ContractsPage() {
   return (
     <MerchantMarksProvider {...marks}>
       <PageHeading title="Verträge" description="Abos, Versicherungen und Fixkosten – erkannt aus deinen Abbuchungen.">
-        <Button variant="outline" className="min-h-11" disabled={disabled} onClick={() => setEditing({ contract: null })}>
+        <Button variant="outline" className="min-h-11" disabled={disabled} onClick={() => openEditor(null)}>
           <Plus aria-hidden="true" />Vertrag hinzufügen
         </Button>
       </PageHeading>
@@ -129,7 +134,7 @@ export function ContractsPage() {
       {empty ? (
         <EmptyState icon={FileText} title="Noch keine Verträge erkannt" className="min-h-72">
           <p>Sobald ein Händler mehrmals im gleichen Rhythmus abbucht, erscheint er hier – Streaming, Handy, Versicherung oder Fitnessstudio.</p>
-          <Button size="sm" variant="soft" className="mt-4" disabled={disabled} onClick={() => setEditing({ contract: null })}>
+          <Button size="sm" variant="soft" className="mt-4" disabled={disabled} onClick={() => openEditor(null)}>
             <Plus aria-hidden="true" />Vertrag selbst anlegen
           </Button>
         </EmptyState>
@@ -227,14 +232,16 @@ export function ContractsPage() {
       )}
 
       <ContractDetailDialog contract={detail} today={today} disabled={disabled} onClose={() => setDetailId(null)} onAction={act} />
-      <ContractEditDialog open={!!editing} contract={editing?.contract ?? null} today={today} disabled={disabled} storageError={storageError}
-        onClose={() => setEditing(null)}
-        onSave={(patch) => {
-          const id = editing?.contract?.id ?? `manual:${crypto.randomUUID()}`;
-          update((current) => ({ ...current, contracts: upsertContractOverride(current.contracts, id, patch) }));
-          setEditing(null);
-          toast.success(editing?.contract ? "Vertrag gespeichert" : "Vertrag hinzugefügt");
-        }} />
+      {editing && (
+        <ContractWizard key={editing.session} open={editing.open} contract={editing.contract} contracts={contracts} state={state} today={today}
+          disabled={disabled} storageError={storageError} onClose={closeEditor}
+          onSave={(patch) => {
+            const id = editing.contract?.id ?? `manual:${crypto.randomUUID()}`;
+            update((current) => ({ ...current, contracts: upsertContractOverride(current.contracts, id, patch) }));
+            closeEditor();
+            toast.success(editing.contract ? "Vertrag gespeichert" : "Vertrag hinzugefügt");
+          }} />
+      )}
       <ContractCancelDialog contract={cancelling} today={today} disabled={disabled} onClose={() => setCancelling(null)}
         onConfirm={(endDate) => {
           if (cancelling) change(cancelling, { status: "cancelled", cancelledAt: endDate }, `${cancelling.name} als gekündigt markiert`);

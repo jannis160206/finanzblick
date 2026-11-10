@@ -667,7 +667,7 @@ export const assistantChangeLogSchema = z.object({
 }).strict();
 export type AssistantChangeLog = z.infer<typeof assistantChangeLogSchema>;
 export const MAX_ASSISTANT_CHANGES = 200;
-export const contractIntervals = ["monthly", "quarterly", "halfyearly", "yearly"] as const;
+export const contractIntervals = ["weekly", "biweekly", "monthly", "quarterly", "halfyearly", "yearly"] as const;
 export const contractIntervalSchema = z.enum(contractIntervals);
 export type ContractInterval = z.infer<typeof contractIntervalSchema>;
 export const contractNoticeSchema = z.object({
@@ -675,6 +675,15 @@ export const contractNoticeSchema = z.object({
   unit: z.enum(["days", "weeks", "months"]),
 }).strict();
 export type ContractNotice = z.infer<typeof contractNoticeSchema>;
+// Which bookings belong to a contract: text in the booking, amount range and account; every set criterion must match.
+export const contractMatchSchema = z.object({
+  text: z.string().trim().min(1).max(80).optional(),
+  amountMin: z.number().finite().nonnegative().max(1_000_000).optional(),
+  amountMax: z.number().finite().nonnegative().max(1_000_000).optional(),
+  account: z.string().trim().min(1).max(100).optional(),
+}).strict().refine((match) => match.amountMin === undefined || match.amountMax === undefined || match.amountMin <= match.amountMax,
+  "Der Mindestbetrag darf nicht über dem Höchstbetrag liegen.");
+export type ContractMatch = z.infer<typeof contractMatchSchema>;
 // The user's decisions about a detected or manually added contract; detection itself is recomputed from bookings.
 export const contractOverrideSchema = z.object({
   id: z.string().trim().min(1).max(300),
@@ -691,6 +700,10 @@ export const contractOverrideSchema = z.object({
   renewalMonths: z.number().int().min(1).max(60).optional(),
   cancelledAt: dateSchema.optional(),
   note: z.string().trim().max(500).optional(),
+  // Bookings picked by hand, bookings taken out, and rules for future bookings.
+  bookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
+  excludedBookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
+  match: contractMatchSchema.optional(),
   updatedAt: z.number().int().nonnegative(),
 }).strict().refine(
   (entry) => !entry.manual || (!!entry.name && entry.amount !== undefined && !!entry.interval && !!entry.nextDate),

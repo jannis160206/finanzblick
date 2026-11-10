@@ -1,6 +1,6 @@
 import { addMonths, round, type Dashboard } from "@/lib/calc";
 import { budgetPace, unusualCategories } from "@/lib/assistant/pulse";
-import { addDays, contractReminders, daysBetween, intervalMonths, type Contract } from "@/lib/contracts";
+import { addDays, contractReminders, daysBetween, perYear, type Contract } from "@/lib/contracts";
 import { currency, dateLabel } from "@/lib/format";
 import { openReviewCount } from "@/lib/import/review";
 import { detectDuplicateCharges } from "@/lib/insights";
@@ -76,7 +76,7 @@ function contractInsights(contracts: Contract[], today: string): CopilotInsight[
     if (reminder.kind === "price" && contract.priceChange) return [{
       id: `price:${contract.id}:${contract.priceChange.date}`, kind: "price", severity: "medium",
       title: `${contract.name} ist teurer geworden`, text: reminder.body,
-      amount: round((contract.priceChange.to - contract.priceChange.from) * 12 / intervalMonths[contract.interval]),
+      amount: round((contract.priceChange.to - contract.priceChange.from) * perYear[contract.interval]),
       href: "/vertraege", prompt: `Was kostet mich ${contract.name} im Jahr?`,
     }];
     return [];
