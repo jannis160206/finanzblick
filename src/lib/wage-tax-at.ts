@@ -57,6 +57,12 @@ export function incomeTax(taxable: number, year: number): number {
   return tax;
 }
 
+/** Rate of the tariff bracket an annual taxable income ends in ("Grenzsteuersatz"). */
+export function marginalTaxRate(taxable: number, year: number): number {
+  const index = wageTaxValues(year).brackets.findIndex((upper) => taxable <= upper);
+  return rates[index === -1 ? rates.length - 1 : index];
+}
+
 /** Tariff tax of a month for its regular LSt base before the Werbungskostenpauschale, before tax credits. */
 export function monthlyTariff(base: number, year: number): number {
   return incomeTax(Math.max(0, base * 12 - WERBUNGSKOSTEN_PAUSCHALE), year) / 12;

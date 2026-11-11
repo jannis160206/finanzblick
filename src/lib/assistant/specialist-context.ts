@@ -5,7 +5,7 @@ import { evidenceText } from "./conversation";
 import { contractsAnswer } from "./copilot";
 import { monthReview } from "./essentials";
 import { assistantFacts, type AssistantFacts } from "./facts";
-import { aboutMoney, type AgentId } from "./orchestrator";
+import { aboutMoney, generalQuestion, type AgentId } from "./orchestrator";
 import { payrollAnswer, payrollFacts } from "./payroll";
 import { pulseAnswer } from "./pulse";
 
@@ -20,9 +20,9 @@ const factKeys: Record<AgentId, readonly (keyof AssistantFacts)[]> = {
   general: ["today", "healthCheck", "totalSavings", "yearToDate", "goals", "memory"],
 };
 
-/** Only the facts the agent needs. The general chat gets none when the question is not about money. */
+/** Only the facts the agent needs. The general chat gets none when the question is not about the user's money. */
 export function agentFacts(agent: AgentId, state: AppState, dashboard: Dashboard, today: string, question: string): Record<string, unknown> {
-  if (agent === "general" && !aboutMoney(question)) return { today };
+  if (agent === "general" && (!aboutMoney(question) || generalQuestion(question.toLowerCase()))) return { today };
   const all = assistantFacts(state, dashboard, today);
   const facts: Record<string, unknown> = Object.fromEntries(factKeys[agent].map((key) => [key, all[key]]));
   if (agent === "payroll") facts.payroll = payrollFacts(state, today);

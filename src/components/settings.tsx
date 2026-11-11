@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, DatabaseBackup, Palette, Save, Search, TriangleAlert, Volume2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, DatabaseBackup, Palette, Save, Search, TriangleAlert, Volume2, Workflow, X } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -190,6 +191,12 @@ export function Settings() {
             })}
           </ul>
         </nav>
+        {/* Hidden admin view of the assistant: deliberately quiet, outside the category list. */}
+        <Link href="/einstellungen/orchestrator"
+          className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:px-3",
+            searching && "max-lg:hidden")}>
+          <Workflow aria-hidden="true" className="size-3.5" />Assistent-Orchestrator
+        </Link>
       </aside>
       <div className={cn("min-w-0 lg:max-w-3xl", opened === null && !searching && "max-lg:hidden")}>
         {opened !== null && !searching && <button type="button" onClick={back}

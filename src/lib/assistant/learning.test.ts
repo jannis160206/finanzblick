@@ -4,7 +4,7 @@ import { calculateDashboard } from "@/lib/calc";
 import { appStateSchema, plannedOneOffSchema, savingsGoalSchema, type AppState } from "@/lib/types";
 import { executeTool } from "./agent";
 import { knowledgeList, learnPhrase, matchPhrase } from "./knowledge";
-import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, resolveGap, unknownTarget, unlearnPhrase } from "./learning";
+import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "./learning";
 import { detectTool } from "./tools";
 
 const asOf = "2026-10-07";
@@ -34,6 +34,14 @@ describe("corrections", () => {
   });
   it("leaves ordinary messages alone", () => {
     expect(correction("Wie viel hab ich im Oktober fürs Essen ausgegeben?")).toBeUndefined();
+  });
+});
+
+describe("rephrasing after an unclear message", () => {
+  it("learns only a real rephrasing, never the next topic", () => {
+    expect(rephrases("wv hab ich fuer essen ausgegeben letzten monat", "Wie viel hab ich letzten Monat für Essen ausgegeben?")).toBe(true);
+    expect(rephrases("Was kostet mich das Fitnessstudio", "Wie teuer ist mein Fitnessvertrag?")).toBe(true);
+    expect(rephrases("Kann man mit 3000 netto in Wien gut leben?", "Was ist ein ETF?")).toBe(false);
   });
 });
 

@@ -579,6 +579,9 @@ export const assistantMessageSchema = z.object({
   suggestions: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
   // The agent the orchestrator chose for this answer (same names as `agentIds` in assistant/orchestrator).
   agent: z.enum(["transactions", "contracts", "budget", "payroll", "general"]).optional(),
+  // How the orchestrator decided (`RouteVia`) and roughly how long the answer took, for the read-only admin view.
+  via: z.enum(["rule", "signal", "model", "fallback"]).optional(),
+  ms: z.number().int().nonnegative().max(3_600_000).optional(),
   // Self-learning: which tool answered which question, the user's 👍/👎, and open questions waiting for a correction or a name.
   tool: z.string().max(40).optional(),
   asked: z.string().max(1000).optional(),

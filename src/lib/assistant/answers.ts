@@ -174,7 +174,7 @@ const categoryWords: [RegExp, Category[], string][] = [
   [/mittagessen|\bmittag\b/, ["Mittagessen"], "Mittagessen"],
   [/\bessen\b|verpflegung|ernährung|\bfood\b/, eating, "Essen"],
   [/\babos?\b|abonnement/, ["Abonnements"], "Abonnements"],
-  [/tanken|sprit|benzin|diesel/, ["Tanken"], "Tanken"],
+  [/tanken|getankt|sprit|benzin|diesel/, ["Tanken", "Mobilität"], "Tanken"],
   [/öffis|öffentlich|\bzug\b|\bbahn\b|\bbus\b/, ["Öffentliche Verkehrsmittel"], "Öffis"],
   [/parken|maut|vignette/, ["Parken & Maut"], "Parken & Maut"],
   [/\bauto\b|mobilität|fahrzeug/, ["Mobilität", "Tanken", "Parken & Maut", "Fahrzeugwartung", "Leasing"], "Auto & Mobilität"],
@@ -198,13 +198,16 @@ const categoryWords: [RegExp, Category[], string][] = [
   [/guthaben/, ["Guthabenkarten"], "Guthabenkarten"],
 ];
 
+// Fuel stations are classified as Mobilität, so "Tanken" also searches there.
+const widerCategories: Partial<Record<Category, Category[]>> = { Tanken: ["Tanken", "Mobilität"] };
+
 export function findCategories(text: string): { categories: Category[]; label: string } | undefined {
   const plain = normalizeSearch(text);
   const exact = [...categories].sort((a, b) => b.length - a.length).find((category) => {
     const name = normalizeSearch(category);
     return plain.includes(name) || (name.length > 5 && plain.includes(name.slice(0, -1)));
   });
-  if (exact) return { categories: [exact], label: exact };
+  if (exact) return { categories: widerCategories[exact] ?? [exact], label: exact };
   const lower = text.toLowerCase();
   const match = categoryWords.find(([pattern]) => pattern.test(lower));
   return match ? { categories: match[1], label: match[2] } : undefined;
@@ -332,7 +335,11 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
       merchant: ownMerchant ?? (inherit && !ownFilter ? findMerchant(state, inherit) : undefined), bank, previous });
   }
   const period = findPeriod(text, today) ?? earlierPeriod(previous, today) ?? parsePeriod(text, today);
-  const hintCategory = hints.category && categories.includes(hints.category as never) ? { categories: [hints.category as Category], label: hints.category } : undefined;
+  // Bookkeeping categories are no guess for "Buchungen über 100 Euro"; they only count when the question names them.
+  const bookkeeping = ["Transfer", "Transfer intern", "Prüfen", "Sonstiges"].includes(hints.category ?? "") &&
+    !normalizeSearch(text).includes(normalizeSearch(hints.category ?? "").slice(0, 6));
+  const hintCategory = hints.category && categories.includes(hints.category as never) && !bookkeeping
+    ? { categories: [hints.category as Category], label: hints.category } : undefined;
   // A bank or card question is about the account, so a model category guess like "Abonnements" is ignored.
   const filter = ownFilter ?? (inherit ? findCategories(inherit) : undefined) ?? (bank ? undefined : hintCategory);
   const merchant = ownMerchant ?? (inherit && !ownFilter ? findMerchant(state, inherit) : undefined);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { conversationalQuestion, conversationRoute, evidenceText, isQuestion } from "./conversation";
+import { conversationalQuestion, conversationRoute, converseOn, evidenceText, isQuestion } from "./conversation";
 
 const route = (text: string, tool?: Parameters<typeof conversationRoute>[0]["tool"], extra: Partial<Parameters<typeof conversationRoute>[0]> = {}) =>
   conversationRoute({ text, tool, ruleTool: undefined, numbers: [], pending: false, ...extra });
@@ -36,6 +36,21 @@ describe("conversation routing", () => {
     for (const text of ["Hab ich irgendwas doppelt bezahlt?", "Wofür geb ich am meisten aus", "Was ist meine teuerste Kategorie?", "Wie viel hab ich seit Jahresbeginn gespart?", "Ist Netflix teurer geworden?"])
       expect(route(text, "query", { ruleTool: "query" }), text).toEqual({ converse: true, skipDraft: true });
     expect(route("Was war meine größte Ausgabe diesen Monat?", "query", { ruleTool: "query" })).toEqual({ tool: "query", converse: false, skipDraft: false });
+  });
+
+  it("keeps the tool's own words for empty results and finished summaries", () => {
+    const empty = { text: "Im Oktober finde ich keine passenden Ausgaben.", card: { kind: "answer" as const, title: "Essen", total: 0, lines: [] } };
+    const filled = { text: "92,40 €", card: { kind: "answer" as const, title: "Essen", total: -92.4, lines: [{ label: "Billa", value: -92.4 }] } };
+    expect(converseOn("query", empty, "wo geht mein ganzes geld hin")).toBe(false);
+    expect(converseOn("why", { text: "Keine Buchung gefunden." }, "Warum ist Billa Lebensmittel?")).toBe(false);
+    expect(converseOn("query", filled, "wo geht mein ganzes geld hin")).toBe(true);
+    expect(converseOn("briefing", filled, "Gib mir den Wochenüberblick")).toBe(false);
+    expect(converseOn("payroll", filled, "Warum zahle ich so viel Lohnsteuer?")).toBe(false);
+    expect(converseOn("check", filled, "Sollte ich mehr sparen?")).toBe(true);
+    expect(converseOn("knowledge", { text: "Ein ETF ist ein börsengehandelter Fonds." }, "Erklär mir ETFs")).toBe(true);
+    expect(converseOn("why", filled, "Warum ist Billa Lebensmittel?")).toBe(false);
+    // A summary the model only guessed for a "Warum …?" question still gets put into words.
+    expect(converseOn("insights", filled, "Warum hab ich am Monatsende so wenig Geld?", true)).toBe(true);
   });
 
   it("turns a tool result into quotable evidence", () => {

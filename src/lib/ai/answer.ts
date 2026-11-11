@@ -44,14 +44,15 @@ function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, ev
 // Specialists keep it short; the general chat gets a little more room and a livelier temperature.
 const answerOptions = (agent: AgentId = "general") => agent === "general" ? { maxTokens: 400, temperature: 0.5 } : { maxTokens: 300, temperature: 0.3 };
 
-// Amounts written inside texts (tool results, health check) count as backed, too.
-function backing(facts: Record<string, unknown>, evidence?: string) {
+// Amounts written inside texts (tool results, health check) and the user's own numbers in the question count as backed, too.
+function backing(facts: Record<string, unknown>, evidence?: string, question?: string) {
   const numbers: number[] = [];
   const collect = (text: string) => {
     for (const raw of text.match(/\d+(?:\.\d{3})*(?:,\d+)?/g) ?? []) numbers.push(Number(raw.replace(/\./g, "").replace(",", ".")));
   };
   JSON.stringify(facts, (_key, value) => { if (typeof value === "string") collect(value); return value; });
   if (evidence) collect(evidence);
+  if (question) collect(question);
   return { facts, numbers };
 }
 
@@ -71,8 +72,12 @@ export function answerCheck(agent: AgentId | undefined, facts: Record<string, un
 
 // Plain chat text: no Markdown emphasis, headings or list markers, one paragraph per answer.
 export function tidyAnswer(text: string): string {
-  return text.split(/\r?\n/).map((line) => line.replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "").trim()).filter(Boolean).join(" ")
+  const plain = text.split(/\r?\n/).map((line) => line.replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "").trim()).filter(Boolean).join(" ")
     .replace(/\*\*(.+?)\*\*|__(.+?)__/g, "$1$2").replace(/`([^`]*)`/g, "$1");
+  // Stock openers ("Kurz gesagt:", "Gute Frage!") and echoing the question ("Du willst wissen, …?") add nothing in a chat.
+  const rest = plain.replace(/^(?:kurz gesagt|kurz und knapp|gute frage|klar doch|na klar)\s*[:!,.–-]\s*/i, "")
+    .replace(/^(?:(?:okay|ok|alles klar|klar),?\s+)?du (?:willst|möchtest|moechtest|fragst|fragst dich|meinst)\b[^?.!]{0,160}\?\s+(?=\S)/i, "");
+  return rest === plain || !rest ? plain : rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 // Splits after ., ! or ? followed by a space; "8.279,28" and "8.11.2026" stay whole.
@@ -82,14 +87,17 @@ const sentences = (text: string) => text.split(/(?<=[.!?])\s+/).filter(Boolean);
 function groundedText(content: string, source: object, check: (sentence: string, source: object) => boolean = backed) {
   const text = tidyAnswer(unwrapJson(stripThinking(content))).replace(/\s+/g, " ").trim().slice(0, 1200);
   if (text.startsWith("{")) return undefined;
-  const kept = sentences(text).filter((sentence) => check(sentence, source)).join(" ").trim();
+  // Small models sometimes loop; a sentence said twice is kept once.
+  const seen = new Set<string>();
+  const kept = sentences(text).filter((sentence) => check(sentence, source))
+    .filter((sentence) => { const key = sentence.toLowerCase(); return !seen.has(key) && !!seen.add(key); }).join(" ").trim();
   return kept.length >= 2 && /\p{L}/u.test(kept) ? kept : undefined;
 }
 
 function prepare(input: AnswerRequest) {
   const facts = cleanFacts(input.facts, 1500);
   const evidence = input.evidence ? cleanUntrusted(input.evidence, 1500) : undefined;
-  return { facts, evidence, source: backing(facts, evidence), check: answerCheck(input.agent, facts, evidence) };
+  return { facts, evidence, source: backing(facts, evidence, input.question), check: answerCheck(input.agent, facts, evidence) };
 }
 
 // A grounded free answer: every number, link and account number must come from the facts or the tool result.

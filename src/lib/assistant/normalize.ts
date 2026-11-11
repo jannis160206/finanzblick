@@ -19,6 +19,9 @@ const umlauts: [RegExp, string][] = [
 const months: Record<string, string> = { feb: "februar", mrz: "märz", "mär": "märz", apr: "april", jun: "juni", jul: "juli",
   aug: "august", sep: "september", sept: "september", okt: "oktober", nov: "november", dez: "dezember" };
 
+const englishMonths: Record<string, string> = { january: "jänner", february: "februar", march: "märz", june: "juni", july: "juli",
+  october: "oktober", december: "dezember" };
+
 const slang: [RegExp, string][] = [
   [/\b(?:wv|wieviel|wie vieel+|wievieel+)\b/gi, "wie viel"],
   [/\b(?:kohle|knete|kröten|kroeten|zaster|moneten|asche)\b/gi, "geld"],
@@ -36,6 +39,9 @@ export function normalizeMessage(text: string): string {
   for (const [pattern, replacement] of slang) result = result.replace(pattern, (match) => keepCase(match.replace(/^'/, ""), replacement));
   // "okt", "sept." → full month names; "Jan" stays because it is also a first name.
   result = result.replace(/\b(feb|mrz|mär|apr|jun|jul|aug|sept|sep|okt|nov|dez)\b\.?/gi, (match, word: string) => keepCase(match, months[word.toLowerCase()]));
+  // English month names ("in october"); "may" stays because it is also a verb.
+  result = result.replace(/\b(january|february|march|june|july|october|december)\b/gi, (match, word: string) =>
+    keepCase(match, englishMonths[word.toLowerCase()]));
   // "Juli 27" → "Juli 2027" (a two-digit year right after a month, not an amount).
   result = result.replace(/\b(jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+'?(2[4-9]|3\d)\b(?!\s*(?:€|euro|eur|\.\d|,\d|\d))/gi,
     (_, month: string, year: string) => `${month} 20${year}`);

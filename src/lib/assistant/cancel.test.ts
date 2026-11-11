@@ -33,6 +33,14 @@ describe("Kündigungshilfe", () => {
     expect(cancelQuestion("mein job wurde gekündigt, was jetzt")).toBe(false);
   });
 
+  it("never offers monthly grocery runs as a contract to cancel", () => {
+    const state = fixture();
+    state.transactions.push(...["2026-07-22", "2026-08-22", "2026-09-22"].map((date, index) => booking(`spar-${index}`, date, "SPAR 5678", -(31 + index * 4), "Lebensmittel")));
+    const list = cancelAnswer(state, "Welche Verträge kann ich kündigen?", today);
+    expect(list.card?.lines.map((line) => line.label)).toContain("NETFLIX.COM");
+    expect(list.card?.lines.map((line) => line.label).join(" ")).not.toMatch(/SPAR/);
+  });
+
   it("explains one contract with costs, notice, link and letter", () => {
     const result = cancelAnswer(fixture(), "Kündige Netflix", today);
     expect(result.card?.kind).toBe("cancel");

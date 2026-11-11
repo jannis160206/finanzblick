@@ -3,6 +3,7 @@ import type { Payslip } from "./payslip-schema";
 import {
   FAMILY_BONUS,
   incomeTax,
+  marginalTaxRate,
   monthlyWageTax,
   specialPaymentTax,
   wageTaxCaption,
@@ -25,6 +26,7 @@ describe("Austrian wage tax", () => {
     expect(monthlyWageTax(3500, 2027)).toBe(624.37);
     expect(monthlyWageTax(900, 2026)).toBe(0);
     expect(wageTaxCaption(2026)).toBe("Lohnsteuertarif AT 2026 · progressiv + Absetzbeträge");
+    expect([13539, 21993, 39228, 2_000_000].map((taxable) => marginalTaxRate(taxable, 2026))).toEqual([0, 0.3, 0.4, 0.55]);
   });
 
   it("learns the tax credits from the payslips and recognises the Familienbonus Plus", () => {

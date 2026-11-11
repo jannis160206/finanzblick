@@ -66,7 +66,7 @@ describe("orchestrator", () => {
   it("lets a specialist interpret with its own tools only, in one call", async () => {
     // A tool of another agent is ignored: the specialist answers in words instead.
     chat.mockResolvedValueOnce({ content: JSON.stringify({ tool: "query" }) });
-    const reply = await interpretAssistantMessage(request("Werden Überstunden anders versteuert?"));
+    const reply = await interpretAssistantMessage(request("Wie wird meine Rufbereitschaft abgerechnet?"));
     expect(reply).toMatchObject({ agent: "payroll", via: "signal", source: "KI" });
     expect(reply.tool).toBeUndefined();
     const [messages] = chat.mock.calls[0] as [{ content: string }[]];
@@ -74,7 +74,7 @@ describe("orchestrator", () => {
     expect(messages[0].content).not.toMatch(/\bquery = |\bbudget_plan = /);
     expect(messages[1].content).not.toContain("Kategorien:");
     chat.mockResolvedValueOnce({ content: JSON.stringify({ tool: "payroll" }) });
-    expect(await interpretAssistantMessage(request("Werden Überstunden anders versteuert?"))).toMatchObject({ agent: "payroll", tool: "payroll" });
+    expect(await interpretAssistantMessage(request("Wie wird meine Rufbereitschaft abgerechnet?"))).toMatchObject({ agent: "payroll", tool: "payroll" });
     expect(chat).toHaveBeenCalledTimes(2);
   });
 });

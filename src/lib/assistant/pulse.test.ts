@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { calculateDashboard, type Dashboard } from "@/lib/calc";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, assistantCardSchema, type AppState, type Transaction } from "@/lib/types";
-import { budgetPace, pulseAnswer, pulseQuestion, salaryStatus } from "./pulse";
+import { conversationRoute } from "./conversation";
+import { budgetAdvice, budgetPace, pulseAnswer, pulseQuestion, salaryStatus } from "./pulse";
 import { detectTool } from "./tools";
 import { emptySeen, findAlerts } from "./watch";
 
@@ -37,6 +38,20 @@ describe("Monats-Puls", () => {
       { id: "fun", label: "Freizeit", total: 200, actual: 60 },
     ]);
     expect(budgetPace(dashboard, "2026-09-10").map((item) => item.status)).toEqual(["over", "ahead", "ok"]);
+  });
+
+  it("answers whether to raise or lower one budget line from its pace instead of opening an edit", () => {
+    const question = "Sollte ich das Lebensmittelbudget erhöhen?";
+    expect(conversationRoute({ text: question, tool: "budget_plan", ruleTool: "budget_plan", numbers: [], pending: false }))
+      .toEqual({ tool: "budget", converse: false, skipDraft: false });
+    const dashboard = (food: number) => withRows(calculateDashboard(stateWith([])), [{ id: "food", label: "Lebensmittel & Haushalt", total: 300, actual: food }]);
+    const fast = budgetAdvice(dashboard(240), "2026-09-15", question);
+    expect(fast?.text).toMatch(/^Ja, eher schon\. Für Lebensmittel & Haushalt sind 300,00\s€ im Monat geplant, bisher hast du 240,00\s€ ausgegeben – bei diesem Tempo landest du bei etwa 480,00\s€/);
+    expect(fast?.suggestions?.[0]).toBe("Budget Lebensmittel & Haushalt auf 480 € setzen");
+    expect(budgetAdvice(dashboard(100), "2026-09-15", question)?.text).toMatch(/^Nein, eher nicht\. .* gut aus\.$/);
+    expect(budgetAdvice(dashboard(60), "2026-09-15", "Sollte ich das Lebensmittelbudget senken?")?.text).toMatch(/^Ja, das geht wohl\./);
+    expect(budgetAdvice(dashboard(20), "2026-09-03", question)?.text).toMatch(/^Dafür ist es noch zu früh im Monat\./);
+    expect(budgetAdvice(dashboard(240), "2026-09-15", "Wie hoch ist mein Lebensmittelbudget?")).toBeUndefined();
   });
 
   it("knows whether this month's salary arrived and when the next one is due", () => {

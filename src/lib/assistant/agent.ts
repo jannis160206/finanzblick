@@ -19,7 +19,7 @@ import { bookingEdit } from "./bookings";
 import { cancelAnswer } from "./cancel";
 import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
-import { pulseAnswer } from "./pulse";
+import { budgetAdvice, pulseAnswer } from "./pulse";
 import { payrollAnswer } from "./payroll";
 import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
@@ -397,7 +397,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "query": return answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage));
     case "amex": return amexSettlement(state, dashboard, text, asOf);
     case "accounts": return goalsQuestion(text.toLowerCase()) ? goalsStatus(dashboard, asOf) : amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
-    case "budget": return monthBudget(dashboard, text);
+    case "budget": return budgetAdvice(dashboard, asOf, text) ?? monthBudget(dashboard, text);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));
     case "check": return financialCheck(state, dashboard, asOf, text);
     case "coach": {
@@ -461,7 +461,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "contracts": return contractsAnswer(state, text, asOf, () => answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage)), context.page);
     case "context": return contextAnswer(state, text, context.page);
     case "insights": return insightsAnswer(state, dashboard, asOf, context.insights);
-    case "payroll": return payrollAnswer(state);
+    case "payroll": return payrollAnswer(state, text);
     case "budget_plan": {
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;

@@ -21,9 +21,9 @@ import { extractMemories } from "@/lib/assistant/memory";
 import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
-import { changingTools, conversationRoute, evidenceText } from "@/lib/assistant/conversation";
+import { changingTools, conversationRoute, converseOn, evidenceText } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
-import { agentLabel, isAgentId, routeByRules, routeBySignals, toolOwner, type AgentId } from "@/lib/assistant/orchestrator";
+import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
 import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
 import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
 import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
@@ -31,7 +31,7 @@ import { currentNavItem } from "@/components/shell/navigation";
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
 import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
 import { resolveFollowUp } from "@/lib/assistant/followup";
-import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
+import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
@@ -171,12 +171,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const setMessage = (id: string, patch: Partial<AssistantMessage>, reply?: string, also?: (current: AppState) => AppState) =>
     save((items) => [...items.map((item) => item.id === id ? { ...item, ...patch } : item),
       ...(reply ? [{ id: newId(), role: "assistant" as const, text: reply, at: Date.now() }] : [])], also);
-  const addDraftMessage = (draft: AssistantDraft, source: AssistantMessage["source"] = "Regel") => {
+  const addDraftMessage = (draft: AssistantDraft, source: AssistantMessage["source"] = "Regel", run: Pick<AssistantMessage, "via" | "ms"> = {}) => {
     const question = missingQuestion(draft);
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
-      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action] }]);
+      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action], ...run }]);
   };
-  const addResult = (result: AgentResult, source: AssistantMessage["source"], meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent"> = {}) => {
+  const addResult = (result: AgentResult, source: AssistantMessage["source"],
+    meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms"> = {}) => {
     const suggestions = result.choices?.length ? result.choices : result.suggestions;
     const message = {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
@@ -184,6 +185,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.change || result.undoId ? { status: "preview" as const } : {}),
       ...(suggestions?.length ? { suggestions: [...new Set(suggestions)].map((item) => item.slice(0, 120)).slice(0, 4) } : {}),
       ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}), ...(meta.agent ? { agent: meta.agent } : {}),
+      ...(meta.via ? { via: meta.via } : {}), ...(meta.ms !== undefined ? { ms: Math.max(0, Math.round(meta.ms)) } : {}),
       ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
     };
@@ -286,7 +288,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const at = timestamp();
     const text = `Gemerkt: ${operations.map((operation) => operation.text).join(" · ")}`.slice(0, 300);
     commit((current) => recordChange(current, applyOperations(current, operations, { asOf: current.settings.asOf, now: at }), { id: logId, at, title: text }),
-      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel" }]);
+      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel", agent: "general" }]);
   }
 
   // Proactive start: one weekly overview per day, built only from your own data.
@@ -385,9 +387,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     event?.preventDefault();
     const text = (preset ?? input).trim().slice(0, 1000);
     if (!text || busy || storageError) return;
-    const pending = [...messages].reverse().find((item) => item.role === "assistant" && item.draft && (item.status === "question" || item.status === "preview"))?.draft;
+    // Only the latest answer's open draft takes follow-ups ("lieber 4000"); once the chat moved on, a new message is a new request.
+    const latest = messages.findLast((item) => item.role === "assistant");
+    const pending = latest?.draft && (latest.status === "question" || latest.status === "preview") ? latest.draft : undefined;
     const asOf = state.settings.asOf;
     const startedAt = Date.now();
+    // Rough duration of this run for the admin view, from sending to the answer.
+    const elapsed = () => Date.now() - startedAt;
     // Short pause, so instant rule answers still read like a reply instead of a page jump.
     const settle = () => new Promise((resolve) => setTimeout(resolve, Math.max(0, 650 - (Date.now() - startedAt))));
     const names = knownNames();
@@ -402,7 +408,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       update((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, teaching.from, target) }));
       await settle();
       addResult({ text: `Gemerkt: Wenn du „${teaching.from}“ schreibst, meinst du „${target}“. Das gilt ab sofort überall im Chat; unter „Gedächtnis“ kannst du es wieder löschen.`,
-        suggestions: [`Wie weit bin ich bei ${teaching.from}?`, "Was hast du gelernt?"] }, "Regel");
+        suggestions: [`Wie weit bin ich bei ${teaching.from}?`, "Was hast du gelernt?"] }, "Regel", { agent: "general", via: "rule", ms: elapsed() });
       setBusy(false);
       inputRef.current?.focus();
       return;
@@ -429,13 +435,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const aliased = applyAliases(state.assistantAliases, work);
     work = aliased.text;
     if (aliased.used.length) update((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
-    const chat = pending || original || chosen ? undefined : smallTalk(text, { hour: new Date().getHours(), seed: messages.length });
+    const chat = pending || original || chosen ? undefined : smallTalk(text, { hour: new Date().getHours(), seed: messages.length, now: new Date() });
     if (chat) {
       setInput("");
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
       await settle();
-      addResult(chat, "Regel");
+      addResult(chat, "Regel", { agent: "general", via: "rule", ms: elapsed() });
       setBusy(false);
       inputRef.current?.focus();
       return;
@@ -447,7 +453,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     setInput("");
     setBusy(true);
     save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
-    let reply: { agent?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
+    let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
     // "und im September?" reuses the previous question instead of asking the model again.
     const follow = pending ? undefined : resolveFollowUp(work, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
@@ -467,28 +473,36 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       // Same orchestrator rules as the server, without the model; whatever stays unclear goes to the general chat.
       const decision = routeByRules(work, [...goals, ...planned]);
       const tool = decision?.tool;
-      if (tool && !isDraftTool(tool) && !(pending && tool === "help")) reply = { agent: decision.agent, tool, source: "Regel" };
+      if (tool && !isDraftTool(tool) && !(pending && tool === "help")) reply = { agent: decision.agent, via: decision.via, tool, source: "Regel" };
       else {
         const draft = mergeDraft(pending, parseAssistantMessage(work, asOf), {}, work, asOf);
-        reply = { agent: draft ? toolOwner[draft.action] : decision?.agent ?? "general", draft, question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
+        reply = { agent: draft ? toolOwner[draft.action] : decision?.agent ?? "general", via: draft ? "rule" : decision?.via ?? "fallback", draft,
+          question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
       }
     }
     const picked: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
     // Explanations, opinions and advice get a written answer; a question never silently opens an edit or a form.
-    const route = conversationRoute({ text: work, tool: picked, ruleTool: reply.source === "Regel" ? picked : detectTool(work, [...goals, ...planned]),
+    const ruleTool = reply.source === "Regel" ? picked : detectTool(work, [...goals, ...planned]);
+    const route = conversationRoute({ text: work, tool: picked, ruleTool,
       draftAction: reply.draft?.action, numbers: work.match(/\d+(?:[.,]\d+)?/g)?.map(Number) ?? [], pending: !!pending });
     const tool = route.tool;
     // A tool's owner answers; without a tool the orchestrator's choice, and the general chat whenever it is unsure.
-    // A question that dropped a misread form ("Was ist mit meiner Versicherung los?") is routed again by its signal words.
-    const agent: AgentId = tool ? toolOwner[tool] : route.skipDraft ? routeBySignals(work, [...goals, ...planned])?.agent ?? "general"
+    // A question that dropped an edit ("Sollte ich das Lebensmittelbudget erhöhen?") stays with that edit's owner;
+    // one that dropped a misread form ("Was ist mit meiner Versicherung los?") is routed again by its signal words.
+    const dropped = !tool && picked && changingTools.includes(picked) ? picked : undefined;
+    const agent: AgentId = tool ? toolOwner[tool] : dropped ? toolOwner[dropped]
+      : route.skipDraft ? routeBySignals(work, [...goals, ...planned])?.agent ?? "general"
       : isAgentId(reply.agent) ? reply.agent : "general";
+    const via: RouteVia = isRouteVia(reply.via) ? reply.via : "rule";
+    const run = { agent, via };
     // Only the model understood this phrasing; remember it so the rules answer it directly next time.
     if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
       !detectTool(work, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
         assistantGaps: resolveGap(current.assistantGaps, work, tool) }));
     // What was learned from this message is said at the start of the answer.
     const notes: string[] = [];
-    if (original && tool && learnableTools.includes(tool) && original !== work && !detectTool(original, [...goals, ...planned])) {
+    // An explicit "Nein, ich meinte …" always teaches; after "da komme ich nicht mit" only a real rephrasing, not the next topic.
+    if (original && tool && learnableTools.includes(tool) && original !== work && !detectTool(original, [...goals, ...planned]) && (fix || rephrases(original, work))) {
       update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, original, tool), assistantGaps: resolveGap(current.assistantGaps, original, tool) }));
       notes.push(`Danke, gelernt: „${original.slice(0, 80)}“ verstehe ich ab jetzt so.`);
     }
@@ -508,14 +522,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         const next = { ...state, accountRules: storeAccountRules(state.accountRules, rules) };
         update((current) => ({ ...current, accountRules: storeAccountRules(current.accountRules, rules) }));
         addResult(rulesResult(next, dashboard, asOf, `Gemerkt: ${rules.map((rule) => `${rule.account} ${ruleText(rule)}`).join("; ")}. ` +
-          "Bei „Kann ich mir … leisten?“ prüfe ich ab jetzt genau diese Konten und sage dir OK oder nicht OK."), "Regel", { tool, asked: work });
+          "Bei „Kann ich mir … leisten?“ prüfe ich ab jetzt genau diese Konten und sage dir OK oder nicht OK."), "Regel", { tool, asked: work, ...run, ms: elapsed() });
       } else addResult({ text: "Welches Konto meinst du und wofür darf es verwendet werden? Zum Beispiel „Sparkonto ist für alle Ausgaben“ oder „Trade Republic nur für Autowerkstatt, Ölwechsel“.",
-        suggestions: ["Welche Konten darf ich wofür verwenden?"] }, reply.source);
+        suggestions: ["Welche Konten darf ich wofür verwenden?"] }, reply.source, { ...run, ms: elapsed() });
     } else if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
       const operation = parseMemory(work);
       if (operation) remember([operation]);
-      else addResult({ text: "Was soll ich mir merken? Zum Beispiel „Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“." }, reply.source);
+      else addResult({ text: "Was soll ich mir merken? Zum Beispiel „Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“." }, reply.source, { ...run, ms: elapsed() });
     } else if (tool) {
       let result: AgentResult;
       const market = tool === "market" || tool === "depot" ? await loadMarket(work) : undefined;
@@ -527,22 +541,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
       // The tool computed the numbers; the model turns them into a direct answer to the actual question. The card stays.
-      if (route.converse && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
+      if (route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
         const said = await freeAnswer(work, history, agent, evidenceText(result));
         if (said) result = { ...result, text: said };
       }
       addResult(withNotes(result.suggestions || result.change || result.undoId || result.choices ? result : { ...result, suggestions: followUps[tool] }), reply.source,
-        { tool, asked: work, clarify: work, agent });
+        { tool, asked: work, clarify: work, ...run, ms: elapsed() });
     } else if (parsed?.success && parsed.data.action === "affordability")
       // Affordability never opens a plan form: it checks the accounts that may be used and says OK or not OK.
-      addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work, agent: "budget" });
-    else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
-    else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, agent });
+      addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work, agent: "budget", via, ms: elapsed() });
+    else if (parsed?.success) addDraftMessage(parsed.data, reply.source, { via, ms: elapsed() });
+    else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, ...run, ms: elapsed() });
     else {
       update((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
       addResult({ text: "Hm, da komme ich gerade nicht mit. Magst du es mir anders sagen? Die neue Formulierung merke ich mir für das nächste Mal. " +
         "Frag mich zum Beispiel nach deinen Ausgaben, einem Sparziel oder ob sich ein Kauf ausgeht.",
-      suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work });
+      suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work, ...run, ms: elapsed() });
     }
     // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.
     if (tool !== "remember") {
@@ -633,7 +647,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       <FinancialData className={panelMode ? "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6" : "flex flex-1 flex-col gap-4"} aria-live="polite">
         <Bubble role="assistant" text={intro} />
         {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
-        {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
+        {messages.map((message) => <div key={message.id} className="flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
+          data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
           <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} faded={message.status === "dismissed"}>
             {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
               onResult={storageError ? undefined : (result) => addResult(result, "Regel")} />}

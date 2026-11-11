@@ -4,6 +4,7 @@ import { pocketKey } from "@/lib/goals";
 import { detectSubscriptions, forecastMonth, ledger } from "@/lib/insights";
 import type { AppState, AssistantCard } from "@/lib/types";
 import { monthEndForecast } from "@/lib/month-forecast";
+import { budgetLinesIn } from "./budget-plan";
 import { buildForecastInput, GIRO, projectAccounts } from "./forecast";
 
 type Line = AssistantCard["lines"][number];
@@ -60,6 +61,41 @@ export function budgetPace(dashboard: Dashboard, today: string): BudgetPace[] {
       : row.actual > expected * 1.2 && row.actual - expected > 15 ? "ahead" as const : "ok" as const;
     return { id: row.id, label: row.label, total: row.total, actual: row.actual, expected, status };
   });
+}
+
+const raiseWords = /erhöh|erhoeh|\bmehr\b|aufstock|rauf/;
+const lowerWords = /senk|reduzier|kürz|kuerz|weniger|runter/;
+
+/** "Sollte ich das Lebensmittelbudget erhöhen?": the named budget line's pace this month and a clear recommendation. */
+export function budgetAdvice(dashboard: Dashboard, today: string, text: string): Result | undefined {
+  const lower = text.toLowerCase();
+  if (!/\b(?:sollte|soll|sollen|müsste|muss)\s+ich\b|\blohnt\s+(?:es\s+)?sich\b/.test(lower) || !raiseWords.test(lower) && !lowerWords.test(lower)) return undefined;
+  const ids = budgetLinesIn(lower).map((line) => line.id);
+  const row = ids.length === 1 ? budgetPace(dashboard, today).find((item) => item.id === ids[0]) : undefined;
+  if (!row) return undefined;
+  const share = Number(today.slice(8, 10)) / daysInMonth(today.slice(0, 7));
+  const projected = round(row.actual / share);
+  const target = Math.ceil(Math.max(projected, row.actual) / 10) * 10;
+  const ahead = row.actual > row.total + 0.5 || projected > row.total * 1.1;
+  const lowering = lowerWords.test(lower) && !raiseWords.test(lower);
+  const base = `Für ${row.label} sind ${currency(row.total)} im Monat geplant, bisher hast du ${currency(row.actual)} ausgegeben`;
+  let answer: string;
+  if (share < 0.25 && !ahead) answer = `Dafür ist es noch zu früh im Monat. ${base}; schau Mitte des Monats noch einmal drauf.`;
+  else if (lowering) answer = ahead ? `Nein, eher nicht. ${base} – du brauchst eher mehr als geplant.`
+    : projected < row.total * 0.8 ? `Ja, das geht wohl. ${base} – bei diesem Tempo reichen etwa ${currency(target)}.`
+      : `Eher nicht. ${base} – bei diesem Tempo brauchst du das Budget ziemlich genau.`;
+  else answer = ahead ? `Ja, eher schon. ${base} – bei diesem Tempo landest du bei etwa ${currency(Math.max(projected, row.actual))}, ` +
+    `realistischer wären rund ${currency(target)}.` : `Nein, eher nicht. ${base} – bei diesem Tempo kommst du mit etwa ${currency(projected)} gut aus.`;
+  const change = target !== row.total && (lowering ? !ahead && projected < row.total * 0.8 && share >= 0.25 : ahead);
+  return {
+    text: answer,
+    card: { kind: "answer", title: `Budget · ${row.label}`, lines: [
+      { label: "Geplant", value: row.total },
+      { label: "Bisher ausgegeben", value: row.actual, detail: `bis heute üblich ${currency(row.expected)}` },
+      { label: "Hochgerechnet aufs Monatsende", value: projected, tone: ahead ? "warn" : "good" },
+    ] },
+    suggestions: change ? [`Budget ${row.label} auf ${target} € setzen`, "Wie viel kann ich heute noch ausgeben?"] : ["Wie viel kann ich heute noch ausgeben?", "Wo kann ich sparen?"],
+  };
 }
 
 // Categories clearly above the average of the last three months at the same day of the month.

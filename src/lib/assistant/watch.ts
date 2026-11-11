@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { daysInMonth, round, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
+import { isEverydayCategory } from "@/lib/contracts";
 import { detectDuplicateCharges, detectDuplicateFixedCosts, detectSubscriptions } from "@/lib/insights";
 import type { AppState } from "@/lib/types";
 import { memoryValue } from "./agent";
@@ -58,7 +59,7 @@ export function findAlerts(state: AppState, dashboard: Dashboard, today: string,
       title: level === "over" ? `Budget überschritten: ${row.label}` : `Budget fast aufgebraucht: ${row.label}`,
       detail: `${currency(-row.actual)} von ${currency(-row.total)} · noch ${daysLeft} Tage im Monat` });
   }
-  const subscriptions = detectSubscriptions(state, today);
+  const subscriptions = detectSubscriptions(state, today).filter((entry) => !isEverydayCategory(entry.category));
   for (const item of subscriptions.filter((entry) => entry.priceChange && entry.priceChange.date >= shiftDate(today, -35)))
     alerts.push({ key: `price:${item.merchant}:${item.priceChange!.date}`, kind: "price", tone: "warn",
       title: `${item.merchant} wurde teurer`,

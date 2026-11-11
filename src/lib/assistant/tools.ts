@@ -19,7 +19,7 @@ import { allCategories } from "@/lib/categories";
 import { cleanupQuestion } from "./cleanup";
 import { contextQuestion, contractsQuestion, insightsQuestion } from "./copilot-questions";
 import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
-import { payrollQuestion } from "./payroll";
+import { payrollQuestion, payrollTermQuestion } from "./payroll";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
@@ -117,7 +117,7 @@ const explainPattern = new RegExp([
 const months = "jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember";
 const periodWords = new RegExp(`\\b(?:${months})\\b|letzte[nrs]? (?:monat|woche|jahr)|vorigen? (?:monat|jahr)|diese[nrs]? (?:monat|woche|jahr)|\\bheuer\\b|\\bvorjahr\\b|\\b20\\d{2}\\b`);
 const spentWords = /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|kosten mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt|draufgegangen|drauf gegangen|gelassen|verballert|verprasst|rausgehauen|ausgeben|gebe ich|geb ich|liegen gelassen|gezahlt|verbraten|\bdrauf\b|war ich (?:bei|beim|im|in)\b|preiserhöh|teurer geworden|\bbestellt\b|fixkosten|fixe kosten|laufenden kosten|\bzahl(?:e)? ich\b|gespart|übrig geblieben|uebrig geblieben/;
-const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert)\b/;
+const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert|getankt|eingekauft)\b/;
 const spendingQuestion = (lower: string) =>
   /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:mein|das|unser) geld/.test(lower) ||
   /^(?:ausgaben|einnahmen|kosten|umsätze|umsaetze)\b/.test(lower) && periodWords.test(lower) ||
@@ -198,6 +198,9 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (insightsQuestion(lower)) return "insights";
   if (contextQuestion(lower)) return "context";
   if (contractsQuestion(lower) && !known) return "contracts";
+  // "Ist Spotify teurer geworden?", "Was ist mit meiner Versicherung los?": one contract, answered from the contract list.
+  if (!known && (/^(?:ist|wurde|hat sich)\b.*\b(?:teurer geworden|teurer|preiserhöh\w*)\b/.test(lower) && !/\b(?:abos|verträge|vertraege|alle)\b/.test(lower) ||
+    /\bwas ist (?:mit|bei) (?:meine[mnr]?|dem|der|den)\s+(?:\S+\s+)?(?:vertrag|abo|versicherung|handyvertrag|tarif)\w*\s+los\b/.test(lower))) return "contracts";
   if (/was (?:weißt|weisst) du (?:über|ueber) mich|was hast du dir (?:\S+ ){0,3}gemerkt|was merkst du dir|dein gedächtnis|\bgedächtnis\b/.test(lower) &&
     !/vergiss|lösch|merk dir|merke dir/.test(lower)) return "memory";
   if (knowledgeListQuestion(lower)) return "knowledge";
@@ -209,6 +212,8 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
   if (loanQuestion(lower)) return "loan";
+  // Payroll terms ("Unterschied zwischen Brutto und Netto?") are explained with the own payslip, not looked up.
+  if (payrollTermQuestion(lower)) return "payroll";
   // Definition questions ("Was ist ein ETF?") are looked up, but never questions about own data or the dashboard.
   // Live values (inflation, key rate, exchange rate) stay with the market tool.
   const termQuestion = knowledgeQuestion(text, names);

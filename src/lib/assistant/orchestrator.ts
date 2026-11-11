@@ -42,10 +42,10 @@ export const agentTools = (agent: AgentId): AssistantTool[] => assistantTools.fi
 const words = (list: string) => new RegExp(String.raw`(?<![\p{L}\p{N}])(?:${list})(?![\p{L}\p{N}])`, "u");
 // Words that clearly belong to one domain. A message has to hit exactly one specialist to skip the model.
 const signals: Record<SpecialistId, RegExp[]> = {
-  transactions: [words(String.raw`buchung\p{L}*|umsätze|umsatz|ausgegeben|bezahlt|gezahlt|eingenommen|überweisung\p{L}*|abbuchung\p{L}*|lastschrift\p{L}*|händler\p{L}*|kategori\p{L}*|rückerstattung\p{L}*|retoure\p{L}*|gutschrift\p{L}*|doppelt|bestellung\p{L}*|klarna|paypal|monatsbericht|rückblick|verdächtig\p{L}*`),
+  transactions: [words(String.raw`buchung\p{L}*|umsätze|spend|spent|spending|expenses?|groceries|getankt|eingekauft|umsatz|ausgegeben|bezahlt|gezahlt|eingenommen|überweisung\p{L}*|abbuchung\p{L}*|lastschrift\p{L}*|händler\p{L}*|kategori\p{L}*|rückerstattung\p{L}*|retoure\p{L}*|gutschrift\p{L}*|doppelt|bestellung\p{L}*|klarna|paypal|monatsbericht|rückblick|verdächtig\p{L}*`),
     /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:\S+ ){0,2}geld\b/],
   contracts: [words(String.raw`vertr[aä]g\p{L}*|abos?|abonnement\p{L}*|kündig\p{L}*|laufzeit\p{L}*|versicherung\p{L}*|mitgliedschaft\p{L}*|streaming|handytarif|stromanbieter`)],
-  budget: [words(String.raw`budget\p{L}*|übrig|leisten|leistbar|ausgehen|knapp|prognose|kontostand|kontostände|sparkonto|girokonto|konten|sparziel\p{L}*|sparen|sparsam|zurücklegen|notgroschen|reserve|puffer|vermögen|monatsende|monatsplan|anleg\p{L}*|veranlagen|etfs?|depot|zinsen|kredit\p{L}*|(?:spar)?rate|amex|pleite`),
+  budget: [words(String.raw`\p{L}*budget\p{L}*|übrig|leisten|leistbar|ausgehen|knapp|prognose|kontostand|kontostände|sparkonto|girokonto|konten|sparziel\p{L}*|sparen|sparsam|zurücklegen|notgroschen|reserve|puffer|vermögen|monatsende|monatsplan|anleg\p{L}*|veranlagen|etfs?|depot|zinsen|kredit\p{L}*|(?:spar)?rate|amex|pleite`),
     /geht sich|reicht (?:mein |das |es |unser )?geld/],
   payroll: [words(String.raw`gehalt(?:s\p{L}*|es)?|lohn(?:zettel|abrechnung\p{L}*|steuer)?|brutto|netto|abrechnung\p{L}*|sonderzahlung\p{L}*|urlaubszuschuss|urlaubsgeld|weihnachtsgeld|weihnachtsremuneration|jahressechstel|sechstel|successbonus|bonus|prämie\p{L}*|steuer\p{L}*|veranlagung|steuerausgleich|absetz\p{L}*|finanzamt|home.?office|rufbereitschaft|überstunden|sozialversicherung`)],
 };
@@ -62,8 +62,12 @@ export function aboutMoney(input: string): boolean {
 // Creative or plain chat requests ("Schreib mir ein Gedicht über Sparen") belong to the general chat, even when they mention money.
 const CHAT_REQUEST = /\b(?:gedicht\w*|witz\w*|reim\w*|lied\w*|songtext\w*|geschichte\w*|kurzgeschichte\w*|rezept\w*|haiku)\b|^(?:erzähl|erzaehl)\w* mir (?:einen|eine|was|etwas)\b/;
 export const chatRequest = (input: string) => CHAT_REQUEST.test(normalizeMessage(input).toLowerCase());
+// "Kann man mit 3000 netto in Wien gut leben?" asks about people in general, not about the user's own data.
+export const generalQuestion = (lower: string) => /\bman\b/.test(lower) && !/\b(?:ich|mir|mich|mein\w*|wir|uns|unser\w*)\b/.test(lower);
 
-export type RouteVia = "rule" | "signal" | "model" | "fallback";
+export const routeVias = ["rule", "signal", "model", "fallback"] as const;
+export type RouteVia = typeof routeVias[number];
+export const isRouteVia = (value: unknown): value is RouteVia => typeof value === "string" && (routeVias as readonly string[]).includes(value);
 export type RouteDecision = { agent: AgentId; tool?: AssistantTool; via: RouteVia };
 
 /** Signal words only: one specialist, the general chat for messages without any money topic, otherwise undecided. */
@@ -82,6 +86,7 @@ export function routeByRules(input: string, names: string[] = []): RouteDecision
   if (detectSmallTalk(text) || chatRequest(text)) return { agent: "general", via: "rule" };
   const tool = detectTool(text, names);
   if (tool) return { agent: toolOwner[tool], tool, via: "rule" };
+  if (generalQuestion(text.toLowerCase())) return { agent: "general", via: "rule" };
   return routeBySignals(text, names);
 }
 

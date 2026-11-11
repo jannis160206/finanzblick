@@ -1,0 +1,62 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { OrchestratorAdmin } from "@/components/orchestrator-admin";
+import { useFinance } from "@/components/finance-provider";
+import { createSeed } from "@/lib/seed";
+import type { AppState } from "@/lib/types";
+
+vi.mock("@/components/finance-provider", () => ({ useFinance: vi.fn() }));
+afterEach(cleanup);
+beforeEach(() => vi.unstubAllGlobals());
+
+function renderAdmin(chat: AppState["assistantChat"] = []) {
+  const state = { ...createSeed(), assistantChat: chat };
+  vi.mocked(useFinance).mockReturnValue({ state, ready: true, update: vi.fn() } as unknown as ReturnType<typeof useFinance>);
+  return render(<OrchestratorAdmin />);
+}
+
+it("shows the tree, the agents with their models, the runs and the tools read-only", async () => {
+  const fetcher = vi.fn(async () => Response.json({ available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov", device: "NPU" }));
+  vi.stubGlobal("fetch", fetcher);
+  renderAdmin([
+    { id: "u1", role: "user", text: "Wie viel netto bekomme ich?", at: Date.UTC(2026, 10, 11, 9, 30) },
+    { id: "a1", role: "assistant", text: "Deine letzte Abrechnung …", at: Date.UTC(2026, 10, 11, 9, 30, 1), agent: "payroll", via: "rule", ms: 820 },
+  ]);
+  const tree = within(screen.getByRole("group", { name: "Orchestrator-Baum" }));
+  expect(await tree.findByText("KI bereit · Qwen3-8B-int4-cw-ov")).toBeTruthy();
+  expect(within(tree.getByRole("list", { name: "Entscheidungsschritte" })).getAllByRole("listitem")).toHaveLength(3);
+  expect(within(tree.getByRole("list", { name: "Agenten" })).getAllByRole("listitem").map((item) => item.textContent))
+    .toEqual(["Umsätze12 Werkzeuge", "Verträge2 Werkzeuge", "Budget & Prognose21 Werkzeuge", "Gehalt & Steuern3 Werkzeuge", "Allgemeiner ChatRückfall11 Werkzeuge"]);
+
+  const agents = within(screen.getByRole("region", { name: "Agenten" }));
+  expect(agents.getByRole("heading", { name: /Gehalt & Steuern/ })).toBeTruthy();
+  const models = (text: string) => agents.getAllByText((_, element) => element?.tagName === "P" && element.textContent === text);
+  expect(models("Werkzeugwahl: Qwen3-8B-int4-cw-ov · Antwort: Qwen3-8B-int4-cw-ov")).toHaveLength(4);
+  expect(models("Antwort: Qwen3-8B-int4-cw-ov · Smalltalk ohne Modell")).toHaveLength(1);
+  expect(agents.getByText("3 Werkzeuge · 1 Lauf")).toBeTruthy();
+
+  const runs = within(screen.getByRole("list", { name: "Letzte Läufe" }));
+  const [run] = runs.getAllByRole("listitem");
+  expect(run.textContent).toContain("Wie viel netto bekomme ich?");
+  expect(run.textContent).toContain("Gehalt & Steuern·Regel");
+  expect(within(run).getByText("Beantwortet")).toBeTruthy();
+  expect(within(run).getByText("0,8 s")).toBeTruthy();
+
+  const tools = within(screen.getByRole("table", { name: "Werkzeuge je Agent" }));
+  expect(tools.getAllByRole("rowheader").map((cell) => cell.textContent)).toEqual(["Umsätze", "Verträge", "Budget & Prognose", "Gehalt & Steuern", "Allgemeiner Chat"]);
+  expect(within(tools.getByRole("list", { name: "Werkzeuge Gehalt & Steuern" })).getAllByRole("listitem").map((item) => item.textContent))
+    .toEqual(["Arbeitnehmerveranlagung", "Home-Office-Rechner", "Gehaltsübersicht"]);
+  // Read-only: nothing to edit, only a refresh.
+  expect(screen.queryAllByRole("textbox")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+});
+
+it("explains an empty run list and an unreachable model", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
+  renderAdmin();
+  expect(await screen.findByText("KI nicht erreichbar · nur Regeln")).toBeTruthy();
+  expect(screen.getByText("Noch keine Läufe")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Assistent öffnen" })).toBeTruthy();
+});

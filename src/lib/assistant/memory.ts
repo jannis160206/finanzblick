@@ -20,6 +20,8 @@ const facts = [
 ];
 // One-off events, plans and past bookings are not facts worth keeping.
 const transient = /\?|\bbis\b|ausgegeben|gekauft|bezahlt|überwiesen|gestern|heute|morgen|vorhin|letzte[nrs]? |nächste[nrs]? |diese[nrs]? (?:woche|monat)|gerade|wie viel|\bwas\b|\bsoll ich\b|\bkann ich\b|\bwürde\b|merk dir|vergiss/;
+// Moods and worries ("Ich bin gestresst wegen Geld") are part of the conversation, not facts to keep.
+const mood = /gestresst|\bstress|sorgen|angst|ängstlich|überfordert|panik|pleite|verzweifelt|frustriert|genervt|traurig|müde|einsam|wütend|sauer\b|nervös|unsicher|enttäuscht|glücklich|\bfroh\b|happy|krank|\bfertig\b|verwirrt|gelangweilt|\bkaputt\b/;
 const habit = /\bimmer\b|\bnie\b|niemals|mindestens|stets|grundsätzlich|generell|jeden monat|monatlich|\bmein(?:e|en)? (?:puffer|reserve|polster)\b|(?:puffer|reserve|polster) (?:ist|von|sind|beträgt)|\bkommt\b|\bbekomm|\bgibt'?s\b|\bjeweils\b/;
 
 function sentences(text: string) {
@@ -47,7 +49,7 @@ export function extractMemories(input: string, state: AppState, tool?: Assistant
       /puffer|reserve|polster|nie unter \d|nicht unter \d/.test(lower)) && habit.test(lower) && !/\bkam\b|\bwar\b|leisten|leistbar/.test(lower)) {
       const parsed = parseMemory(sentence);
       if (parsed && parsed.key !== "note") operation = parsed;
-    } else if (facts.some((pattern) => pattern.test(lower)) && !transient.test(lower) && !months.test(lower) && !detectAction(sentence)) {
+    } else if (facts.some((pattern) => pattern.test(lower)) && !transient.test(lower) && !mood.test(lower) && !months.test(lower) && !detectAction(sentence)) {
       const note = sentence.replace(/[.!;,\s]+$/, "").slice(0, 200);
       if (note.length >= 8) operation = { op: "memory_add", key: "note", text: note.charAt(0).toUpperCase() + note.slice(1) };
     }

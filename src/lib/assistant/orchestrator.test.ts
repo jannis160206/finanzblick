@@ -36,6 +36,13 @@ describe("routing without the model", () => {
     ["Was kann ich bei der Arbeitnehmerveranlagung absetzen?", "payroll", "tax"],
     ["Hallo!", "general"],
     ["Was ist ein ETF?", "general", "knowledge"],
+    ["Was ist der Unterschied zwischen Brutto und Netto?", "payroll", "payroll"],
+    ["Warum zahle ich so viel Lohnsteuer?", "payroll", "payroll"],
+    ["Wann kommt mein Bonus?", "payroll", "payroll"],
+    ["???", "general"],
+    ["Werden Überstunden anders versteuert?", "payroll", "payroll"],
+    ["Wie viel hab ich bei Shell getankt?", "transactions", "query"],
+    ["Ist Spotify teurer geworden?", "contracts", "contracts"],
   ])("typical: %s → %s", (text, agent, tool) => {
     const decision = route(text);
     expect(decision?.agent).toBe(agent);
@@ -58,6 +65,10 @@ describe("routing without the model", () => {
     ["Was hältst du von Bitcoin?", "general"],
     ["Kannst du mir bei einer E-Mail an meinen Vermieter helfen?", "general"],
     ["Lohnt sich das?", "general"],
+    // Compounds, English and questions about people in general.
+    ["Sollte ich das Lebensmittelbudget erhöhen?", "budget"],
+    ["how much did I spend on food in october", "transactions"],
+    ["Kann man mit 3000 netto in Wien gut leben?", "general"],
   ])("borderline: %s → %s", (text, agent) => expect(route(text)?.agent).toBe(agent));
 
   it("sends spending questions without a tool to the transactions specialist", () =>

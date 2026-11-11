@@ -90,11 +90,16 @@ export function contractsAnswer(state: AppState, text: string, today: string, fa
     ? contracts.find((contract) => contract.id === page.contractId) : undefined;
   const match = matchName(text, contracts, (contract) => contract.name) ?? opened;
   if (match) return singleContract(match, lower, today);
-  const list = /\b(?:welche|wie ?viele|zeig|liste|übersicht|uebersicht|alle|meine)\b|\b(?:abos?|abonnements?|verträge|vertraege|versicherungen)\b/.test(lower);
-  if (!list) return fallback();
+  const list = /\b(?:welche|wie ?viele|zeig|liste|übersicht|uebersicht|alle|meine)\b|\b(?:abos?|abonnements?|verträge|vertraege|versicherungen)\b/.test(lower) ||
+    typeWords.some(([pattern]) => pattern.test(lower));
+  // "Wann läuft Netflix aus?" without such a contract: say so and show the next deadlines instead of a booking search.
+  const deadline = /\b(?:läuft|laeuft|endet|verlängert|verlaengert|kündbar|kuendbar)\b|kündigungsfrist|kuendigungsfrist|\bfrist\b/.test(lower);
+  if (!list && !deadline) return fallback();
+  const missing = list ? undefined : text.split(/\s+/).slice(1).map((word) => word.replace(/[^\p{L}\p{N}&+-]/gu, ""))
+    .find((word) => /^\p{Lu}/u.test(word) && !/^(?:vertrag|abo|versicherung|frist|kündigungsfrist|ende|monat|jahr)/i.test(word));
   const running = contracts.filter((contract) => isRunning(contract, today));
   const type = typeWords.find(([pattern]) => pattern.test(lower) && !/verträge|vertraege|vertrag\b/.test(lower));
-  const soon = /bald|demnächst|demnaechst|kündigungsfrist|kuendigungsfrist|laufen .{0,20}aus|enden/.test(lower);
+  const soon = deadline || /bald|demnächst|demnaechst|laufen .{0,20}aus|enden/.test(lower);
   let shown = type ? running.filter((contract) => type[1].includes(contract.type)) : running;
   if (soon) shown = shown.filter((contract) => contract.deadline).sort((a, b) => a.deadline!.localeCompare(b.deadline!));
   if (!running.length) return {
@@ -104,14 +109,14 @@ export function contractsAnswer(state: AppState, text: string, today: string, fa
   const monthly = round(shown.reduce((sum, contract) => sum + contract.monthly, 0));
   const review = shown.filter((contract) => contract.status === "review").length;
   const missingNotice = shown.filter((contract) => !contract.notice).length;
-  const text2 = soon
+  const text2 = (missing ? `„${missing}“ finde ich unter deinen Verträgen nicht. ` : "") + (soon
     ? shown.length
       ? `Diese Fristen laufen als Nächstes ab: ${shown.slice(0, 3).map((contract) => `${contract.name} bis ${dateLabel(contract.deadline!)}`).join(", ")}.`
       : `Für keinen deiner Verträge ist eine Kündigungsfrist hinterlegt – dazu habe ich keine ausreichenden Daten. Trag Fristen im Vertragsordner ein, dann erinnere ich dich rechtzeitig.`
     : `Du hast ${plural(shown.length, type ? typeNoun(type[0]).one : "laufenden Vertrag bzw. Abo", type ? typeNoun(type[0]).many : "laufende Verträge und Abos")}, zusammen ${currency(monthly)} im Monat (${currency(round(monthly * 12))} im Jahr).` +
       (type && shown.length < running.length ? ` Insgesamt laufen ${running.length} Verträge mit ${currency(round(running.reduce((sum, contract) => sum + contract.monthly, 0)))} im Monat.` : "") +
       (review ? ` ${plural(review, "davon ist neu erkannt", "davon sind neu erkannt")} und noch zu bestätigen.` : "") +
-      (missingNotice && !type ? ` Bei ${missingNotice} fehlt die Kündigungsfrist.` : "");
+      (missingNotice && !type ? ` Bei ${missingNotice} fehlt die Kündigungsfrist.` : ""));
   const lines = shown.slice(0, 40).map((contract) => contractLine(contract, today));
   return {
     text: text2,
@@ -200,7 +205,8 @@ export function insightsAnswer(state: AppState, dashboard: Dashboard, today: str
   };
   const important = list.filter((item) => item.severity === "high");
   return {
-    text: `${plural(list.length, "Punkt fällt", "Punkte fallen")} mir auf${important.length ? `, am wichtigsten: ${important.map((item) => item.title).slice(0, 2).join(" und ")}` : ""}.`,
+    text: list.length === 1 ? `Mir fällt eine Sache auf: ${list[0].title}. ${list[0].text}`
+      : `${plural(list.length, "Punkt fällt", "Punkte fallen")} mir auf, am wichtigsten: ${(important.length ? important : list).map((item) => item.title).slice(0, 2).join(" und ")}.`,
     card: { kind: "insights", title: "Hinweise", lines: list.slice(0, 12).map((item) => ({ label: item.title, tone: severityTone[item.severity], detail: item.text,
       ...(item.amount !== undefined ? { value: item.amount } : {}) })) },
     suggestions: list.slice(0, 3).map((item) => item.prompt),

@@ -1,6 +1,7 @@
 import { actualBookings, addMonths, classify, round, type Dashboard } from "@/lib/calc";
 import { isIncomeCategory } from "@/lib/fixed";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
+import { isEverydayCategory } from "@/lib/contracts";
 import { detectDuplicateCharges, detectSubscriptions, ledger, summarizeMonth } from "@/lib/insights";
 import { netWorthHistory } from "@/lib/net-worth";
 import { reconcileSharedHoliday } from "@/lib/shared-holiday";
@@ -78,7 +79,7 @@ export function securityCheck(state: AppState, today: string): Result {
   for (const row of tiny.slice(0, 5))
     lines.push({ label: `Mini-Abbuchung: ${merchantOf(row)}`, value: row.amount, tone: "warn",
       detail: `${dateLabel(row.date)} · unbekannter Händler – Betrüger testen Karten oft mit Kleinstbeträgen`, transactionIds: [row.id] });
-  const subscriptions = detectSubscriptions(state, today);
+  const subscriptions = detectSubscriptions(state, today).filter((item) => !isEverydayCategory(item.category));
   const raised = subscriptions.filter((item) => item.priceChange && item.priceChange.date >= shift(today, -120));
   for (const item of raised)
     lines.push({ label: `${item.merchant} wurde teurer`, value: -item.priceChange!.to, tone: "warn",

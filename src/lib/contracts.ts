@@ -86,6 +86,8 @@ const everydayCategories = new Set<Category>([
   "Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Tanken", "Drogerie",
   "Rückerstattungen", "Transfer", "Transfer intern", "Gehalt", "Einkommen", "Rufbereitschaft",
 ]);
+/** Groceries, fuel or delivery bought every month are spending: never a contract to cancel or a price increase. */
+export const isEverydayCategory = (category: Category) => everydayCategories.has(canonicalCategory(category));
 const contractCategories = new Set<Category>([...groupedContractCategories, "Leasing", "Sport & Fitness"]);
 
 const DAY_MS = 86_400_000;

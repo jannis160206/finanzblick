@@ -72,6 +72,23 @@ describe("contracts tool", () => {
     expect(known.text).toMatch(/Kündigen bis 20\.10\.2026 \(noch 30 Tage\), dann endet der Vertrag am 3\.11\.2026/);
   });
 
+  it("says when a named contract is unknown and shows the next deadlines instead of a booking search", () => {
+    const result = run(stateWith(flix), "Wann läuft Netflix aus?");
+    expect(result.text).toMatch(/^„Netflix“ finde ich unter deinen Verträgen nicht\. /);
+    expect(result.card).toMatchObject({ kind: "contracts", title: "Kündigungsfristen" });
+    expect(run(stateWith(flix), "Wann läuft mein Vertrag aus?").text).not.toMatch(/finde ich unter deinen Verträgen nicht/);
+  });
+
+  it("answers price and status questions about one contract from the contract list", () => {
+    expect(detectTool("Ist Streamflix teurer geworden?")).toBe("contracts");
+    expect(run(stateWith(flix), "Ist Streamflix teurer geworden?").text).toMatch(/3,00\s€ teurer/);
+    const insurance = row("2026-07-15", "Haushaltsversicherung", -18.5, "Versicherungen");
+    const insured = stateWith([insurance, ...["08", "09"].map((month) => ({ ...insurance, id: `ins-${month}`, date: `2026-${month}-15` }))]);
+    const status = run(insured, "Was ist mit meiner Versicherung los?");
+    expect(status.tool).toBe("contracts");
+    expect(status.card?.lines[0]?.label).toBe("Haushaltsversicherung");
+  });
+
   it("uses the contract opened in the folder for 'der Vertrag'", () => {
     const result = run(stateWith(flix), "Wann läuft der Vertrag aus?", { page: { route: "/vertraege", title: "Verträge", contractId: "streamflix" } });
     expect(result.card?.title).toBe("Streamflix Abo");
@@ -82,6 +99,15 @@ describe("contracts tool", () => {
     const essen = run(stateWith([row("2026-09-02", "Supermarkt", -40, "Lebensmittel")]), "Was kostet mich Lebensmittel im Jahr?");
     expect(essen.tool).toBe("contracts");
     expect(essen.card?.kind).toBe("answer");
+  });
+});
+
+describe("query hints", () => {
+  it("ignores a guessed bookkeeping category the question never names", () => {
+    const state = stateWith([row("2026-09-02", "Elektromarkt", -120, "Shopping"), row("2026-09-03", "Bäcker", -5, "Lebensmittel")]);
+    const result = executeTool("query", "Zeig mir alle Buchungen über 100 Euro", { state, dashboard: calculateDashboard(state), asOf: today, hints: { category: "Transfer" } });
+    expect(result.text).not.toMatch(/Transfer/);
+    expect(result.text).toMatch(/120,00\s€/);
   });
 });
 

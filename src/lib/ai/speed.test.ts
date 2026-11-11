@@ -131,6 +131,12 @@ describe("agent answers", () => {
     expect(system(calls)).toContain("lockeren Chat");
   });
 
+  it("may repeat the user's own numbers from the question", async () => {
+    const { fetcher } = stub(() => completion("Mit 3.000 € netto kommt man in Wien gut aus. Du hast übrigens 999 € gespart."));
+    const reply = await answerFreeQuestion({ question: "Kann man mit 3000 netto in Wien gut leben?", facts: { budget: { left: 420 } }, agent: "general" }, { config, fetcher });
+    expect(reply.text).toBe("Mit 3.000 € netto kommt man in Wien gut aus.");
+  });
+
   it("keeps specialists strictly to the facts and their own voice", async () => {
     const { calls, fetcher } = stub(() => completion("Dir bleiben 420 €. Der Mount Everest ist 8.849 Meter hoch."));
     const reply = await answerFreeQuestion({ question: "Was bleibt?", facts: { budget: { left: 420 } }, agent: "budget" }, { config, fetcher });
@@ -141,5 +147,7 @@ describe("agent answers", () => {
 
   it("turns Markdown and lists into plain chat text", () => {
     expect(tidyAnswer("## Kurz gesagt\n- **Netflix** kostet 13,99 €\n- Spotify kostet `10,99 €`")).toBe("Kurz gesagt Netflix kostet 13,99 € Spotify kostet 10,99 €");
+    expect(tidyAnswer("Kurz gesagt: ein Fonds, der einen Index nachbaut.")).toBe("Ein Fonds, der einen Index nachbaut.");
+    expect(tidyAnswer("Du willst wissen, wie das Wetter morgen wird? Da schaust du am besten in eine Wetter-App.")).toBe("Da schaust du am besten in eine Wetter-App.");
   });
 });

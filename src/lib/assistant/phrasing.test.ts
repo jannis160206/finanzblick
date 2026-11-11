@@ -27,6 +27,8 @@ describe("casual phrasing", () => {
     expect(normalizeMessage("wv hab ich im okt fuer essen bezahlt")).toBe("wie viel hab ich im oktober für essen bezahlt");
     expect(normalizeMessage("Japan Reise 3k bis Juli 27, 500 hab ich schon")).toBe("Japan Reise 3000 bis Juli 2027, 500 hab ich schon");
     expect(normalizeMessage("kann ich mir nen tv kaufen")).toBe("kann ich mir einen Fernseher kaufen");
+    expect(normalizeMessage("how much did I spend on food in October")).toBe("how much did I spend on food in Oktober");
+    expect(normalizeMessage("how much may I spend")).toBe("how much may I spend");
     expect(normalizeMessage("lieferando = lieferdienste")).toBe("lieferando ist immer lieferdienste");
     expect(normalizeMessage("Im Mai 25 € mehr")).toBe("Im Mai 25 € mehr");
     const once = normalizeMessage("wieviel kohle ist im okt. fuers essen draufgegangen, 1,5k?");
@@ -95,7 +97,8 @@ describe("automatic memory", () => {
     const state = fixture();
     for (const text of ["Wie viel hab ich im Oktober fürs Essen ausgegeben?", "Ich will bis Juli 2027 3.000 € für Japan sparen, 500 € liegen schon am Sparkonto.",
       "Kann ich mir im Mai einen Fernseher um 900 € leisten?", "Erhöhe Japan auf 4.000 €", "Ich will 200 € mehr im Monat sparen.", "Ich habe gestern 50 € bei Spar bezahlt",
-      "Ich bekomme im Mai 500 € Bonus", "mach japan 4000", "Lieferando ist immer Lieferdienste", "Ich brauche bis Dezember 2.000 €"])
+      "Ich bekomme im Mai 500 € Bonus", "mach japan 4000", "Lieferando ist immer Lieferdienste", "Ich brauche bis Dezember 2.000 €",
+      "Ich bin gestresst wegen Geld", "Ich bin echt überfordert mit meinen Finanzen"])
       expect(extractMemories(text, state), text).toEqual([]);
     expect(extractMemories("Merk dir: Puffer immer 500 €", state, "remember")).toEqual([]);
     const known = applyOperations(state, [{ op: "memory_add", key: "salaryDay", value: 25, text: "Gehalt kommt am 25." },

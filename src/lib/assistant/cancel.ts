@@ -2,6 +2,7 @@ import { round } from "@/lib/calc";
 import { canonicalCategory } from "@/lib/categories";
 import { contractNotice, contractTypeOf, contractTypeRules, type ContractType } from "@/lib/contract-types";
 import { currency, dateLabel } from "@/lib/format";
+import { isEverydayCategory } from "@/lib/contracts";
 import { detectSubscriptions, ledger, type Subscription } from "@/lib/insights";
 import type { AppState, AssistantCard } from "@/lib/types";
 import { matchName } from "./tools";
@@ -120,7 +121,7 @@ function contractList(subscriptions: Subscription[]): Result {
 }
 
 export function cancelAnswer(state: AppState, text: string, today: string): Result {
-  const subscriptions = detectSubscriptions(state, today).filter((item) => canonicalCategory(item.category) !== "Miete");
+  const subscriptions = detectSubscriptions(state, today).filter((item) => canonicalCategory(item.category) !== "Miete" && !isEverydayCategory(item.category));
   const lower = text.toLowerCase();
   const match = matchName(text, subscriptions, (item) => item.merchant)
     ?? subscriptions.find((item) => typeRules.some(([type, pattern]) => type === typeOf(item) && pattern.test(lower) && /handy|internet|versicherung|strom|gas|fitness|streaming/.test(lower)));

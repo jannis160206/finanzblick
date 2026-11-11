@@ -25,6 +25,16 @@ export function correction(input: string): { text: string } | undefined {
   return undefined;
 }
 
+const fillerWords = new Set(["was", "wie", "viel", "wieviel", "ich", "mir", "mich", "mein", "meine", "meinen", "meiner", "der", "die", "das", "den",
+  "dem", "ein", "eine", "einen", "und", "oder", "ist", "sind", "hab", "habe", "hat", "bei", "fuer", "mit", "von", "vom", "zum", "zur", "noch", "schon",
+  "man", "kann", "bitte", "denn", "mal", "nicht", "gibt", "auch", "wer", "wann", "warum", "welche", "welcher", "welches"]);
+const contentWords = (text: string) => fold(text).split(" ").filter((word) => word.length >= 3 && !fillerWords.has(word));
+/** A rephrasing shares a content word (or its stem) with the message it replaces; a new topic is not learned as its meaning. */
+export function rephrases(original: string, next: string): boolean {
+  const before = contentWords(original);
+  return contentWords(next).some((word) => before.some((other) => other === word || other.length >= 5 && word.length >= 5 && other.slice(0, 5) === word.slice(0, 5)));
+}
+
 // "Mit Japan meine ich Motorrad", "Wenn ich Auto sage, meine ich Motorrad", "Unter Urlaub verstehe ich Japan".
 export function aliasTeaching(input: string): { from: string; to: string } | undefined {
   const patterns = [
