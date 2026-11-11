@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { ArrowRight, ChevronDown, TriangleAlert } from "lucide-react";
 import { FinancialData } from "@/components/financial-data";
 import { payrollShare } from "@/components/payroll-focus";
-import { PayrollLabel, PayrollStatusBadge } from "@/components/payroll-ui";
+import { SixthSplitCard } from "@/components/payroll-sixth-split";
+import { PayrollCardHeading as CardHeading, PayrollLabel, PayrollStatusBadge, payrollInfoTip as infoTip } from "@/components/payroll-ui";
 import {
   payrollEstimate,
   payrollMoney,
@@ -68,40 +69,6 @@ export function PayrollCoverage({ view }: { view: PayrollPresentation }) {
 
 const money = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 const open = (value: string) => value === "Noch offen";
-// Compact ⓘ that keeps the row height but still offers a 44 px hit area.
-const infoTip = "relative -my-1.5 size-6 after:absolute after:-inset-2.5 after:content-['']";
-
-function CardHeading({
-  id,
-  title,
-  info,
-  subtitle,
-  action,
-}: {
-  id?: string;
-  title: string;
-  info: ReactNode;
-  subtitle: string;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-0.5">
-          <h3 id={id} className="text-sm leading-snug font-semibold tracking-tight">
-            {title}
-          </h3>
-          <InfoTip label={title} className={infoTip}>
-            {info}
-          </InfoTip>
-        </div>
-        <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
-      </div>
-      {action}
-    </div>
-  );
-}
-
 /** Compact figure below a headline number; the full wording stays available to screen readers. */
 function Figure({
   short,
@@ -648,7 +615,7 @@ function BonusCard({ view }: { view: PayrollPresentation }) {
   );
 }
 
-/** "Sonderzahlung & Jahressechstel": next payment, sixth and bonus room. */
+/** "Sonderzahlung & Jahressechstel": next payment, sixth, the split of every special payment and bonus room. */
 export function PayrollResults({ view }: { view: PayrollPresentation }) {
   return (
     <section aria-labelledby="payroll-special-title" className="min-w-0 space-y-4 pt-2">
@@ -664,6 +631,7 @@ export function PayrollResults({ view }: { view: PayrollPresentation }) {
       <div className="grid gap-5 lg:grid-cols-2">
         <NextPaymentCard view={view} />
         <SixthCard view={view} />
+        <SixthSplitCard view={view} />
         <BonusCard view={view} />
       </div>
     </section>

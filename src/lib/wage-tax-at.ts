@@ -124,10 +124,22 @@ export type SpecialPaymentState = { used: number; taxable: number; svGross: numb
 export type SpecialPaymentTax = {
   gross: number;
   sv: number;
+  /** Jahressechstel of the payment month and the part earlier special payments of the year already used. */
+  sixth: number;
+  usedBefore: number;
   /** Gross within the Jahressechstel, taxed preferentially. */
   eligibleGross: number;
   /** Gross above the sixth (Sechstelüberhang), taxed with the month's regular pay. */
   overflowGross: number;
+  /**
+   * The part within the sixth after its SV share: tax-free (what is left of the yearly 620 €, or all of it while the
+   * sixth stays under the Freigrenze), at 6 %, and in the 27/35,75 % bands.
+   */
+  freeNet: number;
+  reducedNet: number;
+  higherNet: number;
+  /** After SV, added to the month's regular base and taxed by the tariff: the overhang (and anything above 83.333 €). */
+  overflowNet: number;
   preferential: number;
   tariff: number;
   tax: number;
@@ -155,9 +167,14 @@ export function specialPaymentTax(
   const preferential = exempt ? 0 : money(preferentialTax(before.taxable + preferentialNet) - preferentialTax(before.taxable));
   const tariff = overflowNet > 0 ? money(monthlyWageTax(base + overflowNet, year, monthlyCredits) - monthlyWageTax(base, year, monthlyCredits)) : 0;
   const tax = money(preferential + tariff);
+  const band = (lower: number, upper: number) =>
+    money(Math.max(0, Math.min(before.taxable + preferentialNet, upper) - Math.max(before.taxable, lower)));
+  const freeNet = exempt ? preferentialNet : band(0, SPECIAL_ALLOWANCE);
+  const reducedNet = exempt ? 0 : band(SPECIAL_ALLOWANCE, 25000);
   return {
     tax: {
-      gross, sv, eligibleGross, overflowGross: money(gross - eligibleGross),
+      gross, sv, sixth, usedBefore: before.used, eligibleGross, overflowGross: money(gross - eligibleGross),
+      freeNet, reducedNet, higherNet: money(preferentialNet - freeNet - reducedNet), overflowNet,
       preferential, tariff, tax, net: money(gross - sv - tax),
     },
     after: {

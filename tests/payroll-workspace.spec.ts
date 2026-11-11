@@ -170,7 +170,17 @@ for (const width of [1440, 390, 320]) {
       page.getByRole("region", { name: "Monatsübersicht", exact: true }),
     ).toHaveCount(0);
     await expect(monthSelect(page)).toHaveText(/^September/);
+    // Each special payment shows its part at 6 % and the part taxed fully by the tariff; a click reveals the calculation.
+    const split = page.getByRole("region", { name: "Besteuerung je Sonderzahlung", exact: true });
+    const payments = split.getByRole("listitem");
+    await expect(payments.first()).toContainText("Urlaubszuschuss");
+    await expect(payments.first()).toContainText("zu 6 %");
+    const last = payments.last();
+    await last.locator("summary").click();
+    await expect(last.getByRole("table")).toBeVisible();
+    await expect(last.getByRole("rowheader", { name: "Gesamt", exact: true })).toBeVisible();
     await noOverflow(page);
+    await split.screenshot({ path: testInfo.outputPath(`split-${width}-dark.png`) });
     await page.screenshot({
       path: testInfo.outputPath(`payroll-${width}-dark.png`),
       fullPage: true,
@@ -179,6 +189,7 @@ for (const width of [1440, 390, 320]) {
       .getByRole("button", { name: "Farbschema wechseln", exact: true })
       .click();
     await expect(page.locator("html")).toHaveClass(/light/);
+    await split.screenshot({ path: testInfo.outputPath(`split-${width}-light.png`) });
     await page.screenshot({
       path: testInfo.outputPath(`payroll-${width}-light.png`),
       fullPage: true,

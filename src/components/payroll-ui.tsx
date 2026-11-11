@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { payrollStatusLabel, type PayrollMonthStatus } from "@/components/payroll-presentation";
 import { Badge } from "@/components/ui/badge";
+import { InfoTip } from "@/components/ui/info-tip";
 import { cn } from "@/lib/utils";
 
 // Status is never color alone: every state has its own shape and a text label next to it (or for screen readers).
@@ -78,5 +79,39 @@ export function PayrollDisclosure({
         {children}
       </div>
     </details>
+  );
+}
+
+// Compact ⓘ that keeps the row height but still offers a 44 px hit area.
+export const payrollInfoTip = "relative -my-1.5 size-6 after:absolute after:-inset-2.5 after:content-['']";
+
+export function PayrollCardHeading({
+  id,
+  title,
+  info,
+  subtitle,
+  action,
+}: {
+  id?: string;
+  title: string;
+  info: ReactNode;
+  subtitle: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <div className="flex items-center gap-0.5">
+          <h3 id={id} className="text-sm leading-snug font-semibold tracking-tight">
+            {title}
+          </h3>
+          <InfoTip label={title} className={payrollInfoTip}>
+            {info}
+          </InfoTip>
+        </div>
+        <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      {action}
+    </div>
   );
 }

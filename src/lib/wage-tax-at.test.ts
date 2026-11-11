@@ -43,9 +43,12 @@ describe("Austrian wage tax", () => {
   it("taxes a special payment within the sixth with 620 € free once a year, then 6 %", () => {
     const { tax, after } = specialPaymentTax({ gross: 3000, sixth: 7000, base: 3000 }, { used: 0, taxable: 0, svGross: 0 }, 2026);
     expect(tax).toMatchObject({ gross: 3000, sv: 512.1, eligibleGross: 3000, overflowGross: 0, preferential: 112.07, tariff: 0, net: 2375.83 });
+    // 2.487,90 € after SV: 620 € tax-free, 6 % on 1.867,90 €.
+    expect(tax).toMatchObject({ sixth: 7000, usedBefore: 0, freeNet: 620, reducedNet: 1867.9, higherNet: 0, overflowNet: 0 });
     expect(after).toEqual({ used: 3000, taxable: 2487.9, svGross: 3000 });
     // The second payment of the year: the 620 € are used up.
-    expect(specialPaymentTax({ gross: 3000, sixth: 7000, base: 3000 }, after, 2026).tax.preferential).toBeCloseTo(149.27, 2);
+    expect(specialPaymentTax({ gross: 3000, sixth: 7000, base: 3000 }, after, 2026).tax)
+      .toMatchObject({ usedBefore: 3000, freeNet: 0, reducedNet: 2487.9, preferential: 149.27 });
   });
 
   it("taxes the part above the sixth with the month's regular pay by the tariff", () => {
@@ -53,6 +56,7 @@ describe("Austrian wage tax", () => {
     expect(tax.sv).toBe(682.8);
     expect(tax.eligibleGross).toBe(1000);
     expect(tax.overflowGross).toBe(3000);
+    expect(tax).toMatchObject({ usedBefore: 6000, freeNet: 0, reducedNet: 829.3, overflowNet: 2487.9 });
     expect(tax.preferential).toBeCloseTo(49.76, 2);
     // 2.487,90 € net overhang on top of 3.000 € regular base: 40 % bracket.
     expect(tax.tariff).toBeCloseTo(990.24, 2);
@@ -60,7 +64,8 @@ describe("Austrian wage tax", () => {
   });
 
   it("keeps special payments tax-free under the Freigrenze and caps their SV at the annual maximum", () => {
-    expect(specialPaymentTax({ gross: 1200, sixth: 2600, base: 1300 }, { used: 0, taxable: 0, svGross: 0 }, 2026).tax.tax).toBe(0);
+    const free = specialPaymentTax({ gross: 1200, sixth: 2600, base: 1300 }, { used: 0, taxable: 0, svGross: 0 }, 2026).tax;
+    expect(free).toMatchObject({ tax: 0, freeNet: 1030.56, reducedNet: 0 });
     expect(specialPaymentTax({ gross: 3000, sixth: 9000, base: 3000 }, { used: 0, taxable: 0, svGross: 13000 }, 2026).tax.sv).toBe(146.8);
   });
 });

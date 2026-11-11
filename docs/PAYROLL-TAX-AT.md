@@ -71,7 +71,14 @@ Stand: 11.11.2026
   - Jänner 2027: Vom Successbonus liegt nur ein kleiner Teil im restlichen Sechstel. Der größere Teil wird nach Tarif versteuert, das Netto liegt deutlich unter der alten 78-%-Pauschale. Der Jänner ist damit „fast doppelt“.
   - März 2027: keine Sonderzahlung mehr.
   - Die automatische Budget-Übernahme schreibt diese Werte beim nächsten Abgleich; von Hand geänderte Werte bleiben zur Prüfung.
+- **Aufteilung je Sonderzahlung** (M15, `src/lib/payroll-sixth.ts`):
+  - Jede Sonderzahlung des Jahres wird exakt aufgeteilt: Brutto im Jahressechstel und darüber; nach SV (aliquot aufgeteilt) der steuerfreie Rest der 620 € (bzw. alles unter der Freigrenze), der Teil zu 6 % (selten 27 %/35,75 %) und der Überhang, der mit dem laufenden Bezug des Monats nach Tarif versteuert wird.
+  - Belegte Sonderzahlungen werden aus der Abrechnung nachgerechnet: Sechstel = laufende Bezüge seit Jänner ÷ Monate × 2 (Lücken mit dem Durchschnitt, als geschätzt markiert), gedruckte Werte wie verbrauchtes Sechstel haben Vorrang. Ein Überhang steckt laut Lohnverrechnung schon in der gedruckten LSt-Basis und wird davon abgezogen. Tarifbesteuerte Prämien erscheinen als „voll versteuert“ und nutzen das Sechstel nicht.
+  - Geplante Sonderzahlungen kommen aus derselben Prognose wie das Budget (`taxEstimates`).
+  - Präzisionskorrektur: Fehlt ein belegter Sechstelverbrauch, zählte die Prognose bisher alle früheren Sonderzahlungen brutto als verbraucht. Jetzt zählt nur der Teil, der tatsächlich im Sechstel lag; ein früherer Überhang wurde ja nach Tarif versteuert. Ohne Überhang ändert sich nichts.
+  - Mit den echten Abrechnungen geprüft (nur lokal): Die Nachrechnung trifft die gedruckte Sonderzahlungs-Lohnsteuer von Juni und November 2025 sowie Juni 2026 auf den Cent.
 - **Grenzen**:
+  - Kontrollsechstel (§ 77 Abs. 4a): Das Dezember-Sechstel entspricht den Jahresbezügen ÷ 6. Eine Aufrollung früherer Monate, falls das Sechstel im Jahr sinkt oder ein früherer Überhang nachträglich Platz findet, wird nicht nachgerechnet.
   - SV-Werte 2027 sind noch nicht verifiziert; die Schätzung nutzt die Sätze 2026.
   - Ob der Successbonus tatsächlich im Sechstel begünstigt wird, zeigt erst die Dezember-Abrechnung. Die Februar-Prämie 2026 wurde nach Tarif versteuert. Die Validierung warnt dann nur („ein Teil liegt vermutlich über dem Sechstel“), sie hält nicht zurück.
   - Pendlerpauschale, Alleinverdiener- und Unterhaltsabsetzbetrag fließen nur ein, wenn sie in den Abrechnungen erkennbar sind.

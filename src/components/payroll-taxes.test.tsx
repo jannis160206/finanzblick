@@ -152,6 +152,30 @@ it("reserves the Successbonus, names the Austrian tax logic and estimates the ta
   expect(special.getByText(moneyText(149.27))).toBeTruthy();
 });
 
+it("splits every special payment into the part taxed at 6 % and the part taxed fully by the tariff", () => {
+  const payslips = bonusPayslips().map((entry) => entry.month === 6 ? { ...entry, specialTax: 112.07 } : entry);
+  render(<Fixture initial={{ ...seed(), payslips }} />);
+  const card = within(screen.getByRole("region", { name: "Besteuerung je Sonderzahlung" }));
+  expect(card.getByText("Jahressechstel 2026 · 6 % im Sechstel, darüber Tarif")).toBeTruthy();
+  const text = (node: Element | null) => node?.textContent?.replace(/\s/g, " ") ?? "";
+  const rows = card.getAllByRole("listitem");
+  expect(rows.map((row) => text(row.querySelector("summary")))).toEqual([
+    `UrlaubszuschussJuni-Abrechnung · belegt${moneyText(3000)}brutto${moneyText(3000)}zu 6 %`,
+    `WeihnachtsremunerationNovember-Abrechnung · geschätzt${moneyText(3000)}brutto${moneyText(3000)}zu 6 %`,
+    // The sixth of 8.000 € leaves 2.000 € after June and November; the rest of the 4.155 € bonus is taxed by the tariff.
+    `SuccessbonusDezember-Abrechnung · geschätzt${moneyText(4155)}brutto${moneyText(2000)}zu 6 %${moneyText(2155)}voll versteuert`,
+  ]);
+  const june = within(rows[0]);
+  expect(text(june.getByRole("row", { name: /620-€-Freibetrag/ }))).toBe(`620-€-Freibetrag · 0 %${moneyText(620)}${moneyText(0)}`);
+  expect(text(june.getByRole("row", { name: /^6 %/ }))).toBe(`6 %${moneyText(1867.9)}${moneyText(112.07)}`);
+  expect(june.getByText("wie Abrechnung")).toBeTruthy();
+  const december = within(rows[2]);
+  expect(text(december.getByText(/^Sechstel/).parentElement)).toBe(`Sechstel ${moneyText(8000)}·davor genutzt ${moneyText(6000)}·frei ${moneyText(2000)}`);
+  expect(text(december.getByRole("row", { name: /^6 %/ }))).toBe(`6 %${moneyText(1658.6)}${moneyText(99.52)}`);
+  expect(december.getByRole("row", { name: /^Tarif · Ø \d+(,\d)? %/ })).toBeTruthy();
+  expect(december.queryByRole("row", { name: /Freibetrag/ })).toBeNull();
+});
+
 it("automatically imports selected PDFs without a form and keeps bank data untouched", async () => {
   render(<Fixture />);
   const before = latest;

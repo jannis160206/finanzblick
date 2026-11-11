@@ -50,6 +50,39 @@ describe("Successbonus with the December payslip and tariff estimates", () => {
     expect(december.special!.net).toBeCloseTo(documented.netSpecial, 2);
     expect(december.special!.tax).toBeCloseTo(documented.total, 2);
   });
+
+  it("lists every special payment of the year with its exact split into 0 %, 6 % and tariff", () => {
+    const entries = year();
+    const { specialPayments, taxEstimates } = analyzePayrollAutomatically(entries, 2026, entries[0].employer, { successBonusPercent: 138.5 });
+    expect(specialPayments.map((payment) => [payment.month, payment.kind, payment.source])).toEqual([
+      [6, "holiday", "payslip"], [11, "christmas", "forecast"], [12, "successBonus", "forecast"],
+    ]);
+    const [june, november, december] = specialPayments.map((payment) => payment.tax);
+    // The first payment of the year uses the 620 € allowance; 6 % on the rest after SV.
+    expect(june).toMatchObject({ sixth: 8000, usedBefore: 0, eligibleGross: 3000, overflowGross: 0, freeNet: 620, reducedNet: 1867.9, overflowNet: 0, preferential: 112.07 });
+    expect(november).toMatchObject({ usedBefore: 3000, eligibleGross: 3000, freeNet: 0, reducedNet: 2487.9, preferential: 149.27 });
+    // 2.000 € of the bonus fit the rest of the 8.000 € sixth: their SV share is 341,40 €, 6 % of 1.658,60 € are 99,52 €.
+    expect(december).toMatchObject({
+      sixth: 8000, usedBefore: 6000, eligibleGross: 2000, overflowGross: 2155,
+      freeNet: 0, reducedNet: 1658.6, higherNet: 0, overflowNet: 1787.14, preferential: 99.52,
+    });
+    expect(december).toEqual(taxEstimates.find((estimate) => estimate.month === 12)!.special);
+    expect(december.tariff + december.preferential).toBeCloseTo(december.tax, 2);
+  });
+
+  it("does not count an earlier overhang as used sixth when the use is not documented", () => {
+    // January is missing; a raise in June and a 7.000 € special payment above the 6.400 € sixth of June.
+    const entries = [2, 3, 4, 5, 6].map((month) => slip(month, month < 6
+      ? { baseSalary: 3000, regularSv: 540 }
+      : { regularGross: 4000, baseSalary: 4000, regularSv: 720, specialGross: 7000, specialSv: 1194.9 }));
+    const analysis = analyzePayrollAutomatically(entries, 2026, entries[0].employer);
+    expect(analysis.actual?.usedSixth).toBeUndefined();
+    const june = analysis.specialPayments.find((payment) => payment.month === 6)!;
+    expect(june).toMatchObject({ estimatedSixth: true, tax: { sixth: 6400, eligibleGross: 6400, overflowGross: 600 } });
+    // November's sixth is 7.127,27 €: only the 6.400 € inside the June sixth are used, not all 7.000 €.
+    const november = analysis.taxEstimates.find((estimate) => estimate.month === 11)!.special!;
+    expect(november).toMatchObject({ sixth: 7127.27, usedBefore: 6400, eligibleGross: 727.27, overflowGross: 3272.73 });
+  });
 });
 
 describe("estimated additional bonus headroom and isolated tariff example", () => {

@@ -20,6 +20,7 @@ import {
   type SpecialPaymentTax,
   type WageTaxCredits,
 } from "@/lib/wage-tax-at";
+import { documentedSpecialPayments, plannedSpecialPayments, type SixthPayment } from "@/lib/payroll-sixth";
 
 export type PayrollYear = 2026 | 2027;
 
@@ -117,6 +118,8 @@ export type AutomaticPayrollAnalysis = PayrollAnalysis & {
   /** Tax credits as the own payroll applies them (or the statutory Verkehrsabsetzbetrag). */
   credits: WageTaxCredits;
   taxEstimates: PayrollTaxEstimate[];
+  /** Every documented and planned special payment of the year with its exact split: within the sixth or by tariff. */
+  specialPayments: SixthPayment[];
 };
 
 export type PayrollBonusEstimate = {
@@ -559,6 +562,9 @@ export function analyzePayrollAutomatically(
   const employerKey = payrollEmployerKey(employer);
   const credits = wageTaxCredits(payslips.filter((entry) => entry.year <= year && payrollEmployerKey(entry.employer) === employerKey), year);
   const percent = options.successBonusPercent ?? 0;
+  const documented = analysis.latest && !analysis.contextIssues.length
+    ? documentedSpecialPayments(entries, year, credits.monthly) : undefined;
+  const estimates = taxEstimates(entries, analysis, sixthEstimates, credits, documented?.state);
   return {
     ...analysis,
     mode: "automatic-standard-model",
@@ -573,7 +579,9 @@ export function analyzePayrollAutomatically(
     estimatedHistoryMonths,
     unresolvedSixthMonths,
     credits,
-    taxEstimates: taxEstimates(entries, analysis, sixthEstimates, credits),
+    taxEstimates: estimates,
+    specialPayments: documented
+      ? [...documented.payments, ...plannedSpecialPayments(estimates, estimatedHistoryMonths.length > 0)] : [],
   };
 }
 
@@ -587,18 +595,19 @@ function taxEstimates(
   analysis: PayrollAnalysis,
   sixths: AutomaticPayrollAnalysis["sixthEstimates"],
   credits: WageTaxCredits,
+  documented?: SpecialPaymentState,
 ): PayrollTaxEstimate[] {
   const latest = analysis.latest;
   if (!latest || analysis.contextIssues.length) return [];
   const year = analysis.forecast.year;
   const reference = regularReference(entries) ?? latest;
   const svRate = reference.regularSv !== undefined && reference.regularGross > 0 ? reference.regularSv / reference.regularGross : undefined;
-  const specials = entries.filter((entry) => entry.specialGross > 0);
+  // Without a verified use, an earlier overhang no longer counts as used sixth: it was taxed by the tariff.
+  const fallback = documented ?? documentedSpecialPayments(entries, year, credits.monthly).state;
   let state: SpecialPaymentState = {
-    used: analysis.actual?.usedSixth ?? sum(specials.map((entry) => entry.specialGross)),
-    taxable: analysis.actual?.specialTaxableYtd
-      ?? sum(specials.map((entry) => entry.specialGross - (entry.specialSv ?? specialPaymentSv(entry.specialGross, 0)))),
-    svGross: cumulativeSpecialSvGross(entries) ?? sum(entries.map((entry) => sum([entry.specialGross, entry.unresolvedSixthBonus ?? 0]))),
+    used: analysis.actual?.usedSixth ?? fallback.used,
+    taxable: analysis.actual?.specialTaxableYtd ?? fallback.taxable,
+    svGross: cumulativeSpecialSvGross(entries) ?? fallback.svGross,
   };
   return analysis.forecast.months.map((month) => {
     const regularSv = svRate === undefined ? undefined : money(month.regularGross * svRate);
