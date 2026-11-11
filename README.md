@@ -34,7 +34,7 @@ Sechs Seiten plus Einstellungen:
 - an einen von vier Spezialisten: Umsätze, Verträge, Budget & Prognose sowie Gehalt & Steuern, z. B. „Wie viel netto bekomme ich?“ mit dem Anteil zu 6 % und dem voll versteuerten Anteil der nächsten Sonderzahlung;
 - im Zweifel an den allgemeinen Chat, der locker und ohne Fachjargon antwortet.
 
-Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufrufe. Eine versteckte, rein lesende Ansicht unter **Einstellungen → „Assistent-Orchestrator“** zeigt Aufbau, Agenten, die letzten Läufe und die Werkzeuge. Details: [docs/ASSISTANT-ORCHESTRATOR.md](docs/ASSISTANT-ORCHESTRATOR.md).
+Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufrufe. Zwei Fragen in einer Nachricht beantwortet er nacheinander, Faktenfragen („Wie hoch ist der Großglockner?“) schlägt er nach, statt zu raten. Eine versteckte, rein lesende Ansicht unter **Einstellungen → „Assistent-Orchestrator“** zeigt Aufbau, Agenten, die letzten Läufe und die Werkzeuge. Details: [docs/ASSISTANT-ORCHESTRATOR.md](docs/ASSISTANT-ORCHESTRATOR.md).
 
 ## Speicherung
 

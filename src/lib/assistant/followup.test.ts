@@ -5,7 +5,7 @@ import { currency } from "@/lib/format";
 import type { AppState, Transaction } from "@/lib/types";
 import { executeTool } from "./agent";
 import { compareSelection, findPeriod, monthsIn, queryMetric, weeklyBriefing } from "./answers";
-import { isFollowUp, resolveFollowUp } from "./followup";
+import { isFollowUp, resolveFollowUp, resolvePronoun } from "./followup";
 import { detectTool } from "./tools";
 
 const asOf = "2026-11-05";
@@ -62,6 +62,16 @@ describe("follow-up questions", () => {
     expect(resolveFollowUp("und im September?", ["Ich will 3.000 € für Japan sparen"])).toBeUndefined();
     expect(resolveFollowUp("und was bleibt mir diesen Monat?", ["Wie viel ging im Oktober weg?"])).toBeUndefined();
     expect(resolveFollowUp("und im Dezember?", ["Was bleibt mir diesen Monat übrig?"])).toMatchObject({ tool: "budget" });
+  });
+});
+
+describe("references to the previous answer", () => {
+  it("keeps 'davon' with the contracts and names the contract for 'Kündige das'", () => {
+    expect(resolveFollowUp("Was davon ist am teuersten?", ["Welche Abos habe ich?"])).toEqual({ tool: "contracts", previous: ["Welche Abos habe ich?"] });
+    expect(resolvePronoun("Kündige das", { kind: "contracts", title: "Magenta Mobil" })).toBe("Kündige Magenta Mobil");
+    expect(resolvePronoun("Kündige das", { kind: "cancel", title: "Kündigungshilfe · Spotify AB" })).toBe("Kündige Spotify AB");
+    expect(resolvePronoun("Kündige das", { kind: "contracts", title: "Verträge & Abos" })).toBe("Kündige das");
+    expect(resolvePronoun("Kündige das", { kind: "answer", title: "Gehalt · September 2026" })).toBe("Kündige das");
   });
 });
 

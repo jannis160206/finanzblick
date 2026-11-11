@@ -7,11 +7,11 @@ import { payslipIncome } from "@/lib/payslip-income";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { salaryForecast } from "@/lib/salary-forecast";
 import type { AppState } from "@/lib/types";
-import { marginalTaxRate, wageTaxValues, WERBUNGSKOSTEN_PAUSCHALE } from "@/lib/wage-tax-at";
+import { FAMILY_BONUS, marginalTaxRate, monthlyWageTax, wageTaxValues, WERBUNGSKOSTEN_PAUSCHALE } from "@/lib/wage-tax-at";
 import type { AgentResult } from "./agent";
 
 // "Wie viel netto bekomme ich im Dezember?", "Was bleibt vom Weihnachtsgeld?", "Wie viel vom Successbonus wird voll versteuert?"
-const payslipWords = /lohnzettel|lohnabrechnung|gehaltsabrechnung|gehaltszettel|sonderzahlung|urlaubszuschuss|urlaubsgeld|weihnachtsgeld|weihnachtsremuneration|jahressechstel|\bsechstel|successbonus|\b1[34]\.\s*(?:gehalt|monatsgehalt)/;
+const payslipWords = /grenzsteuersatz|steuersatz|steuerstufe|steuerklasse|verkehrsabsetzbetrag|familienbonus|absetzbetrag|lohnzettel|lohnabrechnung|gehaltsabrechnung|gehaltszettel|sonderzahlung|urlaubszuschuss|urlaubsgeld|weihnachtsgeld|weihnachtsremuneration|jahressechstel|\bsechstel|successbonus|\b1[34]\.\s*(?:gehalt|monatsgehalt)/;
 const salaryWords = /\b(?:gehalt|gehalts\w*|lohn|brutto|netto)\b/;
 const askingWords = /\b(?:wie ?viel|wie hoch|was|wann|welche\w*|bekomm\w*|krieg\w*|verdien\w*|bleib\w*|abzüge|abzuege|abgezogen|steuer\w*|versteuer\w*|zeig|erklär\w*)\b/;
 // A bonus is a payroll question once its taxes or net are asked for ("Wie viel Steuer zahle ich auf meine Prämie?").
@@ -22,13 +22,28 @@ const wageTax = (lower: string) => /\blohnsteuer\b|\bsozialversicherung\b/.test(
   !/arbeitnehmerveranlagung|steuerausgleich|absetz|werbungskosten|sonderausgaben|finanzonline|steuer-?mappe|zurück/.test(lower);
 // "Kann man mit 3000 netto gut leben?" asks about people in general, not about the own payslip.
 const generic = (lower: string) => /\bman\b/.test(lower) && !/\b(?:ich|mir|mich|mein\w*|wir|uns|unser\w*)\b/.test(lower);
+// "Wie viel Gehalt ist im Oktober reingekommen?" asks about a booking that already happened.
+const received = (lower: string) => /\b(?:rein|herein|ein)gekommen\b|\beingegangen\b|\bgutgeschrieben\b|\bhab(?:e)? ich\b.*\b(?:bekommen|erhalten|kassiert)\b/.test(lower);
 export const payrollQuestion = (lower: string) =>
-  !/\b(?:merk|vergiss|nettovermögen|schon (?:da|gekommen|eingegangen|drauf))\b/.test(lower) && !generic(lower) &&
+  !/\b(?:merk|vergiss|nettovermögen|schon (?:da|gekommen|eingegangen|drauf))\b/.test(lower) && !generic(lower) && !received(lower) &&
   (payslipWords.test(lower) || salaryWords.test(lower) && askingWords.test(lower) || bonusTax(lower) ||
     wageTax(lower) && (askingWords.test(lower) || /\b(?:warum|wieso|weshalb|zahl\w*)\b/.test(lower)));
 
 // Plain explanations of the payroll terms; the user's own value follows right after.
-const glossary: { pattern: RegExp; text: string; own?: "sixth" | "latest" }[] = [
+const glossary: { pattern: RegExp; text: string | ((year: number) => string); own?: "sixth" | "latest" | "rate" }[] = [
+  { pattern: /verkehrsabsetzbetrag/, text: (year) => `Der Verkehrsabsetzbetrag steht allen Arbeitnehmern zu und wird direkt von der Lohnsteuer abgezogen: ` +
+    `${currency(wageTaxValues(year).trafficCredit)} im Jahr ${year}. Der Arbeitgeber berücksichtigt ihn schon bei jeder Abrechnung.` },
+  { pattern: /familienbonus/, text: `Der Familienbonus Plus senkt die Lohnsteuer direkt: bis zu ${currency(FAMILY_BONUS.child)} im Jahr pro Kind unter 18 ` +
+    `und ${currency(FAMILY_BONUS.adult)} ab 18, solange Familienbeihilfe bezogen wird. Beantragen kannst du ihn beim Arbeitgeber oder in der Arbeitnehmerveranlagung.` },
+  { pattern: /(?<![\p{L}])absetzbetr/u, text: "Ein Absetzbetrag wird direkt von der Steuer abgezogen – anders als Werbungskosten oder Sonderausgaben, " +
+    "die nur das zu versteuernde Einkommen senken. Beispiele in Österreich: Verkehrsabsetzbetrag, Familienbonus Plus, Alleinverdiener- und Pensionistenabsetzbetrag." },
+  { pattern: /steuerklasse/, text: "Steuerklassen gibt es in Österreich nicht. Die Lohnsteuer folgt einem progressiven Tarif für alle, " +
+    "die Familiensituation zählt über Absetzbeträge wie den Familienbonus Plus." },
+  { pattern: /grenzsteuersatz|steuersatz|steuerstufe/, text: "Der Grenzsteuersatz ist der Satz, mit dem jeder zusätzliche Euro besteuert wird – in Österreich 0 bis 55 %. " +
+    "Er liegt immer über dem Durchschnittssatz, den du auf dein ganzes Gehalt zahlst.", own: "rate" },
+  { pattern: /arbeitnehmerveranlagung|steuerausgleich|(?:geld|etwas|was) (?:vom|beim) finanzamt zurück|vom finanzamt (?:geld )?zurück/, text: "Geld zurück gibt es über die Arbeitnehmerveranlagung, " +
+    "wenn im Jahr zu viel Lohnsteuer abgezogen wurde – etwa bei Werbungskosten über 132 €, Sonderausgaben, Pendlerpauschale, Familienbonus Plus " +
+    "oder wenn sich das Gehalt unterm Jahr geändert hat. Einreichen geht bis zu fünf Jahre rückwirkend über FinanzOnline." },
   { pattern: /jahressechstel|\bsechstel/, text: "Das Jahressechstel ist die Grenze für begünstigte Sonderzahlungen: ein Sechstel der laufenden Bezüge des Jahres, " +
     "also etwa zwei Monatsgehälter. Darin sind nach der Sozialversicherung 620 € steuerfrei, der Rest kostet 6 %; was darüber liegt, wird wie laufendes Gehalt versteuert.", own: "sixth" },
   { pattern: /\bbrutto\b.*\bnetto\b|\bnetto\b.*\bbrutto\b/, text: "Brutto ist dein Gehalt vor allen Abzügen, netto das, was nach Sozialversicherung und Lohnsteuer aufs Konto kommt.", own: "latest" },
@@ -43,8 +58,10 @@ const glossary: { pattern: RegExp; text: string; own?: "sixth" | "latest" }[] = 
 const definitionWords = /\b(?:was (?:ist|sind|bedeutet|bedeuten|heißt|heisst)|unterschied|erklär\w*|definition|bedeutung)\b/;
 // "Werden Überstunden anders versteuert?" is a rule question as well, even without "Was ist …".
 const ruleQuestion = (lower: string) => /überstunde|ueberstunde/.test(lower) && /steuer|versteuer|steuerfrei|netto|brutto/.test(lower);
-const definition = (lower: string) => (definitionWords.test(lower) || ruleQuestion(lower)) && !/\b(?:mein\w*|ich|mir|mich)\b/.test(lower)
-  ? glossary.find((entry) => entry.pattern.test(lower)) : undefined;
+// Terms that are explained even in a personal question ("Bekomme ich Geld vom Finanzamt zurück?").
+const alwaysExplained = /verkehrsabsetzbetrag|familienbonus|steuerklasse|finanzamt zurück|vom finanzamt/;
+const definition = (lower: string) => (definitionWords.test(lower) || ruleQuestion(lower)) && !/\b(?:mein\w*|ich|mir|mich)\b/.test(lower) ||
+  alwaysExplained.test(lower) && !/\b(?:mein\w*)\b/.test(lower) ? glossary.find((entry) => entry.pattern.test(lower)) : undefined;
 /** "Was ist das Jahressechstel?", "Unterschied zwischen Brutto und Netto?": payroll terms explained, not looked up. */
 export const payrollTermQuestion = (lower: string) => !!definition(lower);
 
@@ -57,9 +74,11 @@ const period = (year: number, month: number) => `${year}-${String(month).padStar
 const monthName = (month: number) => new Intl.DateTimeFormat("de-AT", { month: "long", timeZone: "UTC" }).format(new Date(Date.UTC(2026, month - 1, 15)));
 const payout = (entry: Pick<Payslip, "year" | "month">) => entry.month === 12 ? period(entry.year + 1, 1) : period(entry.year, entry.month + 1);
 
-function latestPayslip(state: AppState): Payslip | undefined {
-  return (state.payslips ?? []).filter((entry) => !isReferencePayslip(entry))
-    .sort((left, right) => left.year - right.year || left.month - right.month).at(-1);
+// The latest payslip up to today; a payslip dated after today (wrong import, test data) never counts as "latest".
+function latestPayslip(state: AppState, today = state.settings.asOf): Payslip | undefined {
+  const sorted = (state.payslips ?? []).filter((entry) => !isReferencePayslip(entry))
+    .sort((left, right) => left.year - right.year || left.month - right.month);
+  return sorted.filter((entry) => period(entry.year, entry.month) <= today.slice(0, 7)).at(-1) ?? sorted.at(-1);
 }
 
 function payrollView(state: AppState) {
@@ -114,6 +133,32 @@ export function payrollFacts(state: AppState, today: string) {
   };
 }
 
+const payslipsOf = (state: AppState, latest: Payslip) => (state.payslips ?? []).filter((entry) => !isReferencePayslip(entry) && entry.year === latest.year &&
+  payrollEmployerKey(entry.employer) === payrollEmployerKey(latest.employer));
+// "Gehaltserhöhung von 200 € brutto", "200 € mehr brutto": the monthly raise.
+const raiseOf = (lower: string) => {
+  if (!/gehaltserhöhung|gehaltserhoehung|lohnerhöhung|erhöhung|mehr brutto|mehr gehalt|brutto mehr/.test(lower)) return undefined;
+  const value = Number(/(\d{2,5}(?:[.,]\d{1,2})?)\s*(?:€|euro|eur)?/.exec(lower)?.[1]?.replace(",", "."));
+  return value > 0 ? value : undefined;
+};
+const monthNames = ["jänner", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember"];
+// The next month of that name, as the budget month the salary arrives in.
+const askedMonth = (lower: string, today: string) => {
+  const index = monthNames.findIndex((name) => new RegExp(`\\b(?:${name}${name === "jänner" ? "|januar" : ""})\\b`).test(lower));
+  if (index < 0) return /nächste[nm]? monat/.test(lower) ? (Number(today.slice(5, 7)) === 12 ? `${Number(today.slice(0, 4)) + 1}-01` : period(Number(today.slice(0, 4)), Number(today.slice(5, 7)) + 1)) : undefined;
+  const year = Number(today.slice(0, 4));
+  const key = period(year, index + 1);
+  return key < today.slice(0, 7) ? period(year + 1, index + 1) : key;
+};
+function forecastMonth(state: AppState, today: string, month: string) {
+  try {
+    return salaryForecast(state, { today }).months.find((entry) => entry.month === month);
+  } catch {
+    return undefined;
+  }
+}
+const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
 const masculine = (kind: SixthPaymentKind) => kind === "holiday" || kind === "successBonus";
 const article = (kind: SixthPaymentKind) => masculine(kind) ? "der" : "die";
 
@@ -121,9 +166,11 @@ const article = (kind: SixthPaymentKind) => masculine(kind) ? "der" : "die";
  * Salary answer focused on the question: a named special payment, the wage tax, a payroll term, or otherwise the
  * latest payslip with the next special payment and the Jahressechstel.
  */
-export function payrollAnswer(state: AppState, text = ""): AgentResult {
+export function payrollAnswer(state: AppState, text = "", today = state.settings.asOf): AgentResult {
   const lower = text.toLowerCase();
-  const term = definition(lower);
+  const found = definition(lower);
+  const termYear = latestPayslip(state)?.year ?? Number(today.slice(0, 4));
+  const term = found && { ...found, text: typeof found.text === "function" ? found.text(termYear) : found.text };
   const page = { label: "Gehalt & Steuern öffnen", href: "/gehalt-steuern" };
   const view = payrollView(state);
   if (!view) return {
@@ -146,9 +193,49 @@ export function payrollAnswer(state: AppState, text = ""): AgentResult {
     `${splitText(payment).replace(" · ", ", ")}. Netto bleiben etwa ${currency(payment.tax.net)}.`;
   const base = latest.monthlyTaxableBase ?? (breakdown.sv !== undefined ? breakdown.gross - breakdown.sv : undefined);
   const rate = base !== undefined ? marginalTaxRate(base * 12 - WERBUNGSKOSTEN_PAUSCHALE, latest.year) : undefined;
-  const taxQuestion = wageTax(lower) && breakdown.tax !== undefined && breakdown.gross > 0;
+  const taxQuestion = wageTax(lower) && !/sozialversicherung/.test(lower) && breakdown.tax !== undefined && breakdown.gross > 0;
+  const svQuestion = /sozialversicherung|\bsv\b|sv-?beitr/.test(lower) && breakdown.sv !== undefined && breakdown.gross > 0;
+  const own = payslipsOf(state, latest);
+  const yearTax = round(own.reduce((sum, entry) => sum + (entry.regularTax ?? 0) + (entry.specialTax ?? 0), 0));
+  const yearly = taxQuestion && /\b(?:im|pro|aufs|das ganze|ganzen) jahr\b|jährlich|jaehrlich|\bheuer\b|\bbisher\b|insgesamt/.test(lower) && own.some((entry) => entry.regularTax !== undefined);
+  const raise = raiseOf(lower);
+  const named = askedMonth(lower, today);
+  const forecast = named && /netto|bekomm|krieg|kommt|überwiesen|aufs konto|auszahl/.test(lower) ? forecastMonth(state, today, named) : undefined;
+  const farYear = Number(/\b(20[2-9]\d)\b/.exec(lower)?.[1] ?? 0);
   let lead: string;
-  if (asked) lead = paymentText(asked);
+  if (farYear > Number(today.slice(0, 4)) + 1) lead = `So weit voraus rechne ich nicht – bis ${farYear} ändern sich Gehalt, Tarif und Absetzbeträge. Stand heute: ${latestText}`;
+  else if (asked) lead = paymentText(asked);
+  else if (forecast) lead = `Im ${monthLabel(forecast.month)} kommen voraussichtlich ${currency(forecast.total)} netto aufs Konto` +
+    (forecast.special.amount > 0 ? `, davon ${currency(forecast.special.amount)} aus der Sonderzahlung.` : ".") +
+    ` Grundlage ist deine letzte Abrechnung (${month}) und das gelernte Gehaltsmuster.`;
+  else if (named && /netto|bekomm|krieg|kommt|überwiesen|aufs konto|auszahl/.test(lower)) {
+    // Without a forecast month: the regular net of the latest payslip plus the special payment paid out that month.
+    const payslipMonth = Number(named.slice(5, 7)) === 1 ? 12 : Number(named.slice(5, 7)) - 1;
+    const special = payments.find((payment) => payment.source === "forecast" && payment.month === payslipMonth);
+    lead = net !== undefined
+      ? `Im ${monthLabel(named)} kommen voraussichtlich etwa ${currency(round(net + (special?.tax.net ?? 0)))} netto aufs Konto: ${currency(net)} laufendes Gehalt wie zuletzt` +
+        (special ? ` plus etwa ${currency(special.tax.net)} aus ${article(special.kind) === "der" ? "dem" : "der"} ${sixthPaymentLabel[special.kind]}.` : ".")
+      : `Für ${monthLabel(named)} habe ich noch keine Prognose. ${latestText}`;
+  }
+  else if (raise && base !== undefined && breakdown.sv !== undefined && breakdown.gross > 0) {
+    const svShare = breakdown.sv / breakdown.gross;
+    const extraSv = round(raise * svShare);
+    const extraTax = round(monthlyWageTax(base + raise - extraSv, latest.year) - monthlyWageTax(base, latest.year));
+    const extraNet = round(raise - extraSv - extraTax);
+    lead = `Von ${currency(raise)} mehr brutto bleiben dir etwa ${currency(extraNet)} netto im Monat: ${currency(extraSv)} gehen an die Sozialversicherung, ` +
+      `${currency(extraTax)} an die Lohnsteuer${rate ? ` (Grenzsteuersatz ${Math.round(rate * 100)} %)` : ""}. Urlaubszuschuss und Weihnachtsremuneration steigen mit.`;
+  }
+  else if (svQuestion) lead = `Von ${currency(breakdown.gross)} brutto gehen bei dir ${currency(breakdown.sv!)} Sozialversicherung ab, ` +
+    `rund ${Math.round(breakdown.sv! / breakdown.gross * 100)} %. Sie deckt Kranken-, Pensions-, Unfall- und Arbeitslosenversicherung.`;
+  else if (yearly) lead = `Laut ${own.length === 1 ? "deiner Abrechnung" : `deinen ${own.length} Abrechnungen`} ${latest.year} hast du bisher ${currency(yearTax)} Lohnsteuer gezahlt, ` +
+    `zuletzt ${currency(breakdown.tax ?? 0)} im Monat auf das laufende Gehalt.`;
+  else if (/grenzsteuersatz|steuersatz|steuerstufe/.test(lower) && rate !== undefined && (!term || /\bmein\w*\b/.test(lower))) lead = `Dein Grenzsteuersatz liegt bei ` +
+    `${Math.round(rate * 100)} %: Jeder zusätzliche Euro Gehalt kostet dich so viel Lohnsteuer.` +
+    (breakdown.tax !== undefined && breakdown.gross > 0 ? ` Im Schnitt zahlst du aber nur rund ${Math.round(breakdown.tax / breakdown.gross * 100)} % deines Bruttos.` : "");
+  else if (/\bmein(?:e)?\s+(?:jahres)?sechstel\b|\bsechstel\b.*\bbei mir\b/.test(lower) && sixth !== undefined) lead = `Dein Jahressechstel liegt derzeit bei ${currency(sixth)}. ` +
+    "Bis zu dieser Grenze werden Sonderzahlungen begünstigt versteuert: 620 € frei, darüber 6 %.";
+  else if (/\bbrutto\b/.test(lower) && !/\bnetto\b/.test(lower) && !term) lead = `Brutto verdienst du ${currency(breakdown.gross)} im Monat (Abrechnung ${month})` +
+    (net !== undefined ? `, netto bleiben ${currency(net)}.` : ".");
   else if (kinds) lead = `${masculine(kinds[0]) ? "Einen" : "Eine"} ${sixthPaymentLabel[kinds[0]]} finde ich weder in deinen Abrechnungen ` +
     `noch in der Prognose. ${latestText}`;
   else if (term) lead = term.own === "sixth" && sixth !== undefined ? `${term.text} Bei dir liegt es derzeit bei ${currency(sixth)}.`
@@ -159,7 +246,7 @@ export function payrollAnswer(state: AppState, text = ""): AgentResult {
       `jeder zusätzliche Euro wird bei dir aber mit ${Math.round(rate * 100)} % besteuert. ` : "") +
     "Absetzbeträge senken die Steuer, Steuerklassen gibt es in Österreich nicht.";
   else lead = latestText;
-  const nextText = !asked && !term && !kinds && !taxQuestion && next
+  const nextText = lead === latestText && !asked && !term && !kinds && !taxQuestion && next
     ? ` Als Nächstes kommt ${article(next.kind)} ${sixthPaymentLabel[next.kind]} mit der ${monthName(next.month)}-Abrechnung: ${specialText(next)}.` : "";
   const lines = [
     ...(net !== undefined ? [{ label: "Netto", value: net }] : []),

@@ -17,7 +17,9 @@ const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T
 // Monats-Puls: daily safe-to-spend, salary status, budget pace and what still leaves the account this month.
 export const pulseQuestion = (lower: string) =>
   /tagesbudget|safe.?to.?spend|monats-?puls|monats-?check|zwischenstand/.test(lower) ||
-  /(?:kann|darf) ich (?:\S+ ){0,3}(?:pro tag|am tag|täglich|taeglich|heute|diese woche|bis zum gehalt|bis (?:zum )?monatsende)\b/.test(lower) ||
+  /\b(?:bleibt|bleiben) (?:mir |uns )?(?:noch )?(?:pro tag|am tag|täglich|taeglich)\b|(?:pro tag|am tag|täglich|taeglich) (?:\S+ ){0,2}bis zum (?:nächsten |naechsten )?(?:gehalt|lohn)\b/.test(lower) ||
+  /(?:kann|darf) ich (?:\S+ ){0,3}(?:pro tag|am tag|täglich|taeglich|heute|diese woche|bis zum gehalt|bis (?:zum )?monatsende|bis sonntag|bis (?:zum )?wochenende|bis ende der woche)\b/.test(lower) ||
+  /\bkomm\w* ich\b.*\bbis (?:zum )?(?:monatsende|ende des monats|(?:nächsten |naechsten )?gehalt)\b.*\baus\b|\bgeht sich\b.*\bbis (?:zum )?(?:monatsende|ende des monats|gehalt)\b/.test(lower) ||
   /(?:pro tag|am tag|täglich|taeglich|heute) (?:\S+ ){0,2}(?:ausgeben|verbrauchen|verballern)\b/.test(lower) && /\b(?:kann|darf|noch)\b/.test(lower) ||
   /(?:reicht|komm\w*) (?:mein |das )?geld (?:\S+ ){0,2}bis zum (?:nächsten |naechsten )?(?:gehalt|lohn|monatsende)/.test(lower) ||
   /wie (?:läuft|laeuft|steht) (?:es um )?(?:mein|der|dieser|den) monat|wie (?:schaut|sieht) (?:mein|der|dieser) monat (?:bisher|bis jetzt|gerade|aktuell)/.test(lower) ||
@@ -66,13 +68,36 @@ export function budgetPace(dashboard: Dashboard, today: string): BudgetPace[] {
 const raiseWords = /erhöh|erhoeh|\bmehr\b|aufstock|rauf/;
 const lowerWords = /senk|reduzier|kürz|kuerz|weniger|runter/;
 
-/** "Sollte ich das Lebensmittelbudget erhöhen?": the named budget line's pace this month and a clear recommendation. */
-export function budgetAdvice(dashboard: Dashboard, today: string, text: string): Result | undefined {
+const adviceWords = /\b(?:sollte|soll|sollen|müsste|muss)\s+ich\b|\blohnt\s+(?:es\s+)?sich\b/;
+const statusWords = /\bwie (?:steht|stehen|sieht|schaut|läuft|laeuft)\b|\bwie viel (?:\S+ )?(?:ist|hab|habe|bleibt|darf|kann)\b|\bwas ist (?:noch )?(?:im|vom|beim)\b|\bstand\b|\bübrig\b|\buebrig\b|\bnoch frei\b|\bhab ich noch\b/;
+/** "Wie steht mein Lebensmittelbudget?", "Wie viel Puffer hab ich?": one named budget line, without changing it. */
+export const budgetLineQuestion = (lower: string) => budgetLinesIn(lower).length === 1 && statusWords.test(lower) &&
+  !/erhöh|erhoeh|senk|reduzier|setz|stell|änder|aender|umschicht|\bauf\s+\d|\bum\s+\d/.test(lower) && /budget|puffer|\bplan\b|\blimit\b/.test(lower);
+
+/** One budget line: its status this month, or for "Sollte ich das Lebensmittelbudget erhöhen?" a clear recommendation. */
+export function budgetLineAnswer(dashboard: Dashboard, today: string, text: string): Result | undefined {
   const lower = text.toLowerCase();
-  if (!/\b(?:sollte|soll|sollen|müsste|muss)\s+ich\b|\blohnt\s+(?:es\s+)?sich\b/.test(lower) || !raiseWords.test(lower) && !lowerWords.test(lower)) return undefined;
+  const advice = adviceWords.test(lower) && (raiseWords.test(lower) || lowerWords.test(lower));
+  if (!advice && !budgetLineQuestion(lower)) return undefined;
   const ids = budgetLinesIn(lower).map((line) => line.id);
   const row = ids.length === 1 ? budgetPace(dashboard, today).find((item) => item.id === ids[0]) : undefined;
   if (!row) return undefined;
+  if (!advice) {
+    const share = Number(today.slice(8, 10)) / daysInMonth(today.slice(0, 7));
+    const left = round(row.total - row.actual);
+    const projected = round(row.actual / Math.max(share, 0.01));
+    const days = daysInMonth(today.slice(0, 7)) - Number(today.slice(8, 10)) + 1;
+    return {
+      text: `Für ${row.label} sind ${currency(row.total)} im Monat geplant, bisher sind ${currency(row.actual)} weg – ` +
+        (left >= 0 ? `noch ${currency(left)} für ${days === 1 ? "heute" : `die restlichen ${days} Tage`}.` : `${currency(-left)} mehr als geplant.`) +
+        (row.status === "ahead" ? ` Du bist schneller als geplant; bei diesem Tempo landest du bei etwa ${currency(projected)}.` : left >= 0 ? " Das liegt im Plan." : ""),
+      card: { kind: "answer", title: `Budget · ${row.label}`, total: left, lines: [
+        { label: "Geplant", value: row.total }, { label: "Bisher ausgegeben", value: row.actual, detail: `bis heute üblich ${currency(row.expected)}` },
+        { label: "Noch übrig", value: left, tone: left >= 0 ? "good" : "bad" },
+      ] },
+      suggestions: ["Wie viel kann ich heute noch ausgeben?", "Bin ich im Budget?"],
+    };
+  }
   const share = Number(today.slice(8, 10)) / daysInMonth(today.slice(0, 7));
   const projected = round(row.actual / share);
   const target = Math.ceil(Math.max(projected, row.actual) / 10) * 10;
@@ -191,12 +216,31 @@ export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string
     missing.length ? `Noch abgebucht werden ${missing.length === 1 ? missing[0].label : `${missing.length} Fixkosten`} (${currency(round(missing.reduce((sum, item) => sum + item.amount, 0)))}).` : "",
   ].filter(Boolean);
   const asked = question.toLowerCase();
-  const salaryText = parts[3];
+  const salaryText = salary.received > 0 ? `Gehalt ist am ${dateLabel(salary.date!)} eingegangen (${currency(salary.received)}).`
+    : salary.late ? `Dein Gehalt ist noch nicht da, üblich wäre der ${dateLabel(salary.expected!)}.` : salary.expected ? `Gehalt kommt voraussichtlich am ${dateLabel(salary.expected)}.` : "";
+  const budgetsText = over.length ? `Über dem Budget: ${over.join(", ")}.` : ahead.length ? `Schneller als geplant: ${ahead.join(", ")}.` : "Alle Budgets liegen im Plan.";
+  const days = daysInMonth(month) - Number(today.slice(8, 10)) + 1;
+  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
+  const weekDays = Math.min(days, weekday === 0 ? 1 : 8 - weekday);
   // "Wann kommt mein Gehalt?" gets the salary first; "Was kann ich heute ausgeben?" a clear amount first.
   if (/gehalt|lohn/.test(asked) && !/ausgeben|reicht|kann ich|darf ich|komm\w* ich/.test(asked) && salaryText) {
     const wait = salary.expected && salary.received <= 0 && !salary.late ? daysBetween(today, salary.expected) : 0;
     const notYet = salary.received <= 0 && /schon|gekommen|eingegangen|\bda\b|drauf/.test(asked) ? "Noch nicht. " : "";
     parts.splice(0, parts.length, `${notYet}${wait > 0 ? `${salaryText.slice(0, -1)} – noch ${wait === 1 ? "1 Tag" : `${wait} Tage`}.` : salaryText}`, parts[0]);
+  } else if (/diese woche|bis (?:zum )?(?:sonntag|wochenende)|bis ende der woche|pro woche|die woche\b/.test(asked) && /ausgeben|verbrauchen|darf|kann/.test(asked)) {
+    const week = round(perDay * weekDays);
+    parts.splice(0, 1, perDay > 0 ? `Diese Woche kannst du noch rund ${currency(week)} ausgeben – ${currency(perDay)} pro Tag für ${weekDays === 1 ? "heute" : `${weekDays} Tage bis Sonntag`}.`
+      : "Diese Woche ist eigentlich nichts mehr frei.");
+  } else if (/\breicht\b|\bkomm\w* ich\b.*\baus\b|geht sich .* aus/.test(asked) && /gehalt|lohn|monatsende|ende des monats|monat/.test(asked)) {
+    const short = safe ? safe.free < 0 : budgetLeft < 0;
+    parts.splice(0, 1, short
+      ? `Knapp: ${safe && safe.free < 0 ? `bis zum Gehalt am ${dateLabel(safe.until)} fehlen auf dem Konto rund ${currency(-safe.free)}` : `dein Alltagsbudget ist schon um ${currency(-budgetLeft)} überzogen`} – ab jetzt nur noch das Nötigste.`
+      : `Ja, das reicht: Du kannst bis zum Gehalt noch rund ${currency(perDay)} pro Tag ausgeben.`);
+  } else if (/\b(?:im|über|ueber|unter) (?:dem |meinem )?(?:budget|plan|rahmen|limit)\b/.test(asked) && !/ausgeben/.test(asked)) {
+    parts.splice(parts.indexOf(budgetsText), 1);
+    parts.unshift(over.length ? `Nicht ganz – über dem Budget: ${over.join(", ")}.` : ahead.length ? `Noch ja, aber schneller als geplant: ${ahead.join(", ")}.` : "Ja, alle Budgets liegen im Plan.");
+  } else if (/fixkosten|abbuchung|zahlungen|lastschrift/.test(asked) && !missing.length) {
+    parts.unshift("Diesen Monat sind keine Fixkosten mehr offen.");
   } else if (/fixkosten|abbuchung|zahlungen|lastschrift/.test(asked) && missing.length) {
     const due = parts.findIndex((part) => part.startsWith("Noch abgebucht"));
     const grouped = new Map<string, number>();

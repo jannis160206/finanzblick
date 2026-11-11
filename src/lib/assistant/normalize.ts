@@ -30,7 +30,12 @@ const slang: [RegExp, string][] = [
   [/\bkrieg(?=e?\b)/gi, "bekomm"], [/\bkriegst\b/gi, "bekommst"], [/\bmtl\.?(?=\s|$)/gi, "monatlich"], [/\bp\.?\s?m\.?(?=\s|$)/gi, "pro monat"],
   [/\bbtw\b|\bpls\b|\bplz\b|\bbitteschön\b/gi, ""], [/\bnimma\b/gi, "nicht mehr"], [/\bnet\b(?=\s|[.!?]|$)/gi, "nicht"], [/\bhob\b/gi, "hab"],
   [/\bi\b(?=\s+(?:hab|will|möcht|brauch|kann|krieg|bekomm|spar|bin|muss))/gi, "ich"], [/\bmei\b(?=\s)/gi, "mein"],
+  [/(?<=\b(?:kostet|kosten|zahl|zahle)\s)mi\b/gi, "mich"], [/(?<=\bmich\s)des\b/gi, "das"], [/\bjaar\b/gi, "jahr"], [/\bausgegebn\b/gi, "ausgegeben"],
 ];
+
+/** "Danke! Und was ist ein ETF?" → "was ist ein ETF?": a thank-you or okay in front of a question is not part of it. */
+export const stripAck = (text: string) =>
+  text.replace(/^(?:danke(?: dir| schön| sehr)?|ok(?:ay)?|super|alles klar|passt|cool|perfekt|gut)\s*[!,.]+\s*(?:und\s+)?(?=\S)/i, "");
 
 export function normalizeMessage(text: string): string {
   let result = text.slice(0, 1000).replace(/\s+/g, " ").trim();
@@ -48,6 +53,9 @@ export function normalizeMessage(text: string): string {
   // "3k", "1,5k", "4 tsd" → full numbers.
   result = result.replace(/\b(\d{1,3})(?:,(\d))?\s?(?:k|tsd\.?|tausend)(?![a-zäöüß])(?!\s*(?:fernseher|monitor|bildschirm|display|video))/gi, (_, whole: string, decimal: string | undefined) =>
     String(Number(whole) * 1000 + (decimal ? Number(decimal) * 100 : 0)));
+  // "1 Million", "2,5 Mio." → full numbers.
+  result = result.replace(/\b(\d{1,3})(?:,(\d{1,2}))?\s?(?:millionen|million|mio\.?)(?![a-zäöüß])/gi, (_, whole: string, decimal: string | undefined) =>
+    String(Number(whole) * 1_000_000 + (decimal ? Number(decimal.padEnd(2, "0")) * 10_000 : 0)));
   // "Lieferando = Lieferdienste" → a rule sentence.
   result = result.replace(/^([^=\d]{2,40}?)\s*(?:=|->|→|=>)\s*([^=\d]{2,40})$/, "$1 ist immer $2");
   return result.replace(/\s{2,}/g, " ").trim();

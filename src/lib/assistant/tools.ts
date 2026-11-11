@@ -7,10 +7,10 @@ import { checkQuestion } from "./check";
 import { forecastQuestion } from "./forecast";
 import { loanQuestion, reminderListQuestion, reminderRequest, reviewQuestion } from "./extras";
 import { detectAction, findExtra } from "./intent";
-import { knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
+import { factTopic, knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
 import { marketQuestion } from "./market";
-import { normalizeMessage } from "./normalize";
-import { pulseQuestion } from "./pulse";
+import { normalizeMessage, stripAck } from "./normalize";
+import { budgetLineQuestion, pulseQuestion } from "./pulse";
 import { ordersQuestion } from "./orders";
 import { accountRuleRequest, fundsQuestion } from "./funds";
 import { whatIfQuestion } from "./whatif";
@@ -19,6 +19,7 @@ import { allCategories } from "@/lib/categories";
 import { cleanupQuestion } from "./cleanup";
 import { contextQuestion, contractsQuestion, insightsQuestion } from "./copilot-questions";
 import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
+import { explainAgain, fixedReply } from "./fixed-replies";
 import { payrollQuestion, payrollTermQuestion } from "./payroll";
 
 // Everything the assistant can do. The model may only pick one of these names.
@@ -117,9 +118,10 @@ const explainPattern = new RegExp([
 const months = "jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember";
 const periodWords = new RegExp(`\\b(?:${months})\\b|letzte[nrs]? (?:monat|woche|jahr)|vorigen? (?:monat|jahr)|diese[nrs]? (?:monat|woche|jahr)|\\bheuer\\b|\\bvorjahr\\b|\\b20\\d{2}\\b`);
 const spentWords = /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|kosten mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt|draufgegangen|drauf gegangen|gelassen|verballert|verprasst|rausgehauen|ausgeben|gebe ich|geb ich|liegen gelassen|gezahlt|verbraten|\bdrauf\b|war ich (?:bei|beim|im|in)\b|preiserhöh|teurer geworden|\bbestellt\b|fixkosten|fixe kosten|laufenden kosten|\bzahl(?:e)? ich\b|gespart|übrig geblieben|uebrig geblieben/;
-const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert|getankt|eingekauft)\b/;
+const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert|getankt|eingekauft|gekauft|bestellt|(?:rein|herein|ein)gekommen|eingegangen)\b/;
 const spendingQuestion = (lower: string) =>
-  /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:mein|das|unser) geld/.test(lower) ||
+  /\b(?:wo(?:hin)?|wofür|wofuer) (?:geht|gehen|fließt|fliesst|landet|verschwindet|bleibt) (?:mein|das|unser)(?: meiste)? geld/.test(lower) ||
+  /\bwo(?:hin)? (?:ist|sind|ging|gingen|floss|landete) .{0,40}\bgeld\b.{0,12}\b(?:hin|geblieben|gelandet)\b/.test(lower) ||
   /^(?:ausgaben|einnahmen|kosten|umsätze|umsaetze)\b/.test(lower) && periodWords.test(lower) ||
   /^was (?:war|ist|lief) (?:gestern|heute|vorgestern|letzte woche|diese woche|am wochenende|letztes wochenende) (?:so )?los\b/.test(lower) ||
   /^(?:alle |meine )?(?:buchungen|ausgaben|umsätze|umsaetze|käufe|kaeufe|einkäufe|einkaeufe|abbuchungen)\b.*(?:über|ueber|mehr als|unter|weniger als|ab)\s+\d/.test(lower) ||
@@ -146,7 +148,9 @@ const bookingAssignment = (lower: string) => categoryAssignment.test(lower) &&
 
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
 export function detectTool(input: string, names: string[] = []): AssistantTool | undefined {
-  const text = normalizeMessage(input);
+  // "Danke! Und was ist ein ETF?" is the question after the thanks.
+  const text = stripAck(normalizeMessage(input));
+  if (fixedReply(text)) return undefined;
   if (splitCommands(text, names)) return "batch";
   return detectSingle(text, names);
 }
@@ -181,6 +185,8 @@ function detectSingle(text: string, names: string[]): AssistantTool | undefined 
 
 function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   const lower = text.toLowerCase().trim();
+  // "Kannst du das nochmal erklären?", "Was heißt das?" refer to the last answer: a written reply with the history, no tool.
+  if (explainAgain(lower)) return undefined;
   const known = mentionsName(text, names);
   const hasAmount = /\d/.test(lower);
   if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
@@ -190,6 +196,11 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (reviewQuestion(lower)) return "review";
   if (accountRuleRequest(lower)) return "account_rule";
   if (budgetPlanRequest(lower, known)) return "budget_plan";
+  if (budgetLineQuestion(lower)) return "budget";
+  // "Wie hoch ist meine Miete?" is a booking question; without bookings the answer says so.
+  if (/^wie (?:hoch|viel) (?:ist|sind|kostet|kosten|zahl\w*) (?:mich )?(?:meine?|die|der|das) (?:miete|strom\w*|nebenkosten|betriebskosten|heizung\w*|gasrechnung)\b/.test(lower)) return "query";
+  // "Welche Abos sind teurer geworden?" lists the price increases of the contracts.
+  if (/^(?:welche|zeig\w*(?: mir)?) (?:abos|verträge|vertraege|versicherungen) (?:sind|wurden) (?:\S+ )?teurer/.test(lower)) return "contracts";
   if (securityQuestion(lower)) return "security";
   if (cleanupQuestion(lower)) return "cleanup";
   if (sharedQuestion(lower) && !known) return "shared";
@@ -197,6 +208,19 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (netWorthQuestion(lower)) return "networth";
   if (insightsQuestion(lower)) return "insights";
   if (contextQuestion(lower)) return "context";
+  // English basics: "what are my subscriptions", "how much money is left this month", "how much did I spend on food".
+  if (/^(?:what|which|show|list|how many)\b.*\b(?:subscriptions?|contracts?)\b/.test(lower)) return "contracts";
+  if (/\b(?:left|remaining)\b/.test(lower) && /\b(?:money|budget|month)\b/.test(lower)) return "budget";
+  if (/\bhow much\b.*\b(?:spend|spent|pay|paid)\b/.test(lower)) return "query";
+  // "Wofür geht das meiste Geld drauf?" asks where the money went, never whether something is affordable.
+  if (/\b(?:wo(?:hin)?|wofür|wofuer) (?:geht|gehen|ging|fließt|fliesst|landet|verschwindet) (?:mein|das|unser)(?: meiste)? geld\b/.test(lower)) return "query";
+  if (/\b(?:what|which|show)\b.*\b(?:biggest|largest|most expensive)\b.*\b(?:expenses?|purchases?|payments?|spending)\b|\bwhat do i spend (?:the )?most (?:money )?on\b/.test(lower)) return "query";
+  // "Welche Buchungen sind noch nicht kategorisiert?" lists the open ones; it is no rule.
+  if (/\b(?:nicht|noch nicht|un)\s?(?:kategorisiert|zugeordnet|eingeordnet)|\bohne kategorie\b|\boffene buchungen\b/.test(lower) &&
+    /^(?:welche|wie ?viele|gibt es|hab(?:e)? ich|zeig|was|sind)\b/.test(lower)) return "cleanup";
+  // "Wann hab ich das Motorrad zusammen?", "Wie viel fehlt mir noch fürs Motorrad?": the goal's own status.
+  if (known && /\bwann (?:hab|habe|bin|ist|sind|hätte|habe ich)\b.*\b(?:zusammen|erreicht|voll|fertig|geschafft|beisammen)\b|\bwie viel fehlt (?:mir )?(?:noch )?(?:für|fürs|zum|zur|bis)\b|\bwie weit bin ich (?:mit|bei)\b|\bwie viel (?:hab|habe) ich (?:schon )?(?:für|fürs) /.test(lower) &&
+    !/\d/.test(lower)) return "accounts";
   if (contractsQuestion(lower) && !known) return "contracts";
   // "Ist Spotify teurer geworden?", "Was ist mit meiner Versicherung los?": one contract, answered from the contract list.
   if (!known && (/^(?:ist|wurde|hat sich)\b.*\b(?:teurer geworden|teurer|preiserhöh\w*)\b/.test(lower) && !/\b(?:abos|verträge|vertraege|alle)\b/.test(lower) ||
@@ -254,6 +278,8 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   // "Erklär mir meine Finanzen" is about the user's money, not about how the app works.
   if (/erklär|erklaer|versteh/.test(lower) && /\bmeine?[nrs]?\s+(?:finanzen|geld|ausgaben|lage|situation|konten|monat)\b/.test(lower)) return "check";
   if (explainPattern.test(lower)) return "explain";
+  // "Wie hoch ist der Großglockner?": looked up, so the model never guesses a number.
+  if (factTopic(text, names)) return "knowledge";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
   if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
   // "Zahl das Pickerl vom Sparkonto", "Teil den Urlaub mit Raphael", "Nimm das Pickerl aus dem Plan".

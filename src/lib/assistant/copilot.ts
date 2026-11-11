@@ -17,7 +17,7 @@ const folder = { label: "Im Vertragsordner öffnen", href: "/vertraege" } as con
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 const typeWords: [RegExp, Contract["type"][]][] = [
-  [/streaming|\babos?\b|abonnement/, ["streaming", "software", "gym"]],
+  [/streaming|\babos?\b|abonnement|subscription/, ["streaming", "software", "gym"]],
   [/versicherung/, ["insurance"]],
   [/handy|mobilfunk|telefon/, ["mobile"]],
   [/internet|wlan|breitband/, ["internet"]],
@@ -67,6 +67,16 @@ function singleContract(contract: Contract, lower: string, today: string): Agent
       : contract.deadline && contract.effectiveEnd
         ? `${contract.name}: Kündigen bis ${dateLabel(contract.deadline)} (noch ${plural(daysBetween(today, contract.deadline), "Tag", "Tage")}), dann endet der Vertrag am ${dateLabel(contract.effectiveEnd)}. Sonst verlängert er sich.`
         : `Für ${contract.name} ist keine Kündigungsfrist hinterlegt – dazu habe ich keine ausreichenden Daten. Üblich bei ${typical.label}: ${typical.text} Trag die Frist im Vertragsordner ein, dann erinnere ich dich rechtzeitig.`;
+  } else if (/teurer|preiserhöh|preiserhoeh|preis\w* (?:gestiegen|erhöht)|günstiger|billiger/.test(lower)) {
+    const change = contract.priceChange;
+    text = change && change.percent > 0
+      ? `Ja, ${contract.name} ist seit ${dateLabel(change.date)} teurer: ${currency(change.from)} → ${currency(change.to)} (+${change.percent.toLocaleString("de-AT")} %), ` +
+        `also ${currency((change.to - change.from) * (contract.interval === "yearly" ? 1 : 12))} mehr im Jahr.`
+      : change ? `Nein, ${contract.name} ist seit ${dateLabel(change.date)} sogar günstiger: ${currency(change.from)} → ${currency(change.to)}.`
+        : `Nein, bei ${contract.name} sehe ich keinen Preissprung – zuletzt ${currency(contract.amount)} ${intervalLabel[contract.interval]}.`;
+    if (contract.status === "review") text += " Ich habe den Vertrag aus wiederkehrenden Abbuchungen erkannt; im Vertragsordner kannst du ihn bestätigen.";
+    return { text, card: { kind: "contracts", title: contract.name, total: -contract.yearly, lines, page: folder },
+      suggestions: [`Kündige ${contract.name}`, "Welche Abos sind teurer geworden?"] };
   } else if (/jahr|jährlich|jaehrlich/.test(lower)) {
     text = `${contract.name} kostet dich ${currency(contract.yearly)} im Jahr (${currency(contract.amount)} ${intervalLabel[contract.interval]}).`;
   } else {
@@ -81,16 +91,44 @@ function singleContract(contract: Contract, lower: string, today: string): Agent
   };
 }
 
-/** Contract folder questions; `fallback` answers when a named item is not a known contract. */
-export function contractsAnswer(state: AppState, text: string, today: string, fallback: () => AgentResult, page?: AssistantPageContext | null): AgentResult {
-  const lower = text.toLowerCase();
+/** Contract folder questions; `fallback` answers when a named item is not a known contract. `previous` gives "davon" its scope. */
+export function contractsAnswer(state: AppState, text: string, today: string, fallback: () => AgentResult, page?: AssistantPageContext | null,
+  previous: string[] = []): AgentResult {
+  const own = text.toLowerCase();
+  // "Was davon ist am teuersten?" after "Welche Abos habe ich?" keeps the type of the question before.
+  const lower = /\b(?:davon|darunter|von denen)\b/.test(own) ? `${own} ${previous.join(" ").toLowerCase()}` : own;
   const contracts = detectContracts(state, today).filter((contract) => contract.status !== "ignored");
   // "Wann läuft der Vertrag aus?" while a contract is open in the folder refers to that one.
   const opened = page?.contractId && /\b(?:dies\w*|den|der|das|dem)\s+(?:vertrag|abo|versicherung)\b|\bhier\b/.test(lower)
     ? contracts.find((contract) => contract.id === page.contractId) : undefined;
-  const match = matchName(text, contracts, (contract) => contract.name) ?? opened;
-  if (match) return singleContract(match, lower, today);
-  const list = /\b(?:welche|wie ?viele|zeig|liste|übersicht|uebersicht|alle|meine)\b|\b(?:abos?|abonnements?|verträge|vertraege|versicherungen)\b/.test(lower) ||
+  const superlative = /teuerste|am teuersten|am meisten|günstigste|guenstigste|billigste|am günstigsten|am billigsten/.test(own);
+  // Generic words ("Abo" in "Streamflix Abo") never pick one contract for "Welches Abo ist am teuersten?".
+  const named = superlative ? text.replace(/\b(?:abos?|verträge|vertrag|versicherung(?:en)?)\b/gi, " ") : text;
+  const match = matchName(named, contracts, (contract) => contract.name) ?? opened;
+  if (match) return singleContract(match, own, today);
+  const typeOf = typeWords.find(([pattern]) => pattern.test(lower) && !/\b(?:verträge|vertraege|vertrag)\b/.test(lower));
+  const pool = contracts.filter((contract) => isRunning(contract, today) && (!typeOf || typeOf[1].includes(contract.type)));
+  // "Welches Abo ist am teuersten?": the single most expensive (or cheapest) one.
+  if (pool.length && superlative) {
+    const sorted = [...pool].sort((a, b) => b.monthly - a.monthly);
+    const pick = /günstig|guenstig|billig/.test(own) ? sorted.at(-1)! : sorted[0];
+    const result = singleContract(pick, "", today);
+    return { ...result, text: `Am ${/günstig|guenstig|billig/.test(own) ? "günstigsten" : "teuersten"} ist ${pick.name} mit ${currency(pick.monthly)} im Monat ` +
+      `(${currency(pick.yearly)} im Jahr).` + (pick.priceChange && pick.priceChange.percent > 0 ? ` Seit ${dateLabel(pick.priceChange.date)} ist es teurer geworden.` : "") };
+  }
+  // "Welche Abos sind teurer geworden?": only the price increases.
+  if (/teurer|preiserhöh|preiserhoeh|preis\w* (?:gestiegen|erhöht)/.test(own)) {
+    const raised = pool.filter((contract) => contract.priceChange && contract.priceChange.percent > 0);
+    const extra = round(raised.reduce((sum, contract) => sum + (contract.priceChange!.to - contract.priceChange!.from) * (contract.interval === "yearly" ? 1 : 12), 0));
+    return {
+      text: raised.length ? `${plural(raised.length, "Vertrag ist", "Verträge sind")} teurer geworden: ${raised.slice(0, 3).map((contract) =>
+        `${contract.name} ${currency(contract.priceChange!.from)} → ${currency(contract.priceChange!.to)}`).join(", ")}. Zusammen ${currency(extra)} mehr im Jahr.`
+        : "Keiner deiner Verträge ist zuletzt teurer geworden.",
+      card: { kind: "contracts", title: "Preiserhöhungen", total: -extra, lines: raised.map((contract) => contractLine(contract, today)), page: folder },
+      suggestions: raised[0] ? [`Kündige ${raised[0].name}`, "Welche Abos habe ich?"] : ["Welche Abos habe ich?"],
+    };
+  }
+  const list = /\b(?:welche|wie ?viele|zeig|liste|übersicht|uebersicht|alle|meine)\b|\b(?:abos?|abonnements?|verträge|vertraege|versicherungen|subscriptions?|contracts?)\b/.test(lower) ||
     typeWords.some(([pattern]) => pattern.test(lower));
   // "Wann läuft Netflix aus?" without such a contract: say so and show the next deadlines instead of a booking search.
   const deadline = /\b(?:läuft|laeuft|endet|verlängert|verlaengert|kündbar|kuendbar)\b|kündigungsfrist|kuendigungsfrist|\bfrist\b/.test(lower);
@@ -98,7 +136,7 @@ export function contractsAnswer(state: AppState, text: string, today: string, fa
   const missing = list ? undefined : text.split(/\s+/).slice(1).map((word) => word.replace(/[^\p{L}\p{N}&+-]/gu, ""))
     .find((word) => /^\p{Lu}/u.test(word) && !/^(?:vertrag|abo|versicherung|frist|kündigungsfrist|ende|monat|jahr)/i.test(word));
   const running = contracts.filter((contract) => isRunning(contract, today));
-  const type = typeWords.find(([pattern]) => pattern.test(lower) && !/verträge|vertraege|vertrag\b/.test(lower));
+  const type = typeOf;
   const soon = deadline || /bald|demnächst|demnaechst|laufen .{0,20}aus|enden/.test(lower);
   let shown = type ? running.filter((contract) => type[1].includes(contract.type)) : running;
   if (soon) shown = shown.filter((contract) => contract.deadline).sort((a, b) => a.deadline!.localeCompare(b.deadline!));

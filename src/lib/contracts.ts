@@ -1,7 +1,7 @@
 import { brandKey } from "@/lib/ai/evidence";
 import { classify, round } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
-import { canonicalCategory, groupedContractCategories, type Category } from "@/lib/categories";
+import { groupedContractCategories, isEverydayCategory, type Category } from "@/lib/categories";
 import { contractNotice, contractTypeOf, type ContractType } from "@/lib/contract-types";
 import { fixedBookingHistory } from "@/lib/fixed-cost-schedule";
 import { fixedRowCategory } from "@/lib/fixed";
@@ -81,13 +81,6 @@ const gapWindows: Record<ContractInterval, [number, number]> = {
 const graceDays: Record<ContractInterval, number> = { weekly: 5, biweekly: 10, monthly: 20, quarterly: 40, halfyearly: 60, yearly: 60 };
 // Weekly series are left to the user's own rules; automatically they would mostly find the weekly shop.
 const detectionOrder: ContractInterval[] = ["biweekly", "monthly", "quarterly", "halfyearly", "yearly"];
-// Shops visited regularly are spending, not contracts.
-const everydayCategories = new Set<Category>([
-  "Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Tanken", "Drogerie",
-  "Rückerstattungen", "Transfer", "Transfer intern", "Gehalt", "Einkommen", "Rufbereitschaft",
-]);
-/** Groceries, fuel or delivery bought every month are spending: never a contract to cancel or a price increase. */
-export const isEverydayCategory = (category: Category) => everydayCategories.has(canonicalCategory(category));
 const contractCategories = new Set<Category>([...groupedContractCategories, "Leasing", "Sport & Fitness"]);
 
 const DAY_MS = 86_400_000;
@@ -210,7 +203,7 @@ const seriesId = (brand: string, interval: ContractInterval, amount: number) => 
 function detectFromBookings(state: AppState, today: string): { drafts: Draft[]; aliases: DraftAliases } {
   const groups = new Map<string, Charge[]>();
   for (const { row, category } of ledger(state)) {
-    if (row.amount >= 0 || row.ignored || row.date > today || everydayCategories.has(category)) continue;
+    if (row.amount >= 0 || row.ignored || row.date > today || isEverydayCategory(category)) continue;
     const brand = brandKey(row);
     if (!brand) continue;
     groups.set(brand, [...(groups.get(brand) ?? []), { row, category, amount: Math.abs(row.amount) }]);
@@ -290,7 +283,7 @@ function detectFromFixedRows(state: AppState, drafts: Draft[], today: string): D
       continue;
     }
     const category = fixedRowCategory(row) ?? row.planCategory ?? "Sonstiges";
-    if (everydayCategories.has(canonicalCategory(category))) continue;
+    if (isEverydayCategory(category)) continue;
     const interval = rowInterval(row, month);
     const [firstMonth, firstValue] = upcoming[0];
     const amount = round(firstValue ?? 0);

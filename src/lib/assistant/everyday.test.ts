@@ -82,6 +82,12 @@ describe("everyday phrasings", () => {
     expect(detectTool("Was ist mit meinen Sparzielen?")).toBe("accounts");
     expect(detectTool("Wann kommt mein Gehalt?")).toBe("pulse");
     expect(detectTool("Wie viel hab ich im Oktober bei Amazon bestellt?")).toBe("query");
+    expect(detectTool("Was hab ich bei Amazon bestellt?")).toBe("query");
+    expect(detectTool("Wo liegt mein Geld?")).toBe("accounts");
+    for (const text of ["Wofür geht das meiste Geld drauf?", "Wo geht das meiste Geld hin?"]) {
+      expect(detectTool(text), text).toBe("query");
+      expect(queryMetric(text), text).toBe("breakdown");
+    }
     expect(detectTool("Buchungen mehr als 500 € heuer")).toBe("query");
     expect(detectTool("Wie lange brauche ich für 5000 €?")).toBe("funds");
   });

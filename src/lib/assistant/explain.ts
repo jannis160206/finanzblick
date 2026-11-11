@@ -115,6 +115,16 @@ const topics: Topic[] = [
   },
 ];
 
+// "Was ist ein Notgroschen?" first says what the word means; the card then shows how it works here.
+const terms: [RegExp, string][] = [
+  [/notgroschen/, "Der Notgroschen ist deine Reserve für Unerwartetes wie eine Reparatur oder eine kaputte Waschmaschine – üblich sind drei bis sechs Monatsausgaben auf einem täglich verfügbaren Konto."],
+  [/überschuss|ueberschuss/, "Der Überschuss ist das Geld, das im Monat nach Fixkosten, Budgets, Sparkonto und Sparzielen übrig bleibt; bei dir geht er in den Urlaub."],
+  [/pockets?/, "Pockets sind getrennte Töpfe für dein Geld, etwa Notgroschen, Urlaub, Sparkonto oder ein eigenes Sparziel."],
+  [/sparziele?/, "Ein Sparziel ist ein Betrag, den du bis zu einem Datum ansparen willst; ich rechne dir die nötige Monatsrate aus."],
+  [/monatsplan/, "Der Monatsplan stellt Einnahmen, Fixkosten, Budgets und Sparraten eines Monats gegenüber und zeigt, was übrig bleibt."],
+];
+const termQuestion = /^(?:und\s+)?was (?:ist|sind|bedeutet|bedeuten|heißt|heisst) (?:eigentlich )?(?:ein |eine |der |die |das |den )?/;
+
 // Answers questions about the dashboard itself; texts are fixed, live values come from the current data.
 export function explainDashboard(state: AppState, dashboard: Dashboard, text: string): { text: string; card: AssistantCard } {
   const lower = text.toLowerCase();
@@ -135,7 +145,9 @@ export function explainDashboard(state: AppState, dashboard: Dashboard, text: st
     ...live.slice(0, 20),
     ...topic.say.map((say) => ({ label: `„${say}“`.slice(0, 200), detail: "kannst du mir so schreiben", tone: "good" as const })),
   ].slice(0, 40);
-  return { text: `${topic.title}${topic.page ? ` (Seite „${topic.page}“)` : ""}: So funktioniert es, so steht es gerade, und das kann ich für dich einstellen.`,
+  const meaning = termQuestion.test(lower) ? terms.find(([pattern]) => pattern.test(lower))?.[1] : undefined;
+  return { text: meaning ? `${meaning} Wie es bei dir aussieht, siehst du unten.`
+    : `${topic.title}${topic.page ? ` (Seite „${topic.page}“)` : ""}: So funktioniert es, so steht es gerade, und das kann ich für dich einstellen.`,
     card: { kind: "answer", title: topic.title, lines,
       ...(matched.length > 1 ? { note: `Passt auch zu: ${matched.slice(1).map((item) => item.title).join(", ")}.` } : {}) } };
 }

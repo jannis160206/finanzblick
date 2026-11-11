@@ -6,7 +6,7 @@ import { lookupKnowledge, pickPage, shortenText } from "@/lib/web/knowledge";
 import { clearMarketCache } from "@/lib/web/market-data";
 import { callWebTool, fetchKnowledge, listWebTools } from "@/lib/web/mcp-client";
 import { executeTool } from "./agent";
-import { findKnowledge, isStale, knowledgeAnswer, knowledgeList, knowledgeTopics, learnPhrase, matchPhrase, phrasePattern, relevantKnowledge, storeKnowledge } from "./knowledge";
+import { factTopic, findKnowledge, isStale, knowledgeAnswer, knowledgeList, knowledgeTopics, learnPhrase, matchPhrase, phrasePattern, relevantKnowledge, storeKnowledge } from "./knowledge";
 import { detectTool } from "./tools";
 
 const etfPages = [
@@ -57,7 +57,9 @@ describe("knowledge lookup", () => {
 
   it("does not cut sentences at abbreviations", () => {
     const result = knowledgeAnswer("Was ist das?", [entry({ text: "Die Muster d.o.o. ist z. B. ein Anbieter von Fonds. Sie verwaltet Geld. Ein dritter Satz folgt. Der vierte nicht." })]);
-    expect(result.text).toBe("Die Muster d.o.o. ist z. B. ein Anbieter von Fonds. Sie verwaltet Geld. Ein dritter Satz folgt.");
+    expect(result.text).toBe("Die Muster d.o.o. ist z. B. ein Anbieter von Fonds. Sie verwaltet Geld.");
+    expect(knowledgeAnswer("Was ist ein ETF?", [entry({ text: "Ein ETF (englisch exchange-traded fund) ist ein Fonds, der an der Börse gehandelt wird. Mehr." })]).text)
+      .toBe("Ein ETF ist ein Fonds, der an der Börse gehandelt wird. Mehr.");
   });
 
   it("skips people and prefers Austrian articles", () => {
@@ -67,6 +69,13 @@ describe("knowledge lookup", () => {
     ];
     expect(pickPage("Abfertigung", pages)?.title).toBe("Abfertigung (Arbeitsrecht)");
     expect(pickPage("Quantenschaum", [{ title: "Bäckerei", index: 1, extract: "Eine Bäckerei ist ein Handwerksbetrieb, der Brot und Gebäck herstellt und verkauft." }])).toBeUndefined();
+    expect(pickPage("hauptstadt von australien", [{ title: "Divestment (fossile Energien)", index: 1,
+      extract: "Divestment aus fossilen Energieunternehmen ist eine Form der Geldanlage, die in Australien und Europa diskutiert wird." }])).toBeUndefined();
+    // A plain fact question may use any article, also about places; finance questions still may not.
+    const places = [{ title: "Australien", index: 1, extract: "Australien ist ein Staat auf der Südhalbkugel. Die Hauptstadt ist Canberra, die größte Stadt Sydney." }];
+    expect(pickPage("australien", places)).toBeUndefined();
+    expect(pickPage("australien", places, true)?.title).toBe("Australien");
+    expect(pickPage("Quantenschaum", [{ title: "Bäckerei", index: 1, extract: "Eine Bäckerei ist ein Handwerksbetrieb, der Brot und Gebäck herstellt und verkauft." }], true)).toBeUndefined();
   });
 
   it("shortens long texts at sentence ends", () => {
@@ -86,8 +95,10 @@ describe("knowledge lookup", () => {
 describe("knowledge questions", () => {
   it("routes definition questions to knowledge and leaves other tools alone", () => {
     for (const text of ["Was ist ein ETF?", "Was bedeutet KESt?", "Was versteht man unter Zinseszins?", "Wie funktioniert ein Bausparvertrag?",
-      "Erklär mir Tagesgeld", "Was ist der Unterschied zwischen Tagesgeld und Festgeld?", "Was ist die Arbeitnehmerveranlagung?", "Was hast du gelernt?"])
+      "Erklär mir Tagesgeld", "Was ist der Unterschied zwischen Tagesgeld und Festgeld?", "Was hast du gelernt?"])
       expect(detectTool(text), text).toBe("knowledge");
+    // Austrian payroll terms have a fixed explanation with the own values.
+    expect(detectTool("Was ist die Arbeitnehmerveranlagung?")).toBe("payroll");
     expect(detectTool("100 € im Monat in einen ETF, was habe ich nach 10 Jahren?")).toBe("depot");
     expect(detectTool("Wie funktionieren die Sparziele?")).toBe("explain");
     expect(detectTool("Was ist ein Pocket?")).toBe("explain");
@@ -103,6 +114,16 @@ describe("knowledge questions", () => {
 
   it("extracts the terms", () => {
     expect(knowledgeTopics("Was ist eigentlich ein ETF?")).toEqual(["etf"]);
+    expect(knowledgeTopics("Danke! Was ist eigentlich ein ETF?")).toEqual(["etf"]);
+    // Fact questions look up the thing itself.
+    for (const [text, topic] of [["Wie hoch ist der Großglockner?", "großglockner"], ["Was ist die Hauptstadt von Australien?", "australien"],
+      ["Wer hat die Relativitätstheorie entwickelt?", "relativitätstheorie"], ["Wo liegt Kärnten?", "kärnten"],
+      ["Wie mache ich Palatschinken?", "palatschinken"], ["Gib mir ein einfaches Rezept für Pfannkuchen", "pfannkuchen"]]) {
+      expect(knowledgeTopics(text, [], true), text).toEqual([topic]);
+      expect(detectTool(text), text).toBe("knowledge");
+    }
+    for (const text of ["Wie hoch ist mein Gehalt?", "Wie hoch ist die Inflation?", "Wie hoch ist meine Sparquote?", "Wo liegt mein Geld?", "Wie mache ich das?", "Wie mache ich ein Budget?"])
+      expect(factTopic(text), text).toBeUndefined();
     expect(knowledgeTopics("Was ist die KESt in Österreich?")).toEqual(["kest Österreich"]);
     expect(knowledgeTopics("Unterschied zwischen Tagesgeld und Festgeld")).toEqual(["tagesgeld", "festgeld"]);
     expect(knowledgeTopics("etf was is des eigentlich")).toEqual([]);

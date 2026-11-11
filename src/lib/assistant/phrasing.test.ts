@@ -29,6 +29,8 @@ describe("casual phrasing", () => {
     expect(normalizeMessage("kann ich mir nen tv kaufen")).toBe("kann ich mir einen Fernseher kaufen");
     expect(normalizeMessage("how much did I spend on food in October")).toBe("how much did I spend on food in Oktober");
     expect(normalizeMessage("how much may I spend")).toBe("how much may I spend");
+    expect(normalizeMessage("Kann ich mir 1 Million leisten?")).toBe("Kann ich mir 1000000 leisten?");
+    expect(normalizeMessage("wieviel kostet mi des netflix im jaar")).toBe("wie viel kostet mich das netflix im jahr");
     expect(normalizeMessage("lieferando = lieferdienste")).toBe("lieferando ist immer lieferdienste");
     expect(normalizeMessage("Im Mai 25 € mehr")).toBe("Im Mai 25 € mehr");
     const once = normalizeMessage("wieviel kohle ist im okt. fuers essen draufgegangen, 1,5k?");
@@ -38,7 +40,7 @@ describe("casual phrasing", () => {
   const cases: [string, string][] = [
     ["wieviel kohle ist im oktober fürs essen draufgegangen", "query"], ["essen oktober wie viel", "query"], ["Ausgaben Essen Oktober?", "query"],
     ["wie viel geld hab ich letzten monat beim essen gelassen", "query"], ["was hat mich essen im oktober gekostet", "query"],
-    ["wv hab ich im okt für lebensmittel bezahlt", "query"], ["was kosten mich meine abos", "query"], ["wo geht mein geld hin", "query"],
+    ["wv hab ich im okt für lebensmittel bezahlt", "query"], ["was kosten mich meine abos", "contracts"], ["wo geht mein geld hin", "query"],
     ["was hab ich für die versicherung bezahlt", "query"],
     ["möchte bis juli 2027 3000€ für japan zurücklegen, hab schon 500 am sparkonto", "savings_goal"],
     ["Japan Reise 3k bis Juli 27, 500 hab ich schon", "savings_goal"], ["spar mir 3000 euro für japan an bis 07/2027", "savings_goal"],
@@ -91,6 +93,7 @@ describe("automatic memory", () => {
     expect(extractMemories("Ich will nie unter 500 € kommen", state)).toEqual([expect.objectContaining({ key: "buffer", value: 500 })]);
     expect(extractMemories("Ich wohne in Wien und teile mir die Miete mit Raphael.", state)).toEqual([expect.objectContaining({ key: "note", text: "Ich wohne in Wien und teile mir die Miete mit Raphael" })]);
     expect(extractMemories("Meine Miete ist 650 € warm", state)).toEqual([expect.objectContaining({ key: "note" })]);
+    for (const text of ["Mein Konto ist leer", "Ich bin pleite"]) expect(extractMemories(text, state), text).toEqual([]);
   });
 
   it("ignores questions, plans, one-off events and known facts", () => {

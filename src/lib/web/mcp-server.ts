@@ -44,7 +44,7 @@ export function createWebMcpServer(fetcher?: typeof fetch) {
   server.registerTool("search_knowledge", {
     description: "Allgemeines Finanzwissen nachschlagen (deutschsprachige Wikipedia), z. B. ETF, KESt, Bausparvertrag, Tagesgeld, Arbeitnehmerveranlagung. " +
       "Liefert Titel, kurze Erklärung, Link und Lizenz oder null, wenn nichts Passendes gefunden wurde.",
-    inputSchema: { query: z.string().trim().min(2).max(80) }, annotations,
-  }, async ({ query }) => { try { return json((await lookupKnowledge(query, fetcher)) ?? null); } catch (error) { return fail(error); } });
+    inputSchema: { query: z.string().trim().min(2).max(80), general: z.boolean().optional() }, annotations,
+  }, async ({ query, general }) => { try { return json((await lookupKnowledge(query, fetcher, general ?? false)) ?? null); } catch (error) { return fail(error); } });
   return server;
 }

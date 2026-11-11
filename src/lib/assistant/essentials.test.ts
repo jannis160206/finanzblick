@@ -36,7 +36,7 @@ describe("essential assistant tools", () => {
     const cases: [string, string][] = [
       ["Gibt es verdächtige Buchungen?", "security"],
       ["Wurde ich irgendwo doppelt abgebucht?", "security"],
-      ["Welche Abos sind teurer geworden?", "security"],
+      ["Welche Abos sind teurer geworden?", "contracts"],
       ["Wie war mein Oktober?", "month_review"],
       ["Monatsbericht", "month_review"],
       ["Was schuldet mir Raphael?", "shared"],

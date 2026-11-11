@@ -4,7 +4,7 @@ import { currency, dateLabel } from "@/lib/format";
 import { savingsGoals } from "@/lib/goals";
 import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { financialCheck } from "./check";
-import { answerQuestion, depotProjection, findCategories, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing, goalsStatus } from "./answers";
+import { answerQuestion, depotProjection, findCategories, goalProgressQuestion, goalsStatus, namedGoal, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
 import { accountBalances, amexQuestion, amexSettlement, monthBudget, goalsQuestion } from "./accounts";
 import { explainDashboard } from "./explain";
 import { loanAnswer, parseReminder, reminderList, reminderListQuestion, reminderRequest, yearReview } from "./extras";
@@ -19,7 +19,7 @@ import { bookingEdit } from "./bookings";
 import { cancelAnswer } from "./cancel";
 import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
-import { budgetAdvice, pulseAnswer } from "./pulse";
+import { budgetLineAnswer, pulseAnswer } from "./pulse";
 import { payrollAnswer } from "./payroll";
 import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
@@ -304,6 +304,8 @@ function forget({ state, asOf }: Context, text: string): AgentResult {
     : /erinnerungen\b/.test(lower) && all ? memory.filter((entry) => entry.key === "reminder") : [];
   const pool = /erinnerung/.test(lower) ? memory.filter((entry) => entry.key === "reminder") : memory;
   const byText = byKey.length ? byKey : all ? memory : [matchName(text.replace(/\b(?:vergiss|vergessen|bitte|dass|das|den|die|erinnerung(?:en)?|lösch\w*|an|zu)\b/gi, " "), pool, (entry) => entry.text)].filter((entry) => entry !== undefined);
+  // "Vergiss das wieder" right after "Merk dir …" means the latest entry.
+  if (!byText.length && /\b(?:das|es)\b/.test(lower) && !/\balles\b/.test(lower)) byText.push(memory.at(-1)!);
   if (!byText.length) return { text: `Was soll ich vergessen? Gemerkt habe ich: ${memory.map((entry) => `„${entry.text}“`).join(", ")}.` };
   return previewChange(state, byText.slice(0, 20).map((entry) => ({ op: "memory_delete" as const, memoryId: entry.id })), byText.length > 1 ? `${byText.length} Einträge vergessen` : "Eintrag vergessen", asOf);
 }
@@ -396,8 +398,8 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
   switch (tool) {
     case "query": return answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage));
     case "amex": return amexSettlement(state, dashboard, text, asOf);
-    case "accounts": return goalsQuestion(text.toLowerCase()) ? goalsStatus(dashboard, asOf) : amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
-    case "budget": return budgetAdvice(dashboard, asOf, text) ?? monthBudget(dashboard, text);
+    case "accounts": return goalsQuestion(text.toLowerCase()) || namedGoal(dashboard, text) && goalProgressQuestion(text.toLowerCase()) ? goalsStatus(dashboard, asOf, text) : amexQuestion(text.toLowerCase()) ? amexSettlement(state, dashboard, text, asOf) : accountBalances(state, dashboard, text);
+    case "budget": return budgetLineAnswer(dashboard, asOf, text) ?? monthBudget(dashboard, text);
     case "briefing": return weeklyBriefing(state, dashboard, asOf, memoryValue(state, "salaryDay"));
     case "check": return financialCheck(state, dashboard, asOf, text);
     case "coach": {
@@ -458,10 +460,11 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "shared": return sharedAnswer(state, asOf);
     case "networth": return netWorthAnswer(state, dashboard);
     case "refunds": return refundAnswer(state, text, asOf);
-    case "contracts": return contractsAnswer(state, text, asOf, () => answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage)), context.page);
+    case "contracts": return contractsAnswer(state, text, asOf, () => answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage)), context.page,
+      context.previous ?? []);
     case "context": return contextAnswer(state, text, context.page);
     case "insights": return insightsAnswer(state, dashboard, asOf, context.insights);
-    case "payroll": return payrollAnswer(state, text);
+    case "payroll": return payrollAnswer(state, text, asOf);
     case "budget_plan": {
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;

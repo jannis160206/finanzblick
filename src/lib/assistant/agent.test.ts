@@ -143,6 +143,10 @@ describe("assistant changes", () => {
     const goals = executeTool("explain", "Wie funktionieren die Sparziele?", context(state));
     expect(goals.card?.title).toBe("Sparziele");
     expect(goals.card?.lines.some((line) => line.label.startsWith("Japan") && line.detail?.includes("250"))).toBe(true);
+    // "Was ist ein Notgroschen?" says what the word means before the page explanation.
+    const reserve = executeTool("explain", "Was ist ein Notgroschen?", context(state));
+    expect(reserve.text).toMatch(/^Der Notgroschen ist deine Reserve für Unerwartetes/);
+    expect(reserve.card?.title).toBe("Pockets und Konten");
   });
 
   it("pauses a goal rate for a month", () => {

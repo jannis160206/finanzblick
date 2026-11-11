@@ -4,7 +4,7 @@ import { calculateDashboard } from "@/lib/calc";
 import { currency } from "@/lib/format";
 import type { AppState, Transaction } from "@/lib/types";
 import { executeTool } from "./agent";
-import { queryMetric } from "./answers";
+import { compareSelection, queryMetric } from "./answers";
 import { resolveFollowUp } from "./followup";
 import { detectTool } from "./tools";
 
@@ -41,7 +41,7 @@ function chat(state: AppState, texts: string[]) {
 describe("Finanz-Check", () => {
   it("routes casual health questions to the check", () => {
     for (const text of ["Bin ich eher sparsam oder gebe ich viel aus?", "Wie stehe ich finanziell da?", "Mach mal einen Finanz-Check",
-      "Wie gut wirtschafte ich?", "Wie hoch ist meine Sparquote?", "gebe ich zu viel aus"])
+      "Wie gut wirtschafte ich?", "Wie hoch ist meine Sparquote?", "gebe ich zu viel aus", "Bin ich reich?"])
       expect(detectTool(text), text).toBe("check");
   });
 
@@ -73,8 +73,21 @@ describe("Finanz-Check", () => {
 describe("Ausgabenverlauf", () => {
   it("detects trend questions", () => {
     expect(queryMetric("Wie haben sich meine Ausgaben entwickelt?")).toBe("trend");
+    expect(queryMetric("Was sind meine größten Kostenfresser?")).toBe("breakdown");
+    expect(queryMetric("What is my biggest expense?")).toBe("largest");
+    expect(detectTool("What is my biggest expense?")).toBe("query");
+    expect(queryMetric("Hab ich diesen Monat mehr ausgegeben als letzten?")).toBe("compare");
+    expect(compareSelection("Hab ich diesen Monat mehr ausgegeben als letzten?", "2026-11-11", []).map((period) => period.month)).toEqual(["2026-11", "2026-10"]);
     expect(detectTool("Wie haben sich meine Ausgaben entwickelt?")).toBe("query");
     expect(detectTool("Zeig mir den Verlauf meiner Ausgaben für Essen")).toBe("query");
+  });
+
+  it("names the contracts found in the bookings when no fixed costs are planned", () => {
+    const state = fixture();
+    for (const month of ["2026-06", "2026-07", "2026-08", "2026-09", "2026-10"]) state.transactions.push(row(`n${month}`, `${month}-15`, "NETFLIX.COM", -13.99, "Abonnements"));
+    const [answer] = chat(state, ["Welche Fixkosten hab ich?"]);
+    expect(answer.text).toMatch(/^In deinem Plan sind für diesen Monat keine Fixkosten eingetragen\. Aus deinen Buchungen erkenne ich .+ mit zusammen .+ im Monat\.$/);
+    expect(answer.card?.page?.href).toBe("/vertraege");
   });
 
   it("lists six full months and keeps the trend for follow-ups", () => {

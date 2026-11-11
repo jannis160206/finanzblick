@@ -17,10 +17,10 @@ export const amexQuestion = (lower: string) => amexWords.test(lower) &&
 // "Wie stehen meine Sparziele?", "Was ist mit meinen Zielen?", "Bin ich bei Japan im Plan?"
 export const goalsQuestion = (lower: string) => !/\d|anleg|erstell|\bneue[snr]?\b|lösch|loesch|ändern|aendern|verschieb|erhöh|senk|\bdas mit\b|funktionier|wie geht das|wie mache ich|erklär|erklaer/.test(lower) &&
   (/(?:wie (?:steht|stehen|läuft|laufen|weit|schaut|schauen|sieht|sehen)|was ist mit|status|stand|überblick|ueberblick)\b.*\b(?:spar)?ziel(?:e|en)?\b/.test(lower) ||
-    /^(?:meine |alle )?sparziele\??$/.test(lower) || /(?:schaffe|erreiche) ich (?:meine|alle) (?:spar)?ziele/.test(lower));
+    /^(?:meine |alle )?sparziele\??$/.test(lower) || /^zeig\w* (?:mir )?(?:meine |alle )?sparziele\b/.test(lower) || /(?:schaffe|erreiche) ich (?:meine|alle) (?:spar)?ziele/.test(lower));
 
 export const balanceQuestion = (lower: string) =>
-  /kontost(?:a|ä)nde?|\bvermögen|\bguthaben|\bsaldo\b|erspar(?:nisse|tes)|wie viel geld hab(?:e)? ich(?: (?:noch|gerade|aktuell|jetzt|insgesamt|gespart))*\s*\??$|was hab(?:e)? ich (?:alles )?(?:auf|gespart)/.test(lower) ||
+  /kontost(?:a|ä)nde?|\bvermögen|\bguthaben|\bsaldo\b|\bwo (?:liegt|ist|steckt|parkt) (?:mein|unser) (?:ganzes |gespartes )?(?:geld|erspartes)\b|erspar(?:nisse|tes)|wie viel geld hab(?:e)? ich(?: (?:noch|gerade|aktuell|jetzt|insgesamt|gespart))*\s*\??$|was hab(?:e)? ich (?:alles )?(?:auf|gespart)/.test(lower) ||
   /\bwie viel\b.*\b(?:ist|liegt|liegen|hab(?:e)?|sind)\b.*\b(?:auf (?:dem|meinem|der|meiner)|im|am)\b.*\b(?:konto|pocket|notgroschen|sparkonto|tagesgeld|depot|urlaub|motorrad)\b/.test(lower) ||
   /\bwie viel\b.*\b(?:ist|liegt|liegen|hab(?:e)?|sind)\b.*\b(?:auf|bei|am|im)\s+(?:(?:dem|meinem|der|meiner)\s+)?(?:trade\s*republic|revolut|raiffeisen|paypal|giro(?:konto)?|n26|bawag|erste bank|sparkasse)\b/.test(lower) &&
     !/ausgegeben|bezahlt|gezahlt|verdient|eingenommen|gekauft/.test(lower);
@@ -121,6 +121,11 @@ export function accountBalances(state: AppState, dashboard: Dashboard, text: str
       lines: [{ label: named.name, ...(named.amount !== null ? { value: named.amount } : { detail: "unbekannt" }) }] },
     suggestions: ["Zeig mir alle Kontostände", "Was bleibt mir diesen Monat?"] };
   }
+  // "Wie viel ist auf dem Girokonto?", "bei der Deutschen Bank": an account Finanzblick does not know is said, not replaced by the total.
+  const asked = overview ? undefined : /\b(girokonto|giro|gehaltskonto|kreditkarte)\b/i.exec(text)?.[1]
+    ?? /\b(?:bei|auf|von) (?:der|dem|meiner|meinem) ((?:[A-ZÄÖÜ][\wäöüß-]+)(?: [A-ZÄÖÜ][\wäöüß-]+)?)/.exec(text)?.[1];
+  const unknown = asked && !/^(?:Konto|Konten|Sparkonto|Pocket)$/i.test(asked) ? `${/^giro/i.test(asked) ? "Für dein Girokonto" : `Für „${asked}“`} kenne ich keinen aktuellen Kontostand – ` +
+    "verbinde die Bank oder importiere einen Kontoauszug. " : "";
   const shown = all.filter((item) => item.amount === null || Math.abs(item.amount) >= 0.005)
     .sort((a, b) => Number(!a.date) - Number(!b.date) || (b.amount ?? 0) - (a.amount ?? 0));
   const lines: Line[] = shown.slice(0, 20).map((item) => item.amount === null ? { label: item.name, detail: "unbekannt", tone: "warn" as const }
@@ -131,9 +136,9 @@ export function accountBalances(state: AppState, dashboard: Dashboard, text: str
   const total = round(dashboard.totalAssets + accountSum);
   const empty = all.length - shown.length;
   const accountText = accounts.map((item) => `„${item.name}“ ${currency(item.amount ?? 0)} (Stand ${dateLabel(item.date!)})`).join(", ");
-  return { text: `Auf deinen Konten liegen insgesamt ${currency(total)}.` +
+  return { text: `${unknown}${/vermögen|vermoegen/i.test(text) ? "Dein Vermögen auf allen Konten beträgt" : unknown ? "Insgesamt kenne ich auf deinen Konten" : "Auf deinen Konten liegen insgesamt"} ${currency(total)}.` +
     (accounts.length ? ` Davon auf Giro- und Hauptkonten: ${accountText}.` : "") +
-    ` In deinen Pockets und Ersparnissen liegen ${currency(dashboard.totalAssets)}.` +
+    (accounts.length ? ` In deinen Pockets und Ersparnissen liegen ${currency(dashboard.totalAssets)}.` : "") +
     (dashboard.amex.outstanding > 0 ? ` Bei Amex sind noch ${currency(dashboard.amex.outstanding)} offen.` : ""),
   card: { kind: "answer", title: "Kontostände", total, lines,
     note: [`Gesamt = Giro-/Hauptkonten ${currency(accountSum)} + Pockets ${currency(dashboard.totalAssets)}.`, empty ? `${empty} leere Konten ausgeblendet.` : ""].filter(Boolean).join(" ") },

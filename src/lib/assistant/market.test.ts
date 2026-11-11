@@ -112,6 +112,8 @@ describe("market answers", () => {
     const result = marketAnswer("Welche Zinsen bekomme ich fürs Sparkonto?", snapshot, dashboard().dashboard);
     expect(result.text).toMatch(/0,46 %.*2,18 %/);
     expect(result.card?.lines.map((line) => line.label)).toContain("EZB-Einlagesatz");
+    expect(marketAnswer("Was ist der aktuelle Leitzins?", snapshot, dashboard().dashboard).text).toMatch(/^Der Leitzins der EZB \(Einlagesatz\) liegt bei /);
+    expect(marketAnswer("Was ist Inflation?", snapshot, dashboard().dashboard).text).toMatch(/^Inflation heißt, dass die Preise allgemein steigen.+Die Inflation in Österreich liegt bei 3,5 %/);
   });
 
   it("says so when offline", () => {

@@ -1,6 +1,6 @@
 import type { AppState, AssistantCard, AssistantKnowledge, AssistantPhrase } from "@/lib/types";
 import { MAX_ASSISTANT_KNOWLEDGE, MAX_ASSISTANT_PHRASES } from "@/lib/types";
-import { normalizeMessage } from "./normalize";
+import { normalizeMessage, stripAck } from "./normalize";
 
 type Result = { text: string; card?: AssistantCard; suggestions?: string[] };
 type Line = AssistantCard["lines"][number];
@@ -20,6 +20,18 @@ const definition = [
   new RegExp(`^(?:schlag|schau) (?:mal |bitte )*${article}(.+?) nach$`),
   new RegExp(`^(?:such|recherchier)\\w* (?:mal |bitte )*(?:im internet |online )?(?:nach |zu |über |ueber )?${article}(.+)$`),
 ];
+// Plain facts about a named thing: the thing is looked up, the model only reads the answer from the article.
+const facts = [
+  new RegExp(`^(?:was|wie heißt|wie heisst|welche stadt) (?:ist )?die hauptstadt (?:von )?(.+)$`),
+  new RegExp(`^wie (?:hoch|lang|groß|gross|tief|alt|schwer|weit|breit) (?:ist|war|sind|waren) ${article}(.+)$`),
+  new RegExp(`^wer (?:hat|hatte) ${article}(.+?) (?:erfunden|entwickelt|entdeckt|geschrieben|gemalt|komponiert|gegründet|gegruendet|gebaut)$`),
+  new RegExp(`^wann (?:wurde|wurden|war|ist|hat) ${article}(.+?) (?:gegründet|gegruendet|gebaut|erbaut|erfunden|geboren|gestorben|eröffnet|eroeffnet|entdeckt|erschienen)$`),
+  new RegExp(`^wo (?:liegt|liegen) ${article}(.+)$`),
+  new RegExp(`^wie viele einwohner (?:hat|haben) ${article}(.+)$`),
+  // "Wie mache ich Palatschinken?", "Rezept für Pfannkuchen": the dish is looked up, so the basics come from the article.
+  new RegExp(`^wie (?:mache|macht|koche|kocht|backe|backt|bereite|bereitet) (?:ich|man) ${article}(.+?)(?: zu| selber| selbst)?$`),
+  new RegExp(`^(?:gib mir |hast du |kennst du )?(?:mal )?(?:ein |einen )?(?:einfaches |gutes |schnelles |leckeres )?rezept (?:für|fuer) ${article}(.+)$`),
+];
 const difference = /(?:^|\b)unterschied zwischen (?:einem |einer |dem |der |den |die |das )?(.+?) und (?:einem |einer |dem |der |den |die |das )?(.+?)$/;
 
 // Dashboard words, own data and time phrases belong to the other tools.
@@ -37,10 +49,26 @@ function validTopic(topic: string, names: string[]) {
   return !names.some((name) => fold(name) && (plain === fold(name) || plain.includes(fold(name))));
 }
 
+/** The thing a fact question is about ("Wie hoch ist der Großglockner?" → "großglockner"), never own data. */
+export function factTopic(input: string, names: string[] = []): string | undefined {
+  const lower = stripAck(normalizeMessage(input)).toLowerCase().replace(/[?!.]+$/g, "").trim();
+  if (/\d/.test(lower)) return undefined;
+  for (const pattern of facts) {
+    const match = pattern.exec(lower);
+    if (!match) continue;
+    const topic = cleanTopic(match[1]);
+    // Live values (inflation, key rate, exchange rate) come from the market data, not from an article.
+    return validTopic(topic, names) && !/inflation|teuerung|leitzins|einlagesatz|zins|kurs\b/.test(topic) ? topic : undefined;
+  }
+  return undefined;
+}
+
 // Up to two terms to look up; empty when the question is about own data or the dashboard.
 export function knowledgeTopics(input: string, names: string[] = [], loose = false): string[] {
-  const lower = normalizeMessage(input).toLowerCase().replace(/[?!.]+$/g, "").trim();
+  const lower = stripAck(normalizeMessage(input)).toLowerCase().replace(/[?!.]+$/g, "").trim();
   if (/\d/.test(lower)) return [];
+  const fact = loose ? factTopic(input, names) : undefined;
+  if (fact) return [fact];
   const pair = difference.exec(lower);
   if (pair) {
     const topics = [cleanTopic(pair[1]), cleanTopic(pair[2])];
@@ -121,15 +149,18 @@ export function knowledgeAnswer(input: string, found: AssistantKnowledge[], opti
     detail: `${fresh.has(entry.id) ? "gerade gelernt" : `gelernt am ${learnedDate(entry.at)}`} · ${entry.source}`.slice(0, 300),
     tone: "info" as const,
   }));
-  const text = found.length === 1 ? sentences(found[0].text, 3)
-    : found.map((entry) => `${entry.title}: ${sentences(entry.text, 2)}`).join("\n\n");
-  const austrianHint = found.some(isAustrian) ? "" : " Regeln in Österreich können abweichen.";
+  // Asides like "(englisch exchange-traded fund, ETF)" make encyclopedia text hard to read in a chat.
+  const plain = (text: string) => text.replace(/\s*\([^()]{0,160}\)/g, "").replace(/\s+([,.])/g, "$1");
+  const text = found.length === 1 ? sentences(plain(found[0].text), 2)
+    : found.map((entry) => `${entry.title}: ${sentences(plain(entry.text), 2)}`).join("\n\n");
+  const fact = Boolean(factTopic(input));
+  const austrianHint = fact || found.some(isAustrian) ? "" : " Regeln in Österreich können abweichen.";
   const learnedNow = found.some((entry) => fresh.has(entry.id));
   return {
     text: text.slice(0, 1900),
     card: { kind: "answer", title: found.length === 1 ? found[0].title.slice(0, 120) : `${found[0].title} vs. ${found[1].title}`.slice(0, 120), lines,
       note: (`${learnedNow ? "Eben im Internet nachgeschlagen und gemerkt; nächstes Mal antworte ich sofort, auch offline." : "Aus meinem gelernten Wissen, ohne neue Internetabfrage."} ` +
-        `Quelle: ${found.map((entry) => entry.url).join(" · ")}.${austrianHint} Allgemeine Info, keine Steuer- oder Anlageberatung.`).slice(0, 400) },
+        `Quelle: ${found.map((entry) => entry.url).join(" · ")}.${austrianHint}${fact ? "" : " Allgemeine Info, keine Steuer- oder Anlageberatung."}`).slice(0, 400) },
     suggestions: [...followUpsFor(found), "Was hast du gelernt?"].slice(0, 3),
   };
 }

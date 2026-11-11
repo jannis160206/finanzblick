@@ -5,7 +5,7 @@ import {
 } from "./orchestrator";
 import { assistantTools } from "./tools";
 
-const names = ["Japan", "Pickerl"];
+const names = ["Japan", "Pickerl", "Motorrad"];
 const route = (text: string) => routeByRules(text, names);
 
 describe("orchestrator responsibilities", () => {
@@ -43,6 +43,18 @@ describe("routing without the model", () => {
     ["Werden Überstunden anders versteuert?", "payroll", "payroll"],
     ["Wie viel hab ich bei Shell getankt?", "transactions", "query"],
     ["Ist Spotify teurer geworden?", "contracts", "contracts"],
+    ["Was hab ich bei MediaMarkt gekauft?", "transactions", "query"],
+    ["Ist das Geld von Amazon zurückgekommen?", "transactions", "refunds"],
+    ["Welche Buchungen sind noch nicht kategorisiert?", "transactions", "cleanup"],
+    ["Wie viel Gehalt ist im Oktober reingekommen?", "transactions", "query"],
+    ["Was kostet mich mein Handyvertrag im Jahr?", "contracts", "contracts"],
+    ["what are my subscriptions", "contracts", "contracts"],
+    ["how much money is left this month", "budget", "budget"],
+    ["Wann hab ich das Motorrad zusammen?", "budget", "accounts"],
+    ["Wie hoch ist mein Grenzsteuersatz?", "payroll", "payroll"],
+    ["Wie hoch ist meine Miete?", "transactions", "query"],
+    ["Wechsel in den Dark Mode", "general"],
+    ["Was ist 15 % von 2400?", "general"],
   ])("typical: %s → %s", (text, agent, tool) => {
     const decision = route(text);
     expect(decision?.agent).toBe(agent);
@@ -69,6 +81,10 @@ describe("routing without the model", () => {
     ["Sollte ich das Lebensmittelbudget erhöhen?", "budget"],
     ["how much did I spend on food in october", "transactions"],
     ["Kann man mit 3000 netto in Wien gut leben?", "general"],
+    // A statement about one's mood is no question for a specialist.
+    ["Mein Konto ist leer", "general"],
+    ["Ich bin pleite", "general"],
+    ["Gib mir ein einfaches Rezept für Pfannkuchen", "general"],
   ])("borderline: %s → %s", (text, agent) => expect(route(text)?.agent).toBe(agent));
 
   it("sends spending questions without a tool to the transactions specialist", () =>
@@ -82,6 +98,10 @@ describe("routing without the model", () => {
   it("recognises chat requests and money topics", () => {
     expect(chatRequest("schreib mir ein gedicht über mein konto")).toBe(true);
     expect(chatRequest("Schreib die Kündigung für Netflix")).toBe(false);
+    // A named dish is looked up like other facts; a recipe wish without a dish stays with the chat.
+    expect(chatRequest("Gib mir ein einfaches Rezept für Pfannkuchen")).toBe(false);
+    expect(route("Gib mir ein einfaches Rezept für Pfannkuchen")).toMatchObject({ agent: "general", tool: "knowledge" });
+    expect(chatRequest("Hast du ein Rezept für mich?")).toBe(true);
     expect(aboutMoney("Wie wird das Wetter morgen?")).toBe(false);
     expect(aboutMoney("Was kostet mich Spotify?")).toBe(true);
     expect(aboutMoney("Wie viel ist übrig?")).toBe(true);

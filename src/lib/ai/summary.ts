@@ -44,10 +44,15 @@ export function numbersBacked(text: string, facts: object) {
   };
   JSON.stringify(facts, (_key, value) => { if (typeof value === "number") add(value); return value; });
   const numbers = text.match(/\d+(?:\.\d{3})*(?:,\d+)?/g) ?? [];
+  // Euro amounts always need a source, even small ones ("13,00 € für eine Kamera").
+  const amounts = new Set((text.match(/(?:€|\beur\b|\beuro\b)\s*\d[\d.,]*|\d[\d.,]*\s*(?:€|eur\b|euro\b)/gi) ?? [])
+    .flatMap((match) => match.match(/\d+(?:\.\d{3})*(?:,\d+)?/g) ?? []));
   return numbers.every((raw) => {
     const value = Number(raw.replace(/\./g, "").replace(",", "."));
+    if (known.has(value.toFixed(2)) || value === 0) return true;
+    if (amounts.has(raw)) return false;
     // Years, day numbers and small counts are fine; amounts need a source.
-    return value < 32 || (value >= 2000 && value <= 2100 && !raw.includes(",")) || known.has(value.toFixed(2));
+    return value < 32 || (value >= 2000 && value <= 2100 && !raw.includes(","));
   });
 }
 

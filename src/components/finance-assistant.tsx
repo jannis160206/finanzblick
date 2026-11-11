@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Brain, Bot, CalendarClock, Check, CircleHelp, Columns2, History, LoaderCircle, MessageSquareText, Pencil, PiggyBank, Send, Sparkles, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
 import { useFinance } from "@/components/finance-provider";
@@ -21,7 +22,7 @@ import { extractMemories } from "@/lib/assistant/memory";
 import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
-import { changingTools, conversationRoute, converseOn, evidenceText } from "@/lib/assistant/conversation";
+import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
 import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
 import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
@@ -29,8 +30,11 @@ import { currentAssistantContext, type AssistantPageContext } from "@/lib/assist
 import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
 import { currentNavItem } from "@/components/shell/navigation";
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
-import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
-import { resolveFollowUp } from "@/lib/assistant/followup";
+import { factTopic, findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
+import { resolveFollowUp, resolvePronoun } from "@/lib/assistant/followup";
+import { splitQuestion } from "@/lib/assistant/combined";
+import { explainAgain, fixedReply, topicClarify } from "@/lib/assistant/fixed-replies";
+import { detectContracts } from "@/lib/contracts";
 import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
@@ -130,6 +134,7 @@ const monthEnd = (month: string) => `${month}-${String(lastDay(month)).padStart(
 
 export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number; send?: boolean } } = {}) {
   const { state, dashboard, update, storageError, ready } = useFinance();
+  const { setTheme } = useTheme();
   const extras = useDashboardExtras();
   const messages = state.assistantChat ?? [];
   const [input, setInput] = useState(prompt?.text ?? "");
@@ -312,7 +317,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }, [ready, storageError]);
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
-  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string) {
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, brief = false) {
     try {
       const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
@@ -321,19 +326,29 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setAnswering(agent);
       // The general chat keeps the conversation; a specialist only needs the last exchange.
       const context = agent === "general" ? history : history.slice(-2);
-      const response = await fetch("/api/ai/answer?stream=1", {
-        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ question, history: context, facts, agent, ...(evidence ? { evidence } : {}) }),
-      });
-      if (!response.ok) return undefined;
-      if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
-        const text = await readAnswerStream(response.body, setStreaming);
-        // A rejected answer disappears again; the normal fallback takes over.
-        if (!text) setStreaming(undefined);
-        return text;
-      }
-      const answer: { text?: unknown } = await response.json();
-      return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
+      const ask = async (past: typeof history) => {
+        const response = await fetch("/api/ai/answer?stream=1", {
+          method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence } : {}), ...(brief ? { brief } : {}) }),
+        });
+        if (!response.ok) return undefined;
+        if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
+          const text = await readAnswerStream(response.body, setStreaming);
+          // A rejected answer disappears again; the normal fallback takes over.
+          if (!text) setStreaming(undefined);
+          return text;
+        }
+        const answer: { text?: unknown } = await response.json();
+        return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
+      };
+      const text = await ask(context);
+      // Sentences copied from the previous answer are dropped; a full copy is asked once more without the history.
+      const previous = context.findLast((item) => item.role === "assistant")?.text;
+      if (!text || !context.length) return text;
+      const fresh = freshPart(text, previous);
+      if (fresh) return fresh;
+      setStreaming(undefined);
+      return await ask([]) ?? text;
     } catch {
       setStreaming(undefined);
       return undefined;
@@ -359,13 +374,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // Terms are answered from learned knowledge; unknown or outdated ones are looked up once via the MCP server and remembered.
   async function loadKnowledge(text: string, names: string[]) {
     const topics = knowledgeTopics(text, names, true);
+    const general = Boolean(factTopic(text, names));
     const found: AssistantKnowledge[] = [], fresh: AssistantKnowledge[] = [], used: string[] = [];
     let offline = false;
     for (const topic of topics) {
       const stored = findKnowledge(state.assistantKnowledge, topic);
       if (stored && !isStale(stored)) { found.push(stored); used.push(stored.id); continue; }
       try {
-        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}${general ? "&general=1" : ""}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error();
         const { hit } = await response.json() as { hit?: KnowledgeHit | null };
         if (hit?.title && hit.text && hit.url) {
@@ -433,10 +449,21 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       work = target ? applyAliases([{ from: target, to: chosen, at: 0 }], lastAnswer.clarify).text : `${lastAnswer.clarify} ${chosen}`;
     }
     const aliased = applyAliases(state.assistantAliases, work);
-    work = aliased.text;
+    work = resolvePronoun(aliased.text, lastAnswer?.card);
     if (aliased.used.length) update((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
-    const chat = pending || original || chosen ? undefined : smallTalk(text, { hour: new Date().getHours(), seed: messages.length, now: new Date() });
+    // Bare words ("Netflix", "500", "Geld") get a short question back; a bare account or goal name shows its balance.
+    const open = !pending && !original && !chosen;
+    const topic = open ? topicClarify(work, state, { accounts: balances(state, dashboard).map((item) => item.name),
+      goals: savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name), contracts: detectContracts(state, asOf).map((contract) => contract.name) }) : undefined;
+    if (topic && "rewrite" in topic) work = topic.rewrite;
+    const fixed = open ? fixedReply(work) : undefined;
+    // "Erklär das nochmal" after small talk has nothing to explain: ask what is meant.
+    const nothingToExplain = explainAgain(work) && (!lastAnswer || !lastAnswer.card && !lastAnswer.tool && lastAnswer.text.length < 160)
+      ? { text: "Was soll ich dir genauer erklären? Frag mich einfach direkt danach.", suggestions: starterSuggestions } : undefined;
+    const chat = open ? smallTalk(text, { hour: new Date().getHours(), seed: messages.length, now: new Date() }) ?? fixed ?? nothingToExplain ??
+      (topic && "reply" in topic ? topic.reply : undefined) : undefined;
     if (chat) {
+      if (fixed?.theme && chat === fixed) setTheme(fixed.theme);
       setInput("");
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
@@ -458,6 +485,34 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const follow = pending ? undefined : resolveFollowUp(work, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
     const learned = pending || follow || detectTool(work, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, work);
+    // Two questions in one message are answered one after the other, each by its own agent.
+    const parts = pending || follow || original || chosen ? undefined : splitQuestion(work, [...goals, ...planned]);
+    if (parts) {
+      for (const part of parts) {
+        const partAgent: AgentId = part.tool ? toolOwner[part.tool] : routeBySignals(part.text, [...goals, ...planned])?.agent ?? "general";
+        let result: AgentResult;
+        if (part.tool) {
+          const market = part.tool === "market" || part.tool === "depot" ? await loadMarket(part.text) : undefined;
+          const knowledge = part.tool === "knowledge" ? await loadKnowledge(part.text, [...goals, ...planned]) : undefined;
+          try {
+            result = executeTool(part.tool, part.text, { state, dashboard, asOf, market, knowledge, page: pageContext(), insights: extras?.copilot });
+          } catch {
+            result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
+          }
+        } else {
+          const said = await freeAnswer(work, history, partAgent, agentEvidence(partAgent, state, dashboard, asOf, part.text));
+          result = { text: said ?? "Den zweiten Teil beantworte ich gern extra – frag mich einfach noch einmal danach." };
+        }
+        await settle();
+        addResult(result.suggestions ? result : { ...result, suggestions: part.tool ? followUps[part.tool] : agentSuggestions[partAgent] },
+          part.tool ? "Regel" : "KI", { tool: part.tool ?? "free", asked: part.text, agent: partAgent, via: "rule", ms: elapsed() });
+      }
+      setStreaming(undefined);
+      setAnswering(undefined);
+      setBusy(false);
+      inputRef.current?.focus();
+      return;
+    }
     if (follow) reply = { tool: follow.tool, source: "Regel" };
     else if (learned && isAssistantTool(learned.tool)) {
       reply = { tool: learned.tool, source: "Regel" };
@@ -489,7 +544,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // A tool's owner answers; without a tool the orchestrator's choice, and the general chat whenever it is unsure.
     // A question that dropped an edit ("Sollte ich das Lebensmittelbudget erhöhen?") stays with that edit's owner;
     // one that dropped a misread form ("Was ist mit meiner Versicherung los?") is routed again by its signal words.
-    const dropped = !tool && picked && changingTools.includes(picked) ? picked : undefined;
+    const dropped = !tool && picked ? picked : undefined;
     const agent: AgentId = tool ? toolOwner[tool] : dropped ? toolOwner[dropped]
       : route.skipDraft ? routeBySignals(work, [...goals, ...planned])?.agent ?? "general"
       : isAgentId(reply.agent) ? reply.agent : "general";
@@ -540,8 +595,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
+      // Nothing reliable to look up ("Hauptstadt von Australien"): the general chat answers from general knowledge instead.
+      let worded = false;
+      if (tool === "knowledge" && knowledge && !knowledge.found.length) {
+        const said = await freeAnswer(work, history, "general", undefined, true);
+        if (said) { result = { text: said, suggestions: agentSuggestions.general }; worded = true; }
+      } else if (tool === "knowledge" && knowledge?.found.length && factTopic(work)) {
+        // "Hauptstadt von Australien": the article is the evidence, the model only reads the answer out of it.
+        const said = await freeAnswer(work, [], "general", knowledge.found.map((entry) => `${entry.title}: ${entry.text}`).join("\n\n").slice(0, 1500), true);
+        // A question back ("Kannst du mir verraten, was …?") is no answer; the article's own sentences stay then.
+        if (said && !said.includes("?")) { result = { ...result, text: said }; worded = true; }
+      }
       // The tool computed the numbers; the model turns them into a direct answer to the actual question. The card stays.
-      if (route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
+      if (!worded && route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
         const said = await freeAnswer(work, history, agent, evidenceText(result));
         if (said) result = { ...result, text: said };
       }

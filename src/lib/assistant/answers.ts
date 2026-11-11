@@ -3,6 +3,7 @@ import { canonicalCategory, categories, type Category } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { detectDuplicateCharges, detectSubscriptions, forecastMonth, ledger } from "@/lib/insights";
+import { contractSummary, detectContracts } from "@/lib/contracts";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import { openReviewCount } from "@/lib/import/review";
 import { matchesTransactionSearch, normalizeSearch } from "@/lib/transaction-tools";
@@ -257,7 +258,7 @@ export function findMerchant(state: AppState, text: string, hint?: string): stri
 
 type QueryMetric = "saved" | "merchants" | "fixed" | "duplicates" | "subscriptions" | "largest" | "income" | "count" | "average" | "breakdown" | "compare" | "trend" | "sum";
 export const trendPattern = /entwickelt|entwicklung|verlauf|\btrend\b|monat für monat|monat fuer monat|jeden monat|über die (?:letzten )?monate|ueber die monate|monatsverlauf|von monat zu monat/;
-export const comparePattern = /vergleich|verglichen|gegenüber|\bvs\.?(?=\s)|\bversus\b|mehr oder weniger|(?:mehr|weniger|besser|schlechter|sparsamer)\b[^?.!]{0,30}?\bals (?:im |in |letzten |vorigen |den |der )?(?:vormonat|monat davor|letzten monat|vorigen monat|jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember)/;
+export const comparePattern = /vergleich|verglichen|gegenüber|\bvs\.?(?=\s)|\bversus\b|mehr oder weniger|(?:mehr|weniger|besser|schlechter|sparsamer)\b[^?.!]{0,30}?\bals (?:im |in |letzten |vorigen |den |der )?(?:vormonat|monat davor|letzten monat|vorigen monat|(?:letzten|vorigen)(?=\s*[?.!]*$)|jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember)/;
 export function queryMetric(text: string): QueryMetric {
   const lower = text.toLowerCase();
   if (/gespart|übrig geblieben|uebrig geblieben|zurückgelegt|zurueckgelegt/.test(lower)) return "saved";
@@ -268,9 +269,10 @@ export function queryMetric(text: string): QueryMetric {
   if (trendPattern.test(lower)) return "trend";
   if (/preiserhöh|preiserhoeh|teurer geworden|teurer wurde|preis\w* (?:gestiegen|erhöht|angehoben)/.test(lower)) return "subscriptions";
   if (/\babos?\b|abonnement/.test(lower) && !/\bbei\b/.test(lower)) return "subscriptions";
-  if (/größte|grösste|teuerste|höchste|meiste geld|top\s*\d*/.test(lower)) return "largest";
+  if (/(?:teuerste|größte|grösste|meiste)\w* (?:kategorie|bereich|posten|brocken)|kostenfresser|geldfresser|spend (?:the )?most|most money on|am meisten (?:geld )?(?:aus\b|ausgegeben|weg|hin)|meiste geld (?:hin|weg|geblieben|drauf)|(?:wo(?:hin)?|wofür|wofuer) (?:ist|sind|ging|gingen|geht|gehen|fließt) .{0,30}(?:das )?meiste/.test(lower)) return "breakdown";
+  if (/größte|grösste|teuerste|höchste|meiste geld|top\s*\d*|\b(?:biggest|largest|most expensive)\b/.test(lower)) return "largest";
   if (/\b(?:warum|wieso|weshalb)\b.*\bso\s+(?:viel|hoch|teuer)|woher kommt/.test(lower)) return "largest";
-  if (/verdient|einnahmen|eingenommen|reinbekommen|gehalt bekommen|eingegangen/.test(lower)) return "income";
+  if (/verdient|einnahmen|eingenommen|reinbekommen|gehalt bekommen|eingegangen|(?:rein|herein)gekommen|gutgeschrieben|\bgehalt\b.*\b(?:bekommen|erhalten|gekommen)\b/.test(lower)) return "income";
   if (/wie oft|wie viele (?:mal|male|buchungen|käufe|einkäufe)|wievielmal/.test(lower)) return "count";
   if (/\bzahl(?:e)? ich\b|\bkoste[tn] mich\b|\bgebe? ich\b/.test(lower) && !/wofür|wofuer|wohin|am meisten|aufteilung|verteilt|insgesamt|gesamt|bisher|schon|jänner|januar|februar|märz|april|\bmai\b|juni|juli|august|september|oktober|november|dezember|monat\b|woche|jahr|heuer|gestern|heute|seit|letzte|vorige|20\d\d/.test(lower)) return "average";
   if (/durchschnitt|im schnitt|pro monat|pro woche|wöchentlich|woechentlich|monatlich|je monat|\bim monat\b(?!\s+(?:jänner|januar|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember))/.test(lower)) return "average";
@@ -338,15 +340,32 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
   // Bookkeeping categories are no guess for "Buchungen über 100 Euro"; they only count when the question names them.
   const bookkeeping = ["Transfer", "Transfer intern", "Prüfen", "Sonstiges"].includes(hints.category ?? "") &&
     !normalizeSearch(text).includes(normalizeSearch(hints.category ?? "").slice(0, 6));
-  const hintCategory = hints.category && categories.includes(hints.category as never) && !bookkeeping
+  // The model's category guess only counts when the question carries a word of it ("Futter" never becomes "Guthabenkarten").
+  const plainText = normalizeSearch(text);
+  const grounded = (category: string) => normalizeSearch(category).split(" ").some((word) => word.length >= 5 && plainText.includes(word.slice(0, 5)));
+  const hintCategory = hints.category && categories.includes(hints.category as never) && !bookkeeping && grounded(hints.category)
     ? { categories: [hints.category as Category], label: hints.category } : undefined;
   // A bank or card question is about the account, so a model category guess like "Abonnements" is ignored.
-  const filter = ownFilter ?? (inherit ? findCategories(inherit) : undefined) ?? (bank ? undefined : hintCategory);
+  const filter = ownFilter ?? (inherit ? findCategories(inherit) : undefined) ?? (bank || ownMerchant ? undefined : hintCategory);
   const merchant = ownMerchant ?? (inherit && !ownFilter ? findMerchant(state, inherit) : undefined);
   // "Wie viel für Lieferando?" without any Lieferando booking must not answer with all spending.
   const unknown = !filter && !merchant && !bank && !inherit ? unknownName(text) : undefined;
   if (unknown) return { text: `Für „${unknown}“ finde ich keine Buchungen im Zeitraum ${period.label}.`,
     card: { kind: "answer", title: `${unknown} · ${period.label}`, total: 0, lines: [] } };
+  const askedPeriod = findPeriod(text, today) ?? earlierPeriod(previous, today);
+  if (merchant && !askedPeriod && !filter && (metric === "sum" || metric === "average") && !/\b(?:im|pro|aufs?|ein) jahr\b|jährlich|jaehrlich|insgesamt|gesamt|bisher|schon/.test(text.toLowerCase())) {
+    const plain = normalizeSearch(merchant);
+    const subscription = detectSubscriptions(state, today).find((item) => normalizeSearch(item.merchant).includes(plain) || plain.includes(normalizeSearch(item.merchant)));
+    if (subscription) {
+      const yearly = round(subscription.monthlyCost * 12);
+      return { text: `${subscription.merchant} kostet dich ${currency(subscription.amount)} ${subscription.interval === "jährlich" ? "im Jahr" : "im Monat"}` +
+        `${subscription.interval === "jährlich" ? "" : `, also ${currency(yearly)} im Jahr`}.` +
+        (subscription.priceChange && subscription.priceChange.percent > 0 ? ` Seit ${dateLabel(subscription.priceChange.date)} ist es ${currency(round(subscription.priceChange.to - subscription.priceChange.from))} teurer.` : ""),
+        card: { kind: "answer", title: subscription.merchant, total: subscription.monthlyCost, lines: [
+          { label: "pro Monat", value: subscription.monthlyCost }, { label: "pro Jahr", value: yearly },
+          { label: "nächste Abbuchung", detail: dateLabel(subscription.nextDate), tone: "info" }], page: { label: "Vertragsordner öffnen", href: "/vertraege" } } };
+    }
+  }
   if (merchant && /\b(?:im|pro|aufs?|ein) jahr\b|jährlich|jaehrlich/.test(text.toLowerCase())) {
     const plain = normalizeSearch(merchant);
     const subscription = detectSubscriptions(state, today).find((item) => normalizeSearch(item.merchant).includes(plain) || plain.includes(normalizeSearch(item.merchant)));
@@ -372,7 +391,8 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
   const entries = ledger(state).filter(({ row, category }) => row.date >= period.from && row.date <= period.to &&
     (!wanted || wanted.has(category)) && (!merchant || matchesTransactionSearch(row, merchant)) && (!bank || bank.pattern.test(row.bank.trim())) &&
     (!limit || (limit.over ? Math.abs(row.amount) > limit.value : Math.abs(row.amount) < limit.value)));
-  const scope = [bank?.label, merchant, filter?.label].filter(Boolean).join(" · ") || "Alle Ausgaben";
+  const merchantLabel = merchant && merchant === merchant.toLowerCase() ? merchant.charAt(0).toUpperCase() + merchant.slice(1) : merchant;
+  const scope = [bank?.label, merchantLabel, filter?.label].filter(Boolean).join(" · ") || "Alle Ausgaben";
   const title = `${metric === "income" ? "Einnahmen" : scope} · ${period.label}`;
   const month = period.month;
   if (metric === "saved") {
@@ -435,23 +455,58 @@ export function answerQuestion(state: AppState, text: string, today: string, hin
     return { text: `Am meisten Geld lässt du bei ${lines[0].label}: ${currency(lines[0].value ?? 0)} im Zeitraum ${period.label}.` +
       (lines.length > 1 ? ` Danach ${lines.slice(1, 3).map((line) => `${line.label} (${currency(line.value ?? 0)})`).join(" und ")}.` : ""), card };
   if (metric === "count") return { text: `${plural(rows.length, "Buchung", "Buchungen")} im Zeitraum ${period.label} für ${scope}, zusammen ${currency(total)}.`, card };
+  // Averages start with the first booking at all, so a year that was imported from July on is not divided by twelve.
+  const firstBooking = state.transactions.reduce((first, row) => row.date < first ? row.date : first, "9999-12-31");
+  const start = firstBooking > period.from && firstBooking <= period.to ? firstBooking : period.from;
   if (metric === "average" && /pro woche|wöchentlich|woechentlich|in der woche|die woche\b/.test(text.toLowerCase())) {
     const end = period.to > today ? today : period.to;
-    const weeks = Math.max(1, (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${period.from}T00:00:00Z`)) / DAY_MS / 7 + 1 / 7);
+    const weeks = Math.max(1, (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / DAY_MS / 7 + 1 / 7);
     const weekly = round(total / weeks);
     return { text: `Im Schnitt ${currency(weekly)} pro Woche für ${scope} (${period.label}, gesamt ${currency(total)}).`, card: { ...card, total: weekly,
       note: `Durchschnitt über ${Math.round(weeks)} Wochen.` } };
   }
   if (metric === "average") {
-    const average = round(total / Math.max(1, period.months));
-    return { text: `Im Schnitt ${currency(average)} pro Monat für ${scope} (${period.label}, gesamt ${currency(total)}).`, card: { ...card, total: average,
-      note: `Durchschnitt über ${plural(period.months, "Monat", "Monate")}; der laufende Monat zählt mit.` } };
+    const end = (period.to > today ? today : period.to).slice(0, 7);
+    const months = start === period.from ? period.months
+      : Math.max(1, (Number(end.slice(0, 4)) - Number(start.slice(0, 4))) * 12 + Number(end.slice(5, 7)) - Number(start.slice(5, 7)) + 1);
+    const average = round(total / Math.max(1, months));
+    return { text: `Im Schnitt ${currency(average)} pro Monat für ${scope} (${start === period.from ? period.label : `seit ${monthLabel(start.slice(0, 7))}`}, gesamt ${currency(total)}).`,
+      card: { ...card, total: average, note: `Durchschnitt über ${plural(months, "Monat", "Monate")}${start === period.from ? "" : " mit Buchungen"}; der laufende Monat zählt mit.` } };
   }
-  return { text: `Für ${scope} hast du im Zeitraum ${period.label} ${currency(total)} ausgegeben (${plural(rows.length, "Buchung", "Buchungen")}).`, card };
+  return { text: `${scope === "Alle Ausgaben" ? "Insgesamt hast du" : `Für ${scope} hast du`} im Zeitraum ${period.label} ${currency(total)} ausgegeben (${plural(rows.length, "Buchung", "Buchungen")}).`, card };
 }
 
 // "Wie stehen meine Sparziele?": saved so far, monthly rate and whether each goal makes it in time.
-export function goalsStatus(dashboard: Dashboard, today: string): { text: string; card: AssistantCard } {
+/** "Wann hab ich das Motorrad zusammen?", "Wie viel fehlt mir noch für Japan?" */
+export const goalProgressQuestion = (lower: string) =>
+  /\bwann\b.*\b(?:zusammen|erreicht|voll|fertig|geschafft|beisammen)\b|\bwie viel fehlt\b|\bwie weit bin ich\b|\bwie (?:steht|läuft|laeuft|schaut|sieht)\b|\bwie viel (?:hab|habe) ich (?:schon )?(?:für|fürs|fuer)\b|\bsparziel\b/.test(lower);
+export const namedGoal = (dashboard: Dashboard, text: string) => {
+  const plain = ` ${normalizeSearch(text)} `;
+  return dashboard.goals.filter((goal) => !goal.completedAt).find((goal) => normalizeSearch(goal.name).length >= 3 && plain.includes(` ${normalizeSearch(goal.name)}`));
+};
+
+function goalProgress(dashboard: Dashboard, goal: Dashboard["goals"][number]): { text: string; card: AssistantCard } {
+  const saved = round(dashboard.goalStatuses[goal.id]?.amount ?? 0);
+  const missing = round(Math.max(0, goal.target - saved));
+  const reach = dashboard.timeline.find((row) => (row.goalEnd[goal.id] ?? 0) + 0.5 >= goal.target)?.month;
+  const due = goal.date.slice(8, 10) === "01" ? addMonths(goal.date.slice(0, 7), -1) : goal.date.slice(0, 7);
+  const rate = goalRate(goal);
+  const text = missing <= 0 ? `${goal.name} hast du geschafft: ${currency(saved)} von ${currency(goal.target)}.`
+    : `Für ${goal.name} hast du ${currency(saved)} von ${currency(goal.target)} – es fehlen noch ${currency(missing)}.` +
+      (reach ? ` Laut Plan hast du es im ${monthLabel(reach)} zusammen${reach > due ? `, also später als geplant (${dateLabel(goal.date)})` : ", rechtzeitig"}.`
+        : " Mit dem aktuellen Plan reicht es in den nächsten Monaten nicht – mehr sparen oder das Ziel verschieben?") +
+      (rate ? ` Dafür legst du ${currency(rate)} im Monat zur Seite.` : "");
+  return { text, card: { kind: "answer", title: `Sparziel · ${goal.name}`, total: saved, lines: [
+    { label: "Angespart", value: saved, tone: "info" }, { label: "Ziel", value: goal.target, detail: `bis ${dateLabel(goal.date)}` },
+    ...(missing > 0 ? [{ label: "Fehlt noch", value: missing, tone: "warn" as const }] : []),
+    ...(rate ? [{ label: "Sparrate", value: rate, detail: "pro Monat" }] : []),
+    ...(reach ? [{ label: "Erreicht laut Plan", detail: monthLabel(reach), tone: reach > due ? "warn" as const : "good" as const }] : []),
+  ], page: { label: "Sparen öffnen", href: "/sparen" } } };
+}
+
+export function goalsStatus(dashboard: Dashboard, today: string, text = ""): { text: string; card: AssistantCard } {
+  const one = text ? namedGoal(dashboard, text) : undefined;
+  if (one) return goalProgress(dashboard, one);
   const goals = dashboard.goals.filter((goal) => !goal.completedAt);
   if (!goals.length) return { text: "Du hast gerade keine offenen Sparziele. Sag z. B. „Ich will bis Juli 3.000 € für Japan sparen“, dann lege ich eins an.",
     card: { kind: "answer", title: "Sparziele", total: 0, lines: [] } };
@@ -489,7 +544,15 @@ function fixedCosts(state: AppState, today: string): { text: string; card: Assis
   const total = round(items.reduce((sum, item) => sum + item.value, 0));
   const income = round(state.financeRows.filter((row) => row.kind === "income").reduce((sum, row) => sum + Math.max(0, row.values[month] ?? 0), 0));
   const share = income > 0 ? Math.round(total / income * 100) : undefined;
-  if (!items.length) return { text: "In deinem Plan sind für diesen Monat keine Fixkosten eingetragen.", card: { kind: "answer", title: `Fixkosten · ${monthLabel(month)}`, total: 0, lines: [], month } };
+  if (!items.length) {
+    // No fixed costs planned yet: the contracts found in the bookings are the next best answer.
+    const contracts = detectContracts(state, today).filter((contract) => contract.status !== "ignored");
+    const summary = contractSummary(contracts, today);
+    return { text: "In deinem Plan sind für diesen Monat keine Fixkosten eingetragen." +
+      (summary.active ? ` Aus deinen Buchungen erkenne ich ${plural(summary.active, "laufenden Vertrag", "laufende Verträge")} mit zusammen ${currency(summary.monthly)} im Monat.` : ""),
+    card: { kind: "answer", title: `Fixkosten · ${monthLabel(month)}`, total: 0, lines: [], month,
+      ...(summary.active ? { page: { label: "Verträge öffnen", href: "/vertraege" } } : {}) } };
+  }
   return {
     text: `Deine Fixkosten liegen bei ${currency(total)} im Monat (${plural(items.length, "Posten", "Posten")}${share !== undefined ? `, ${share} % vom Einkommen` : ""}). ` +
       `Die größten: ${items.slice(0, 3).map((item) => `${item.label} ${currency(item.value)}`).join(", ")}.` +
@@ -525,8 +588,8 @@ export function compareSelection(text: string, today: string, previous: string[]
       { from: `${year - 1}-01-01`, to: `${year - 1}${today.slice(4)}`, label: `Vorjahr bis ${dateLabel(`${year - 1}${today.slice(4)}`)}`, months: Number(today.slice(5, 7)) }];
   }
   // "mehr als im Vormonat?" compares the month asked before (or this month) with its previous one; "mehr als im September?" with September.
-  if (/\bals\s+(?:im\s+|in\s+|der\s+)?(?:vormonat|monat davor|letzten monat|vorigen monat)/.test(lower) && months.length <= 1) {
-    const base = earlier ?? monthPeriodOf(today.slice(0, 7), today);
+  if (/\bals\s+(?:im\s+|in\s+|der\s+)?(?:vormonat|monat davor|letzten monat|vorigen monat|(?:letzten|vorigen)(?=\s*[?.!]*$))/.test(lower) && months.length <= 1) {
+    const base = monthsIn(text.replace(/\bals\s.*$/i, ""), today)[0] ?? earlier ?? monthPeriodOf(today.slice(0, 7), today);
     months = [base, monthPeriodOf(addMonths(base.month!, -1), today)];
   } else if (months.length === 1 && /\bals\s+(?:im\s+|in\s+)?[a-zäöü]+/.test(lower)) {
     const base = earlier && earlier.month !== months[0].month ? earlier : monthPeriodOf(today.slice(0, 7), today);

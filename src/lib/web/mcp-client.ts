@@ -37,5 +37,5 @@ export async function listWebTools(): Promise<string[]> {
 export const fetchMarketSnapshot = (currencies: string[], fetcher?: typeof fetch) =>
   callWebTool("get_market_snapshot", { currencies }, fetcher) as Promise<MarketSnapshot>;
 
-export const fetchKnowledge = (query: string, fetcher?: typeof fetch) =>
-  callWebTool("search_knowledge", { query }, fetcher) as Promise<KnowledgeHit | null>;
+export const fetchKnowledge = (query: string, fetcher?: typeof fetch, general = false) =>
+  callWebTool("search_knowledge", general ? { query, general } : { query }, fetcher) as Promise<KnowledgeHit | null>;

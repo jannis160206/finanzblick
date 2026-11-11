@@ -11,12 +11,11 @@ const ADVICE = new RegExp([
   String.raw`\b(?:sollte|soll|sollen|müsste|muss)\s+ich\b`,
   String.raw`\blohnt\s+(?:es\s+)?sich\b`,
   String.raw`\b(?:was|wie)\s+(?:denkst|meinst|findest|würdest|siehst|rätst|empfiehlst)\s+du\b`,
-  String.raw`\bwas\s+(?:soll|kann|könnte|würde|mach|tu)e?\s+ich\b`,
+  String.raw`\bwas\s+(?:soll|kann|könnte|würde|mach|tu)e?\s+ich\b(?![^?.!]*\b(?:ausgeben|verbrauchen)\b)`,
   String.raw`\b(?:rat|ratschlag|ratschläge|tipps?|empfehlung\w*|vorschl[aä]g\w*|idee\w*)\b`,
   String.raw`\b(?:gestresst|stress|sorgen|angst|überfordert|panik|pleite|verzweifelt|frustriert)\b`,
   String.raw`\bist\s+(?:das|es|der|die)\b.*\b(?:normal|schlimm|okay|ok|gut|schlecht|zu\s+viel|zu\s+hoch|zu\s+teuer|vernünftig|sinnvoll)\b`,
   String.raw`\b(?:bin|stehe)\s+ich\b.*\b(?:gut|schlecht|sparsam|verschwenderisch|normal|auf\s+kurs|im\s+plan)\b`,
-  String.raw`\bwas\s+(?:passiert|würde\s+passieren|wäre|ändert\s+sich)\b.*\bwenn\b`,
   String.raw`\bzu\s+(?:teuer|hoch|viel)\b`,
   String.raw`\bwie\s+(?:kann|könnte)\s+ich\b`,
 ].join("|"), "i");
@@ -25,6 +24,8 @@ const EXPLAIN = new RegExp([
   String.raw`^(?:und\s+)?(?:warum|wieso|weshalb|wie\s+kommt|woran\s+liegt|woher\s+kommt)\b`,
   String.raw`\bfass\w*\b.*\bzusammen\b|\bzusammenfass\w*|überblick\b|\bin\s+\w+\s+sätzen\b`,
   String.raw`\b(?:erklär|beschreib)\w*\b`,
+  // "Was passiert, wenn ich Netflix kündige?": the what-if tool already says it in words.
+  String.raw`\bwas\s+(?:passiert|würde\s+passieren|wäre|ändert\s+sich)\b.*\bwenn\b`,
 ].join("|"), "i");
 
 export const adviceQuestion = (text: string) => ADVICE.test(text.trim().toLowerCase());
@@ -46,12 +47,26 @@ export function converseOn(tool: AssistantTool, result: AgentResult, text: strin
   return !!card && (card.lines.length > 0 || !!card.total || !!card.whatif || !!card.chart);
 }
 
+const words = (text: string) => new Set(text.toLowerCase().match(/\p{L}{3,}/gu) ?? []);
+const similar = (a: Set<string>, b: Set<string>) => a.size >= 3 && b.size >= 3 && [...a].filter((word) => b.has(word)).length / Math.min(a.size, b.size) >= 0.75;
+const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+(?=[^a-zäöüß])/).filter(Boolean);
+/**
+ * The small model sometimes copies its previous answer ("Buchtipp" right after a film tip). Sentences that repeat the
+ * previous answer are dropped; an empty result means the reply was a copy and is asked again without history.
+ */
+export function freshPart(answer: string, previous?: string): string {
+  if (!previous) return answer;
+  const before = sentencesOf(previous).map(words);
+  return sentencesOf(answer).filter((sentence) => !before.some((old) => similar(words(sentence), old))).join(" ").trim();
+}
+
 // A question rather than a command: "Wann bin ich pleite?", "Kommt noch was Großes?".
 export const isQuestion = (text: string) => /\?\s*$/.test(text) ||
   /^(?:und\s+)?(?:wie|was|wann|wo|wofür|wohin|woher|warum|wieso|weshalb|welche[rsmn]?|wer|ist|sind|hab|habe|hat|kann|könnte|bin|soll|sollte|gibt|kommt|reicht|darf|lohnt|muss)\b/i.test(text.trim());
 
 // Questions the computed facts answer (duplicates, top category, year so far, price increases), not a single booking search.
-const FACT_QUESTION = /\b(?:doppelt|zweimal\s+(?:bezahlt|abgebucht|belastet)|(?:am|das)\s+meiste\w*|teuerste\w*\s+kategorie|größte\w*\s+(?:kategorie|posten)|seit\s+(?:jahresbeginn|jahresanfang|jänner|januar|neujahr)|teurer\s+geworden|preiserhöhung\w*|preise?\s+(?:gestiegen|erhöht))\b/i;
+// Category superlatives and "seit Jahresbeginn gespart" are answered by the query tool itself.
+const FACT_QUESTION = /\b(?:doppelt|zweimal\s+(?:bezahlt|abgebucht|belastet)|teurer\s+geworden|preiserhöhung\w*|preise?\s+(?:gestiegen|erhöht))\b/i;
 export const factQuestion = (text: string) => FACT_QUESTION.test(text);
 
 export type Route = { tool?: AssistantTool; converse: boolean; skipDraft: boolean };

@@ -3,7 +3,7 @@ import { calculateDashboard, type Dashboard } from "@/lib/calc";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, assistantCardSchema, type AppState, type Transaction } from "@/lib/types";
 import { conversationRoute } from "./conversation";
-import { budgetAdvice, budgetPace, pulseAnswer, pulseQuestion, salaryStatus } from "./pulse";
+import { budgetLineAnswer, budgetPace, pulseAnswer, pulseQuestion, salaryStatus } from "./pulse";
 import { detectTool } from "./tools";
 import { emptySeen, findAlerts } from "./watch";
 
@@ -22,7 +22,8 @@ describe("Monats-Puls", () => {
   it("routes daily budget, salary and pace questions without stealing budget or forecast", () => {
     for (const text of ["Wie viel kann ich heute noch ausgeben?", "Was darf ich pro Tag noch ausgeben", "Tagesbudget", "Ist mein Gehalt schon da?",
       "wann kommt mein gehalt", "Bin ich diesen Monat im Budget?", "wie läuft mein monat", "Wo gebe ich diesen Monat mehr aus als sonst?",
-      "reicht mein geld bis zum gehalt", "welche fixkosten kommen noch"]) {
+      "reicht mein geld bis zum gehalt", "welche fixkosten kommen noch", "Was kann ich bis Sonntag noch ausgeben?",
+      "Komm ich bis zum Monatsende mit meinem Geld aus?", "Wie viel bleibt mir pro Tag bis zum Gehalt?"]) {
       expect(pulseQuestion(text.toLowerCase()), text).toBe(true);
       expect(detectTool(text), text).toBe("pulse");
     }
@@ -45,13 +46,13 @@ describe("Monats-Puls", () => {
     expect(conversationRoute({ text: question, tool: "budget_plan", ruleTool: "budget_plan", numbers: [], pending: false }))
       .toEqual({ tool: "budget", converse: false, skipDraft: false });
     const dashboard = (food: number) => withRows(calculateDashboard(stateWith([])), [{ id: "food", label: "Lebensmittel & Haushalt", total: 300, actual: food }]);
-    const fast = budgetAdvice(dashboard(240), "2026-09-15", question);
+    const fast = budgetLineAnswer(dashboard(240), "2026-09-15", question);
     expect(fast?.text).toMatch(/^Ja, eher schon\. Für Lebensmittel & Haushalt sind 300,00\s€ im Monat geplant, bisher hast du 240,00\s€ ausgegeben – bei diesem Tempo landest du bei etwa 480,00\s€/);
     expect(fast?.suggestions?.[0]).toBe("Budget Lebensmittel & Haushalt auf 480 € setzen");
-    expect(budgetAdvice(dashboard(100), "2026-09-15", question)?.text).toMatch(/^Nein, eher nicht\. .* gut aus\.$/);
-    expect(budgetAdvice(dashboard(60), "2026-09-15", "Sollte ich das Lebensmittelbudget senken?")?.text).toMatch(/^Ja, das geht wohl\./);
-    expect(budgetAdvice(dashboard(20), "2026-09-03", question)?.text).toMatch(/^Dafür ist es noch zu früh im Monat\./);
-    expect(budgetAdvice(dashboard(240), "2026-09-15", "Wie hoch ist mein Lebensmittelbudget?")).toBeUndefined();
+    expect(budgetLineAnswer(dashboard(100), "2026-09-15", question)?.text).toMatch(/^Nein, eher nicht\. .* gut aus\.$/);
+    expect(budgetLineAnswer(dashboard(60), "2026-09-15", "Sollte ich das Lebensmittelbudget senken?")?.text).toMatch(/^Ja, das geht wohl\./);
+    expect(budgetLineAnswer(dashboard(20), "2026-09-03", question)?.text).toMatch(/^Dafür ist es noch zu früh im Monat\./);
+    expect(budgetLineAnswer(dashboard(240), "2026-09-15", "Wie hoch ist mein Lebensmittelbudget?")).toBeUndefined();
   });
 
   it("knows whether this month's salary arrived and when the next one is due", () => {
@@ -59,6 +60,26 @@ describe("Monats-Puls", () => {
     expect(salaryStatus(stateWith(history), "2026-09-28")).toMatchObject({ received: 0, expected: "2026-09-25", late: true });
     const paid = salaryStatus(stateWith([...history, row("2026-09-25", "Arbeitgeber GmbH", 2400, "Gehalt")]), "2026-09-28");
     expect(paid).toMatchObject({ received: 2400, date: "2026-09-25", expected: "2026-10-25", late: false });
+  });
+
+  it("leads with what was asked: salary, week, enough until payday, budget status, fixed costs", () => {
+    const state = stateWith([...[6, 7, 8].map((month) => row(`2026-0${month}-25`, "Arbeitgeber GmbH", 2400, "Gehalt")), row("2026-09-02", "Supermarkt", -45, "Lebensmittel")]);
+    const dashboard = calculateDashboard(state);
+    const ask = (question: string) => pulseAnswer(state, dashboard, "2026-09-10", question).text;
+    expect(ask("Wann kommt mein Gehalt?")).toMatch(/^Gehalt kommt voraussichtlich am 25\.9\.2026 – noch 15 Tage\./);
+    expect(ask("Wie viel darf ich diese Woche noch ausgeben?")).toMatch(/^Diese Woche kannst du noch rund .+ pro Tag für 4 Tage bis Sonntag\./);
+    expect(ask("Reicht mein Geld bis zum nächsten Gehalt?")).toMatch(/^(?:Ja, das reicht|Knapp)/);
+    expect(ask("Bin ich im Budget?")).toMatch(/^(?:Ja, alle Budgets liegen im Plan|Noch ja|Nicht ganz)/);
+    expect(ask("Welche Fixkosten kommen noch?")).toMatch(/^(?:Diesen Monat sind keine Fixkosten mehr offen|Noch abgebucht werden)/);
+  });
+
+  it("answers about one budget line without changing it", () => {
+    const dashboard = withRows(calculateDashboard(stateWith([])), [{ id: "food", label: "Lebensmittel & Haushalt", total: 300, actual: 100 }]);
+    expect(budgetLineAnswer(dashboard, "2026-09-15", "Wie steht mein Lebensmittelbudget?")?.text)
+      .toBe("Für Lebensmittel & Haushalt sind 300,00\u00a0€ im Monat geplant, bisher sind 100,00\u00a0€ weg – noch 200,00\u00a0€ für die restlichen 16 Tage. Das liegt im Plan.");
+    expect(detectTool("Wie steht mein Lebensmittelbudget?")).toBe("budget");
+    expect(detectTool("Wie viel Puffer hab ich?")).toBe("budget");
+    expect(detectTool("Lebensmittelbudget auf 300")).toBe("budget_plan");
   });
 
   it("answers with a valid card", () => {

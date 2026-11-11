@@ -13,7 +13,8 @@ export async function GET(request: Request): Promise<Response> {
   const query = (new URL(request.url).searchParams.get("q") ?? "").replace(/\s+/g, " ").trim();
   if (query.length < 2 || query.length > 80 || /\d{4,}|@/.test(query)) return jsonResponse({ error: "Ungültiger Begriff." }, 400);
   try {
-    return jsonResponse({ hit: await fetchKnowledge(query) });
+    // general=1: a plain fact question, which may use any article (places, people), not only finance terms.
+    return jsonResponse({ hit: await fetchKnowledge(query, undefined, new URL(request.url).searchParams.get("general") === "1") });
   } catch {
     return jsonResponse({ error: "Das Nachschlagen ist gerade nicht möglich." }, 502);
   }

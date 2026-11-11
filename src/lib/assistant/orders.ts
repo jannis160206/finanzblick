@@ -12,7 +12,7 @@ export const ordersQuestion = (lower: string) =>
   !/\b(?:rückgängig|lösch|kategorie)\b/.test(lower) && !pastOrder(lower);
 // "Wie viel hab ich im Oktober bei Amazon bestellt?" asks for spending, not open orders.
 const pastOrder = (lower: string) => /\b(?:hab|habe|hatte|haben)\b[^?!]*\bbestellt\b/.test(lower) && !/\boffen|noch nicht|kommt|kommen|fällig|faellig/.test(lower) &&
-  (/\bwie ?viel|\bwie oft|insgesamt/.test(lower) || /jänner|januar|februar|märz|april|\bmai\b|juni|juli|august|september|oktober|november|dezember|letzte|vorige|diese[nmr]? monat|heuer/.test(lower));
+  (/\bwie ?viel|\bwie oft|insgesamt|^was (?:hab|habe|hatte|haben) (?:ich|wir)\b/.test(lower) || /jänner|januar|februar|märz|april|\bmai\b|juni|juli|august|september|oktober|november|dezember|letzte|vorige|diese[nmr]? monat|heuer/.test(lower));
 
 export function ordersAnswer(state: AppState, today: string): { text: string; card: AssistantCard; suggestions: string[] } {
   const orders = (state.plannedOneOffs ?? []).filter((item) => item.id.startsWith(PLANNED_PREFIX));

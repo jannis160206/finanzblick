@@ -1,5 +1,7 @@
 import { normalizeMessage } from "./normalize";
 import { detectSmallTalk } from "./smalltalk";
+import { fixedReply } from "./fixed-replies";
+import { factTopic } from "./knowledge";
 import { assistantTools, detectTool, mentionsName, type AssistantTool } from "./tools";
 
 /**
@@ -42,12 +44,12 @@ export const agentTools = (agent: AgentId): AssistantTool[] => assistantTools.fi
 const words = (list: string) => new RegExp(String.raw`(?<![\p{L}\p{N}])(?:${list})(?![\p{L}\p{N}])`, "u");
 // Words that clearly belong to one domain. A message has to hit exactly one specialist to skip the model.
 const signals: Record<SpecialistId, RegExp[]> = {
-  transactions: [words(String.raw`buchung\p{L}*|umsätze|spend|spent|spending|expenses?|groceries|getankt|eingekauft|umsatz|ausgegeben|bezahlt|gezahlt|eingenommen|überweisung\p{L}*|abbuchung\p{L}*|lastschrift\p{L}*|händler\p{L}*|kategori\p{L}*|rückerstattung\p{L}*|retoure\p{L}*|gutschrift\p{L}*|doppelt|bestellung\p{L}*|klarna|paypal|monatsbericht|rückblick|verdächtig\p{L}*`),
+  transactions: [words(String.raw`buchung\p{L}*|umsätze|spend|spent|spending|expenses?|groceries|getankt|eingekauft|gekauft|bestellt|gelassen|gespart|umsatz|ausgegeben|bezahlt|gezahlt|eingenommen|überweisung\p{L}*|abbuchung\p{L}*|lastschrift\p{L}*|händler\p{L}*|kategori\p{L}*|rückerstattung\p{L}*|retoure\p{L}*|gutschrift\p{L}*|doppelt|bestellung\p{L}*|klarna|paypal|monatsbericht|rückblick|verdächtig\p{L}*`),
     /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:\S+ ){0,2}geld\b/],
-  contracts: [words(String.raw`vertr[aä]g\p{L}*|abos?|abonnement\p{L}*|kündig\p{L}*|laufzeit\p{L}*|versicherung\p{L}*|mitgliedschaft\p{L}*|streaming|handytarif|stromanbieter`)],
-  budget: [words(String.raw`\p{L}*budget\p{L}*|übrig|leisten|leistbar|ausgehen|knapp|prognose|kontostand|kontostände|sparkonto|girokonto|konten|sparziel\p{L}*|sparen|sparsam|zurücklegen|notgroschen|reserve|puffer|vermögen|monatsende|monatsplan|anleg\p{L}*|veranlagen|etfs?|depot|zinsen|kredit\p{L}*|(?:spar)?rate|amex|pleite`),
+  contracts: [words(String.raw`vertr[aä]g\p{L}*|abos?|abonnement\p{L}*|subscriptions?|kündig\p{L}*|laufzeit\p{L}*|versicherung\p{L}*|mitgliedschaft\p{L}*|streaming|handytarif|stromanbieter`)],
+  budget: [words(String.raw`\p{L}*budget\p{L}*|übrig|konto|kontos|pleite|blank|leisten|leistbar|ausgehen|knapp|prognose|kontostand|kontostände|sparkonto|girokonto|konten|sparziel\p{L}*|sparen|sparsam|zurücklegen|notgroschen|reserve|puffer|vermögen|monatsende|monatsplan|anleg\p{L}*|veranlagen|etfs?|depot|zinsen|kredit\p{L}*|(?:spar)?rate|amex|pleite`),
     /geht sich|reicht (?:mein |das |es |unser )?geld/],
-  payroll: [words(String.raw`gehalt(?:s\p{L}*|es)?|lohn(?:zettel|abrechnung\p{L}*|steuer)?|brutto|netto|abrechnung\p{L}*|sonderzahlung\p{L}*|urlaubszuschuss|urlaubsgeld|weihnachtsgeld|weihnachtsremuneration|jahressechstel|sechstel|successbonus|bonus|prämie\p{L}*|steuer\p{L}*|veranlagung|steuerausgleich|absetz\p{L}*|finanzamt|home.?office|rufbereitschaft|überstunden|sozialversicherung`)],
+  payroll: [words(String.raw`grenzsteuersatz|steuersatz|steuerklassen?|verkehrsabsetzbetrag|familienbonus|gehalt(?:s\p{L}*|es)?|lohn(?:zettel|abrechnung\p{L}*|steuer)?|brutto|netto|abrechnung\p{L}*|sonderzahlung\p{L}*|urlaubszuschuss|urlaubsgeld|weihnachtsgeld|weihnachtsremuneration|jahressechstel|sechstel|successbonus|bonus|prämie\p{L}*|steuer\p{L}*|veranlagung|steuerausgleich|absetz\p{L}*|finanzamt|home.?office|rufbereitschaft|überstunden|sozialversicherung`)],
 };
 // Anything about money at all; without it, the general chat answers right away.
 const financeWords = [/€|\d+\s*k\b|\bgeb\w* (?:\S+ ){0,4}aus\b/, words(String.raw`eur|euro|geld\p{L}*|konto|bank\p{L}*|kosten?|kostet|teuer\p{L}*|günstig\p{L}*|billig\p{L}*|preis\p{L}*|zahl\p{L}*|finanz\p{L}*|spar\p{L}*|ausgab\p{L}*|einnahm\p{L}*|schulden|verdien\p{L}*|invest\p{L}*|rechnung\p{L}*|kauf\p{L}*|leist\p{L}*|monat\p{L}*`)];
@@ -61,7 +63,8 @@ export function aboutMoney(input: string): boolean {
 
 // Creative or plain chat requests ("Schreib mir ein Gedicht über Sparen") belong to the general chat, even when they mention money.
 const CHAT_REQUEST = /\b(?:gedicht\w*|witz\w*|reim\w*|lied\w*|songtext\w*|geschichte\w*|kurzgeschichte\w*|rezept\w*|haiku)\b|^(?:erzähl|erzaehl)\w* mir (?:einen|eine|was|etwas)\b/;
-export const chatRequest = (input: string) => CHAT_REQUEST.test(normalizeMessage(input).toLowerCase());
+// "Rezept für Pfannkuchen" names a dish that can be looked up, so it goes through the tools like other fact questions.
+export const chatRequest = (input: string) => CHAT_REQUEST.test(normalizeMessage(input).toLowerCase()) && !factTopic(input);
 // "Kann man mit 3000 netto in Wien gut leben?" asks about people in general, not about the user's own data.
 export const generalQuestion = (lower: string) => /\bman\b/.test(lower) && !/\b(?:ich|mir|mich|mein\w*|wir|uns|unser\w*)\b/.test(lower);
 
@@ -83,7 +86,9 @@ export function routeBySignals(input: string, names: string[] = []): RouteDecisi
 /** The orchestrator's free decision: small talk and clear commands by rule, then signal words. Undefined = ask the model. */
 export function routeByRules(input: string, names: string[] = []): RouteDecision | undefined {
   const text = normalizeMessage(input);
-  if (detectSmallTalk(text) || chatRequest(text)) return { agent: "general", via: "rule" };
+  if (detectSmallTalk(text) || chatRequest(text) || fixedReply(text)) return { agent: "general", via: "rule" };
+  // "Mein Konto ist leer", "Ich bin pleite": a worry first, answered with understanding by the general chat.
+  if (/^(?:mein (?:konto|girokonto) ist (?:leer|im minus|überzogen|blank)|ich bin (?:total |komplett |gerade )?(?:pleite|blank|abgebrannt|im minus))\b/.test(text.toLowerCase())) return { agent: "general", via: "rule" };
   const tool = detectTool(text, names);
   if (tool) return { agent: toolOwner[tool], tool, via: "rule" };
   if (generalQuestion(text.toLowerCase())) return { agent: "general", via: "rule" };

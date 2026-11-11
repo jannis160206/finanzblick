@@ -44,8 +44,8 @@ describe("copilot routing", () => {
 
   it("leaves cancelling, past spending, price checks and changes with their tools", () => {
     const cases: [string, string | undefined][] = [
-      ["Kündige Netflix", "cancel"], ["Welche Verträge kann ich kündigen?", "cancel"], ["was kosten mich meine abos", "query"],
-      ["Wie viel hab ich für Abos ausgegeben?", "query"], ["Welche Abos sind teurer geworden?", "security"],
+      ["Kündige Netflix", "cancel"], ["Welche Verträge kann ich kündigen?", "cancel"], ["was kosten mich meine abos", "contracts"],
+      ["Wie viel hab ich für Abos ausgegeben?", "query"], ["Welche Abos sind teurer geworden?", "contracts"],
       ["Markiere die ausgewählten Buchungen als geprüft", "booking"], ["was bleibt mir diesen monat noch", "budget"],
       ["wie viel kann ich im dezember noch ausgeben", "budget"], ["wann kommt mein gehalt", "pulse"],
     ];
@@ -81,7 +81,13 @@ describe("contracts tool", () => {
 
   it("answers price and status questions about one contract from the contract list", () => {
     expect(detectTool("Ist Streamflix teurer geworden?")).toBe("contracts");
-    expect(run(stateWith(flix), "Ist Streamflix teurer geworden?").text).toMatch(/3,00\s€ teurer/);
+    expect(run(stateWith(flix), "Ist Streamflix teurer geworden?").text).toMatch(/^Ja, Streamflix Abo ist seit .+ teurer: 9,99\s€ → 12,99\s€ \(\+30 %\), also 36,00\s€ mehr im Jahr\./);
+    const steady = ["06", "07", "08"].map((month) => row(`2026-${month}-15`, "Tonwelt Abo", -6.99, "Abonnements"));
+    expect(run(stateWith(steady), "Ist Tonwelt teurer geworden?").text).toMatch(/^Nein, bei Tonwelt Abo sehe ich keinen Preissprung/);
+    const raised = run(stateWith([...flix, ...steady]), "Welche Abos sind teurer geworden?");
+    expect(raised.text).toMatch(/^1 Vertrag ist teurer geworden: Streamflix Abo 9,99\s€ → 12,99\s€/);
+    expect(raised.card?.lines.map((line) => line.label)).toEqual(["Streamflix Abo"]);
+    expect(run(stateWith([...flix, ...steady]), "Welches Abo ist am teuersten?").text).toMatch(/^Am teuersten ist Streamflix Abo mit 12,99\s€ im Monat/);
     const insurance = row("2026-07-15", "Haushaltsversicherung", -18.5, "Versicherungen");
     const insured = stateWith([insurance, ...["08", "09"].map((month) => ({ ...insurance, id: `ins-${month}`, date: `2026-${month}-15` }))]);
     const status = run(insured, "Was ist mit meiner Versicherung los?");
@@ -108,6 +114,27 @@ describe("query hints", () => {
     const result = executeTool("query", "Zeig mir alle Buchungen über 100 Euro", { state, dashboard: calculateDashboard(state), asOf: today, hints: { category: "Transfer" } });
     expect(result.text).not.toMatch(/Transfer/);
     expect(result.text).toMatch(/120,00\s€/);
+  });
+
+  it("uses a guessed category only when the question carries a word of it, and never over a named merchant", () => {
+    const state = stateWith([row("2026-09-02", "BILLA DANKT", -40, "Lebensmittel"), row("2026-09-05", "BILLA DANKT", -20, "Lebensmittel")]);
+    const ask = (text: string, category: string) => executeTool("query", text, { state, dashboard: calculateDashboard(state), asOf: today, hints: { category } });
+    expect(ask("Wie viel hab ich bei Billa gelassen?", "Guthabenkarten").text).toMatch(/^Für Billa hast du .* 60,00\s€ ausgegeben/);
+    expect(ask("Was war meine teuerste Buchung im September?", "Lieferdienste").text).toMatch(/^Deine größte Ausgabe im Zeitraum September 2026 war BILLA DANKT mit 40,00\s€/);
+    expect(ask("Wie viel hab ich bei Hofer ausgegeben?", "Mittagessen").text).toMatch(/^Für „Hofer“ finde ich keine Buchungen/);
+  });
+
+  it("averages over the months with bookings and answers a known subscription with its price", () => {
+    const state = stateWith([...flix, row("2026-07-08", "Supermarkt", -100, "Lebensmittel"), row("2026-09-08", "Supermarkt", -50, "Lebensmittel")]);
+    const ask = (text: string) => executeTool("query", text, { state, dashboard: calculateDashboard(state), asOf: today }).text;
+    // Bookings start in May, so "2026 bis heute" is five months, not nine.
+    expect(ask("Wie viel geb ich im Monat für Lebensmittel aus?")).toMatch(/^Im Schnitt 30,00\s€ pro Monat für Lebensmittel \(seit Mai 2026, gesamt 150,00\s€\)/);
+    expect(ask("Was zahle ich für Streamflix?")).toBe("Streamflix Abo kostet dich 12,99\u00a0€ im Monat, also 155,88\u00a0€ im Jahr. Seit 3.9.2026 ist es 3,00\u00a0€ teurer.");
+    expect(ask("Wo ist im September das meiste Geld hin?")).toMatch(/^Am meisten gibst du für Lebensmittel aus/);
+    expect(ask("Was hab ich im September ausgegeben?")).toMatch(/^Insgesamt hast du im Zeitraum September 2026 /);
+    const paid = stateWith([row("2026-09-01", "Arbeitgeber GmbH", 2400, "Gehalt")]);
+    expect(executeTool("query", "Wie viel Gehalt ist im September reingekommen?", { state: paid, dashboard: calculateDashboard(paid), asOf: today }).text)
+      .toBe("Eingenommen hast du im Zeitraum September 2026 2.400,00\u00a0€.");
   });
 });
 

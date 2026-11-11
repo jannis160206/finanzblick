@@ -21,7 +21,7 @@ const facts = [
 // One-off events, plans and past bookings are not facts worth keeping.
 const transient = /\?|\bbis\b|ausgegeben|gekauft|bezahlt|überwiesen|gestern|heute|morgen|vorhin|letzte[nrs]? |nächste[nrs]? |diese[nrs]? (?:woche|monat)|gerade|wie viel|\bwas\b|\bsoll ich\b|\bkann ich\b|\bwürde\b|merk dir|vergiss/;
 // Moods and worries ("Ich bin gestresst wegen Geld") are part of the conversation, not facts to keep.
-const mood = /gestresst|\bstress|sorgen|angst|ängstlich|überfordert|panik|pleite|verzweifelt|frustriert|genervt|traurig|müde|einsam|wütend|sauer\b|nervös|unsicher|enttäuscht|glücklich|\bfroh\b|happy|krank|\bfertig\b|verwirrt|gelangweilt|\bkaputt\b/;
+const mood = /\bleer\b|\bpleite\b|\bblank\b|abgebrannt|\bknapp\b|im minus|überzogen|gestresst|\bstress|sorgen|angst|ängstlich|überfordert|panik|pleite|verzweifelt|frustriert|genervt|traurig|müde|einsam|wütend|sauer\b|nervös|unsicher|enttäuscht|glücklich|\bfroh\b|happy|krank|\bfertig\b|verwirrt|gelangweilt|\bkaputt\b/;
 const habit = /\bimmer\b|\bnie\b|niemals|mindestens|stets|grundsätzlich|generell|jeden monat|monatlich|\bmein(?:e|en)? (?:puffer|reserve|polster)\b|(?:puffer|reserve|polster) (?:ist|von|sind|beträgt)|\bkommt\b|\bbekomm|\bgibt'?s\b|\bjeweils\b/;
 
 function sentences(text: string) {

@@ -1,5 +1,5 @@
 import { actualBookings, bookingMonth, classify } from "@/lib/calc";
-import { canonicalCategory, type Category } from "@/lib/categories";
+import { canonicalCategory, isEverydayCategory, type Category } from "@/lib/categories";
 import { brandKey } from "@/lib/ai/evidence";
 import { categoryParts } from "@/lib/splits";
 import type { AppState, Transaction } from "@/lib/types";
@@ -104,7 +104,7 @@ export function ledger(state: AppState) {
 export function detectSubscriptions(state: AppState, today = new Date().toISOString().slice(0, 10)): Subscription[] {
   const groups = new Map<string, { row: Transaction; category: Category }[]>();
   for (const entry of ledger(state)) {
-    if (entry.row.amount >= 0) continue;
+    if (entry.row.amount >= 0 || isEverydayCategory(entry.category)) continue;
     const brand = brandKey(entry.row);
     if (!brand) continue;
     groups.set(brand, [...(groups.get(brand) ?? []), entry]);

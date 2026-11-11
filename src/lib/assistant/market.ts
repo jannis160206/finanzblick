@@ -74,6 +74,8 @@ function inflationPart(text: string, snapshot: MarketSnapshot, dashboard: Dashbo
   if (!inflation) return undefined;
   const rate = inflation.value / 100;
   lines.push({ label: "Inflation Österreich", detail: `${percent(inflation.value, 1)} zum Vorjahresmonat · ${periodLabel(inflation.period)}`, tone: inflation.value > 3 ? "warn" : "info" });
+  const meaning = /^was (?:ist|bedeutet|heißt|heisst) (?:eigentlich )?(?:die |eine )?(?:inflation|teuerung)\b/.test(text.trim())
+    ? "Inflation heißt, dass die Preise allgemein steigen und Geld dadurch an Kaufkraft verliert. " : "";
   const years = /(\d{1,2})\s*jahr/i.exec(text);
   const amount = amounts(text).find((item) => !item.unit)?.value;
   if (years && amount) {
@@ -84,11 +86,11 @@ function inflationPart(text: string, snapshot: MarketSnapshot, dashboard: Dashbo
   }
   const loss = round(dashboard.totalAssets * rate);
   if (loss > 0) lines.push({ label: "Kaufkraftverlust deiner Reserve pro Jahr", value: loss, tone: "warn", detail: `auf ${currency(round(dashboard.totalAssets))} ohne Zinsen` });
-  return `Die Inflation in Österreich liegt bei ${percent(inflation.value, 1)} (${periodLabel(inflation.period)}).` +
+  return `${meaning}Die Inflation in Österreich liegt bei ${percent(inflation.value, 1)} (${periodLabel(inflation.period)}).` +
     (loss > 0 ? ` Unverzinst verliert deine Reserve damit rund ${currency(loss)} Kaufkraft pro Jahr.` : "");
 }
 
-function ratesPart(snapshot: MarketSnapshot, dashboard: Dashboard, lines: Line[]): string | undefined {
+function ratesPart(snapshot: MarketSnapshot, dashboard: Dashboard, lines: Line[], text = ""): string | undefined {
   const rates = snapshot.rates;
   if (!rates) return undefined;
   const reserve = round(dashboard.totalAssets);
@@ -101,7 +103,10 @@ function ratesPart(snapshot: MarketSnapshot, dashboard: Dashboard, lines: Line[]
   const parts: string[] = [];
   if (rates.overnight && rates.fixedUpToOneYear)
     parts.push(`Österreichische Banken zahlen im Schnitt ${percent(rates.overnight.value)} fürs täglich verfügbare Sparen und ${percent(rates.fixedUpToOneYear.value)} bei Bindung bis 1 Jahr.`);
-  if (rates.ecbDeposit) parts.push(`Der EZB-Einlagesatz liegt bei ${percent(rates.ecbDeposit.value)}; gute Tagesgeld-Angebote kommen nahe an diesen Wert.`);
+  // "Was ist der aktuelle Leitzins?" leads with the ECB rate, not with the banks' savings rates.
+  if (rates.ecbDeposit && /leitzins|ezb|einlagesatz|zentralbank/.test(text))
+    parts.unshift(`Der Leitzins der EZB (Einlagesatz) liegt bei ${percent(rates.ecbDeposit.value)}.`);
+  else if (rates.ecbDeposit) parts.push(`Der EZB-Einlagesatz liegt bei ${percent(rates.ecbDeposit.value)}; gute Tagesgeld-Angebote kommen nahe an diesen Wert.`);
   const best = rates.ecbDeposit?.value ?? rates.fixedUpToOneYear?.value;
   if (reserve > 0 && rates.overnight && best !== undefined && best > rates.overnight.value)
     parts.push(`Auf deine Reserve von ${currency(reserve)} macht das ${currency(yearly(best) - yearly(rates.overnight.value))} pro Jahr Unterschied.`);
@@ -145,7 +150,7 @@ export function marketAnswer(input: string, snapshot: MarketSnapshot | undefined
   const parts = [
     wantsFx ? fxPart(text, snapshot, lines) : undefined,
     wantsInflation || all ? inflationPart(text, snapshot, dashboard, lines) : undefined,
-    wantsRates || all ? ratesPart(snapshot, dashboard, lines) : undefined,
+    wantsRates || all ? ratesPart(snapshot, dashboard, lines, text) : undefined,
   ].filter((part): part is string => Boolean(part));
   if (!parts.length) return { text: `Die Daten zu ${[wantsFx && "Wechselkursen", wantsInflation && "Inflation", wantsRates && "Zinsen"].filter(Boolean).join(" und ")} sind gerade nicht erreichbar. Versuch es bitte gleich noch einmal.` };
   const sources = [...new Set([snapshot.inflation && lines.some((line) => /Inflation|Kaufkraft/.test(line.label)) ? "Eurostat" : "",

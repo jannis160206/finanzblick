@@ -131,6 +131,32 @@ describe("agent answers", () => {
     expect(system(calls)).toContain("lockeren Chat");
   });
 
+  it("keeps plain facts to one sober sentence", async () => {
+    const { calls, fetcher } = stub(() => completion("Canberra."));
+    expect((await answerFreeQuestion({ question: "Was ist die Hauptstadt von Australien?", facts: { today: "2026-11-11" }, agent: "general", brief: true }, { config, fetcher })).text).toBe("Canberra.");
+    const body = calls[0] as unknown as { messages: { content: string }[]; temperature: number };
+    expect(body.messages[1].content).toContain("in einem kurzen Satz");
+    expect(body.temperature).toBeLessThanOrEqual(0.1);
+  });
+
+  it("adds film or recipe hints only when the question asks for them", async () => {
+    const { calls, fetcher } = stub(() => completion("Schau dir „Forrest Gump“ an."));
+    await answerFreeQuestion({ question: "Kannst du mir einen Film empfehlen?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
+    await answerFreeQuestion({ question: "Was soll ich tun?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
+    await answerFreeQuestion({ question: "Gib mir einen Buchtipp", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
+    await answerFreeQuestion({ question: "Welche Buchung war die teuerste?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
+    const [film, vague, book, booking] = (calls as unknown as { messages: { content: string }[] }[]).map((call) => call.messages[1].content);
+    expect(film).toContain("„Forrest Gump“");
+    expect(book).toContain("„Momo“");
+    for (const text of [vague, booking]) expect(text).not.toMatch(/Titel|Liste|Rezept|Zutaten/);
+  });
+
+  it("never lets an invented small euro amount through", async () => {
+    const { fetcher } = stub(() => completion("Bei MediaMarkt hast du 13,00 € für eine Kamera ausgegeben. Schau in die Umsätze."));
+    const reply = await answerFreeQuestion({ question: "Was hab ich bei MediaMarkt gekauft?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
+    expect(reply.text).toBe("Schau in die Umsätze.");
+  });
+
   it("may repeat the user's own numbers from the question", async () => {
     const { fetcher } = stub(() => completion("Mit 3.000 € netto kommt man in Wien gut aus. Du hast übrigens 999 € gespart."));
     const reply = await answerFreeQuestion({ question: "Kann man mit 3000 netto in Wien gut leben?", facts: { budget: { left: 420 } }, agent: "general" }, { config, fetcher });
@@ -149,5 +175,9 @@ describe("agent answers", () => {
     expect(tidyAnswer("## Kurz gesagt\n- **Netflix** kostet 13,99 €\n- Spotify kostet `10,99 €`")).toBe("Kurz gesagt Netflix kostet 13,99 € Spotify kostet 10,99 €");
     expect(tidyAnswer("Kurz gesagt: ein Fonds, der einen Index nachbaut.")).toBe("Ein Fonds, der einen Index nachbaut.");
     expect(tidyAnswer("Du willst wissen, wie das Wetter morgen wird? Da schaust du am besten in eine Wetter-App.")).toBe("Da schaust du am besten in eine Wetter-App.");
+    expect(tidyAnswer("Gerne! Ein Klassiker ist Spaghetti aglio e olio.")).toBe("Ein Klassiker ist Spaghetti aglio e olio.");
+    expect(tidyAnswer("Wo liegt dein Geld? Das meiste liegt am Notgroschen.")).toBe("Das meiste liegt am Notgroschen.");
+    // "am 25.8. und …" is one sentence: the check sees it whole.
+    expect(visiblePrefix("Dein Gehalt kam am 25.8. und war pünktlich. ", {}, (sentence) => sentence.includes("pünktlich")).trim()).toBe("Dein Gehalt kam am 25.8. und war pünktlich.");
   });
 });

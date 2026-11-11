@@ -31,6 +31,12 @@ export const allCategories: Category[] = [...categories, ...Object.keys(category
 export function canonicalCategory(category: Category): Category {
   return categoryAliases[category as keyof typeof categoryAliases] ?? category;
 }
+// Shops visited regularly (groceries, fuel, delivery) are spending, never a contract, subscription or price increase.
+const everydaySpending = new Set<Category>([
+  "Lebensmittel", "Mittagessen", "Restaurants", "Lieferdienste", "Cafés & Snacks", "Tanken", "Mobilität", "Drogerie",
+  "Rückerstattungen", "Transfer", "Transfer intern", "Gehalt", "Einkommen", "Rufbereitschaft",
+]);
+export const isEverydayCategory = (category: Category) => everydaySpending.has(canonicalCategory(category));
 export const groupedContractCategories: readonly Category[] = ["Abonnements", "Versicherungen", "Telefon & Internet", "Bankgebühren", "Miete", "Energie & Nebenkosten"];
 export const travelCategories: readonly Category[] = ["Urlaub"];
 export const isTravelCategory = (category: Category) => travelCategories.includes(canonicalCategory(category));

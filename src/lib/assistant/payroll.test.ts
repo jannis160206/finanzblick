@@ -3,6 +3,7 @@ import { calculateDashboard } from "@/lib/calc";
 import { currency } from "@/lib/format";
 import { payrollEmployer, payrollFixture } from "../../../tests/fixtures/payroll-state";
 import { payrollAnswer, payrollFacts, payrollQuestion } from "./payroll";
+import { detectTool } from "./tools";
 import { agentEvidence, agentFacts } from "./specialist-context";
 
 const year2026 = () => {
@@ -20,6 +21,7 @@ describe("payroll specialist", () => {
   it.each([
     "ist mein gehalt schon da", "merk dir mein gehalt kommt am 25.", "wie hoch ist mein nettovermögen", "wie viel hab ich im oktober ausgegeben",
     "kann man mit 3000 netto in wien gut leben", "was kann ich bei der arbeitnehmerveranlagung von der lohnsteuer absetzen",
+    "wie viel gehalt ist im oktober reingekommen", "wie viel gehalt hab ich im september bekommen",
   ])("leaves %s to other tools", (text) => expect(payrollQuestion(text)).toBe(false));
 
   it("answers with the latest payslip and splits the next special payment into 6 % and fully taxed", () => {
@@ -47,6 +49,33 @@ describe("payroll specialist", () => {
     expect(tax).toContain("mit 40 % besteuert");
     expect(tax).not.toContain("Als Nächstes");
     expect(payrollAnswer(state, "Werden Überstunden anders versteuert?").text).toMatch(/^Überstunden selbst werden wie dein normales Gehalt versteuert\. .*§ 68 EStG/);
+  });
+
+  it("answers social security, the own sixth, the yearly tax, the marginal rate and a raise from the payslips", () => {
+    const state = year2026();
+    expect(payrollAnswer(state, "Wie viel Sozialversicherung zahle ich?").text).toBe(`Von ${currency(4000)} brutto gehen bei dir ${currency(720)} Sozialversicherung ab, ` +
+      "rund 18 %. Sie deckt Kranken-, Pensions-, Unfall- und Arbeitslosenversicherung.");
+    expect(payrollAnswer(state, "Wie hoch ist mein Jahressechstel?").text).toMatch(/^Dein Jahressechstel liegt derzeit bei /);
+    expect(payrollAnswer(state, "Wie viel Lohnsteuer zahle ich im Jahr?").text).toMatch(/^Laut deinen 9 Abrechnungen 2026 hast du bisher /);
+    expect(payrollAnswer(state, "Wie hoch ist mein Grenzsteuersatz?").text).toMatch(/^Dein Grenzsteuersatz liegt bei 40 %/);
+    const raise = payrollAnswer(state, "Was ändert sich bei einer Gehaltserhöhung von 200 € brutto?").text;
+    expect(raise).toMatch(new RegExp(`^Von ${currency(200)} mehr brutto bleiben dir etwa .+ netto im Monat: ${currency(36)} gehen an die Sozialversicherung`));
+    expect(payrollAnswer(state, "Wie viel verdiene ich brutto?").text).toMatch(new RegExp(`^Brutto verdienst du ${currency(4000)} im Monat`));
+    expect(payrollAnswer(state, "Wie viel Gehalt bekomme ich 2030?").text).toMatch(/^So weit voraus rechne ich nicht/);
+  });
+
+  it("forecasts a named month with the special payment paid out in it", () => {
+    expect(payrollAnswer(payrollFixture(), "Wie viel netto bekomme ich im Dezember?", "2026-11-11").text)
+      .toMatch(/^Im Dezember 2026 kommen voraussichtlich etwa .+ netto aufs Konto: .+ laufendes Gehalt wie zuletzt plus etwa .+ aus der Weihnachtsremuneration\.$/);
+  });
+
+  it("explains Austrian tax terms without a lookup", () => {
+    for (const [question, start] of [["Was ist der Verkehrsabsetzbetrag?", "Der Verkehrsabsetzbetrag"], ["Was ist der Familienbonus Plus?", "Der Familienbonus Plus"],
+      ["Was ist ein Absetzbetrag?", "Ein Absetzbetrag wird direkt von der Steuer abgezogen"],
+      ["Gibt es Steuerklassen in Österreich?", "Steuerklassen gibt es in Österreich nicht"], ["Bekomme ich Geld vom Finanzamt zurück?", "Geld zurück gibt es über die Arbeitnehmerveranlagung"]]) {
+      expect(detectTool(question), question).toBe("payroll");
+      expect(payrollAnswer(year2026(), question).text, question).toMatch(new RegExp(`^${start}`));
+    }
   });
 
   it("hands the model finished numbers only", () => {

@@ -132,4 +132,11 @@ export const agentCases: AgentCase[] = [
   { message: "Was hältst du von Bitcoin?", agents: ["general"] },
   { message: "Wie wird das Wetter morgen?", agents: ["general"] },
   { message: "Kannst du mir bei einer E-Mail an meinen Vermieter helfen?", agents: ["general"] },
+  // Found in the chat test of 11.11.2026.
+  { message: "Was hab ich bei MediaMarkt gekauft?", agents: ["transactions"] },
+  { message: "Wie viel Gehalt ist im Oktober reingekommen?", agents: ["transactions"] },
+  { message: "how much did I spend on food in october", agents: ["transactions"] },
+  { message: "Mein Konto ist leer", agents: ["budget", "general"] },
+  { message: "Wie hoch ist mein Grenzsteuersatz?", agents: ["payroll"] },
+  { message: "Lösche alle meine Buchungen", agents: ["general"] },
 ];

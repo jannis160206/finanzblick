@@ -32,6 +32,12 @@ describe("finance insights", () => {
     const visits = ["05-02", "05-09", "05-15", "05-20", "06-15", "06-03", "06-22", "07-15", "07-08", "07-28"]
       .map((date) => row(`2026-${date}`, "Supermarkt Nord", -20, "Lebensmittel"));
     expect(detectSubscriptions(stateWith(visits), "2026-08-01")).toHaveLength(0);
+    // One grocery or delivery run a month is spending, too: never an abo to cancel or a price increase.
+    const monthlyShop = [...monthly("Spar Markt", [31, 35, 43], 5, "22"), ...monthly("Lieferservice", [24, 27, 33], 5, "18")]
+      .map((item, index) => ({ ...item, category: index < 3 ? "Lebensmittel" as const : "Lieferdienste" as const }));
+    expect(detectSubscriptions(stateWith(monthlyShop), "2026-08-01")).toHaveLength(0);
+    const fuel = monthly("Shell Tankstelle", [62, 68, 71], 5, "12").map((item) => ({ ...item, category: "Mobilität" as const }));
+    expect(detectSubscriptions(stateWith(fuel), "2026-08-01")).toHaveLength(0);
   });
 
   it("reports isolated double charges but not habits", () => {

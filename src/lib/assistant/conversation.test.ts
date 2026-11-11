@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { conversationalQuestion, conversationRoute, converseOn, evidenceText, isQuestion } from "./conversation";
+import { conversationalQuestion, conversationRoute, converseOn, evidenceText, freshPart, isQuestion } from "./conversation";
 
 const route = (text: string, tool?: Parameters<typeof conversationRoute>[0]["tool"], extra: Partial<Parameters<typeof conversationRoute>[0]> = {}) =>
   conversationRoute({ text, tool, ruleTool: undefined, numbers: [], pending: false, ...extra });
+
+describe("copied answers", () => {
+  it("drops sentences that repeat the previous answer", () => {
+    const film = "„Der kleine Prinz“ ist immer eine gute Wahl. „Ziemlich beste Freunde“ ist perfekt für Lachtränen.";
+    expect(freshPart(film, film)).toBe("");
+    expect(freshPart("„Der kleine Prinz“ ist super, eine gute Wahl. Pfannkuchen macht man aus Mehl, Milch und Eiern.", film))
+      .toBe("Pfannkuchen macht man aus Mehl, Milch und Eiern.");
+    expect(freshPart("Lies „Der Alchimist“ von Paulo Coelho, eine schöne Geschichte über Träume.", film)).toBe("Lies „Der Alchimist“ von Paulo Coelho, eine schöne Geschichte über Träume.");
+    expect(freshPart("Klar.", undefined)).toBe("Klar.");
+  });
+});
 
 describe("conversation routing", () => {
   it("recognises explanations, advice, opinions and worries in any phrasing", () => {
@@ -33,9 +44,11 @@ describe("conversation routing", () => {
   });
 
   it("answers fact questions from the facts instead of a booking search", () => {
-    for (const text of ["Hab ich irgendwas doppelt bezahlt?", "Wofür geb ich am meisten aus", "Was ist meine teuerste Kategorie?", "Wie viel hab ich seit Jahresbeginn gespart?", "Ist Netflix teurer geworden?"])
+    for (const text of ["Hab ich irgendwas doppelt bezahlt?", "Ist Netflix teurer geworden?"])
       expect(route(text, "query", { ruleTool: "query" }), text).toEqual({ converse: true, skipDraft: true });
-    expect(route("Was war meine größte Ausgabe diesen Monat?", "query", { ruleTool: "query" })).toEqual({ tool: "query", converse: false, skipDraft: false });
+    // Category superlatives and savings since January are the query tool's own answers.
+    for (const text of ["Wofür geb ich am meisten aus", "Was ist meine teuerste Kategorie?", "Wie viel hab ich seit Jahresbeginn gespart?", "Was war meine größte Ausgabe diesen Monat?"])
+      expect(route(text, "query", { ruleTool: "query" }), text).toEqual({ tool: "query", converse: false, skipDraft: false });
   });
 
   it("keeps the tool's own words for empty results and finished summaries", () => {

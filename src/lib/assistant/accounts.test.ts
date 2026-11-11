@@ -26,6 +26,15 @@ function fixture(): AppState {
 }
 const context = (state: AppState) => ({ state, dashboard: calculateDashboard(state), asOf });
 
+describe("account and goal questions", () => {
+  it("says when it does not know a named account instead of giving only the total", () => {
+    const state = fixture();
+    expect(executeTool("accounts", "Wie viel ist auf dem Girokonto?", context(state)).text).toMatch(/^Für dein Girokonto kenne ich keinen aktuellen Kontostand/);
+    expect(executeTool("accounts", "Was ist mein Kontostand bei der Deutschen Bank?", context(state)).text).toMatch(/^Für „Deutschen Bank“ kenne ich keinen aktuellen Kontostand/);
+    expect(executeTool("accounts", "Wie hoch ist mein Vermögen?", context(state)).text).toMatch(/^Dein Vermögen auf allen Konten beträgt /);
+  });
+});
+
 describe("date ranges", () => {
   it("reads explicit day ranges in many spellings", () => {
     expect(parseDateRange("seit 11.10.", asOf)).toMatchObject({ from: "2026-10-11", to: asOf, label: "seit 11.10." });
