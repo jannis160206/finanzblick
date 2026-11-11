@@ -47,4 +47,30 @@ Stand: 11.11.2026
 - **Manuell geänderte Werte**: Finanzblick merkt sich, welche Budgetwerte es selbst geschrieben hat. Weicht ein solcher Wert später ab, hat ihn jemand von Hand geändert. Er wird dann nicht überschrieben, sondern zur Prüfung angeboten.
 - **Doppelte Sonderzahlungen** in „Sonstiges“ werden nie automatisch entfernt, sondern zur Prüfung angeboten.
 - **Status in den Finanzdaten**: Der Merkstatus steht als optionales Feld `payrollBudget` in den Finanzdaten (JSON). Eine Datenbankmigration ist nicht nötig.
-- **Parser**: Einzige Änderung in `src/lib/import/` ist die Bezeichnung unklarer Bestandteile in der Hinweismeldung, damit sie nachgeschlagen werden können.
+- **Parser**: `src/lib/import/` bleibt unverändert. Der Parser nennt unbekannte Bestandteile bewusst nur mit Lohnartnummer (Datenschutz-Test „does not leak their text“); nachgeschlagen werden deshalb nur Begriffe, die Parser und Prüfung selbst benennen.
+
+## Ergebnis
+
+| Schritt | Commit | Inhalt |
+|---|---|---|
+| Analyse | `f897992` | dieses Dokument |
+| Prüfung | `d3542fb` | `src/lib/payslip-validation.ts`, Prüfergebnisse im Import-Protokoll |
+| Automatik | `37b65cf` | `src/lib/payroll-budget.ts`, `PayrollBudgetSync`, Prüf-Dialog statt „Budget aktualisieren“, Kachelstatus „prüfen“ |
+| Lernen | `5e313d5` | Pauschale je Jahr, `payrollProfile`, Sonderzahlungshöhe in der Prognose |
+| Begriffe | `bf4944e` | Glossar, optionales Nachschlagen (`payslipTermLookup`) |
+| Tests & Doku | siehe `main` | E2E-Anpassungen, README, Zusammenfassung |
+
+- **Automatische Übernahme**:
+  - Der Abgleich läuft im Browser 1,5 s nach jeder Änderung der Finanzdaten (`src/components/payroll-budget-sync.tsx`) und im Hintergrund-Import auf dem Server (`src/lib/drive/payslips.ts`).
+  - Ein Wert geht automatisch ins Budget, wenn Finanzblick ihn noch nicht gesetzt hat oder er seit dem letzten Setzen unverändert ist. Weicht er davon ab, wurde er von Hand geändert und kommt in **„n Budgetwerte prüfen“**. Doppelte Sonderzahlungen kommen immer dorthin.
+  - „Beibehalten“ ist dauerhaft (`payrollBudget.kept`); vergangene Monate werden aus dem Merkstatus entfernt.
+- **Zurückgehaltene Abrechnungen**:
+  - Sie werden gespeichert, aber nicht ins Budget und nicht in die Prognose übernommen.
+  - Kachelstatus **prüfen**; die Details nennen die Abweichung, **Ins Budget übernehmen** bestätigt genau diese Werte (`payrollBudget.confirmed`).
+  - Das gilt für Upload, Drive im Browser, Hintergrund-Import und „Erneut prüfen“.
+- **Prüfung mit echten Daten** (nur lokal): Alle 21 lesbaren Abrechnungen sind konsistent. Der Oktober 2026 mit vielen Überstunden erscheint nur als Info „deutlich über dem üblichen Monat“.
+- **Gelerntes Profil mit echten Daten**:
+  - Pauschale 2026 erkannt; 2025 hat keinen wiederkehrenden Betrag (Abrechnung je Dienstwoche) und wird nicht aufgeteilt.
+  - Sonderzahlungen im Juni und November in Höhe des Grundgehalts, Prämie im Februar, Akonto-Muster.
+- **Begriffe**: Glossar für Jahressechstel, Akonto, Auszahlung, Rufbereitschaft, Feiertagsarbeit, Überstunden, Sonderzahlung, Prämie u. a.; „VEB-Prämie“ ist als unklar markiert. Online-Nachschlagen nur mit Einstellung, nur der Begriff verlässt das Gerät.
+- **Bekannte Grenze**: Ein länger laufender Statement-Worker oder Dev-Server mit altem Code kennt das Feld `payrollBudget` nicht und entfernt es beim Speichern. Nach dem Update deshalb Server und Worker neu starten; der nächste Abgleich legt den Merkstatus neu an.

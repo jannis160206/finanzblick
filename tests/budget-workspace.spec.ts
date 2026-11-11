@@ -3,6 +3,7 @@ import { appStateSchema, type AppState } from "../src/lib/types";
 import { calculateDashboard, round, sum } from "../src/lib/calc";
 import { currency } from "../src/lib/format";
 import { budgetBooking, budgetFixture } from "./fixtures/budget-state";
+import { syncPayrollBudget } from "../src/lib/payroll-budget";
 
 test.skip(
   process.env.PLAYWRIGHT_LOCAL_ADMIN !== "1",
@@ -56,7 +57,9 @@ async function unlock(page: Page, heading = "Budget") {
     page.getByText("Synchronisiert", { exact: true }),
   ).toBeAttached();
 }
-async function open(page: Page, state = budgetFixture()) {
+async function open(page: Page, fixture = budgetFixture()) {
+  // Already in sync with the salary forecast, so the automatic budget changes nothing on load.
+  const state = syncPayrollBudget(fixture).state;
   await page.clock.setFixedTime(new Date("2026-10-08T10:00:00Z"));
   await page.context().addCookies(cookies);
   await page.goto("/budget");

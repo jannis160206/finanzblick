@@ -98,7 +98,7 @@ export function PayslipSummary({ onReviewPayslip }: { onReviewPayslip?: (entry: 
           </span>
           <div className="min-w-0">
             <h2 className="text-sm font-semibold tracking-tight">
-              {current.length ? `${plural(current.length, "Abrechnung", "Abrechnungen")} übernommen` : "Noch keine Abrechnung übernommen"}
+              {current.length > held.length ? `${plural(current.length - held.length, "Abrechnung", "Abrechnungen")} übernommen` : "Noch keine Abrechnung übernommen"}
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {[latest ? `zuletzt ${monthLabel(period(latest.year, latest.month))}` : null,

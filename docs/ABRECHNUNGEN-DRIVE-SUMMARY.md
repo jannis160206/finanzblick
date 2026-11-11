@@ -19,9 +19,10 @@ Jeder Meilenstein ist ein eigener Commit auf einem eigenen, gestapelten Branch (
 | M6 Regeln & Planung | `drive/m6-rules` | `60dade9` | Verträge, Sparziel-Logik, Gehaltsprognose, Trade Republic nur per API, Mittagessen |
 | M7 Feinschliff | `drive/m7-polish` | `8fd9598` | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
 | M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | `794f66b` | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
-| M9 Gehalt & Steuern aufgeräumt | `payroll/cleanup` | siehe Branch | Monatslogik nach Auszahlung, 2025 als Referenz, Prognose am aktuellen Gehalt, Rufbereitschaft ≠ Feiertagsarbeit/Überstunden, Import-Protokoll |
+| M9 Gehalt & Steuern aufgeräumt | `payroll/cleanup` | `e30bd0f` | Monatslogik nach Auszahlung, 2025 als Referenz, Prognose am aktuellen Gehalt, Rufbereitschaft ≠ Feiertagsarbeit/Überstunden, Import-Protokoll |
+| M10 Automatische Budget-Übernahme | `payroll/auto-budget` | `f897992`–`bf4944e` + Tests/Doku | Prüfung jeder Abrechnung, automatische Übernahme, gelerntes Profil, Glossar mit optionalem Nachschlagen (`docs/PAYROLL-AUTOMATION.md`) |
 
-Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen und jeweils gegen den Vorgänger öffnen.
+Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-Branches sind gelöscht.
 
 ## Was sich geändert hat
 
@@ -146,6 +147,16 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
   - Die Prognose für November und Dezember setzt das übliche laufende Brutto statt des Oktober-Werts an.
   - Monatssummen im Budget bleiben gleich, nur die Aufteilung ändert sich.
 
+### M10 – Abrechnungen automatisch ins Budget
+- **Kein „Budget aktualisieren“ mehr**: Konsistente Abrechnungen und die Gehaltsprognose gehen ohne Bestätigung ins Budget. Rückmeldung per kurzem Toast („Budget aus Abrechnungen aktualisiert · n Werte“) und als Statuszeile in der Zusammenfassung.
+- **Schutz vor Überschreiben**: Finanzblick merkt sich die selbst gesetzten Werte im optionalen Feld `payrollBudget` der Finanzdaten (JSON, keine Migration). Von Hand geänderte Werte und doppelte Sonderzahlungen in „Sonstiges“ werden nie automatisch geändert, sondern unter **„n Budgetwerte prüfen“** angeboten (Budget-Seite und Zusammenfassung). Was man beibehält, wird nicht erneut angeboten.
+- **Prüfung jeder Abrechnung** (`src/lib/payslip-validation.ts`): Netto-Abgleich, Überweisungen gegen Netto, Brutto-Bestandteile und Lohnsteuerquote halten eine widersprüchliche Abrechnung vom Budget fern. SV-Quote, Sechstel-Besteuerung der Sonderzahlung, Jahreswerte, Rufbereitschaft, Sonderzahlungsmonat und Ausreißer sind Warnungen bzw. Infos. Zurückgehaltene Abrechnungen tragen in der Monatsübersicht den Status **prüfen** und lassen sich nach Kontrolle mit **Ins Budget übernehmen** bestätigen.
+- **Gelerntes Profil** (`src/lib/payroll-pattern.ts`): Rufbereitschafts-Pauschale je Jahr, Monate mit Feiertagsdiensten, Sonderzahlungs- und Prämienmonate, Höhe der Sonderzahlung (fließt in die Prognose) und Akonto-Muster. Anzeige unter Einstellungen → Abrechnungen → Import-Protokoll.
+- **Unklare Begriffe** (`src/lib/payslip-terms.ts`): lokales Glossar; optional (standardmäßig aus) Nachschlagen in der deutschsprachigen Wikipedia über den eingebauten MCP-Server. Nur der Begriff verlässt das Gerät. Ergebnisse im Import-Protokoll.
+- **Import-Protokoll**: Neue Felder `validation`, `lookups` und `budget` (übernommen, zur Prüfung, zurückgehalten) sowie die Quelle `budget` für automatische Abgleiche.
+- **Keine Änderung in `src/lib/import/`.** Eine Erweiterung der Parser-Hinweise um die Bezeichnung unbekannter Bestandteile wurde verworfen, weil der Parser diese Texte aus Datenschutzgründen bewusst nicht weitergibt.
+- **Mit echten Daten geprüft** (nur lokal): alle 21 lesbaren Abrechnungen konsistent; der automatische Abgleich übernahm 36 Werte inklusive der neuen Zeile „Überstunden“.
+
 ## Einrichtung Google Drive
 
 1. **Google Cloud Console**:
@@ -217,6 +228,7 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
   - `seasonal-theme.spec.ts`, `ux-cut.spec.ts` (Browsermodus);
   - `pockets-workspace.spec.ts`, `budget-workspace.spec.ts`, `savings-transfer-status.spec.ts`, `settings-design.spec.ts`, mobiler Teil von `profile.spec.ts` (Kontomodus).
 - **Nach M9**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5089 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Lernmuster Rufbereitschaft, Aufteilung Feiertagsarbeit/Überstunden (auch bei Akonto), 2025-Referenz (Parser, Budget, Hintergrund-Import), übliche Referenzabrechnung im Jahresmodell, Median-/Saisonprognose, Prämie als Sonderzahlung, Kacheln nach Auszahlungsmonat, Import-Protokoll (Bibliothek, Dateispeicher, Route), Drive-`recheck`. E2E bestanden: `payslip-safety.spec.ts`, `payroll-workspace.spec.ts` (320/390/1440 px) und `salary-settings.spec.ts` für Gehalt & Steuern (375/768/1440 px, hell/dunkel, axe). Ein Kachel-Test im Kontomodus schlug einmal wegen automatisch nachgefüllter Monatsbudgets fehl und lief bei der Wiederholung durch (bekannter Reload-Effekt, nicht payroll-bezogen).
+- **Nach M10**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5114 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Prüfregeln (kalibriert an echten Werten, als synthetische Fälle), automatischer Abgleich mit Merkstatus, Prüf-Dialog, zurückgehaltene und bestätigte Abrechnungen (Upload, Hintergrund-Import, Kachel), Pauschale je Jahr und Profil, Glossar und Nachschlagen (Browser und Server). E2E bestanden: `payslip-safety.spec.ts`, `salary-settings.spec.ts` (375/768/1440 px, hell/dunkel, axe) und `payroll-workspace.spec.ts` im Kontomodus. `payroll-workspace` und `budget-workspace` gleichen ihre Testdaten jetzt vorab mit `syncPayrollBudget` ab, weil die App das Budget sonst beim ersten Laden selbst korrigiert. Der bekannte Reload-Effekt trat einmal auf und lief bei der Wiederholung durch.
 - **Hinweis zu Kontomodus-E2E**: Viele Specs in einem Lauf lösen das Login-Rate-Limit aus („Zu viele Versuche“). Deshalb in kleineren Gruppen mit jeweils frischer Test-Datenbank ausführen.
 
 ## Offene Punkte und Grenzen
@@ -229,7 +241,9 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 - **Bestehende Klartext-Secrets** der Mail- und Bankanbindung wurden nicht angefasst (außerhalb des Umfangs). Sie ließen sich mit `src/lib/server/secrets.ts` nachziehen.
 - **Bereits vorher rote E2E-Specs** (siehe oben) sollten in einem eigenen Schritt an das neue UI angepasst werden.
 - **2025-Abrechnungen aus Drive**: Die zwölf PDFs aus 2025 sind passwortgeschützt, und auf dem Server ist noch kein PDF-Passwort gespeichert. Bisher wurden sie stillschweigend verworfen. Nach dem Speichern des Passworts (Einstellungen → Abrechnungen) und **Erneut prüfen** werden sie als Referenz übernommen und verfeinern die Prognose (Feiertagsarbeit pro Monat, Sonderzahlungen). Bis dahin stützt sich die Prognose auf die 2026-Abrechnungen und Gehaltseingänge.
-- **Prognose-Korrekturen im Budget** werden nicht automatisch geschrieben, sondern über **Budget aktualisieren** zur Bestätigung angeboten.
-- **Ohne Budgetzeile „Überstunden“** landen Überstunden aus der Auszahlung (Akonto-Fall) in „Feiertagsarbeit“. „Budget aktualisieren“ schlägt die Zeile vor, sobald die Prognose Überstunden enthält. Danach trennt **Erneut prüfen** auch die abgerechneten Monate in diese Zeile.
+- **Prognose-Korrekturen im Budget** werden seit M10 automatisch geschrieben. Von Hand geänderte Werte und doppelte Sonderzahlungen bleiben zur Prüfung stehen.
+- **Ohne Budgetzeile „Überstunden“** landen Überstunden aus der Auszahlung (Akonto-Fall) in „Feiertagsarbeit“. Der automatische Abgleich legt die Zeile an, sobald die Prognose Überstunden enthält. Danach trennt **Erneut prüfen** auch die abgerechneten Monate in diese Zeile.
+- **Nach einem Update** Dev-Server bzw. Dienst und Statement-Worker neu starten: Ein Prozess mit altem Code kennt `payrollBudget` nicht und verwirft den Merkstatus beim Speichern.
+- **Online-Nachschlagen** unklarer Begriffe braucht Internet und ist standardmäßig aus. Begriffe, die der Parser nur als Lohnartnummer meldet, werden nicht nachgeschlagen.
 - **Monate vor der letzten Abrechnung ohne Abrechnung** zählen als „fehlt“, auch über den Jahreswechsel hinweg, z. B. wenn schon eine Jänner-Abrechnung des Folgejahres vorliegt.
 - `src/lib/import/statements.test.ts`: Nur eine Testerwartung wurde an die neue Mittagessen-Regel angepasst (Revolut SPAR 12:00 → Mittagessen). Die Import-Logik ist unverändert.

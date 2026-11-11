@@ -1,6 +1,7 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { appStateSchema, type AppState } from "../src/lib/types";
 import { analyzePayrollAutomatically } from "../src/lib/payroll-analysis";
+import { syncPayrollBudget } from "../src/lib/payroll-budget";
 import { payslipKey } from "../src/lib/payslip-schema";
 import { currency, monthLabel } from "../src/lib/format";
 import {
@@ -60,7 +61,9 @@ async function unlock(page: Page) {
     page.getByText("Synchronisiert", { exact: true }),
   ).toBeAttached();
 }
-async function open(page: Page, state = payrollFixture()) {
+async function open(page: Page, fixture = payrollFixture()) {
+  // The budget follows the payslips automatically; a fixture already in sync keeps "the page changes no data" checkable.
+  const state = syncPayrollBudget(fixture).state;
   await page.clock.setFixedTime(new Date("2026-10-08T10:00:00Z"));
   await page.context().addCookies(cookies);
   await page.goto("/gehalt-steuern");
@@ -338,11 +341,11 @@ for (const width of [1440, 390]) {
       ),
     );
     expect(after.transactions).toEqual(initial.transactions);
-    // The import wrote the net into the next month's income; removing the payslip leaves it untouched.
-    // (Variable budgets of the current month may be filled in on reload independently of payroll.)
-    const income = (rows: AppState["financeRows"]) =>
-      rows.filter((row) => row.kind === "income");
-    expect(income(after.financeRows)).toEqual(income(saved.financeRows));
+    // The import wrote the net into the next month's income; removing the payslip leaves that paid month untouched.
+    // (The forecast for the coming months follows the remaining payslips automatically.)
+    const paid = (rows: AppState["financeRows"]) =>
+      rows.filter((row) => row.kind === "income").map((row) => [row.id, row.values["2026-11"]]);
+    expect(paid(after.financeRows)).toEqual(paid(saved.financeRows));
     expect(after.savingsGoals).toEqual(initial.savingsGoals);
     await noOverflow(page);
   });

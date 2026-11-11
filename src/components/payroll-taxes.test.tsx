@@ -591,6 +591,7 @@ it("keeps a contradicting payslip out of the budget, marks it for review and tak
   const [entry] = importLog();
   expect(entry).toMatchObject({ validation: [expect.objectContaining({ period: "2026-01", consistent: false, held: true })] });
   const summary = within(screen.getByRole("region", { name: "Abrechnungen" }));
+  expect(summary.getByRole("heading", { name: "Noch keine Abrechnung übernommen" })).toBeTruthy();
   fireEvent.click(summary.getByRole("button", { name: "Abrechnung Jän. 2026 prüfen" }));
   const tile = screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, prüfen, Abrechnung Jänner 2026, nicht im Budget/ });
   await waitFor(() => expect(tile.getAttribute("aria-expanded")).toBe("true"));
@@ -602,6 +603,7 @@ it("keeps a contradicting payslip out of the budget, marks it for review and tak
   expect(latest.payrollBudget?.confirmed).toHaveLength(1);
   expect(screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, belegt/ })).toBeTruthy();
   expect(summary.queryByRole("button", { name: /^Abrechnung .* prüfen$/ })).toBeNull();
+  expect(summary.getByRole("heading", { name: "1 Abrechnung übernommen" })).toBeTruthy();
 });
 
 it("looks up an unclear term on Wikipedia after the import only when allowed", async () => {
