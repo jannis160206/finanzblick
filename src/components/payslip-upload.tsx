@@ -17,6 +17,7 @@ import { useImportInbox } from "@/components/use-import-inbox";
 import { usePayslipPasswordStore, type PayslipPasswordStore } from "@/components/payslip-password";
 import { usePayslipLogStore } from "@/components/payslip-log";
 import { payslipLogEntry, type PayslipLogSource } from "@/lib/payslip-log";
+import { validatePayslips } from "@/lib/payslip-validation";
 import { parsePayslipPdf, PayslipPasswordError } from "@/lib/import/payslip";
 import { payslipKey, payslipSchema, payrollEmployerKey, type Payslip, type PayslipDraft, type PayslipImport } from "@/lib/payslip-schema";
 import { assertPayslipReview, capturePayslipReview, PayslipMutationError, preparePayslipMerge, type PayslipReview } from "@/lib/payslip-storage";
@@ -132,8 +133,13 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
       current.skipped.has(index) ? { outcome: "skipped", note: "Passwort fehlt." }
         : current.unrecognized.has(index) && outcome !== "failed" ? { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }
           : outcome === "imported" ? { outcome } : { outcome, note: message });
+    const complete = (current.report?.drafts ?? []).flatMap((draft) => {
+      const parsed = payslipSchema.safeParse(draft);
+      return parsed.success ? [parsed.data] : [];
+    });
     const entry = payslipLogEntry({
       source: current.log, message, report: current.report, stored: current.stored,
+      validation: validatePayslips(complete, live.current.state.payslips ?? []),
       files: files.map((file, index) => ({ name: current.names[index] ?? `Datei ${index + 1}`, ...file })),
     });
     live.current.logStore.append(entry).catch(() => undefined);

@@ -3,6 +3,7 @@ import { createEmptyAccountState } from "@/lib/account-state";
 import { queueLedgerReview } from "@/lib/import/review";
 import { applyPayslipIncome } from "@/lib/payslip-income";
 import { payslipLogEntry, type PayslipLogFile } from "@/lib/payslip-log";
+import { validatePayslips, type PayslipValidation } from "@/lib/payslip-validation";
 import { isReferencePayslip, payrollEmployerKey, payslipSchema, type Payslip, type PayslipImport } from "@/lib/payslip-schema";
 import { preparePayslipMerge } from "@/lib/payslip-storage";
 import { synchronizePlan } from "@/lib/planning";
@@ -87,6 +88,7 @@ export async function processDriveInbox(
   let handled = 0;
   let saved = 0;
   const files: PayslipLogFile[] = [];
+  const validation: PayslipValidation[] = [];
   const report: PayslipImport = { drafts: [], issues: [] };
   for (const item of items) {
     if (signal?.aborted || handled >= MAX_PER_RUN) break;
@@ -118,6 +120,7 @@ export async function processDriveInbox(
         return entry.success ? [entry.data] : [];
       });
       if (!entries.length) { await finish("failed", "Nicht vollständig erkannt."); continue; }
+      validation.push(...validatePayslips(entries, database.getFinance(userId).state?.payslips ?? []));
       const result = commit(database, userId, entries);
       if (result === "conflict") {
         await markInboxItem(database, userId, item.id, { waiting: "conflict" });
@@ -136,7 +139,7 @@ export async function processDriveInbox(
   }
   if (files.length) {
     const message = `Google Drive im Hintergrund: ${run.imported} übernommen, ${run.waiting} warten, ${run.skipped} übersprungen, ${run.failed} fehlgeschlagen.`;
-    await appendPayslipLogFile(database, userId, payslipLogEntry({ source: "drive-background", message, files, report, stored: saved })).catch(() => undefined);
+    await appendPayslipLogFile(database, userId, payslipLogEntry({ source: "drive-background", message, files, report, stored: saved, validation })).catch(() => undefined);
   }
   return run;
 }

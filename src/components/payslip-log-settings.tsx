@@ -14,6 +14,7 @@ const sourceLabel: Record<PayslipLogSource, string> = {
   drive: "Google Drive",
   "drive-background": "Drive · Hintergrund",
   recheck: "Erneut geprüft",
+  budget: "Budget automatisch",
 };
 const timeFormat = new Intl.DateTimeFormat("de-AT", { dateStyle: "medium", timeStyle: "short" });
 

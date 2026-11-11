@@ -1,9 +1,13 @@
 import { z } from "zod";
 import type { PayslipImport } from "@/lib/payslip-schema";
 import { isReferencePayslip, payslipSchema } from "@/lib/payslip-schema";
+import type { PayslipValidation } from "@/lib/payslip-validation";
 
-/** Where a payslip import started: the page button, the central import, Drive in the browser or in the background, "Erneut prüfen". */
-export const payslipLogSources = ["upload", "import", "drive", "drive-background", "recheck"] as const;
+/**
+ * Where an entry comes from: the page button, the central import, Drive in the browser or in the background,
+ * "Erneut prüfen", or the automatic budget update from payslips.
+ */
+export const payslipLogSources = ["upload", "import", "drive", "drive-background", "recheck", "budget"] as const;
 export type PayslipLogSource = (typeof payslipLogSources)[number];
 
 const text = (max: number) => z.string().max(max);
@@ -14,6 +18,33 @@ const draftSchema = z.object({
   complete: z.boolean(),
   reference: z.boolean().optional(),
   fields: z.record(text(40), z.number().finite()).optional(),
+});
+
+const checkSchema = z.object({ id: text(40), level: z.enum(["error", "warning", "info"]), message: text(400) });
+const validationSchema = z.object({
+  period: text(20),
+  employer: text(200).optional(),
+  consistent: z.boolean(),
+  /** Kept out of the budget until the user confirms it. */
+  held: z.boolean().optional(),
+  checks: z.array(checkSchema).max(30),
+  passed: z.array(text(40)).max(30).optional(),
+});
+const lookupSchema = z.object({
+  term: text(80),
+  source: z.enum(["glossar", "wikipedia", "ohne-treffer", "nicht-nachgeschlagen", "fehler"]),
+  title: text(200).optional(),
+  text: text(1600).optional(),
+  url: text(300).optional(),
+});
+const budgetSchema = z.object({
+  /** Budget values written automatically. */
+  applied: z.number().int().nonnegative(),
+  /** Values offered for review instead (changed by hand, possible duplicates). */
+  review: z.number().int().nonnegative().optional(),
+  /** Abrechnungsmonate kept out of the budget because of contradictions. */
+  held: z.array(text(10)).max(60).optional(),
+  changes: z.array(z.object({ row: text(100), month: text(10), from: z.number().finite(), to: z.number().finite(), reason: text(300) })).max(120).optional(),
 });
 
 export const payslipLogEntrySchema = z.object({
@@ -27,7 +58,14 @@ export const payslipLogEntrySchema = z.object({
   stored: z.number().int().nonnegative().optional(),
   /** Abrechnungsmonate of reference payslips (2025): kept for forecasts, never written to the budget. */
   reference: z.array(text(10)).max(60).optional(),
+  /** Local plausibility checks of every complete payslip. */
+  validation: z.array(validationSchema).max(60).optional(),
+  /** Unclear terms explained by the glossary or – only when allowed – looked up on Wikipedia. */
+  lookups: z.array(lookupSchema).max(10).optional(),
+  budget: budgetSchema.optional(),
 });
+export type PayslipLogLookup = z.infer<typeof lookupSchema>;
+export type PayslipLogBudget = z.infer<typeof budgetSchema>;
 export type PayslipLogEntry = z.infer<typeof payslipLogEntrySchema>;
 export type PayslipLogFile = z.infer<typeof fileSchema>;
 
@@ -45,6 +83,11 @@ export function payslipLogEntry(input: {
   files?: PayslipLogFile[];
   report?: PayslipImport | null;
   stored?: number;
+  validation?: readonly PayslipValidation[];
+  /** Abrechnungsmonate kept out of the budget. */
+  held?: readonly string[];
+  lookups?: readonly PayslipLogLookup[];
+  budget?: PayslipLogBudget;
 }): PayslipLogEntry {
   const drafts = (input.report?.drafts ?? []).slice(0, 60).map((draft) => {
     const parsed = payslipSchema.safeParse(draft);
@@ -71,6 +114,31 @@ export function payslipLogEntry(input: {
     ...(drafts.length ? { drafts } : {}),
     ...(input.stored !== undefined ? { stored: input.stored } : {}),
     ...(reference.length ? { reference } : {}),
+    ...(input.validation?.length ? {
+      validation: input.validation.slice(0, 60).map((item) => ({
+        period: item.period,
+        employer: clip(item.employer, 200),
+        consistent: item.consistent,
+        ...(input.held?.includes(item.period) ? { held: true } : {}),
+        checks: item.checks.slice(0, 30).map((check) => ({ id: check.id.slice(0, 40), level: check.level, message: clip(check.message, 400) })),
+        passed: item.passed.slice(0, 30),
+      })),
+    } : {}),
+    ...(input.lookups?.length ? {
+      lookups: input.lookups.slice(0, 10).map((item) => ({
+        ...item, term: clip(item.term, 80),
+        ...(item.title ? { title: clip(item.title, 200) } : {}),
+        ...(item.text ? { text: clip(item.text, 1600) } : {}),
+        ...(item.url ? { url: item.url.slice(0, 300) } : {}),
+      })),
+    } : {}),
+    ...(input.budget ? {
+      budget: {
+        ...input.budget,
+        ...(input.budget.held ? { held: input.budget.held.slice(0, 60) } : {}),
+        ...(input.budget.changes ? { changes: input.budget.changes.slice(0, 120).map((change) => ({ ...change, row: clip(change.row, 100), reason: clip(change.reason, 300) })) } : {}),
+      },
+    } : {}),
   });
 }
 

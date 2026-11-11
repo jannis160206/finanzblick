@@ -29,6 +29,26 @@ it("logs what an import read: complete and reference drafts, deduplicated issues
   expect(payslipLogEntry({ source: "recheck", message: "" }).message).toBe("Ohne Meldung.");
 });
 
+it("documents checks, held months, lookups and budget changes", () => {
+  const entry = payslipLogEntry({
+    source: "upload", message: "ok", at: 1,
+    validation: [
+      { period: "2026-10", employer: "Musterbetrieb GmbH", consistent: false, checks: [{ id: "net-balance", level: "error", message: "Netto passt nicht." }], passed: ["tax-rate"] },
+      { period: "2026-09", employer: "Musterbetrieb GmbH", consistent: true, checks: [], passed: ["net-balance"] },
+    ],
+    held: ["2026-10"],
+    lookups: [{ term: "VEB-Prämie", source: "glossar", text: "Prämie …" }],
+    budget: { applied: 2, review: 1, changes: [{ row: "Gehalt", month: "2026-12", from: 2400, to: 2500, reason: "Prognose" }] },
+  });
+  expect(entry.validation).toEqual([
+    { period: "2026-10", employer: "Musterbetrieb GmbH", consistent: false, held: true, checks: [{ id: "net-balance", level: "error", message: "Netto passt nicht." }], passed: ["tax-rate"] },
+    { period: "2026-09", employer: "Musterbetrieb GmbH", consistent: true, checks: [], passed: ["net-balance"] },
+  ]);
+  expect(entry.lookups).toEqual([{ term: "VEB-Prämie", source: "glossar", text: "Prämie …" }]);
+  expect(entry.budget).toMatchObject({ applied: 2, review: 1, changes: [{ row: "Gehalt", to: 2500 }] });
+  expect(readPayslipLog([entry])).toEqual([entry]);
+});
+
 it("keeps only the newest entries and drops damaged ones", () => {
   const entry = payslipLogEntry({ source: "drive", message: "ok", at: 1 });
   const full = Array.from({ length: PAYSLIP_LOG_LIMIT }, (_, index) => ({ ...entry, at: index }));

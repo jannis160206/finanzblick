@@ -83,6 +83,7 @@ it("stores 2025 payslips only as reference and logs every background run", async
     stored: 1,
     reference: ["2025-12"],
     files: [{ name: "slip-2025.pdf", outcome: "imported" }, { name: "slip-locked.pdf", outcome: "waiting", note: "Passwort fehlt." }],
+    validation: [{ period: "2025-12", consistent: true, checks: [] }],
   });
   await processDriveInbox(accounts, userId, { read });
   expect(await readPayslipLogFile(accounts, userId)).toHaveLength(1);
