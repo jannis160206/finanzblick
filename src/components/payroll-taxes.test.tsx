@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useEffect, useState } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { PayrollTaxes } from "@/components/payroll-taxes";
 import { useFinance } from "@/components/finance-provider";
 import { createSeed } from "@/lib/seed";
@@ -34,6 +34,13 @@ beforeEach(() => {
   pdf.parse.mockReset().mockResolvedValue({ drafts: [january], issues: [] });
 });
 afterEach(cleanup);
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
+const monthOptions = () => {
+  fireEvent.click(screen.getByLabelText("Monat"));
+  return screen.getAllByRole("option");
+};
 
 function Fixture({ initial = seed(), storageError = null }: { initial?: AppState; storageError?: string | null }) {
   const [state, setState] = useState(initial);
@@ -137,15 +144,12 @@ it("reserves the Successbonus, names the Austrian tax logic and estimates the ta
   // November's Grundgehalt and 138,5 % of it with the December payslip use up the sixth.
   expect(bonus.getByText("Geplante Sonderzahlungen").parentElement?.textContent).toContain(currency(3000 + 4155));
   expect(bonus.queryByText(moneyText(2000))).toBeNull();
-  const months = within(screen.getByRole("region", { name: "Monatsübersicht" }));
-  expect(months.getByText("Lohnsteuertarif AT 2026 · progressiv + Absetzbeträge lt. Abrechnung")).toBeTruthy();
+  const focus = within(screen.getByRole("region", { name: /^Gehalt / }));
+  expect(focus.getByText("Lohnsteuertarif AT 2026 · progressiv + Absetzbeträge lt. Abrechnung")).toBeTruthy();
   expect(screen.queryByText(/Steuerklasse/)).toBeNull();
-  fireEvent.click(months.getByRole("button", { name: /^Dezember 2026, netto .*geschätzt, mit Sonderzahlung/ }));
-  const december = within(screen.getByRole("region", { name: "Dezember 2026" }));
-  // 500 € regular tax by the tariff with the learned credits, 6 % of November's special payment after SV.
-  expect(december.getByText("Lohnsteuer · Schätzung")).toBeTruthy();
-  expect(december.getByLabelText("Dezember 2026 Lohnsteuer").textContent).toBe(currency(649.27));
-  expect(december.getByText(/Geschätzt nach Lohnsteuertarif/)).toBeTruthy();
+  // 6 % of November's special payment after SV, estimated with the learned tax credits.
+  const special = within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" }));
+  expect(special.getByText(moneyText(149.27))).toBeTruthy();
 });
 
 it("automatically imports selected PDFs without a form and keeps bank data untouched", async () => {
@@ -166,15 +170,9 @@ it("automatically imports selected PDFs without a form and keeps bank data untou
   const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
   expect(actual.getAllByText(moneyText(6000)).length).toBeGreaterThan(0);
   expect(actual.getByText(`Stand: ${monthLabel("2026-01")}`)).toBeTruthy();
-  // The January payslip is paid out in February.
-  const february = screen.getByRole("button", { name: /^Februar 2026, netto 2\.260\s€, belegt, Abrechnung Jänner 2026/ });
-  expect(february.getAttribute("aria-expanded")).toBe("false");
-  expect(screen.queryByRole("region", { name: monthLabel("2026-02") })).toBeNull();
-  fireEvent.click(february);
-  expect(february.getAttribute("aria-expanded")).toBe("true");
-  const details = screen.getByRole("region", { name: monthLabel("2026-02") });
-  expect(details.closest(`#${february.getAttribute("aria-controls")}`)).toBeTruthy();
-  expect(within(details).getByLabelText(`${monthLabel("2026-02")} Laufendes Brutto`).textContent).toBe(currency(3000));
+  expect(screen.getByLabelText("Monat").textContent).toBe("Jänner, importiert");
+  expect(screen.getByRole("region", { name: `Gehalt ${monthLabel("2026-01")}` })).toBeTruthy();
+  expect(screen.queryByRole("region", { name: "Monatsübersicht" })).toBeNull();
 });
 
 it("asks for the password of a protected PDF in a dialog and never stores it", async () => {
@@ -425,9 +423,10 @@ it("removes the technical assumptions and sources block while keeping forecast a
   expect(screen.queryByText("Berechnungsdetails, Annahmen & Quellen")).toBeNull();
   expect(screen.queryByText(/Automatisches Standardmodell mit unbestätigten Annahmen/)).toBeNull();
   expect(screen.queryByRole("link", { name: /RIS · § 67/, hidden: true })).toBeNull();
-  const months = within(screen.getByRole("list", { name: "Monate 2026" }));
-  // January pays December 2025, which is not stored: only the following eleven months can be opened.
-  expect(months.getAllByRole("button", { expanded: false })).toHaveLength(11);
+  // All twelve months are listed; only the imported January can be chosen.
+  const options = monthOptions();
+  expect(options).toHaveLength(12);
+  expect(options.filter((option) => option.getAttribute("aria-disabled") === "true")).toHaveLength(11);
 });
 
 it("replaces provisional values with the computed sixth when February closes the historical gap", async () => {
@@ -487,7 +486,6 @@ it("removes an explicitly selected payroll without changing bank transactions", 
     { year: 2026 as const, employer: january.employer, months: [], standardPayrollConfirmed: true },
   ] };
   render(<Fixture initial={initial} />);
-  fireEvent.click(screen.getByRole("button", { name: /^Februar 2026, netto/ }));
   fireEvent.click(screen.getByRole("button", { name: `Abrechnung ${monthLabel("2026-01")} entfernen` }));
   const dialog = within(screen.getByRole("dialog", { name: "Lohnabrechnung entfernen?" }));
   fireEvent.click(dialog.getByRole("button", { name: "Entfernen" }));
@@ -590,7 +588,7 @@ it("re-applies stored payslips to the budget on \"Erneut prüfen\" and logs the 
   expect(latest.payslips).toEqual([january]);
 });
 
-it("keeps an uploaded 2025 payslip as reference: stored, shown in January, never in the budget", async () => {
+it("keeps an uploaded 2025 payslip as reference: stored, counted in the summary, never in the budget", async () => {
   const december: Payslip = { ...january, year: 2025, month: 12, netPay: 2300 };
   pdf.parse.mockResolvedValueOnce({ drafts: [december], issues: [] });
   const initial = { ...seed(), payslips: [january] };
@@ -601,7 +599,7 @@ it("keeps an uploaded 2025 payslip as reference: stored, shown in January, never
   expect(screen.queryByRole("alert")).toBeNull();
   expect(await screen.findByText("1 Abrechnung als Referenz übernommen")).toBeTruthy();
   expect(screen.getByLabelText<HTMLSelectElement>("Steuerjahr").value).toBe("2026");
-  expect(screen.getByRole("button", { name: /^Jänner 2026, netto 2\.300\s€, Referenz, Abrechnung Dezember 2025/ })).toBeTruthy();
+  expect(screen.getByLabelText("Monat").textContent).toBe("Jänner, importiert");
   expect(within(screen.getByRole("region", { name: "Abrechnungen" })).getByText(/1 aus 2025 als Referenz/)).toBeTruthy();
 });
 
@@ -619,16 +617,18 @@ it("keeps a contradicting payslip out of the budget, marks it for review and tak
   expect(entry).toMatchObject({ validation: [expect.objectContaining({ period: "2026-01", consistent: false, held: true })] });
   const summary = within(screen.getByRole("region", { name: "Abrechnungen" }));
   expect(summary.getByRole("heading", { name: "Noch keine Abrechnung übernommen" })).toBeTruthy();
+  expect(screen.getByLabelText("Monat").textContent).toBe("Jänner, zur Prüfung");
   fireEvent.click(summary.getByRole("button", { name: "Abrechnung Jän. 2026 prüfen" }));
-  const tile = screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, prüfen, Abrechnung Jänner 2026, nicht im Budget/ });
-  await waitFor(() => expect(tile.getAttribute("aria-expanded")).toBe("true"));
-  expect(document.activeElement).toBe(tile);
-  const details = within(screen.getByRole("region", { name: monthLabel("2026-02") }));
+  const card = screen.getByRole("region", { name: `Gehalt ${monthLabel("2026-01")}` });
+  await waitFor(() => expect(document.activeElement).toBe(card));
+  const details = within(card);
   expect(details.getByRole("note").textContent).toMatch(/Nicht im Budget – die Zahlen passen nicht zusammen.*gedruckt sind 2\.700,00\s€ Netto/);
   fireEvent.click(details.getByRole("button", { name: "Ins Budget übernehmen" }));
   await waitFor(() => expect(latest.financeRows.find((row) => row.id === "income-salary")?.values["2026-02"]).toBe(2700));
   expect(latest.payrollBudget?.confirmed).toHaveLength(1);
-  expect(screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, belegt/ })).toBeTruthy();
+  expect(screen.getByLabelText("Monat").textContent).toBe("Jänner, importiert");
+  expect(details.queryByRole("note")).toBeNull();
+  expect(details.queryByRole("button", { name: "Ins Budget übernehmen" })).toBeNull();
   expect(summary.queryByRole("button", { name: /^Abrechnung .* prüfen$/ })).toBeNull();
   expect(summary.getByRole("heading", { name: "1 Abrechnung übernommen" })).toBeTruthy();
 });

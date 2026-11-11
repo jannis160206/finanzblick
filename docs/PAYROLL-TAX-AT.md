@@ -4,7 +4,7 @@ Stand: 11.11.2026
 
 ## Ist-Zustand (vor der Umsetzung)
 
-- **Monatslogik**: Eine Abrechnung wird im Folgemonat ausgezahlt (Oktober → November, Dezember → Jänner). Budget, Monatsübersicht und Bankbuchungen folgen dieser Regel. Ein Gehalt, das am 26.–30. eingeht, zählt zum Folgemonat. Vor Sonderzahlungsmonaten (März, Juli, Dezember) zählt auch der 25.
+- **Monatslogik**: Eine Abrechnung wird im Folgemonat ausgezahlt (Oktober → November, Dezember → Jänner). Budget, Prognose und Bankbuchungen folgen dieser Regel. Ein Gehalt, das am 26.–30. eingeht, zählt zum Folgemonat. Vor Sonderzahlungsmonaten (März, Juli, Dezember) zählt auch der 25.
 - **Prognose der Sonderzahlungen** (`src/lib/salary-forecast.ts`):
   - Das Modell kennt je ein Grundgehalt mit der Juni- und der November-Abrechnung (ausgezahlt im Juli bzw. Dezember).
   - Fehlt ein Modellwert, wiederholt die Prognose den gleichen Monat des Vorjahres.
@@ -64,7 +64,7 @@ Stand: 11.11.2026
   - für jeden Prognosemonat gibt es eine Schätzung (`taxEstimates`). Wo die strenge Projektion rechnen kann, stimmt die Schätzung mit ihr auf den Cent überein (Test).
 - **Successbonus**:
   - Einstellung `successBonusPercent`, Standard 138,5 % des Grundgehalts, 0 schaltet ihn ab; JSON-Feld der Finanzdaten, keine Datenbankmigration; in der Excel-Sicherung enthalten;
-  - im Gehaltsmodell mit der Dezember-Abrechnung, im Budget und in der Monatsübersicht im Jänner;
+  - im Gehaltsmodell mit der Dezember-Abrechnung, im Budget und in der Prognose im Jänner;
   - reserviert das restliche Jahressechstel, deshalb schrumpft der „Prämien-Spielraum“ entsprechend.
 - **Mit echten Daten geprüft** (nur lokal):
   - Dezember 2026: die November-Sonderzahlung liegt im Sechstel und wird mit 6 % versteuert, wie im Juni.

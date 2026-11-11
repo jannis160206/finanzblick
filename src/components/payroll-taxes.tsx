@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ReceiptText } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
@@ -12,14 +12,14 @@ import { Button } from "@/components/ui/button";
 import { PayrollCoverage, PayrollResults } from "@/components/payroll-results";
 import { PayrollFocusCard } from "@/components/payroll-focus";
 import { PayrollYearCard } from "@/components/payroll-year";
-import { PayrollMonths, payrollMonthName } from "@/components/payroll-months";
-import { payrollMonthTiles, payrollPresentation } from "@/components/payroll-presentation";
+import { PayrollMonthSelect, type PayrollMonthState } from "@/components/payroll-month-select";
+import { payrollPresentation } from "@/components/payroll-presentation";
 import { employerPayslips } from "@/lib/payroll-overview";
-import { analyzePayrollAutomatically, successBonusPercent, type PayrollYear } from "@/lib/payroll-analysis";
+import { successBonusPercent, type PayrollYear } from "@/lib/payroll-analysis";
 import { confirmPayslip } from "@/lib/payroll-budget";
 import { monthLabel } from "@/lib/format";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
-import { salaryForecast } from "@/lib/salary-forecast";
+import { payslipHold, type PayslipCheck } from "@/lib/payslip-validation";
 import { wageTaxCaption } from "@/lib/wage-tax-at";
 
 const scopeKey = (year: number, employer: string) => `${year}|${payrollEmployerKey(employer)}`;
@@ -34,8 +34,7 @@ function PayrollWorkspace() {
   // The chosen month only applies to the year and employer it was picked for; otherwise the latest payslip leads.
   const [focus, setFocus] = useState<{ scope: string; month: number } | null>(null);
   const [removal, setRemoval] = useState<PayslipRemoval | null>(null);
-  const [openRequest, setOpenRequest] = useState<{ month: number; seq: number } | null>(null);
-  const clearOpenRequest = useCallback(() => setOpenRequest(null), []);
+  const [reviewRequest, setReviewRequest] = useState(0);
   const payslips = state.payslips ?? noPayslips;
   const employers = [
     ...new Map(
@@ -57,32 +56,29 @@ function PayrollWorkspace() {
   // The analysis only depends on the payslips; picking another month must not recompute it.
   const view = useMemo(() => payrollPresentation(payslips, year, employer, asOf, modelOptions), [payslips, year, employer, asOf, modelOptions]);
   const entries = useMemo(() => employerPayslips(payslips, year, employer), [payslips, year, employer]);
-  // A year without own payslips still shows the payouts of the latest employer (December is paid in January).
-  const tileEmployer = employer || payslips.reduce<Payslip | undefined>((last, entry) =>
-    !last || entry.year * 12 + entry.month > last.year * 12 + last.month ? entry : last, undefined)?.employer || "";
-  const forecast = useMemo(() => salaryForecast(state), [state]);
-  const previous = useMemo(
-    () => (year === 2027 ? analyzePayrollAutomatically(payslips, 2026, tileEmployer, modelOptions) : undefined),
-    [payslips, year, tileEmployer, modelOptions],
-  );
   const credits = view.analysis.credits;
   const taxNote = `${wageTaxCaption(year)}${credits.label.startsWith("Absetzbeträge") ? " lt. Abrechnung" : ` (${credits.label})`}`;
   const confirmed = state.payrollBudget?.confirmed;
-  const tiles = useMemo(
-    () => payrollMonthTiles({ view, previous, payslips, employer: tileEmployer, forecast, confirmed }),
-    [view, previous, payslips, tileEmployer, forecast, confirmed],
-  );
+  // Contradicting payslips stay out of the budget until the user takes them in; their month gets an amber dot.
+  const holds = useMemo(() => new Map(entries.flatMap((entry): [number, PayslipCheck[]][] => {
+    const hold = payslipHold(entry, payslips, confirmed);
+    return hold ? [[entry.month, hold.checks.filter((check) => check.level === "error")]] : [];
+  })), [entries, payslips, confirmed]);
+  const monthStates = useMemo(() => Object.fromEntries(entries.map((entry): [number, PayrollMonthState] =>
+    [entry.month, holds.has(entry.month) ? "review" : "imported"])), [entries, holds]);
   const reviewPayslip = (entry: Payslip) => {
-    const payout = entry.month === 12 ? { year: entry.year + 1, month: 1 } : { year: entry.year, month: entry.month + 1 };
-    if (payout.year === 2026 || payout.year === 2027) setYear(payout.year);
+    if (entry.year === 2026 || entry.year === 2027) setYear(entry.year);
     setSelectedEmployer(entry.employer);
-    setOpenRequest({ month: payout.month, seq: Date.now() });
+    setFocus({ scope: scopeKey(entry.year, entry.employer), month: entry.month });
+    setReviewRequest((count) => count + 1);
   };
+  useEffect(() => {
+    if (reviewRequest) document.getElementById("payroll-focus")?.focus();
+  }, [reviewRequest]);
   const confirmEntry = (entry: Payslip) => {
     update((current) => confirmPayslip(current, entry).state);
     toast.success(`Abrechnung ${monthLabel(`${entry.year}-${String(entry.month).padStart(2, "0")}`)} ins Budget übernommen`);
   };
-  const showTiles = tiles.some((tile) => tile.status === "actual" || tile.status === "forecast");
   const scope = scopeKey(year, employer);
   const focusEntry =
     (focus?.scope === scope
@@ -162,18 +158,7 @@ function PayrollWorkspace() {
                 >
                   <ChevronLeft aria-hidden="true" />
                 </Button>
-                <select
-                  id="payroll-month"
-                  className="select-input w-32"
-                  value={focusEntry.month}
-                  onChange={(event) => selectMonth(Number(event.target.value))}
-                >
-                  {entries.map((entry) => (
-                    <option key={entry.month} value={entry.month}>
-                      {payrollMonthName(entry.month)}
-                    </option>
-                  ))}
-                </select>
+                <PayrollMonthSelect id="payroll-month" value={focusEntry.month} states={monthStates} onChange={selectMonth} />
                 <Button
                   variant="outline"
                   size="icon"
@@ -191,15 +176,12 @@ function PayrollWorkspace() {
       </PageHeading>
       <div className="space-y-5">
         <PayrollCoverage view={view} />
-        {showTiles && (
-          // Keyed by scope so an opened month never carries over to another year or employer.
-          <PayrollMonths key={scope} year={year} tiles={tiles} selectedMonth={focusEntry?.month}
-            onRemove={(entry, trigger) => setRemoval({ entry, trigger })} onConfirm={confirmEntry}
-            openRequest={openRequest} onOpened={clearOpenRequest} taxNote={taxNote} />
-        )}
         {focusEntry ? (
           <>
-            <PayrollFocusCard entry={focusEntry} payslips={payslips} />
+            {/* Keyed by payslip so a removed month's buttons never hand focus to the next payslip. */}
+            <PayrollFocusCard key={`${scope}|${focusEntry.month}`} entry={focusEntry} payslips={payslips}
+              review={holds.get(focusEntry.month)} onConfirm={confirmEntry} taxNote={taxNote}
+              onRemove={(entry, trigger) => setRemoval({ entry, trigger })} />
             <PayrollYearCard
               year={year}
               entries={entries}
@@ -228,8 +210,7 @@ function PayrollWorkspace() {
         <PayslipSummary onReviewPayslip={reviewPayslip} />
       </div>
       <PayslipRemoveDialog target={removal} onClose={() => setRemoval(null)}
-        fallbackFocus={() => (document.querySelector<HTMLElement>("#payroll-months button[aria-expanded=true]")
-          ?? document.querySelector<HTMLElement>("#payroll-months, #payroll-import"))?.focus()} />
+        fallbackFocus={() => document.querySelector<HTMLElement>("#payroll-month, #payroll-import")?.focus()} />
     </>
   );
 }

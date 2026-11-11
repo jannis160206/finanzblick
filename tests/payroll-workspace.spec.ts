@@ -96,10 +96,8 @@ async function details(page: Page) {
     }),
   ).toBeVisible();
 }
-function monthTile(page: Page, month: string) {
-  return page
-    .getByRole("list", { name: "Monate 2026", exact: true })
-    .getByRole("button", { name: new RegExp(`^${monthLabel(month)},`) });
+function monthSelect(page: Page) {
+  return page.getByRole("combobox", { name: "Monat", exact: true });
 }
 async function field(page: Page, label: string, value: number | undefined) {
   const special = page.getByRole("region", {
@@ -169,15 +167,9 @@ for (const width of [1440, 390, 320]) {
       page.getByRole("button", { name: "PDF auswählen", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("region", {
-        name: monthLabel("2026-10"),
-        exact: true,
-      }),
+      page.getByRole("region", { name: "Monatsübersicht", exact: true }),
     ).toHaveCount(0);
-    await expect(monthTile(page, "2026-10")).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    await expect(monthSelect(page)).toHaveText(/^September/);
     await noOverflow(page);
     await page.screenshot({
       path: testInfo.outputPath(`payroll-${width}-dark.png`),
@@ -210,17 +202,17 @@ for (const width of [1440, 390, 320]) {
     await expect(
       page.getByRole("group", { name: "Steuerbeispiel Zusatzprämie" }),
     ).toBeVisible();
-    await monthTile(page, "2026-10").click();
-    await expect(monthTile(page, "2026-10")).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    await monthSelect(page).click();
+    await expect(page.getByRole("option")).toHaveCount(12);
     await expect(
-      page.getByRole("region", {
-        name: monthLabel("2026-10"),
-        exact: true,
-      }),
+      page.getByRole("option", { name: "Oktober, noch nicht importiert", exact: true }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await noOverflow(page);
+    await page.getByRole("option", { name: /^März,/ }).click();
+    await expect(
+      page.getByRole("region", { name: `Gehalt ${monthLabel("2026-03")}`, exact: true }),
     ).toBeVisible();
+    await expect(monthSelect(page)).toHaveText(/^März/);
     await noOverflow(page);
     await page
       .getByLabel("Dienstverhältnis", { exact: true })
@@ -229,7 +221,7 @@ for (const width of [1440, 390, 320]) {
     await expect(
       page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
     ).toContainText(currency(6000));
-    await expect(monthTile(page, "2026-02")).toContainText("belegt");
+    await expect(monthSelect(page)).toHaveText(/, importiert$/);
     await noOverflow(page);
     await page.getByLabel("Steuerjahr", { exact: true }).selectOption("2027");
     await expect(
@@ -298,9 +290,8 @@ for (const width of [1440, 390]) {
     ).toBe(4500);
     await page.reload();
     await unlock(page);
-    // The October payslip is paid out in November: its tile offers the removal.
-    const november = monthTile(page, "2026-11");
-    await november.click();
+    // The newest payslip leads the Brutto → Netto card, which offers the removal.
+    await expect(monthSelect(page)).toHaveText(/^Oktober/);
     const trigger = page.getByRole("button", {
       name: `Abrechnung ${monthLabel("2026-10")} entfernen`,
       exact: true,
@@ -319,11 +310,9 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Entfernen", exact: true })
       .click();
     await expect(deleting).toHaveCount(0);
-    // The fixture also holds January 2027: without October, November's payslip is a real gap and focus returns to the overview.
-    await expect(page.locator("#payroll-months")).toBeFocused();
-    await expect(
-      page.getByRole("list", { name: "Monate 2026", exact: true }).getByRole("listitem").nth(10),
-    ).toContainText(`${monthLabel("2026-11")}, Abrechnung ${monthLabel("2026-10")} fehlt`);
+    // The removed month's card is gone: focus returns to the month select, which falls back to September.
+    await expect(monthSelect(page)).toBeFocused();
+    await expect(monthSelect(page)).toHaveText(/^September/);
     await expect(
       page.getByText("Synchronisiert", { exact: true }),
     ).toBeAttached();
@@ -434,15 +423,14 @@ test("large supported amounts fit 320px without overflowing result cards", async
     page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
   ).toContainText(currency(1_000_000_000));
   await noOverflow(page);
-  await monthTile(page, "2026-02").click();
   await expect(
-    page.getByRole("region", { name: monthLabel("2026-02"), exact: true }),
+    page.getByRole("region", { name: `Gehalt ${monthLabel("2026-01")}`, exact: true }),
   ).toBeVisible();
   await noOverflow(page);
 });
 
 for (const width of [1440, 390]) {
-  test(`month tiles reveal January-based forecast values and highlight special payments at ${width}px`, async ({
+  test(`month select marks imported months with a dot and keeps the rest unselectable at ${width}px`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
@@ -451,48 +439,35 @@ for (const width of [1440, 390]) {
       entry.employer === payrollEmployer && entry.year === 2026 && entry.month === 1,
     );
     const state = await open(page, fixture);
-    const model = analyzePayrollAutomatically(state.payslips ?? [], 2026, payrollEmployer);
-    await expect(page.getByText("Berechnungsdetails, Annahmen & Quellen", { exact: true })).toHaveCount(0);
-    const months = page.getByRole("list", { name: "Monate 2026", exact: true });
-    await expect(months.getByRole("listitem")).toHaveCount(12);
-    // Tiles follow the payout: January pays the missing December 2025, February the January payslip.
-    await expect(months.getByRole("button", { expanded: false })).toHaveCount(11);
-    await expect(monthTile(page, "2026-02")).toContainText("belegt");
-    // Grid instead of a list: 6 tiles per row on desktop, 3 on phones.
-    const tops = await months
-      .getByRole("listitem")
-      .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));
-    expect(tops.filter((top) => top === tops[0])).toHaveLength(width >= 1024 ? 6 : 3);
-    let tile = monthTile(page, "2026-02");
-    for (const month of model.forecast.months.filter((entry) => entry.month < 12)) {
-      const period = `2026-${String(month.month + 1).padStart(2, "0")}`;
-      const label = monthLabel(period);
-      tile = monthTile(page, period);
-      await expect(tile).toContainText(month.specialGross > 0 ? "mit Sonderzahlung" : "geschätzt");
-      await tile.focus();
-      await page.keyboard.press("Enter");
-      await expect(tile).toHaveAttribute("aria-expanded", "true");
-      const card = page.getByRole("region", { name: label, exact: true });
-      await expect(card).toBeVisible();
-      await expect(card.getByLabel(`${label} Laufendes Brutto`, { exact: true })).toHaveText(currency(month.regularGross));
-      await expect(card.getByText(`Abrechnung ${monthLabel(`2026-${String(month.month).padStart(2, "0")}`)}`, { exact: true })).toBeVisible();
-      await expect(card.getByLabel(`${label} Sonderzahlung brutto`, { exact: true })).toHaveText(
-        month.specialGross > 0 ? currency(month.specialGross) : "Keine geplant",
-      );
-      await expect(card.locator("header").getByText("Sonderzahlung", { exact: true })).toHaveCount(month.specialGross > 0 ? 1 : 0);
-      const sixth = model.sixthEstimates.find((entry) => entry.month === month.month)!;
-      await expect(card.getByLabel(`${label} Jahressechstel`, { exact: true })).toHaveText(currency(sixth.sixth));
-      await noOverflow(page);
-    }
+    await expect(page.getByRole("region", { name: "Monatsübersicht", exact: true })).toHaveCount(0);
+    const select = monthSelect(page);
+    await expect(select).toHaveText("Jänner, importiert");
+    await expect(select.locator(".bg-success")).toBeVisible();
+    await select.click();
+    const options = page.getByRole("option");
+    await expect(options).toHaveCount(12);
+    await expect(options.first()).toHaveAttribute("data-state", "checked");
+    await expect(options.first().locator(".bg-success")).toBeVisible();
+    await expect(page.locator("[role=option][aria-disabled=true]")).toHaveCount(11);
+    await expect(options.nth(5)).toHaveText("Juni, noch nicht importiert");
+    await expect(options.nth(5).locator(".bg-muted-foreground\\/35")).toBeVisible();
+    // The status is the dot alone; the words exist for screen readers only.
+    await expect(options.nth(5).getByText(/importiert/)).toHaveClass(/sr-only/);
     for (const theme of ["dark", "light"]) {
       await noOverflow(page);
-      await page.screenshot({ path: testInfo.outputPath(`forecast-${width}-${theme}.png`), fullPage: true });
-      if (theme === "dark") await page.getByRole("button", { name: "Farbschema wechseln", exact: true }).click();
+      await page.screenshot({ path: testInfo.outputPath(`month-select-${width}-${theme}.png`) });
+      if (theme === "dark") {
+        await page.keyboard.press("Escape");
+        await expect(select).toBeFocused();
+        await page.getByRole("button", { name: "Farbschema wechseln", exact: true }).click();
+        await select.click();
+      }
     }
+    await options.nth(5).click({ force: true });
+    await expect(options.first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(select).toHaveText("Jänner, importiert");
+    await expect(page.getByRole("region", { name: `Gehalt ${monthLabel("2026-01")}`, exact: true })).toBeVisible();
     expect((await snapshot(page)).state).toEqual(state);
-    await page.getByRole("button", { name: "Monatsdetails schließen", exact: true }).click();
-    await expect(page.getByRole("region", { name: monthLabel("2026-12"), exact: true })).toHaveCount(0);
-    await expect(tile).toBeFocused();
-    await expect(tile).toHaveAttribute("aria-expanded", "false");
   });
 }

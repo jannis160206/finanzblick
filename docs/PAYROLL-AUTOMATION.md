@@ -31,7 +31,7 @@ Stand: 11.11.2026
    - kumulierte Werte;
    - Rufbereitschaft gegenüber Sonderzahlung.
 
-   Widersprüche halten die Abrechnung vom Budget fern und markieren sie in der Monatsübersicht zur Prüfung. Alle Prüfergebnisse stehen im Import-Protokoll.
+   Widersprüche halten die Abrechnung vom Budget fern und markieren ihren Monat in der Monatsauswahl mit einem gelben Punkt zur Prüfung. Alle Prüfergebnisse stehen im Import-Protokoll.
 3. Aus den eigenen Abrechnungen (2025 + 2026) wird ein **Profil** gelernt:
    - Rufbereitschafts-Pauschale je Jahr;
    - Monate mit Feiertagsdiensten;
@@ -40,7 +40,7 @@ Stand: 11.11.2026
 
    Das Profil fließt in Prüfung und Prognose ein.
 4. Unklare Begriffe erklärt zuerst ein **lokales Glossar**. Nur auf ausdrücklichen Wunsch (Einstellung, standardmäßig aus) wird zusätzlich die vorhandene Wikipedia-Abfrage über den MCP-Server genutzt; dabei verlässt nur der Begriff das Gerät. Ergebnisse stehen im Import-Protokoll.
-5. Die Monatsübersicht bleibt die Hauptansicht; technische Details bleiben im Import-Protokoll.
+5. Gehalt & Steuern zeigt den Status nur als Punkt in der Monatsauswahl; technische Details bleiben im Import-Protokoll.
 
 ## Leitplanken
 

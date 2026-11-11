@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { PayrollFocusCard } from "@/components/payroll-focus";
 import { PayrollTaxes } from "@/components/payroll-taxes";
 import { useFinance } from "@/components/finance-provider";
@@ -14,6 +14,9 @@ vi.mock("@/lib/import/payslip", () => ({ parsePayslipPdf: vi.fn(), PayslipPasswo
 vi.mock("@/components/finance-provider", () => ({ useFinance: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 afterEach(cleanup);
+beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
+});
 
 const july: Payslip = {
   year: 2026, month: 7, employer: "Musterbetrieb GmbH", regularGross: 4000, specialGross: 0,
@@ -112,10 +115,13 @@ function Fixture({ payslips }: { payslips: Payslip[] }) {
 it("defaults to the latest payslip and switches the focus month with buttons and the month select", () => {
   const payslips = [3, 6, 7].map((month) => ({ ...july, month, netPay: 2600 + month * 10 }));
   render(<Fixture payslips={[...payslips, { ...july, year: 2027, month: 2 }]} />);
-  const select = screen.getByLabelText<HTMLSelectElement>("Monat");
+  const select = screen.getByLabelText("Monat");
   expect(screen.getByRole("region", { name: "Gehalt Juli 2026" })).toBeTruthy();
-  expect(select.value).toBe("7");
-  expect([...select.options].map((option) => option.textContent)).toEqual(["März", "Juni", "Juli"]);
+  expect(select.textContent).toBe("Juli, zur Prüfung");
+  fireEvent.click(select);
+  const imported = screen.getAllByRole("option").filter((option) => option.getAttribute("aria-disabled") !== "true");
+  expect(imported.map((option) => option.textContent)).toEqual(["März, zur Prüfung", "Juni, zur Prüfung", "Juli, zur Prüfung"]);
+  fireEvent.keyDown(screen.getByRole("listbox"), { key: "Escape" });
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Nächster Monat" }).disabled).toBe(true);
   expect(screen.getByText(`+${money(10)} zum Vormonat`)).toBeTruthy();
 
@@ -123,8 +129,10 @@ it("defaults to the latest payslip and switches the focus month with buttons and
   expect(screen.getByRole("region", { name: "Gehalt Juni 2026" })).toBeTruthy();
   expect(screen.getByText(`+${money(30)} zu März 2026`)).toBeTruthy();
 
-  fireEvent.change(select, { target: { value: "3" } });
+  fireEvent.click(screen.getByLabelText("Monat"));
+  fireEvent.click(screen.getByRole("option", { name: "März, zur Prüfung" }));
   expect(screen.getByRole("region", { name: "Gehalt März 2026" })).toBeTruthy();
+  expect(screen.getByLabelText("Monat").textContent).toBe("März, zur Prüfung");
   expect(screen.getByRole<HTMLButtonElement>("button", { name: "Vorheriger Monat" }).disabled).toBe(true);
   expect(screen.queryByRole("list", { name: "Vergleich" })).toBeNull();
 

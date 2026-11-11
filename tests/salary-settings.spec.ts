@@ -58,8 +58,9 @@ test.describe("browser mode", () => {
         await expect(focus).toBeVisible();
         await expect(focus.getByRole("list", { name: "Aufteilung des Bruttos" })).toBeVisible();
         await expect(page.getByRole("region", { name: "Jahr bisher" })).toBeVisible();
-        await expect(page.getByRole("list", { name: "Monate 2026" }).getByRole("listitem")).toHaveCount(12);
-        await page.getByLabel("Monat", { exact: true }).selectOption("1");
+        await expect(page.getByRole("region", { name: "Monatsübersicht", exact: true })).toHaveCount(0);
+        await page.getByRole("combobox", { name: "Monat", exact: true }).click();
+        await page.getByRole("option", { name: /^Jänner,/ }).click();
         await expect(page.getByRole("region", { name: "Gehalt Jänner 2026" })).toBeVisible();
         await settled(page, theme);
         await axe(page);
