@@ -140,9 +140,7 @@ export function AiReviewAssistant() {
         webTotals.current += preview.applied.length;
         if (!pendingWebLookups(next, 1, webAttempted.current).length && webTotals.current) {
           const done = webTotals.current;
-          toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Internet-Recherche zugeordnet`, {
-            description: "Geschäftstyp aus OpenStreetMap, Wikidata oder der Händler-Webseite.",
-          });
+          toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Internet-Recherche zugeordnet`);
           webTotals.current = 0;
         }
       } catch {
@@ -183,9 +181,7 @@ export function AiReviewAssistant() {
         // Offline, logged out or another sweep running; the next page load continues.
       }
       if (saved)
-        toast.success(`${saved} neue${saved === 1 ? "s" : ""} Händler-Logo${saved === 1 ? "" : "s"} aus dem Internet geladen`, {
-          description: "Quellen: Wikidata/Wikimedia Commons und die offiziellen Webseiten der Händler.",
-        });
+        toast.success(`${saved} neue${saved === 1 ? "s" : ""} Händler-Logo${saved === 1 ? "" : "s"} geladen`);
     })();
   }, [ready, storageError, hasBookings]);
 
@@ -252,9 +248,7 @@ export function AiReviewAssistant() {
         totals.current.open += batch.length - applied;
         if (!aiReviewCandidates(latest.current, attempted.current).length && totals.current.applied) {
           const { applied: done, open } = totals.current;
-          toast.success(`Lokale KI hat ${done} Buchung${done === 1 ? "" : "en"} zugeordnet`, {
-            description: open ? `${open} bleiben zur manuellen Prüfung.` : "Keine offenen Fälle für die KI.",
-          });
+          toast.success(`Lokale KI hat ${done} Buchung${done === 1 ? "" : "en"} zugeordnet${open ? ` · ${open} bitte selbst prüfen` : ""}`);
           totals.current = { applied: 0, open: 0 };
         }
         for (const logo of logos) {

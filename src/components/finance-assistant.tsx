@@ -234,7 +234,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (!solved.length) return;
       update((current) => solved.reduce((next, item) => ({ ...next,
         assistantPhrases: learnPhrase(next.assistantPhrases, item.text, item.tool), assistantGaps: resolveGap(next.assistantGaps, item.text, item.tool) }), current));
-      toast.success(`Selbst nachgelernt: ${solved.length === 1 ? `„${solved[0].text.slice(0, 60)}“ verstehe ich jetzt` : `${solved.length} offene Fragen verstehe ich jetzt`}`);
+      toast.success(`Selbst nachgelernt · ${solved.length === 1 ? "1 offene Frage" : `${solved.length} offene Fragen`}`);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, storageError]);

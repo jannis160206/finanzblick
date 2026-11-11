@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, Download, ScrollText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsSection } from "@/components/settings-section";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { ToggleRow } from "@/components/ui/premium-dialog";
 import { useFinance } from "@/components/finance-provider";
 import { downloadPayslipLog, usePayslipLogStore } from "@/components/payslip-log";
+import { currency, monthLabel } from "@/lib/format";
 import type { PayslipLogEntry, PayslipLogSource } from "@/lib/payslip-log";
 import { cn } from "@/lib/utils";
 
@@ -71,10 +72,24 @@ function summary(entry: PayslipLogEntry) {
   return [...parts, ...(review ? [`${review} zur Prüfung`] : [])].join(" · ");
 }
 
+function DetailGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div>
+      {title && <p className="text-2xs font-medium text-muted-foreground">{title}</p>}
+      <ul className="mt-1 space-y-1.5">{children}</ul>
+    </div>
+  );
+}
+
 function LogEntry({ entry }: { entry: PayslipLogEntry }) {
   const state = status(entry);
   const files = [...(entry.files ?? [])].sort((a, b) =>
     (["failed", "waiting", "skipped", "imported"] as const).indexOf(a.outcome) - (["failed", "waiting", "skipped", "imported"] as const).indexOf(b.outcome));
+  // Which payslip went to which budget month, and which budget values changed: only here, never in toasts.
+  const income = entry.income ?? [];
+  const changes = entry.budget?.changes ?? [];
+  const withoutNet = entry.withoutNet ?? [];
+  const onlyFiles = !income.length && !changes.length && !withoutNet.length;
   return (
     <li className="py-2.5">
       <div className="flex items-start justify-between gap-3">
@@ -87,13 +102,14 @@ function LogEntry({ entry }: { entry: PayslipLogEntry }) {
         </div>
         <Badge variant={state.variant} className="shrink-0">{state.label}</Badge>
       </div>
-      {files.length > 0 && (
+      {(files.length > 0 || !onlyFiles) && (
         <details className="group mt-1.5">
           <summary className="inline-flex min-h-9 cursor-pointer list-none items-center gap-1 rounded-md text-xs text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring pointer-fine:min-h-6 [&::-webkit-details-marker]:hidden">
             <ChevronRight aria-hidden="true" className="size-3.5 transition-transform duration-150 group-open:rotate-90" />
-            {files.length === 1 ? "1 Datei" : `${files.length} Dateien`}
+            {onlyFiles ? files.length === 1 ? "1 Datei" : `${files.length} Dateien` : "Details"}
           </summary>
-          <ul className="mt-1 space-y-1.5 border-l border-border/70 pl-3">
+          <div className="mt-1 max-h-72 space-y-3 overflow-y-auto border-l border-border/70 pl-3">
+          {files.length > 0 && <DetailGroup title={onlyFiles ? "" : "Dateien"}>
             {files.map((file, index) => (
               <li key={`${file.name}-${index}`} className="flex min-w-0 items-baseline gap-2 text-xs">
                 <span aria-hidden="true" className={cn("size-1.5 shrink-0 translate-y-[-1px] rounded-full", outcomeDot[file.outcome])} />
@@ -105,7 +121,29 @@ function LogEntry({ entry }: { entry: PayslipLogEntry }) {
                 </span>
               </li>
             ))}
-          </ul>
+          </DetailGroup>}
+          {income.length > 0 && <DetailGroup title="Ins Budget">
+            {income.map((item) => (
+              <li key={item.payroll} className="flex min-w-0 flex-wrap justify-between gap-x-3 text-xs">
+                <span>Abrechnung {monthLabel(item.payroll, true)} → {monthLabel(item.month, true)}</span>
+                <span className="tabular-nums">
+                  {currency(item.net)}{item.special ? <span className="text-muted-foreground"> · davon Sonderzahlung {currency(item.special)}</span> : null}
+                </span>
+              </li>
+            ))}
+          </DetailGroup>}
+          {withoutNet.length > 0 && <DetailGroup title="Ohne eindeutiges Netto">
+            <li className="text-xs">{withoutNet.map((month) => monthLabel(month, true)).join(", ")}</li>
+          </DetailGroup>}
+          {changes.length > 0 && <DetailGroup title="Budgetwerte">
+            {changes.map((change, index) => (
+              <li key={`${change.row}-${change.month}-${index}`} className="flex min-w-0 flex-wrap justify-between gap-x-3 text-xs">
+                <span>{change.row} · {monthLabel(change.month, true)}</span>
+                <span className="tabular-nums text-muted-foreground">{currency(change.from)} → <span className="text-foreground">{currency(change.to)}</span></span>
+              </li>
+            ))}
+          </DetailGroup>}
+          </div>
         </details>
       )}
     </li>

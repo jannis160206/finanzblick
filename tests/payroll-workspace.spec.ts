@@ -261,7 +261,7 @@ for (const width of [1440, 390]) {
     });
     await picker.setInputFiles(pdf());
     await expect(
-      importer.getByText(/^1 Abrechnung\(en\) automatisch übernommen\./),
+      importer.locator("p[role=status]", { hasText: /^1 Abrechnung übernommen/ }),
     ).toBeVisible();
     await expect(
       page.getByText("Synchronisiert", { exact: true }),
@@ -271,9 +271,7 @@ for (const width of [1440, 390]) {
     await modelValues(page, saved);
     await picker.setInputFiles(pdf());
     await expect(
-      importer.getByText(
-        /^Abrechnungen bereits vorhanden – nicht doppelt übernommen\./,
-      ),
+      importer.locator("p[role=status]", { hasText: /^Bereits vorhanden – nichts doppelt übernommen/ }),
     ).toBeVisible();
     expect((await snapshot(page)).state.payslips).toEqual(saved.payslips);
     await picker.setInputFiles(pdf(4500));

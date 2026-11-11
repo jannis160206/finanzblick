@@ -14,11 +14,12 @@ const entries: PayslipLogEntry[] = [
   {
     at: at("2026-11-10T18:30:00"), source: "upload", message: "1 Abrechnung(en) automatisch übernommen.",
     files: [{ name: "Oktober.pdf", outcome: "imported" }],
+    income: [{ payroll: "2026-10", month: "2026-11", net: 2500, special: 300 }],
     validation: [{ period: "2026-10", employer: "Musterbetrieb GmbH", consistent: false, held: true, checks: [] }],
   },
   {
     at: at("2026-11-11T09:56:00"), source: "budget", message: "Budget aus Abrechnungen aktualisiert · 3 Werte (Dez. 2026 – März 2027).",
-    budget: { applied: 3 },
+    budget: { applied: 1, changes: [{ row: "Gehalt", month: "2027-03", from: 2400, to: 2500, reason: "Prognose" }] },
   },
   {
     at: at("2026-11-11T10:44:00"), source: "drive-background",
@@ -64,6 +65,10 @@ it("groups runs by day with a plain summary and one clear status, files folded a
   const yesterday = within(screen.getByRole("region", { name: "Gestern" }));
   expect(yesterday.getByText(/1 übernommen · 1 zur Prüfung/)).toBeTruthy();
   expect(yesterday.getByText("Zur Prüfung")).toBeTruthy();
+  // Amounts and months only inside the folded details.
+  expect(yesterday.getByText("Details")).toBeTruthy();
+  expect(yesterday.getByText("Abrechnung Okt. 2026 → Nov. 2026").nextElementSibling?.textContent).toMatch(/^2\.500,00\s€ · davon Sonderzahlung 300,00\s€$/);
+  expect(within(budget).getByText("Gehalt · März 2027")).toBeTruthy();
   expect(screen.queryByText(/im Hintergrund: 3 übernommen, 0 warten/)).toBeNull();
   expect(screen.getByRole("switch", { name: "Unbekannte Begriffe online nachschlagen" })).toBeTruthy();
   expect(screen.getByRole("button", { name: /JSON herunterladen/ })).toBeTruthy();

@@ -39,6 +39,13 @@ const lookupSchema = z.object({
   text: text(1600).optional(),
   url: text(300).optional(),
 });
+const incomeSchema = z.object({
+  /** Abrechnungsmonat and the budget month that receives its net. */
+  payroll: text(10),
+  month: text(10),
+  net: z.number().finite(),
+  special: z.number().finite().optional(),
+});
 const budgetSchema = z.object({
   /** Budget values written automatically. */
   applied: z.number().int().nonnegative(),
@@ -65,7 +72,12 @@ export const payslipLogEntrySchema = z.object({
   /** Unclear terms explained by the glossary or – only when allowed – looked up on Wikipedia. */
   lookups: z.array(lookupSchema).max(10).optional(),
   budget: budgetSchema.optional(),
+  /** Net pay of each payslip written to the budget: the detail the short message leaves out. */
+  income: z.array(incomeSchema).max(60).optional(),
+  /** Abrechnungsmonate whose net could not be read for the budget. */
+  withoutNet: z.array(text(10)).max(60).optional(),
 });
+export type PayslipLogIncome = z.infer<typeof incomeSchema>;
 export type PayslipLogLookup = z.infer<typeof lookupSchema>;
 export type PayslipLogBudget = z.infer<typeof budgetSchema>;
 export type PayslipLogEntry = z.infer<typeof payslipLogEntrySchema>;
@@ -90,6 +102,8 @@ export function payslipLogEntry(input: {
   held?: readonly string[];
   lookups?: readonly PayslipLogLookup[];
   budget?: PayslipLogBudget;
+  income?: readonly PayslipLogIncome[];
+  withoutNet?: readonly string[];
 }): PayslipLogEntry {
   const drafts = (input.report?.drafts ?? []).slice(0, 60).map((draft) => {
     const parsed = payslipSchema.safeParse(draft);
@@ -142,6 +156,8 @@ export function payslipLogEntry(input: {
         ...(input.budget.changes ? { changes: input.budget.changes.slice(0, 120).map((change) => ({ ...change, row: clip(change.row, 100), reason: clip(change.reason, 300) })) } : {}),
       },
     } : {}),
+    ...(input.income?.length ? { income: input.income.slice(0, 60).map((item) => ({ ...item })) } : {}),
+    ...(input.withoutNet?.length ? { withoutNet: input.withoutNet.slice(0, 60) } : {}),
   });
 }
 

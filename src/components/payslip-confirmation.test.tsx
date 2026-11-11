@@ -183,7 +183,7 @@ describe("reviewed payslip confirmations with synthetic refreshed state", () => 
     expect(fixture.state.payslips).toEqual([january]);
     expect(fixture.state.payrollForecasts).toEqual([forecast]);
     expect(fixture.state).toBe(before);
-    expect(fixture.success).toHaveBeenCalledWith("Abrechnungen bereits vorhanden – nicht doppelt übernommen. Netto nicht eindeutig für Abrechnung Jänner 2026 – im Folgemonat bitte manuell eintragen.");
+    expect(fixture.success).toHaveBeenCalledWith("Bereits vorhanden – nichts doppelt übernommen · 1 ohne eindeutiges Netto");
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 

@@ -20,6 +20,7 @@ Jeder Meilenstein ist ein eigener Commit auf einem eigenen, gestapelten Branch (
 | M7 Feinschliff | `drive/m7-polish` | `8fd9598` | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
 | M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | `794f66b` | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
 | M9 Gehalt & Steuern aufgeräumt | `payroll/cleanup` | `e30bd0f` | Monatslogik nach Auszahlung, 2025 als Referenz, Prognose am aktuellen Gehalt, Rufbereitschaft ≠ Feiertagsarbeit/Überstunden, Import-Protokoll |
+| M13 Kurze Meldungen | `ui/short-messages` | siehe `main` | Zählende Toasts und Statuszeilen, Details nur im Import-Protokoll |
 | M12 Parser & Einstellungen | `payroll/parser-ui` | `d613206`, `d1b457c` + Doku | Nachzahlungen für Vormonate, Referenz-Schätzungen 2025, aufgeräumtes Gehaltsmodell und Import-Protokoll |
 | M11 Lohnsteuertarif AT & Successbonus | `payroll/at-tax` | `d0076a7`–`114d014` + Doku | Successbonus mit der Dezember-Abrechnung im Jänner, Sonderzahlungen nach § 67, Tarif mit gelernten Absetzbeträgen (`docs/PAYROLL-TAX-AT.md`) |
 | M10 Automatische Budget-Übernahme | `payroll/auto-budget` | `f897992`–`bf4944e` + Tests/Doku | Prüfung jeder Abrechnung, automatische Übernahme, gelerntes Profil, Glossar mit optionalem Nachschlagen (`docs/PAYROLL-AUTOMATION.md`) |
@@ -149,6 +150,23 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
   - Die Prognose für November und Dezember setzt das übliche laufende Brutto statt des Oktober-Werts an.
   - Monatssummen im Budget bleiben gleich, nur die Aufteilung ändert sich.
 
+### M13 – Kurze Meldungen statt Einzelauflistungen
+- **Abrechnungs-Import** (Upload, zentraler Import, Drive im Browser):
+  - Toast und Statuszeile nennen nur noch Anzahlen, z. B. „Google Drive · 1 Abrechnung übernommen“ oder „10 Abrechnungen übernommen · 2 als Referenz · 1 zur Prüfung“, „1 ohne eindeutiges Netto“, „1 ohne Passwort“.
+  - Die frühere Aufzählung „Abrechnung Jänner 2026 → Februar 2026: Netto …“ steht als strukturiertes Feld `income` (und `withoutNet`) im Import-Protokoll, auch bei Hintergrund-Importen.
+  - In Einstellungen → Abrechnungen ist sie unter „Details“ aufklappbar.
+- **Weitere Meldungen**:
+  - Budget-Abgleich: „Budget aktualisiert · n Werte“ ohne Monatsbereich.
+  - Erneut prüfen: „10 Abrechnungen abgeglichen · 22 Dateien in Prüfung“.
+  - Nicht übernommene Abrechnungen als Anzahl statt Monatsliste; die Statuszeile ist nicht mehr abgeschnitten.
+  - Drive-Fehler mit Verweis aufs Protokoll statt langer Beschreibung.
+- **App-weit**:
+  - Kassenbon-Aufteilung ohne Betragsliste.
+  - Importhinweise als Anzahl.
+  - KI- und Logo-Toasts ohne Quellenbeschreibung.
+  - PayPal-Ergänzung, Assistent und Startdatei-Hinweis gekürzt; „(en)“-Plurale ersetzt.
+- **Unverändert**: Die Zähl-Toasts des Kontoauszug-Imports („3 neu, 0 Duplikate ignoriert“) bleiben, weil sie bereits kurz sind. Ebenso der Uploadstatus-Dialog als Detailansicht.
+
 ### M12 – Robuster Parser und aufgeräumte Einstellungen
 - **Abrechnung Juli 2025**: Sie scheiterte an zwei Abschnitten „Nachtrag für Mai/Juni“ (rückwirkende Erhöhung). Der Parser las die Überschriften als unvollständige Bestandteile, die wiederholten Gehalts- und Überstundenzeilen als Dubletten und fand drei Grundgehälter.
   - Jetzt wird die Nachzahlung als eigener Abschnitt erkannt. Die Monatswerte bleiben sauber; Nachzahlung und „Vormonate“-Abzüge werden getrennt gespeichert.
@@ -170,7 +188,7 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
 - **Keine Änderung** in `src/lib/import/` und an der Validierung.
 
 ### M10 – Abrechnungen automatisch ins Budget
-- **Kein „Budget aktualisieren“ mehr**: Konsistente Abrechnungen und die Gehaltsprognose gehen ohne Bestätigung ins Budget. Rückmeldung per kurzem Toast („Budget aus Abrechnungen aktualisiert · n Werte“) und als Statuszeile in der Zusammenfassung.
+- **Kein „Budget aktualisieren“ mehr**: Konsistente Abrechnungen und die Gehaltsprognose gehen ohne Bestätigung ins Budget. Rückmeldung per kurzem Toast („Budget aktualisiert · n Werte“) und als Statuszeile in der Zusammenfassung.
 - **Schutz vor Überschreiben**: Finanzblick merkt sich die selbst gesetzten Werte im optionalen Feld `payrollBudget` der Finanzdaten (JSON, keine Migration). Von Hand geänderte Werte und doppelte Sonderzahlungen in „Sonstiges“ werden nie automatisch geändert, sondern unter **„n Budgetwerte prüfen“** angeboten (Budget-Seite und Zusammenfassung). Was man beibehält, wird nicht erneut angeboten.
 - **Prüfung jeder Abrechnung** (`src/lib/payslip-validation.ts`): Netto-Abgleich, Überweisungen gegen Netto, Brutto-Bestandteile und Lohnsteuerquote halten eine widersprüchliche Abrechnung vom Budget fern. SV-Quote, Sechstel-Besteuerung der Sonderzahlung, Jahreswerte, Rufbereitschaft, Sonderzahlungsmonat und Ausreißer sind Warnungen bzw. Infos. Zurückgehaltene Abrechnungen tragen in der Monatsübersicht den Status **prüfen** und lassen sich nach Kontrolle mit **Ins Budget übernehmen** bestätigen.
 - **Gelerntes Profil** (`src/lib/payroll-pattern.ts`): Rufbereitschafts-Pauschale je Jahr, Monate mit Feiertagsdiensten, Sonderzahlungs- und Prämienmonate, Höhe der Sonderzahlung (fließt in die Prognose) und Akonto-Muster. Anzeige unter Einstellungen → Abrechnungen → Import-Protokoll.

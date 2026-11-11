@@ -128,7 +128,7 @@ it("reports every file of an automatic read and names its source", async () => {
   expect(settled.mock.calls[0][0]).toMatchObject({
     files: [{ outcome: "imported" }, { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }, { outcome: "skipped", note: "Passwort fehlt." }],
   });
-  expect(vi.mocked(toast.success)).toHaveBeenLastCalledWith(expect.stringMatching(/^Google Drive: 1 Abrechnung\(en\) automatisch übernommen\./));
+  expect(vi.mocked(toast.success)).toHaveBeenLastCalledWith("Google Drive · 1 Abrechnung übernommen · 1 ohne eindeutiges Netto · 1 ohne Passwort");
   expect(fixture.state.payslips).toEqual([january]);
 });
 

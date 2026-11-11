@@ -524,7 +524,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         ...draft, category, categoryOverride: true, manualCategory: true, reviewed: true, includeInPlan: true, fixedCost: false,
       });
       if (!parsed.success) {
-        toast.error(`${bookingDescription(item.draft)} braucht eine Einzelprüfung.`);
+        toast.error("Diese Buchung braucht eine Einzelprüfung.");
         return;
       }
       rows.push({ ...parsed.data, includeInPlan: classify(parsed.data).includeInPlan });
@@ -658,9 +658,8 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
       }
       const prepared = prepareStatementImport(results, latestState.current);
       importMetadata.current = prepared.metadata;
-      if (prepared.issues.length) toast.error(prepared.issues.length === 1
-        ? prepared.issues[0]
-        : `${prepared.issues.length} Importhinweise – Details im Uploadstatus.`);
+      if (prepared.issues.length)
+        toast.error(`${prepared.issues.length === 1 ? "1 Importhinweis" : `${prepared.issues.length} Importhinweise`} – Details im Uploadstatus.`);
       setUI({ review: prepared.review, open: prepared.review.length > 0 });
       commit(prepared.automatic, prepared.duplicates, undefined, [], parsedIds, uploads.map((item) => item.id));
     } catch (error) {

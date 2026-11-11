@@ -38,7 +38,8 @@ it("updates the budget on its own once the data settles, with a short toast and 
   expect(update).toHaveBeenCalledTimes(1);
   const next: AppState = update.mock.calls[0][0](state);
   expect(next.financeRows.find((row) => row.id === "income-salary")?.values).toMatchObject({ "2026-12": 2100, "2027-12": 2100 });
-  expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/^Budget aus Abrechnungen aktualisiert · \d+ Werte$/), { description: "Dez. 2026 – Dez. 2027" });
+  // Short toast without months or amounts; the range and every value are in the import log.
+  expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/^Budget aktualisiert · \d+ Werte$/));
   const [entry] = JSON.parse(localStorage.getItem("finanzblick.payslip-log") ?? "[]");
   expect(entry).toMatchObject({ source: "budget", budget: { applied: expect.any(Number), changes: expect.arrayContaining([expect.objectContaining({ month: "2026-12", to: 2100 })]) } });
 });

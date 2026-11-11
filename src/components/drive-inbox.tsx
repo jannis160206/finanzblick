@@ -91,7 +91,7 @@ export function DriveInbox() {
       if (result.busy) return false;
       await Promise.all(result.files.map((file, index) => report(ids[index], file.outcome, file.note)));
       const failed = result.files.filter((file) => file.outcome === "failed").length;
-      if (failed) toast.error(`Google Drive: ${failed} Abrechnung(en) nicht übernommen`, { description: result.message });
+      if (failed) toast.error(`Google Drive · ${failed === 1 ? "1 Abrechnung" : `${failed} Abrechnungen`} nicht übernommen`, { description: "Details im Import-Protokoll." });
       return items.length > batch.length;
     }
 

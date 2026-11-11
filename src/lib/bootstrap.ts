@@ -32,8 +32,8 @@ async function loadInitialData() {
     return {
       state: createSeed(),
       warning: missing
-        ? "Keine Startdatei gefunden. Die vorgegebenen Ist-Stände sind hinterlegt; Umsätze und Monatswerte können direkt erfasst werden."
-        : "Die Startdatei konnte nicht gelesen werden. Ist-Stände sind hinterlegt. Bitte die Arbeitsmappe über Importieren prüfen.",
+        ? "Noch keine Startdatei – Umsätze und Werte lassen sich direkt erfassen."
+        : "Startdatei nicht lesbar – bitte über Importieren prüfen.",
     };
   }
 }

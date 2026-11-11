@@ -29,10 +29,11 @@ export function PayrollBudgetSync() {
       if (!apply.length) return;
       const months = [...new Set(apply.map((item) => item.month))].sort();
       const range = months.length === 1 ? monthLabel(months[0]) : `${monthLabel(months[0], true)} – ${monthLabel(months.at(-1)!, true)}`;
-      const message = `Budget aus Abrechnungen aktualisiert · ${apply.length === 1 ? "1 Wert" : `${apply.length} Werte`}`;
-      toast.success(message, { description: range });
+      const values = apply.length === 1 ? "1 Wert" : `${apply.length} Werte`;
+      // The toast stays short; months, rows and amounts are in the import log.
+      toast.success(`Budget aktualisiert · ${values}`);
       logStore.append(payslipLogEntry({
-        source: "budget", message: `${message} (${range}).`, at: now,
+        source: "budget", message: `Budget aus Abrechnungen aktualisiert · ${values} (${range}).`, at: now,
         budget: { applied: apply.length, changes: apply.map((item) => ({ row: item.label, month: item.month, from: item.from, to: item.to, reason: item.reason })) },
       })).catch(() => undefined);
     }, SETTLE_MS);

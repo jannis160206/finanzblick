@@ -52,7 +52,7 @@ export function GlobalImport() {
       setOpen(false);
       if (statements.length) {
         router.push("/umsaetze");
-        if (payslips.length) toast.info(`${payslips.length} Lohnabrechnung(en) erkannt`, {
+        if (payslips.length) toast.info(`${payslips.length === 1 ? "1 Lohnabrechnung" : `${payslips.length} Lohnabrechnungen`} erkannt`, {
           description: "Sie werden im Hintergrund eingelesen.",
           action: { label: "Öffnen", onClick: () => router.push("/gehalt-steuern") },
         });

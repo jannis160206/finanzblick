@@ -107,7 +107,7 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
         : latest;
       return { ...next, transactions: next.transactions.map((row) => (row.id === current.id ? { ...row, splits } : row)) };
     });
-    toast.success(`Kassenbon aufgeteilt: ${splits.map((part) => `${canonicalCategory(part.category)} ${currency(-part.amount)}`).join(", ")}`);
+    toast.success(`Kassenbon in ${splits.length} Buchungen aufgeteilt`);
     onClose();
   }
 

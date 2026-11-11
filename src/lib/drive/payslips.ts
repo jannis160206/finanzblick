@@ -5,7 +5,7 @@ import type { BudgetCorrection } from "@/lib/budget-corrections";
 import { syncPayrollBudget } from "@/lib/payroll-budget";
 import { applyPayslipIncome } from "@/lib/payslip-income";
 import { completeReferenceDrafts } from "@/lib/payslip-estimate";
-import { payslipLogEntry, type PayslipLogFile } from "@/lib/payslip-log";
+import { payslipLogEntry, type PayslipLogFile, type PayslipLogIncome } from "@/lib/payslip-log";
 import { validatePayslips, type PayslipValidation } from "@/lib/payslip-validation";
 import { glossaryLookups, lookupPendingTerms } from "@/lib/payslip-terms";
 import type { KnowledgeHit } from "@/lib/web/knowledge";
@@ -25,7 +25,7 @@ const MAX_PER_RUN = 48;
 
 export type DriveInboxRun = { imported: number; waiting: number; skipped: number; failed: number };
 type Merge =
-  | { state: AppState; changed: number; held: PayslipValidation[]; budget: BudgetCorrection[] }
+  | { state: AppState; changed: number; held: PayslipValidation[]; budget: BudgetCorrection[]; income: PayslipLogIncome[] }
   | { conflict: true }
   | { unchanged: true };
 
@@ -52,6 +52,9 @@ export function mergeServerPayslips(state: AppState, entries: Payslip[]): Merge 
   return {
     state: appStateSchema.parse(synchronizePlan(queueLedgerReview(budget.state))),
     changed: merged.changed.length, held: income.held, budget: budget.applied,
+    income: income.applied.map((item) => ({
+      payroll: item.payrollMonth, month: item.month, net: item.net, ...(item.special > 0 ? { special: item.special } : {}),
+    })),
   };
 }
 
@@ -59,12 +62,13 @@ class Stop {
   constructor(readonly result: "conflict" | "unchanged") {}
 }
 
-type Commit = { result: "imported" | "unchanged" | "conflict"; held: PayslipValidation[]; budget: BudgetCorrection[] };
+type Commit = { result: "imported" | "unchanged" | "conflict"; held: PayslipValidation[]; budget: BudgetCorrection[]; income: PayslipLogIncome[] };
 
 function commit(database: AccountDatabase, userId: string, entries: Payslip[]): Commit {
   for (let attempt = 0; ; attempt++) {
     let held: PayslipValidation[] = [];
     let budget: BudgetCorrection[] = [];
+    let income: PayslipLogIncome[] = [];
     try {
       database.transformFinance(userId, (stored) => {
         const merged = mergeServerPayslips(stored ?? createEmptyAccountState(), entries);
@@ -72,11 +76,12 @@ function commit(database: AccountDatabase, userId: string, entries: Payslip[]): 
         if ("unchanged" in merged) throw new Stop("unchanged");
         held = merged.held;
         budget = merged.budget;
+        income = merged.income;
         return merged.state;
       }, () => undefined);
-      return { result: "imported", held, budget };
+      return { result: "imported", held, budget, income };
     } catch (error) {
-      if (error instanceof Stop) return { result: error.result, held: [], budget: [] };
+      if (error instanceof Stop) return { result: error.result, held: [], budget: [], income: [] };
       // Saved in the browser meanwhile: merge again on the newer state.
       if (isAccountError(error) && error.status === 409 && attempt < 2) continue;
       throw error;
@@ -113,6 +118,7 @@ export async function processDriveInbox(
   const validation: PayslipValidation[] = [];
   const held: string[] = [];
   const budget: BudgetCorrection[] = [];
+  const income: PayslipLogIncome[] = [];
   const report: PayslipImport = { drafts: [], issues: [] };
   for (const item of items) {
     if (signal?.aborted || handled >= MAX_PER_RUN) break;
@@ -147,7 +153,8 @@ export async function processDriveInbox(
       });
       if (!entries.length) { await finish("failed", "Nicht vollständig erkannt."); continue; }
       validation.push(...validatePayslips(entries, database.getFinance(userId).state?.payslips ?? []));
-      const { result, held: kept, budget: written } = commit(database, userId, entries);
+      const { result, held: kept, budget: written, income: applied } = commit(database, userId, entries);
+      income.push(...applied);
       held.push(...kept.map((item) => item.period));
       budget.push(...written);
       if (result === "conflict") {
@@ -175,7 +182,7 @@ export async function processDriveInbox(
     );
     if (pending.length) lookups.push(...await lookupPendingTerms(pending, lookup));
     await appendPayslipLogFile(database, userId, payslipLogEntry({
-      source: "drive-background", message, files, report, stored: saved, validation, held, lookups,
+      source: "drive-background", message, files, report, stored: saved, validation, held, lookups, income,
       ...(budget.length || held.length ? { budget: { applied: budget.length, held, changes: budget.map((item) => ({ row: item.label, month: item.month, from: item.from, to: item.to, reason: item.reason })) } } : {}),
     })).catch(() => undefined);
   }

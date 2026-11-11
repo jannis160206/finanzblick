@@ -35,10 +35,7 @@ export function usePaypalActivityImport() {
         return;
       }
       toast.success(`${result.matched.length} PayPal-Buchung${result.matched.length === 1 ? "" : "en"} mit Händler ergänzt`, {
-        description: [
-          assigned ? `${assigned} davon direkt zugeordnet.` : "",
-          result.ambiguous ? `${result.ambiguous} nicht eindeutig, bitte selbst prüfen.` : "",
-        ].filter(Boolean).join(" ") || undefined,
+        description: result.ambiguous ? `${result.ambiguous} bitte selbst prüfen` : assigned ? `${assigned} direkt zugeordnet` : undefined,
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Der PayPal-Export konnte nicht gelesen werden.");

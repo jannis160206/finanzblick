@@ -31,7 +31,7 @@ async function recheckDrive(account: string | null): Promise<string> {
     const { status } = await accountRequest<{ status: DriveStatus }>("/api/drive", account, { method: "POST", json: { action: "recheck" } },
       "Google Drive konnte nicht geprüft werden.");
     if (status.inbox) requestDriveInbox();
-    return status.inbox ? `${plural(status.inbox, "Datei", "Dateien")} aus Google Drive in Prüfung.` : "Google Drive geprüft.";
+    return status.inbox ? `${plural(status.inbox, "Datei", "Dateien")} in Prüfung` : "Google Drive geprüft";
   } catch (cause) {
     if (cause instanceof AccountRequestError && [404, 409, 503].includes(cause.status)) return "";
     return cause instanceof Error ? cause.message : "Google Drive konnte nicht geprüft werden.";
@@ -68,11 +68,8 @@ export function PayslipSummary({ onReviewPayslip }: { onReviewPayslip?: (entry: 
       return synced.state;
     }, () => {
       void (async () => {
-        const budget = [synced?.applied.length
-          ? `${plural(synced.applied.length, "Abrechnung", "Abrechnungen")} im Budget abgeglichen.`
-          : "Keine Abrechnung fürs Budget.",
-        synced?.held.length ? `${plural(synced.held.length, "Abrechnung", "Abrechnungen")} zur Prüfung markiert.` : ""].filter(Boolean).join(" ");
-        const message = [budget, await recheckDrive(account)].filter(Boolean).join(" ");
+        const message = [synced?.applied.length ? `${plural(synced.applied.length, "Abrechnung", "Abrechnungen")} abgeglichen` : "Keine Abrechnung fürs Budget",
+          synced?.held.length ? `${synced.held.length} zur Prüfung` : "", await recheckDrive(account)].filter(Boolean).join(" · ");
         setMessage({ notice: message, error: "" });
         toast.success(message);
         logStore.append(payslipLogEntry({
@@ -126,10 +123,10 @@ export function PayslipSummary({ onReviewPayslip }: { onReviewPayslip?: (entry: 
       </div>
       {busy && <p role="status" className="mt-3 text-sm text-muted-foreground">PDFs werden lokal gelesen …</p>}
       {(error || storageError) && <p role="alert" className="mt-3 text-sm text-destructive">{storageError || error}</p>}
-      {notice && <p role="status" title={notice} className="mt-3 line-clamp-2 text-sm text-muted-foreground">{notice}</p>}
+      {notice && <p role="status" className="mt-3 text-sm text-muted-foreground">{notice}</p>}
       {notTaken.length > 0 && (
         <p role="alert" className="mt-2 text-xs text-muted-foreground">
-          {notTaken.join(", ")} nicht übernommen ·{" "}
+          {plural(notTaken.length, "Abrechnung", "Abrechnungen")} nicht übernommen ·{" "}
           <Link href="/einstellungen#import-protokoll" className="font-medium text-foreground underline-offset-4 hover:underline">Import-Protokoll</Link>
         </p>
       )}

@@ -265,10 +265,14 @@ it("imports complete months but never guesses the gross split of unknown wage co
   render(<Fixture />);
   selectPdf();
   await waitFor(() => expect(latest.payslips).toEqual([january]));
-  expect(screen.getByRole("alert").textContent).toContain(`${monthLabel("2026-02")} nicht übernommen`);
+  expect(screen.getByRole("alert").textContent).toBe("1 Abrechnung nicht übernommen · Import-Protokoll");
   expect(screen.getByRole("link", { name: "Import-Protokoll" }).getAttribute("href")).toBe("/einstellungen#import-protokoll");
   expect(screen.queryByText(/Lohnart 1509/)).toBeNull();
   await waitFor(() => expect(importLog()[0]?.issues?.[0]).toMatch(/Lohnart 1509/));
+  // The toast only counts; which payslip went to which month with which net is in the import log.
+  const { toast } = await import("sonner");
+  expect(vi.mocked(toast.success).mock.calls.at(-1)?.[0]).toBe("1 Abrechnung übernommen");
+  expect(importLog()[0]).toMatchObject({ message: "1 Abrechnung übernommen", income: [{ payroll: "2026-01", month: "2026-02", net: 2260 }] });
   expectNoManualInputs();
   expect(screen.queryByRole("button", { name: "Abrechnung übernehmen" })).toBeNull();
 });
@@ -299,7 +303,7 @@ it("leaves existing records untouched after an unsupported replacement upload", 
 it("ignores identical uploads and requires only explicit consent for a different same-month PDF", async () => {
   render(<Fixture initial={{ ...seed(), payslips: [january] }} />);
   selectPdf();
-  await screen.findByText(/Abrechnungen bereits vorhanden/);
+  await screen.findByText("Bereits vorhanden – nichts doppelt übernommen");
   expect(latest.payslips).toEqual([january]);
   pdf.parse.mockResolvedValueOnce({ drafts: [{ ...january, regularGross: 3200 }], issues: [] });
   selectPdf();
@@ -334,7 +338,7 @@ it("saves nothing while a later PDF waits for its password and imports the rest 
   expect(localStorage.getItem("payroll-test")).toBeNull();
   fireEvent.click(dialog.getByRole("button", { name: "Überspringen" }));
   await waitFor(() => expect(latest.payslips).toEqual([january]));
-  expect(vi.mocked(toast.success).mock.calls.at(-1)?.[0]).toContain("1 von 2 Datei(en) ohne Passwort übersprungen.");
+  expect(vi.mocked(toast.success).mock.calls.at(-1)?.[0]).toBe("1 Abrechnung übernommen · 1 ohne Passwort");
   expect(pdf.parse).toHaveBeenCalledTimes(2);
 });
 
@@ -581,7 +585,7 @@ it("re-applies stored payslips to the budget on \"Erneut prüfen\" and logs the 
   expect(latest.financeRows.find((row) => row.id === "income-salary")?.values["2026-02"]).toBeUndefined();
   fireEvent.click(screen.getByRole("button", { name: "Erneut prüfen" }));
   await waitFor(() => expect(latest.financeRows.find((row) => row.id === "income-salary")?.values["2026-02"]).toBe(2260));
-  expect(await screen.findByText("1 Abrechnung im Budget abgeglichen.")).toBeTruthy();
+  expect(await screen.findByText("1 Abrechnung abgeglichen")).toBeTruthy();
   await waitFor(() => expect(importLog().map((entry) => entry.source)).toEqual(["recheck"]));
   expect(latest.payslips).toEqual([january]);
 });
@@ -595,7 +599,7 @@ it("keeps an uploaded 2025 payslip as reference: stored, shown in January, never
   await waitFor(() => expect(latest.payslips).toHaveLength(2));
   expect(latest.financeRows).toEqual(initial.financeRows);
   expect(screen.queryByRole("alert")).toBeNull();
-  expect(await screen.findByText(/1 Abrechnung aus 2025 als Referenz gespeichert – nicht im Budget\./)).toBeTruthy();
+  expect(await screen.findByText("1 Abrechnung als Referenz übernommen")).toBeTruthy();
   expect(screen.getByLabelText<HTMLSelectElement>("Steuerjahr").value).toBe("2026");
   expect(screen.getByRole("button", { name: /^Jänner 2026, netto 2\.300\s€, Referenz, Abrechnung Dezember 2025/ })).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Abrechnungen" })).getByText(/1 aus 2025 als Referenz/)).toBeTruthy();
@@ -610,7 +614,7 @@ it("keeps a contradicting payslip out of the budget, marks it for review and tak
   selectPdf();
   await waitFor(() => expect(latest.payslips).toEqual([broken]));
   expect(latest.financeRows).toEqual(initial.financeRows);
-  expect(await screen.findByText(/Zur Prüfung markiert, nicht im Budget: Abrechnung Jänner 2026/)).toBeTruthy();
+  expect(await screen.findByText("1 Abrechnung übernommen · 1 zur Prüfung")).toBeTruthy();
   const [entry] = importLog();
   expect(entry).toMatchObject({ validation: [expect.objectContaining({ period: "2026-01", consistent: false, held: true })] });
   const summary = within(screen.getByRole("region", { name: "Abrechnungen" }));

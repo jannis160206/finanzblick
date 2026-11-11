@@ -109,7 +109,7 @@ test.describe("browser mode", () => {
       await dialog.getByRole("button", { name: "Öffnen", exact: true }).click();
       await expect(dialog).toBeHidden();
       const archive = page.getByRole("region", { name: "Abrechnungen", exact: true });
-      await expect(archive.getByText(/^2 Abrechnung\(en\) automatisch übernommen\./)).toBeVisible();
+      await expect(archive.locator("p[role=status]", { hasText: /^2 Abrechnungen übernommen/ })).toBeVisible();
       await expect(page.getByRole("region", { name: "Gehalt Oktober 2026" })).toBeVisible();
       expect(await page.evaluate((key) => localStorage.getItem(key) ?? "", storageKey)).not.toContain("synthetisch-123");
       await settled(page, theme);
@@ -134,7 +134,7 @@ test.describe("browser mode", () => {
     const chooser = page.waitForEvent("filechooser");
     await page.getByRole("button", { name: "Abrechnungen hochladen", exact: true }).click();
     await (await chooser).setFiles({ name: "oktober.pdf", mimeType: "application/pdf", buffer: syntheticPayslipPdf(10, 4000, "synthetisch-123") });
-    await expect(page.getByRole("region", { name: "Abrechnungen", exact: true }).getByText(/^1 Abrechnung\(en\) automatisch übernommen\./)).toBeVisible();
+    await expect(page.getByRole("region", { name: "Abrechnungen", exact: true }).locator("p[role=status]", { hasText: /^1 Abrechnung übernommen/ })).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 

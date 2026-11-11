@@ -46,7 +46,7 @@ it("keeps automatic payslip analysis open through the native Explorer focus cycl
   fireEvent.change(screen.getByLabelText("Lohnabrechnungen als PDF auswählen"), { target: { files: [file] } });
   fireEvent(window, new Event("focus"));
 
-  expect(await screen.findByText(/automatisch übernommen/)).toBeTruthy();
+  expect(await screen.findByText(/^1 Abrechnung übernommen/)).toBeTruthy();
   expect(pdf.parse).toHaveBeenCalledWith(buffer);
   expect(getSecuritySnapshot().locked).toBe(false);
   expect(update).toHaveBeenCalledOnce();
