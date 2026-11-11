@@ -20,6 +20,7 @@ Jeder Meilenstein ist ein eigener Commit auf einem eigenen, gestapelten Branch (
 | M7 Feinschliff | `drive/m7-polish` | `8fd9598` | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
 | M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | `794f66b` | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
 | M9 Gehalt & Steuern aufgeräumt | `payroll/cleanup` | `e30bd0f` | Monatslogik nach Auszahlung, 2025 als Referenz, Prognose am aktuellen Gehalt, Rufbereitschaft ≠ Feiertagsarbeit/Überstunden, Import-Protokoll |
+| M12 Parser & Einstellungen | `payroll/parser-ui` | `d613206`, `d1b457c` + Doku | Nachzahlungen für Vormonate, Referenz-Schätzungen 2025, aufgeräumtes Gehaltsmodell und Import-Protokoll |
 | M11 Lohnsteuertarif AT & Successbonus | `payroll/at-tax` | `d0076a7`–`114d014` + Doku | Successbonus mit der Dezember-Abrechnung im Jänner, Sonderzahlungen nach § 67, Tarif mit gelernten Absetzbeträgen (`docs/PAYROLL-TAX-AT.md`) |
 | M10 Automatische Budget-Übernahme | `payroll/auto-budget` | `f897992`–`bf4944e` + Tests/Doku | Prüfung jeder Abrechnung, automatische Übernahme, gelerntes Profil, Glossar mit optionalem Nachschlagen (`docs/PAYROLL-AUTOMATION.md`) |
 
@@ -148,6 +149,18 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
   - Die Prognose für November und Dezember setzt das übliche laufende Brutto statt des Oktober-Werts an.
   - Monatssummen im Budget bleiben gleich, nur die Aufteilung ändert sich.
 
+### M12 – Robuster Parser und aufgeräumte Einstellungen
+- **Abrechnung Juli 2025**: Sie scheiterte an zwei Abschnitten „Nachtrag für Mai/Juni“ (rückwirkende Erhöhung). Der Parser las die Überschriften als unvollständige Bestandteile, die wiederholten Gehalts- und Überstundenzeilen als Dubletten und fand drei Grundgehälter.
+  - Jetzt wird die Nachzahlung als eigener Abschnitt erkannt. Die Monatswerte bleiben sauber; Nachzahlung und „Vormonate“-Abzüge werden getrennt gespeichert.
+  - Mit der echten Datei (nur lokal geprüft) sind alle Felder erkannt, und Brutto − Abzüge − Netto ergibt genau die steuerfreie Telearbeitspauschale wie in den anderen Monaten. Juni und August werden unverändert gelesen.
+- **Referenzjahr 2025**: Bei mehreren Werten gilt der letzte; eine unsichere Aufteilung nimmt das laufende Brutto aus der SV-Bemessungsgrundlage; fehlende Werte ergänzt `src/lib/payslip-estimate.ts` aus den eigenen Abrechnungen. Alles als „geschätzt“ markiert und im Protokoll begründet.
+- **2026/2027** bleiben streng. Geschätzte Werte kommen nie automatisch ins Budget.
+- **Änderung in `src/lib/import/payslip.ts`**: nötig, weil nur der Parser die Tabellenstruktur kennt. Bestehende Tests sind unverändert grün, neue Tests decken Nachzahlung und Referenz-Schätzung ab.
+- **Einstellungen → Abrechnungen**:
+  - Gehaltsmodell mit Successbonus-Zeile (Speichern erst nach einer Änderung, „≈ … € brutto“ als Orientierung), dem gelernten Profil und der Steuerlogik als kurze Zeilen; Details hinter ⓘ.
+  - Import-Protokoll nach Tagen mit Status je Lauf („Erledigt“, „Teilweise“, „Fehler“, „Zur Prüfung“, „Wartet“, „Aktualisiert“) und aufklappbaren Dateien.
+  - Online-Nachschlagen als kleiner Schalter.
+
 ### M11 – Lohnsteuertarif AT und Successbonus
 - **Successbonus**: kommt mit der Dezember-Abrechnung und wird im **Jänner** ausgezahlt. Standard 138,5 % des Brutto-Grundgehalts, einstellbar unter Einstellungen → Abrechnungen → **Gehaltsmodell**. Die Prämie, die bisher als Vorjahresmuster im März wiederholt wurde, erscheint dort nicht mehr.
 - **Lohnsteuer nach österreichischem Tarif** (`src/lib/wage-tax-at.ts`): progressive Tarifstufen 2025–2027 und Absetzbeträge, die aus den eigenen Abrechnungen gelernt werden (Verkehrsabsetzbetrag, Familienbonus Plus). Mit den echten Abrechnungen stimmt die einbehaltene Lohnsteuer auf den Cent.
@@ -239,6 +252,7 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
 - **Nach M9**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5089 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Lernmuster Rufbereitschaft, Aufteilung Feiertagsarbeit/Überstunden (auch bei Akonto), 2025-Referenz (Parser, Budget, Hintergrund-Import), übliche Referenzabrechnung im Jahresmodell, Median-/Saisonprognose, Prämie als Sonderzahlung, Kacheln nach Auszahlungsmonat, Import-Protokoll (Bibliothek, Dateispeicher, Route), Drive-`recheck`. E2E bestanden: `payslip-safety.spec.ts`, `payroll-workspace.spec.ts` (320/390/1440 px) und `salary-settings.spec.ts` für Gehalt & Steuern (375/768/1440 px, hell/dunkel, axe). Ein Kachel-Test im Kontomodus schlug einmal wegen automatisch nachgefüllter Monatsbudgets fehl und lief bei der Wiederholung durch (bekannter Reload-Effekt, nicht payroll-bezogen).
 - **Nach M10**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5114 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Prüfregeln (kalibriert an echten Werten, als synthetische Fälle), automatischer Abgleich mit Merkstatus, Prüf-Dialog, zurückgehaltene und bestätigte Abrechnungen (Upload, Hintergrund-Import, Kachel), Pauschale je Jahr und Profil, Glossar und Nachschlagen (Browser und Server). E2E bestanden: `payslip-safety.spec.ts`, `salary-settings.spec.ts` (375/768/1440 px, hell/dunkel, axe) und `payroll-workspace.spec.ts` im Kontomodus. `payroll-workspace` und `budget-workspace` gleichen ihre Testdaten jetzt vorab mit `syncPayrollBudget` ab, weil die App das Budget sonst beim ersten Laden selbst korrigiert. Der bekannte Reload-Effekt trat einmal auf und lief bei der Wiederholung durch.
 - **Nach M11**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5124 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Tarif 2026/2027, gelernte Absetzbeträge, Sonderzahlungs-Steuer (Sechstel, Überhang, Freigrenze, SV-Deckel), Successbonus im Modell und in der Prognose, keine Wiederholung verschobener Prämien, frühes Dezember-Gehalt, Steuerzeile und Schätzungen in der Monatsübersicht, Einstellung Gehaltsmodell. E2E bestanden: `salary-settings.spec.ts` und `payslip-safety.spec.ts` (375/768/1440 px, hell/dunkel, axe) sowie `payroll-workspace.spec.ts` im Kontomodus.
+- **Nach M12**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5132 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Nachzahlungs-Abschnitte und Referenz-Schätzungen im Parser, Ergänzung aus Mustern, Validierung und Netto-Aufteilung mit Nachzahlung, Gehaltsmodell und Import-Protokoll. E2E bestanden: `salary-settings.spec.ts` und `payslip-safety.spec.ts` (375/768/1440 px, hell/dunkel, axe) sowie `payroll-workspace.spec.ts` im Kontomodus.
 - **Hinweis zu Kontomodus-E2E**: Viele Specs in einem Lauf lösen das Login-Rate-Limit aus („Zu viele Versuche“). Deshalb in kleineren Gruppen mit jeweils frischer Test-Datenbank ausführen.
 
 ## Offene Punkte und Grenzen
@@ -254,6 +268,7 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
 - **Prognose-Korrekturen im Budget** werden seit M10 automatisch geschrieben. Von Hand geänderte Werte und doppelte Sonderzahlungen bleiben zur Prüfung stehen.
 - **Ohne Budgetzeile „Überstunden“** landen Überstunden aus der Auszahlung (Akonto-Fall) in „Feiertagsarbeit“. Der automatische Abgleich legt die Zeile an, sobald die Prognose Überstunden enthält. Danach trennt **Erneut prüfen** auch die abgerechneten Monate in diese Zeile.
 - **Nach einem Update** Dev-Server bzw. Dienst und Statement-Worker neu starten: Ein Prozess mit altem Code kennt `payrollBudget` nicht und verwirft den Merkstatus beim Speichern.
+- **Nachzahlungen für Vormonate** zählen nicht zum kumulierten Brutto der Sechstel-Rechnung, weil sie früheren Monaten gehören. Die Sechstel-Schätzung kann dadurch geringfügig abweichen, bis die Lohnverrechnung die kumulierten Werte ausweist.
 - **Online-Nachschlagen** unklarer Begriffe braucht Internet und ist standardmäßig aus. Begriffe, die der Parser nur als Lohnartnummer meldet, werden nicht nachgeschlagen.
 - **Monate vor der letzten Abrechnung ohne Abrechnung** zählen als „fehlt“, auch über den Jahreswechsel hinweg, z. B. wenn schon eine Jänner-Abrechnung des Folgejahres vorliegt.
 - `src/lib/import/statements.test.ts`: Nur eine Testerwartung wurde an die neue Mittagessen-Regel angepasst (Revolut SPAR 12:00 → Mittagessen). Die Import-Logik ist unverändert.
