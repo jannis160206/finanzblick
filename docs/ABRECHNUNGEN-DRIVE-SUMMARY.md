@@ -20,6 +20,7 @@ Jeder Meilenstein ist ein eigener Commit auf einem eigenen, gestapelten Branch (
 | M7 Feinschliff | `drive/m7-polish` | `8fd9598` | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
 | M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | `794f66b` | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
 | M9 Gehalt & Steuern aufgeräumt | `payroll/cleanup` | `e30bd0f` | Monatslogik nach Auszahlung, 2025 als Referenz, Prognose am aktuellen Gehalt, Rufbereitschaft ≠ Feiertagsarbeit/Überstunden, Import-Protokoll |
+| M11 Lohnsteuertarif AT & Successbonus | `payroll/at-tax` | `d0076a7`–`114d014` + Doku | Successbonus mit der Dezember-Abrechnung im Jänner, Sonderzahlungen nach § 67, Tarif mit gelernten Absetzbeträgen (`docs/PAYROLL-TAX-AT.md`) |
 | M10 Automatische Budget-Übernahme | `payroll/auto-budget` | `f897992`–`bf4944e` + Tests/Doku | Prüfung jeder Abrechnung, automatische Übernahme, gelerntes Profil, Glossar mit optionalem Nachschlagen (`docs/PAYROLL-AUTOMATION.md`) |
 
 Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-Branches sind gelöscht.
@@ -147,6 +148,14 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
   - Die Prognose für November und Dezember setzt das übliche laufende Brutto statt des Oktober-Werts an.
   - Monatssummen im Budget bleiben gleich, nur die Aufteilung ändert sich.
 
+### M11 – Lohnsteuertarif AT und Successbonus
+- **Successbonus**: kommt mit der Dezember-Abrechnung und wird im **Jänner** ausgezahlt. Standard 138,5 % des Brutto-Grundgehalts, einstellbar unter Einstellungen → Abrechnungen → **Gehaltsmodell**. Die Prämie, die bisher als Vorjahresmuster im März wiederholt wurde, erscheint dort nicht mehr.
+- **Lohnsteuer nach österreichischem Tarif** (`src/lib/wage-tax-at.ts`): progressive Tarifstufen 2025–2027 und Absetzbeträge, die aus den eigenen Abrechnungen gelernt werden (Verkehrsabsetzbetrag, Familienbonus Plus). Mit den echten Abrechnungen stimmt die einbehaltene Lohnsteuer auf den Cent.
+- **Sonderzahlungen**: SV, im Jahressechstel 620 € frei und 6 %, darüber nach Tarif mit dem laufenden Bezug. Das ersetzt die bisherige Pauschale von 78 % in Prognose, Budget und Sparziel-Planung.
+- **Monatsübersicht**: Geschätzte Monate zeigen Lohnsteuer und SV als Schätzung. Eine kleine Zeile nennt „Lohnsteuertarif AT · progressiv + Absetzbeträge“.
+- **Bank**: Ein Dezember-Gehalt ab dem 20. Dezember zählt zum Jänner.
+- **Keine Änderung** in `src/lib/import/` und an der Validierung.
+
 ### M10 – Abrechnungen automatisch ins Budget
 - **Kein „Budget aktualisieren“ mehr**: Konsistente Abrechnungen und die Gehaltsprognose gehen ohne Bestätigung ins Budget. Rückmeldung per kurzem Toast („Budget aus Abrechnungen aktualisiert · n Werte“) und als Statuszeile in der Zusammenfassung.
 - **Schutz vor Überschreiben**: Finanzblick merkt sich die selbst gesetzten Werte im optionalen Feld `payrollBudget` der Finanzdaten (JSON, keine Migration). Von Hand geänderte Werte und doppelte Sonderzahlungen in „Sonstiges“ werden nie automatisch geändert, sondern unter **„n Budgetwerte prüfen“** angeboten (Budget-Seite und Zusammenfassung). Was man beibehält, wird nicht erneut angeboten.
@@ -229,6 +238,7 @@ Alle Branches sind per Fast-Forward in `main` gemergt und gepusht; die Feature-B
   - `pockets-workspace.spec.ts`, `budget-workspace.spec.ts`, `savings-transfer-status.spec.ts`, `settings-design.spec.ts`, mobiler Teil von `profile.spec.ts` (Kontomodus).
 - **Nach M9**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5089 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Lernmuster Rufbereitschaft, Aufteilung Feiertagsarbeit/Überstunden (auch bei Akonto), 2025-Referenz (Parser, Budget, Hintergrund-Import), übliche Referenzabrechnung im Jahresmodell, Median-/Saisonprognose, Prämie als Sonderzahlung, Kacheln nach Auszahlungsmonat, Import-Protokoll (Bibliothek, Dateispeicher, Route), Drive-`recheck`. E2E bestanden: `payslip-safety.spec.ts`, `payroll-workspace.spec.ts` (320/390/1440 px) und `salary-settings.spec.ts` für Gehalt & Steuern (375/768/1440 px, hell/dunkel, axe). Ein Kachel-Test im Kontomodus schlug einmal wegen automatisch nachgefüllter Monatsbudgets fehl und lief bei der Wiederholung durch (bekannter Reload-Effekt, nicht payroll-bezogen).
 - **Nach M10**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5114 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Prüfregeln (kalibriert an echten Werten, als synthetische Fälle), automatischer Abgleich mit Merkstatus, Prüf-Dialog, zurückgehaltene und bestätigte Abrechnungen (Upload, Hintergrund-Import, Kachel), Pauschale je Jahr und Profil, Glossar und Nachschlagen (Browser und Server). E2E bestanden: `payslip-safety.spec.ts`, `salary-settings.spec.ts` (375/768/1440 px, hell/dunkel, axe) und `payroll-workspace.spec.ts` im Kontomodus. `payroll-workspace` und `budget-workspace` gleichen ihre Testdaten jetzt vorab mit `syncPayrollBudget` ab, weil die App das Budget sonst beim ersten Laden selbst korrigiert. Der bekannte Reload-Effekt trat einmal auf und lief bei der Wiederholung durch.
+- **Nach M11**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5124 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Tarif 2026/2027, gelernte Absetzbeträge, Sonderzahlungs-Steuer (Sechstel, Überhang, Freigrenze, SV-Deckel), Successbonus im Modell und in der Prognose, keine Wiederholung verschobener Prämien, frühes Dezember-Gehalt, Steuerzeile und Schätzungen in der Monatsübersicht, Einstellung Gehaltsmodell. E2E bestanden: `salary-settings.spec.ts` und `payslip-safety.spec.ts` (375/768/1440 px, hell/dunkel, axe) sowie `payroll-workspace.spec.ts` im Kontomodus.
 - **Hinweis zu Kontomodus-E2E**: Viele Specs in einem Lauf lösen das Login-Rate-Limit aus („Zu viele Versuche“). Deshalb in kleineren Gruppen mit jeweils frischer Test-Datenbank ausführen.
 
 ## Offene Punkte und Grenzen

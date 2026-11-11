@@ -41,3 +41,37 @@ Stand: 11.11.2026
 - `src/lib/import/` und die Validierung bleiben unverändert.
 - Die automatische Budget-Übernahme schreibt die neuen Prognosewerte wie bisher; von Hand geänderte Werte bleiben zur Prüfung stehen.
 - Die strenge Steuerprojektion („Sonderzahlung & Jahressechstel“) rechnet unverändert nur mit belegten Werten. Die Prognose nutzt dieselben Formeln mit geschätzten Startwerten.
+
+## Ergebnis
+
+| Schritt | Commit | Inhalt |
+|---|---|---|
+| Analyse | `d0076a7` | dieses Dokument |
+| Logik | `1dde606` | `src/lib/wage-tax-at.ts`, Successbonus, Prognose nach Tarif, frühes Dezember-Gehalt |
+| Oberfläche | `e2f506d` | Steuerzeile, geschätzte Lohnsteuer/SV je Monat, Einstellungen → Gehaltsmodell |
+| Korrektur | `114d014` | Absetzbeträge eines Jahres ohne Abrechnung aus früheren Abrechnungen |
+| Tests & Doku | siehe `main` | README, Zusammenfassung |
+
+- **Lohnsteuer** (`src/lib/wage-tax-at.ts`):
+  - Tarifstufen 2025, 2026 und 2027 (2027 aus BGBl. II Nr. 260/2026);
+  - Lohnsteuer eines Monats = Tarif(Basis × 12 − 132 €) / 12 − Absetzbeträge / 12, nie negativ;
+  - Absetzbeträge aus den letzten drei Abrechnungen gelernt; der Verkehrsabsetzbetrag folgt dem Jahr (496 € 2026, 508 € 2027), weitere Absetzbeträge bleiben wie beobachtet; Familienbonus Plus (2.000,16 € bzw. 700,08 € je Kind) wird erkannt;
+  - die bisherigen privaten Kopien in `payroll-analysis.ts` nutzen jetzt dieses Modul; die Ergebnisse der Steuerprojektion sind unverändert.
+- **Sonderzahlungen**:
+  - SV mit 14,12–17,07 % bis zur jährlichen Höchstbeitragsgrundlage von 13.860 €;
+  - im Sechstel kumuliert 620 € frei, dann 6 %, 27 % und 35,75 %; unter der Freigrenze steuerfrei;
+  - der Überhang wird zum laufenden Bezug des Monats addiert und nach Tarif versteuert;
+  - für jeden Prognosemonat gibt es eine Schätzung (`taxEstimates`). Wo die strenge Projektion rechnen kann, stimmt die Schätzung mit ihr auf den Cent überein (Test).
+- **Successbonus**:
+  - Einstellung `successBonusPercent`, Standard 138,5 % des Grundgehalts, 0 schaltet ihn ab; JSON-Feld der Finanzdaten, keine Datenbankmigration; in der Excel-Sicherung enthalten;
+  - im Gehaltsmodell mit der Dezember-Abrechnung, im Budget und in der Monatsübersicht im Jänner;
+  - reserviert das restliche Jahressechstel, deshalb schrumpft der „Prämien-Spielraum“ entsprechend.
+- **Mit echten Daten geprüft** (nur lokal):
+  - Dezember 2026: die November-Sonderzahlung liegt im Sechstel und wird mit 6 % versteuert, wie im Juni.
+  - Jänner 2027: Vom Successbonus liegt nur ein kleiner Teil im restlichen Sechstel. Der größere Teil wird nach Tarif versteuert, das Netto liegt deutlich unter der alten 78-%-Pauschale. Der Jänner ist damit „fast doppelt“.
+  - März 2027: keine Sonderzahlung mehr.
+  - Die automatische Budget-Übernahme schreibt diese Werte beim nächsten Abgleich; von Hand geänderte Werte bleiben zur Prüfung.
+- **Grenzen**:
+  - SV-Werte 2027 sind noch nicht verifiziert; die Schätzung nutzt die Sätze 2026.
+  - Ob der Successbonus tatsächlich im Sechstel begünstigt wird, zeigt erst die Dezember-Abrechnung. Die Februar-Prämie 2026 wurde nach Tarif versteuert. Die Validierung warnt dann nur („ein Teil liegt vermutlich über dem Sechstel“), sie hält nicht zurück.
+  - Pendlerpauschale, Alleinverdiener- und Unterhaltsabsetzbetrag fließen nur ein, wenn sie in den Abrechnungen erkennbar sind.
