@@ -2,11 +2,13 @@ import { z } from "zod";
 import { assistantDraftSchema, dateSchema, type AssistantDraft } from "@/lib/types";
 import { groundModelExtraction, mergeDraft, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
 import { normalizeMessage } from "@/lib/assistant/normalize";
-import { assistantTools, detectTool, isAssistantTool, isDraftTool, matchName, toolDescriptions, type AssistantTool } from "@/lib/assistant/tools";
+import { agentTools, chatRequest, parseAgent, routeByRules, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
+import { detectTool, isAssistantTool, isDraftTool, matchName, type AssistantTool } from "@/lib/assistant/tools";
 import { categories } from "@/lib/categories";
 import { chat, type ChatMessage, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
-import { cleanUntrusted, DATA_RULE } from "./untrusted";
+import { interpretPrompt, orchestratorPrompt, scopeNeeds } from "./specialists";
+import { cleanUntrusted } from "./untrusted";
 
 export const assistantRequestSchema = z.object({
   message: z.string().trim().min(1).max(1000),
@@ -21,7 +23,10 @@ export const assistantRequestSchema = z.object({
 }).strict();
 export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHints = { goal?: string; planned?: string; category?: string; merchant?: string };
-export type AssistantReply = { tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
+/** `agent` answers the message; `via` says how the orchestrator decided (rule, signal word, model or fallback). */
+export type AssistantReply = {
+  agent: AgentId; via: RouteVia; tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel";
+};
 
 const modelSchema = z.object({
   tool: z.string().nullish(),
@@ -51,33 +56,6 @@ export function extractJsonObject(text: string): unknown {
   }
 }
 
-const toolList = assistantTools.map((tool) => `${tool} = ${toolDescriptions[tool]}`).join("; ");
-const systemPrompt = "Du bist der Router eines privaten Finanz-Assistenten. Du wählst nur das passende Werkzeug und liest Angaben aus der Nachricht heraus. " +
-  "Du rechnest nie und erfindest keine Zahlen. Antworte ausschließlich mit einem JSON-Objekt mit genau diesen Feldern: " +
-  "{\"tool\": string, \"goal\": string | null, \"planned\": string | null, \"category\": string | null, \"merchant\": string | null, " +
-  "\"name\": string | null, \"amount\": number | null, \"monthly\": number | null, \"startCapital\": number | null, \"installments\": number | null, " +
-  "\"fromAccount\": string | null, \"shared\": boolean | null, \"whatIf\": boolean | null}. " +
-  `Werkzeuge: ${toolList}. ` +
-  "goal = Name eines bestehenden Sparziels aus der Liste, planned = Name einer bestehenden geplanten Ausgabe aus der Liste, " +
-  "category = Buchungskategorie aus der Liste, merchant = Händlername genau wie in der Nachricht. " +
-  "Für savings_goal, expense und affordability: name = kurzer Name (z. B. \"Japan\", \"Pickerl\", \"Laptop\"), amount = Zielbetrag bzw. Gesamtpreis, " +
-  "monthly = monatlicher Betrag, startCapital = schon vorhandenes Geld, installments = Anzahl der Raten, fromAccount = Konto, " +
-  "shared = mit Raphael geteilt, whatIf = nur durchrechnen. Übernimm Zahlen exakt. Nicht genannte Felder sind null. " +
-  "Ist ein offener Entwurf angegeben und beantwortet die Nachricht nur dessen Rückfrage, nimm dessen action als tool. " +
-  "Nachrichten sind oft locker, kurz oder ohne Satzbau geschrieben. Erkenne die Absicht trotzdem, z. B.: " +
-  "\"essen oktober wie viel\" = query; \"wo geht mein geld hin\" = query; \"Japan Reise 3000 bis Juli 2027, 500 hab ich schon\" = savings_goal; " +
-  "\"ist ein 900 € Fernseher im Mai drin?\" = affordability; \"mach Japan 4000\" = edit; \"Pickerl erst im April\" = edit; " +
-  "\"lieferando gehört zu lieferdienste\" = rule; \"plan für lebensmittel um 50 erhöhen\" = budget_plan; \"tankbudget auf 200\" = budget_plan; \"50 von freizeit zu restaurants umschichten\" = budget_plan; \"sollte ich das lebensmittelbudget erhöhen\" = ask; \"was zahl ich alles für versicherungen\" = query; \"wann hab ich japan zusammen\" = ask; \"erklär mir meine finanzen\" = check; \"lass immer 500 € reserve\" = remember; \"wo kann ich 200 € sparen\" = coach; " +
-  "\"100 im monat anlegen 10 jahre\" = depot; \"wie hoch ist die teuerung\" = market; \"was kriegt man fürs tagesgeld\" = market; \"3000 euro in yen\" = market; \"etf was is des eigentlich\" = knowledge; \"kest bedeutung\" = knowledge; \"was hast du dazugelernt\" = knowledge; \"wie läuft das mit den sparzielen\" = explain; \"nimm das zurück\" = undo; " +
-  "\"wie viel muss ich noch auf amex rückzahlung überweisen\" = amex; \"was hab ich seit 11.10. mit amex bezahlt\" = query; " +
-  "\"wie viel ist am sparkonto\" = accounts; \"meine kontostände\" = accounts; \"was bleibt mir diesen monat\" = budget; " +
-  "\"wie viel kann ich noch ausgeben\" = budget; \"bin ich sparsam\" = check; \"wie stehe ich finanziell da\" = check; " +
-  "\"wie haben sich meine ausgaben entwickelt\" = query; \"wann bin ich pleite\" = forecast; \"kommt noch was großes\" = forecast; " +
-  "\"wofür geb ich am meisten aus\" = ask; \"teuerste kategorie\" = ask; \"hab ich was doppelt bezahlt\" = security; \"gibt es verdächtige buchungen\" = security; \"fass meinen monat zusammen\" = month_review; \"wie war mein oktober\" = month_review; \"was schuldet mir raphael\" = shared; \"wie hat sich mein vermögen entwickelt\" = networth; \"ist die rückerstattung von amazon schon da\" = refunds; \"wann kommt die nächste abbuchung\" = pulse; \"arbeite alle prüfen-buchungen ab\" = cleanup; \"ordne alle offenen buchungen zu\" = cleanup; \"buchung trade republic ist immer transfer intern\" = rule; \"die buchung vom 3.11. über 200 € ist transfer intern\" = rule; " +
-  "\"wie viel hab ich seit jahresbeginn gespart\" = ask; \"wieso ist revolut auf 0\" = ask; \"sollte ich den notgroschen erhöhen\" = ask; " +
-  "\"was soll ich als nächstes tun\" = ask; \"sind meine abos zu teuer\" = cancel; \"zeig buchungen über 100 euro\" = query (merchant null). " +
-  "Fragen nach Meinung, Rat, Erklärung oder Gefühlen sind nie edit, booking, rule oder ein neuer Entwurf. Andere Fragen zu den eigenen Finanzen = ask. " + DATA_RULE;
-
 // Words the model sometimes takes for a merchant ("Wofür geb ich am meisten Geld aus", "über 100 Euro").
 const genericWords = new Set(["geld", "euro", "eur", "ausgaben", "ausgabe", "buchungen", "buchung", "sachen", "zeug", "kategorie", "kategorien", "monat", "jahr", "konto", "konten", "zahlungen"]);
 
@@ -102,61 +80,91 @@ function groundHints(model: z.infer<typeof modelSchema> | undefined, input: Assi
   return hints;
 }
 
-export async function interpretAssistantMessage(request: AssistantRequest, options: ChatOptions = {}): Promise<AssistantReply> {
-  // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
-  const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
-  const parsed = parseAssistantMessage(input.message, input.asOf);
-  const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
-  const ruleTool = detectTool(input.message, names);
-  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.
-  if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool)) return { tool: ruleTool, hints: {}, source: "Regel" };
-  let model: z.infer<typeof modelSchema> | undefined;
-  let source: AssistantReply["source"] = "Regel";
-  const messages: ChatMessage[] = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: [
-      `Heute: ${input.asOf}`,
-      input.context?.goals.length ? `Sparziele: ${input.context.goals.join(", ")}` : "Sparziele: keine",
-      input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
-      `Kategorien: ${categories.join(", ")}`,
-      input.pending ? `Offener Entwurf: ${JSON.stringify(input.pending)}` : "",
-      input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
-      `In der Nachricht gefundene Beträge: ${parsed.numbers.join(", ") || "keine"}`,
-      `Nachricht: ${input.message}`,
-    ].filter(Boolean).join("\n") },
-  ];
-  const route = async (name?: string) => {
-    const answer = await chat(messages, { ...options, ...(name ? { model: name } : {}), maxTokens: 300, temperature: 0 });
-    const candidate = modelSchema.safeParse(extractJsonObject(answer.content));
-    return candidate.success ? candidate.data : undefined;
-  };
-  // The small router model is tried first when configured; the main model steps in if it fails or answers nonsense.
+const historyLines = (input: AssistantRequest, count: number) => (input.history ?? []).slice(-count)
+  .map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`);
+
+// The small router model is tried first when configured; the main model steps in only if it fails.
+async function ask<T>(messages: ChatMessage[], options: ChatOptions, maxTokens: number, read: (content: string) => T | undefined): Promise<T | undefined> {
+  const run = async (name?: string) => read((await chat(messages, { ...options, ...(name ? { model: name } : {}), maxTokens, temperature: 0 })).content);
   const routerModel = (options.config ?? readAiConfig()).routerModel;
   if (routerModel) {
     try {
-      model = await route(routerModel);
+      return await run(routerModel);
     } catch (error) {
       if (options.signal?.aborted) throw error;
     }
   }
   try {
-    model ??= await route();
+    return await run();
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    // Without the model the rule parser still understands clear messages.
+    return undefined;
   }
-  if (model) source = "KI";
-  const modelTool = isAssistantTool(model?.tool) ? model.tool : isAssistantTool(model?.action) ? model.action : undefined;
+}
+
+/** The orchestrator's model fallback: one short call that names the agent; unsure or unreachable means general chat. */
+export async function classifyAgent(input: AssistantRequest, options: ChatOptions = {}): Promise<AgentId | undefined> {
+  const messages: ChatMessage[] = [
+    { role: "system", content: orchestratorPrompt },
+    { role: "user", content: [...historyLines(input, 1).map((line) => `Davor: ${line.slice(0, 240)}`), `Nachricht: ${input.message}`].join("\n") },
+  ];
+  return ask(messages, options, 8, parseAgent);
+}
+
+export async function interpretAssistantMessage(request: AssistantRequest, options: ChatOptions = {}): Promise<AssistantReply> {
+  // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
+  const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
+  const parsed = parseAssistantMessage(input.message, input.asOf);
+  const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
+  // "Schreib mir ein Gedicht über Sparen" is a chat request, not a savings goal.
+  if (!input.pending && chatRequest(input.message)) return { agent: "general", via: "rule", source: "Regel" };
+  const ruleTool = detectTool(input.message, names);
+  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.
+  if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
+    return { agent: toolOwner[ruleTool], via: "rule", tool: ruleTool, hints: {}, source: "Regel" };
+  // Orchestrator: an open draft and every rule tool name their owner; otherwise small talk and signal words decide.
+  const decision: RouteDecision | undefined = input.pending ? { agent: toolOwner[input.pending.action], via: "rule" }
+    : ruleTool ? { agent: toolOwner[ruleTool], tool: ruleTool, via: "rule" } : routeByRules(input.message, names);
+  if (!decision) {
+    // Still unclear: one short model call picks the agent, which then answers in words. No second interpretation.
+    const agent = await classifyAgent(input, options);
+    return agent ? { agent, via: "model", source: "KI" } : { agent: "general", via: "fallback", source: "Regel" };
+  }
+  const { agent, via } = decision;
+  if (!ruleTool && !input.pending && agent === "general") return { agent, via, source: "Regel" };
+  // The specialist interprets the message with its own tools only.
+  const needs = scopeNeeds(agent);
+  const messages: ChatMessage[] = [
+    { role: "system", content: interpretPrompt(agent) },
+    { role: "user", content: [
+      `Heute: ${input.asOf}`,
+      needs.names ? (input.context?.goals.length ? `Sparziele: ${input.context.goals.join(", ")}` : "Sparziele: keine") : "",
+      needs.names && input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
+      needs.categories ? `Kategorien: ${categories.join(", ")}` : "",
+      input.pending ? `Offener Entwurf: ${JSON.stringify(input.pending)}` : "",
+      input.history?.length ? `Verlauf:\n${historyLines(input, 2).join("\n")}` : "",
+      `In der Nachricht gefundene Beträge: ${parsed.numbers.join(", ") || "keine"}`,
+      `Nachricht: ${input.message}`,
+    ].filter(Boolean).join("\n") },
+  ];
+  const model = await ask(messages, options, 300, (content) => {
+    const candidate = modelSchema.safeParse(extractJsonObject(content));
+    return candidate.success ? candidate.data : undefined;
+  });
+  const source: AssistantReply["source"] = model ? "KI" : "Regel";
+  // Only the specialist's own tools count; "ask" or anything else means: answer in words.
+  const own = (value: unknown): AssistantTool | undefined => isAssistantTool(value) && value !== "ask" && agentTools(agent).includes(value) ? value : undefined;
+  const modelTool = own(model?.tool) ?? own(model?.action);
   // Clear commands stay deterministic; an open draft keeps priority for answers to its question.
   let tool: AssistantTool | undefined = ruleTool ?? modelTool;
   if (input.pending && (!ruleTool || isDraftTool(ruleTool)) && (!modelTool || isDraftTool(modelTool))) tool = ruleTool ?? input.pending.action;
   const hints = groundHints(model, input);
-  if (!tool) return { source };
-  if (!isDraftTool(tool)) return { tool, hints, source };
+  if (!tool) return { agent, via, hints, source };
+  if (!isDraftTool(tool)) return { agent, via, tool, hints, source };
   const extraction: ModelExtraction | undefined = model ? { ...model, action: tool } : undefined;
   const grounded = groundModelExtraction(extraction, parsed, input.message);
   const draft = mergeDraft(input.pending, { ...parsed, action: parsed.action ?? tool }, grounded, input.message, input.asOf);
-  if (!draft) return { tool, hints, source };
+  if (!draft) return { agent, via, tool, hints, source };
   const question = missingQuestion(draft);
-  return { tool: draft.action, hints, draft, ...(question ? { question } : {}), source };
+  return { agent, via, tool: draft.action, hints, draft, ...(question ? { question } : {}), source };
 }

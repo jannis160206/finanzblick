@@ -19,13 +19,14 @@ import { allCategories } from "@/lib/categories";
 import { cleanupQuestion } from "./cleanup";
 import { contextQuestion, contractsQuestion, insightsQuestion } from "./copilot-questions";
 import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
+import { payrollQuestion } from "./payroll";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
-  "security", "month_review", "shared", "networth", "refunds", "cleanup", "contracts", "context", "insights",
+  "security", "month_review", "shared", "networth", "refunds", "cleanup", "contracts", "context", "insights", "payroll",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -80,6 +81,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   contracts: "Vertragsordner: erkannte und eigene Verträge und Abos auflisten, einzelne Verträge mit Betrag, Jahreskosten, nächster Abbuchung, Kündigungsfrist und Preisänderung (z. B. „Welche Abos habe ich?“, „Wann läuft Netflix aus?“, „Was kostet mich Spotify im Jahr?“); Kündigen selbst ist cancel",
   context: "die gerade angezeigten oder ausgewählten Buchungen der aktuellen Seite auswerten: Summe, Top-Kategorien und Händler, mögliche Doppelbuchungen, unklare Kategorien (z. B. „Was ist mit den angezeigten Buchungen?“, „Fass die ausgewählten Buchungen zusammen“)",
   insights: "proaktive Hinweise: knappes Monatsende, Budgetüberschreitungen, Kündigungsfristen, Preiserhöhungen, Sparziele in Gefahr, Doppelbuchungen, ungewöhnliche Ausgaben, unklare Kategorien (z. B. „Was fällt dir auf?“, „Gibt es Auffälligkeiten?“)",
+  payroll: "Gehalt und Lohnabrechnung: Netto, Brutto, Lohnsteuer und SV der letzten Abrechnung, nächste Sonderzahlung mit Anteil zu 6 % und voll versteuert, Jahressechstel (z. B. „Wie viel netto bekomme ich?“, „Was bleibt vom Weihnachtsgeld?“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
@@ -223,6 +225,7 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (upcomingQuestion(lower)) return /woche|tage\b/.test(lower) ? "briefing" : "pulse";
   if (pulseQuestion(lower)) return "pulse";
   if (forecastQuestion(lower)) return "forecast";
+  if (payrollQuestion(lower)) return "payroll";
   if (whyQuestion(lower)) return "why";
   if (cancelQuestion(lower)) return "cancel";
   if (/arbeitnehmerveranlagung|steuerausgleich|absetzbar|absetzen|steuerlich|lohnsteuer|werbungskosten|sonderausgaben|finanzonline|von der steuer|steuer-?mappe/.test(lower)) return "tax";

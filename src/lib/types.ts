@@ -577,6 +577,8 @@ export const assistantMessageSchema = z.object({
   source: z.enum(["KI", "Regel"]).optional(),
   // Quick replies shown under the latest assistant message.
   suggestions: z.array(z.string().trim().min(1).max(120)).max(4).optional(),
+  // The agent the orchestrator chose for this answer (same names as `agentIds` in assistant/orchestrator).
+  agent: z.enum(["transactions", "contracts", "budget", "payroll", "general"]).optional(),
   // Self-learning: which tool answered which question, the user's 👍/👎, and open questions waiting for a correction or a name.
   tool: z.string().max(40).optional(),
   asked: z.string().max(1000).optional(),

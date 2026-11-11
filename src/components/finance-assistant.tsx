@@ -12,7 +12,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
-import { assistantFacts } from "@/lib/assistant/facts";
 import { balances } from "@/lib/assistant/accounts";
 import { giroTopUp, parseAccountRules, ruleText, rulesResult, storeAccountRules, topUpText } from "@/lib/assistant/funds";
 import { readAnswerStream } from "@/lib/ai/answer-stream";
@@ -24,6 +23,8 @@ import { applyOperations, OperationError, recordChange, recordCreation, undoChan
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { changingTools, conversationRoute, evidenceText } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
+import { agentLabel, isAgentId, routeByRules, routeBySignals, toolOwner, type AgentId } from "@/lib/assistant/orchestrator";
+import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
 import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
 import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
 import { currentNavItem } from "@/components/shell/navigation";
@@ -158,6 +159,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const briefed = useRef(false);
   const marketCache = useRef(new Map<string, { at: number; value: MarketSnapshot }>());
+  // The agent whose answer is streaming right now, for the label above the growing text.
+  const [answering, setAnswering] = useState<AgentId>();
   useEffect(() => { endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy, streaming]);
 
   const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) =>
@@ -171,16 +174,16 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const addDraftMessage = (draft: AssistantDraft, source: AssistantMessage["source"] = "Regel") => {
     const question = missingQuestion(draft);
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
-      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source }]);
+      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action] }]);
   };
-  const addResult = (result: AgentResult, source: AssistantMessage["source"], meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify"> = {}) => {
+  const addResult = (result: AgentResult, source: AssistantMessage["source"], meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent"> = {}) => {
     const suggestions = result.choices?.length ? result.choices : result.suggestions;
     const message = {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
       ...(result.card ? { card: result.card } : {}), ...(result.change ? { change: result.change } : {}),
       ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.change || result.undoId ? { status: "preview" as const } : {}),
       ...(suggestions?.length ? { suggestions: [...new Set(suggestions)].map((item) => item.slice(0, 120)).slice(0, 4) } : {}),
-      ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}),
+      ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}), ...(meta.agent ? { agent: meta.agent } : {}),
       ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
     };
@@ -306,16 +309,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, storageError]);
 
-  // Anything no tool covers gets a short model answer built only from the computed facts.
-  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], evidence?: string) {
+  // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string) {
     try {
-      const facts = assistantFacts(state, dashboard, state.settings.asOf);
+      const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
+      setAnswering(agent);
+      // The general chat keeps the conversation; a specialist only needs the last exchange.
+      const context = agent === "general" ? history : history.slice(-2);
       const response = await fetch("/api/ai/answer?stream=1", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ question, history, facts, ...(evidence ? { evidence } : {}) }),
+        body: JSON.stringify({ question, history: context, facts, agent, ...(evidence ? { evidence } : {}) }),
       });
       if (!response.ok) return undefined;
       if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
@@ -441,7 +447,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     setInput("");
     setBusy(true);
     save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
-    let reply: { tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
+    let reply: { agent?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
     // "und im September?" reuses the previous question instead of asking the model again.
     const follow = pending ? undefined : resolveFollowUp(work, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
@@ -458,12 +464,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (!response.ok) throw new Error();
       reply = await response.json();
     } catch {
-      // Same rules as the server, without the model.
-      const tool = detectTool(work, [...goals, ...planned]);
-      if (tool && !isDraftTool(tool) && !(pending && tool === "help")) reply = { tool, source: "Regel" };
+      // Same orchestrator rules as the server, without the model; whatever stays unclear goes to the general chat.
+      const decision = routeByRules(work, [...goals, ...planned]);
+      const tool = decision?.tool;
+      if (tool && !isDraftTool(tool) && !(pending && tool === "help")) reply = { agent: decision.agent, tool, source: "Regel" };
       else {
         const draft = mergeDraft(pending, parseAssistantMessage(work, asOf), {}, work, asOf);
-        reply = { draft, question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
+        reply = { agent: draft ? toolOwner[draft.action] : decision?.agent ?? "general", draft, question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
       }
     }
     const picked: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
@@ -471,6 +478,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const route = conversationRoute({ text: work, tool: picked, ruleTool: reply.source === "Regel" ? picked : detectTool(work, [...goals, ...planned]),
       draftAction: reply.draft?.action, numbers: work.match(/\d+(?:[.,]\d+)?/g)?.map(Number) ?? [], pending: !!pending });
     const tool = route.tool;
+    // A tool's owner answers; without a tool the orchestrator's choice, and the general chat whenever it is unsure.
+    // A question that dropped a misread form ("Was ist mit meiner Versicherung los?") is routed again by its signal words.
+    const agent: AgentId = tool ? toolOwner[tool] : route.skipDraft ? routeBySignals(work, [...goals, ...planned])?.agent ?? "general"
+      : isAgentId(reply.agent) ? reply.agent : "general";
     // Only the model understood this phrasing; remember it so the rules answer it directly next time.
     if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
       !detectTool(work, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
@@ -488,7 +499,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
-    const free = !tool && !parsed?.success ? await freeAnswer(work, history) : undefined;
+    const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent, agentEvidence(agent, state, dashboard, asOf, work)) : undefined;
     await settle();
     if (tool === "account_rule") {
       // "Sparkonto ist für alle Ausgaben", "Trade Republic nur für Autowerkstatt": saved right away, deletable under „Gedächtnis“.
@@ -517,20 +528,20 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       }
       // The tool computed the numbers; the model turns them into a direct answer to the actual question. The card stays.
       if (route.converse && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
-        const said = await freeAnswer(work, history, evidenceText(result));
+        const said = await freeAnswer(work, history, agent, evidenceText(result));
         if (said) result = { ...result, text: said };
       }
       addResult(withNotes(result.suggestions || result.change || result.undoId || result.choices ? result : { ...result, suggestions: followUps[tool] }), reply.source,
-        { tool, asked: work, clarify: work });
+        { tool, asked: work, clarify: work, agent });
     } else if (parsed?.success && parsed.data.action === "affordability")
       // Affordability never opens a plan form: it checks the accounts that may be used and says OK or not OK.
-      addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work });
+      addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work, agent: "budget" });
     else if (parsed?.success) addDraftMessage(parsed.data, reply.source);
-    else if (free) addResult(withNotes({ text: free, suggestions: ["Zeig mir meine Kontostände", "Was bleibt mir diesen Monat?", "Was kannst du alles?"] }), "KI", { tool: "free", asked: work });
+    else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, agent });
     else {
       update((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
-      addResult({ text: "Das verstehe ich noch nicht. Schreib es mir bitte kurz anders; die neue Formulierung merke ich mir, damit ich es beim nächsten Mal gleich verstehe. " +
-        "Du kannst mich zum Beispiel nach deinen Ausgaben fragen, ein Sparziel planen oder prüfen lassen, ob du dir etwas leisten kannst.",
+      addResult({ text: "Hm, da komme ich gerade nicht mit. Magst du es mir anders sagen? Die neue Formulierung merke ich mir für das nächste Mal. " +
+        "Frag mich zum Beispiel nach deinen Ausgaben, einem Sparziel oder ob sich ein Kauf ausgeht.",
       suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work });
     }
     // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.
@@ -539,6 +550,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (memories.length) remember(memories);
     }
     setStreaming(undefined);
+    setAnswering(undefined);
     setBusy(false);
     inputRef.current?.focus();
   }
@@ -622,7 +634,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         <Bubble role="assistant" text={intro} />
         {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
         {messages.map((message) => <div key={message.id} className="flex flex-col gap-2">
-          <Bubble role={message.role} text={message.text} source={message.source} faded={message.status === "dismissed"}>
+          <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} faded={message.status === "dismissed"}>
             {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
               onResult={storageError ? undefined : (result) => addResult(result, "Regel")} />}
           </Bubble>
@@ -667,7 +679,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
               </>}
           </div>}
         </div>)}
-        {busy && (streaming ? <div aria-live="polite" aria-busy="true"><Bubble role="assistant" text={streaming} source="KI" /></div> : <Thinking />)}
+        {busy && (streaming ? <div aria-live="polite" aria-busy="true"><Bubble role="assistant" text={streaming} source="KI" agent={answering} /></div> : <Thinking />)}
         <div ref={endRef} />
       </FinancialData>
       <form onSubmit={send} className={panelMode ? "flex shrink-0 items-end gap-2 border-t border-border/60 px-4 pt-3 pb-1 sm:px-6" : "mt-5 flex items-end gap-2 border-t border-border/60 pt-4"}>
@@ -686,7 +698,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
           className="min-h-11 flex-1 resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <Button type="submit" className="min-h-11" disabled={busy || !input.trim() || !!storageError}><Send aria-hidden="true" className="size-4" />Senden</Button>
       </form>
-      <p className={cn("mt-2 text-2xs text-muted-foreground", panelMode && "shrink-0 px-4 pb-4 sm:px-6")}>Die KI wählt nur die passende Funktion und liest Namen und Beträge heraus. Alle Zahlen rechnet der Code. Gespeichert wird nur nach deinem Klick, der Verlauf bleibt in deiner lokalen Datenbank.</p>
+      <p className={cn("mt-2 text-2xs text-muted-foreground", panelMode && "shrink-0 px-4 pb-4 sm:px-6")}>Jede Frage geht an den passenden Spezialisten (Umsätze, Verträge, Budget, Gehalt) oder in den Chat. Alle Zahlen rechnet der Code. Gespeichert wird nur nach deinem Klick, der Verlauf bleibt in deiner lokalen Datenbank.</p>
     </section>
   </div>;
 }
@@ -719,7 +731,9 @@ function Thinking() {
   </div>;
 }
 
-function Bubble({ role, text, source, faded, children }: { role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; faded?: boolean; children?: React.ReactNode }) {
+function Bubble({ role, text, source, agent, faded, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; faded?: boolean; children?: React.ReactNode;
+}) {
   const mine = role === "user";
   return <div className={cn("assistant-reveal flex items-start gap-3", mine && "flex-row-reverse", faded && "opacity-60")}>
     <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-xl", mine ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary")}>
@@ -728,7 +742,8 @@ function Bubble({ role, text, source, faded, children }: { role: "user" | "assis
     <div className={cn("min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed", mine ? "max-w-[80%] bg-primary text-primary-foreground" : "bg-muted/50",
       !mine && (children ? "max-w-[90%] flex-1 py-3.5" : "max-w-[80%]"))}>
       <span className="sr-only">{mine ? "Du: " : "Assistent: "}</span><span className="whitespace-pre-line">{text}</span>
-      {source === "KI" && <span className="ml-2 inline-flex items-center gap-1 text-2xs text-muted-foreground"><Sparkles aria-hidden="true" className="size-3" />KI</span>}
+      {(source === "KI" || agent && agent !== "general") && <span className="ml-2 inline-flex items-center gap-1 text-2xs text-muted-foreground">
+        {source === "KI" && <Sparkles aria-hidden="true" className="size-3" />}{[agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? "KI" : ""].filter(Boolean).join(" · ")}</span>}
       {children}
     </div>
   </div>;

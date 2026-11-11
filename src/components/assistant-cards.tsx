@@ -62,6 +62,8 @@ function NoteText({ text }: { text: string }) {
 }
 
 // With "embedded" the card sits inside the assistant's chat bubble, so text and result form one answer.
+const CARD_LINES = 6;
+
 export function ResultCard({ card, state, embedded, onResult }: { card: AssistantCard; state: AppState; embedded?: boolean; onResult?: (result: AgentResult) => void }) {
   const transactions = useMemo(() => new Map(state.transactions.map((row) => [row.id, row])), [state.transactions]);
   const [open, setOpen] = useState<number | "all">();
@@ -69,6 +71,9 @@ export function ResultCard({ card, state, embedded, onResult }: { card: Assistan
   // A single line repeating the title becomes its subtitle.
   const subtitle = card.lines.length === 1 && card.lines[0].label === card.title && !card.lines[0].value && !card.lines[0].transactionIds?.length ? card.lines[0].detail : undefined;
   const lines = subtitle !== undefined || card.whatif ? [] : card.lines;
+  // Summary first: long cards show their first lines; the rest only on request.
+  const [all, setAll] = useState(false);
+  const shown = all || lines.length <= CARD_LINES + 1 ? lines : lines.slice(0, CARD_LINES);
   return <article className={embedded ? "mt-3 border-t border-border/60 pt-3" : "rounded-2xl border border-border/70 bg-background/40 p-4"} aria-label={card.title}>
     {!(embedded && card.kind === "answer") && <p className="text-2xs uppercase tracking-wide text-muted-foreground">{kindLabel[card.kind]}</p>}
     <h3 className="mt-0.5 flex items-baseline justify-between gap-3 text-sm font-semibold">
@@ -80,7 +85,7 @@ export function ResultCard({ card, state, embedded, onResult }: { card: Assistan
     {card.chart && <AssistantChartView chart={card.chart} title={card.title} />}
     {card.whatif && <WhatIfCard data={card.whatif} state={state} onResult={onResult} />}
     {lines.length > 0 && <ul className="mt-3 space-y-1.5">
-      {lines.map((line, index) => <li key={`${line.label}-${index}`} className="text-sm">
+      {shown.map((line, index) => <li key={`${line.label}-${index}`} className="text-sm">
         <div className="flex items-start justify-between gap-3">
           <span className={cn("min-w-0", line.tone && toneClass[line.tone])}>
             {line.transactionIds?.length
@@ -94,6 +99,9 @@ export function ResultCard({ card, state, embedded, onResult }: { card: Assistan
         {open === index && line.transactionIds && <Bookings ids={line.transactionIds} transactions={transactions} />}
       </li>)}
     </ul>}
+    {shown.length < lines.length && <button type="button" onClick={() => setAll(true)}
+      className="mt-2 inline-flex min-h-9 items-center gap-1 rounded-lg text-xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+      <ChevronDown aria-hidden="true" className="size-3.5" />Alle {lines.length} anzeigen</button>}
     {card.transactionIds && card.transactionIds.length > 0 && <div className="mt-3">
       <Button type="button" size="sm" variant="outline" className="min-h-9" aria-expanded={open === "all"} onClick={() => toggle("all")}>
         <ListChecks aria-hidden="true" className="size-4" />{open === "all" ? "Buchungen ausblenden" : `Buchungen anzeigen (${card.transactionIds.length}${card.transactionIds.length === 50 ? "+" : ""})`}

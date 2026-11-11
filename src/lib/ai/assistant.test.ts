@@ -28,7 +28,7 @@ describe("assistant AI interpretation", () => {
   it("routes agent tools and keeps only hints the message and context back", async () => {
     chat.mockResolvedValue({ content: JSON.stringify({ tool: "edit", goal: "Japan", planned: "Erfunden", merchant: "Billa", category: "Gibtsnicht" }) });
     const reply = await interpretAssistantMessage({ message: "Erhöhe Japan auf 4.000 €", asOf: "2026-10-07", context: { goals: ["Japan"], planned: [] } });
-    expect(reply).toEqual({ source: "KI", tool: "edit", hints: { goal: "Japan" } });
+    expect(reply).toEqual({ agent: "budget", via: "rule", source: "KI", tool: "edit", hints: { goal: "Japan" } });
   });
 
   it("lets clear rule words win over the model tool", async () => {
@@ -37,5 +37,44 @@ describe("assistant AI interpretation", () => {
     expect(reply.tool).toBe("undo");
     chat.mockRejectedValue(new AiUnavailableError());
     expect((await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober für Lebensmittel ausgegeben?", asOf: "2026-10-07" })).tool).toBe("query");
+  });
+});
+
+describe("orchestrator", () => {
+  const request = (message: string) => ({ message, asOf: "2026-10-07", context: { goals: ["Japan"], planned: [] } });
+
+  it("answers messages without a money topic in the general chat, without any model call", async () => {
+    expect(await interpretAssistantMessage(request("Erzähl mir einen Witz"))).toEqual({ agent: "general", via: "rule", source: "Regel" });
+    expect(await interpretAssistantMessage(request("Schreib mir ein Gedicht über Sparen"))).toEqual({ agent: "general", via: "rule", source: "Regel" });
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it("asks the model once for a single word when the owner is unclear, and falls back to the general chat when unsure", async () => {
+    chat.mockResolvedValueOnce({ content: "umsaetze" });
+    expect(await interpretAssistantMessage(request("Ich hab das Gefühl, ich gebe zu viel aus"))).toEqual({ agent: "transactions", via: "model", source: "KI" });
+    expect(chat).toHaveBeenCalledTimes(1);
+    const [messages, options] = chat.mock.calls[0] as [{ content: string }[], { maxTokens: number }];
+    expect(messages[0].content).toContain("Wenn du nicht sicher bist, antworte chat");
+    expect(options.maxTokens).toBeLessThanOrEqual(8);
+    chat.mockResolvedValueOnce({ content: "Das ist schwer zu sagen, vielleicht budget oder gehalt." });
+    expect(await interpretAssistantMessage(request("Ich bin gestresst wegen Geld"))).toEqual({ agent: "general", via: "fallback", source: "Regel" });
+    chat.mockRejectedValueOnce(new AiUnavailableError());
+    expect(await interpretAssistantMessage(request("Ich bin gestresst wegen Geld"))).toEqual({ agent: "general", via: "fallback", source: "Regel" });
+    expect(chat).toHaveBeenCalledTimes(3);
+  });
+
+  it("lets a specialist interpret with its own tools only, in one call", async () => {
+    // A tool of another agent is ignored: the specialist answers in words instead.
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ tool: "query" }) });
+    const reply = await interpretAssistantMessage(request("Werden Überstunden anders versteuert?"));
+    expect(reply).toMatchObject({ agent: "payroll", via: "signal", source: "KI" });
+    expect(reply.tool).toBeUndefined();
+    const [messages] = chat.mock.calls[0] as [{ content: string }[]];
+    expect(messages[0].content).toContain("payroll = ");
+    expect(messages[0].content).not.toMatch(/\bquery = |\bbudget_plan = /);
+    expect(messages[1].content).not.toContain("Kategorien:");
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ tool: "payroll" }) });
+    expect(await interpretAssistantMessage(request("Werden Überstunden anders versteuert?"))).toMatchObject({ agent: "payroll", tool: "payroll" });
+    expect(chat).toHaveBeenCalledTimes(2);
   });
 });

@@ -36,16 +36,19 @@ export function smallTalk(input: string, { hour, seed = input.length }: { hour: 
   const kind = detectSmallTalk(input);
   if (!kind) return undefined;
   const pick = (options: string[]) => options[seed % options.length];
+  // The general chat agent's instant replies: short and warm like in a normal chat, no model call needed.
   switch (kind) {
-    case "greet": return { text: `${daytime(hour)}! ${pick(["Schön, dass du da bist. Wobei kann ich dir helfen?",
-      "Was möchtest du heute über deine Finanzen wissen?", "Womit fangen wir an?"])}`, suggestions: starterSuggestions };
-    case "mood": return { text: pick(["Mir geht's gut, danke! Ich hab deine Zahlen im Blick. Wie kann ich dir helfen?",
-      "Danke der Nachfrage, alles bestens. Soll ich dir einen kurzen Überblick über diese Woche geben?"]), suggestions: starterSuggestions };
-    case "thanks": return { text: pick(["Gern geschehen! Sag Bescheid, wenn ich noch etwas durchrechnen soll.", "Sehr gerne! Kann ich sonst noch etwas für dich tun?",
-      "Immer wieder gern. Falls noch etwas ist, frag einfach."]) };
-    case "bye": return { text: pick(["Bis bald! Deine Daten bleiben sicher auf deinem Gerät.", "Mach's gut, bis zum nächsten Mal!"]) };
-    case "who": return { text: "Ich bin dein Finanz-Assistent. Ich laufe lokal auf deinem Rechner, kenne deine Buchungen, Sparziele und geplanten Ausgaben " +
-      "und kann damit rechnen, planen und Dinge für dich einstellen. Geändert wird nur, wenn du bestätigst.", suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] };
-    case "ack": return { text: pick(["Alles klar. Was steht als Nächstes an?", "Passt! Sag einfach, wenn du noch etwas brauchst."]) };
+    case "greet": return { text: `${daytime(hour)}! ${pick(["Was liegt an?", "Schön, dass du da bist. Was möchtest du wissen?",
+      "Womit fangen wir an – Geldfrage oder kurzer Plausch?"])}`, suggestions: starterSuggestions };
+    case "mood": return { text: pick(["Danke, mir geht's gut! Und dir? Wenn du magst, schau ich kurz, wie dein Monat läuft.",
+      "Bestens, danke der Nachfrage. Was kann ich für dich tun?"]), suggestions: starterSuggestions };
+    case "thanks": return { text: pick(["Gern geschehen! Sag einfach, wenn noch was ist.", "Sehr gern. Freut mich, wenn's geholfen hat.",
+      "Immer gern!"]) };
+    case "bye": return { text: pick(["Bis bald, mach's gut!", "Ciao, schönen Tag noch! Deine Daten bleiben hier auf deinem Rechner."]) };
+    case "who": return { text: "Ich bin Finanzblick, dein Finanz-Assistent. Ich laufe lokal auf deinem Rechner, kenne deine Buchungen, Verträge, " +
+      "dein Budget und dein Gehalt und rechne damit für dich – plaudern geht aber genauso. Geändert wird nur, wenn du bestätigst.",
+    suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] };
+    case "ack": return { text: pick(["Alles klar!", "Passt. Sag Bescheid, wenn du noch was brauchst."]) };
   }
 }
+

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerFreeQuestion, streamFreeAnswer, visiblePrefix } from "./answer";
+import { answerFreeQuestion, streamFreeAnswer, tidyAnswer, visiblePrefix } from "./answer";
 import { readAnswerStream } from "./answer-stream";
 import { interpretAssistantMessage } from "./assistant";
 import { chatStream, parseSse } from "./client";
@@ -118,5 +118,28 @@ describe("streaming", () => {
     const evidence = await answerFreeQuestion({ question: "Fixkosten?", facts, evidence: "Noch fällig: 514,95 € in 14 Posten." },
       { config, fetcher: stub(() => completion("Es kommen noch 514,95 € an Fixkosten.")).fetcher });
     expect(evidence.text).toBe("Es kommen noch 514,95 € an Fixkosten.");
+  });
+});
+
+describe("agent answers", () => {
+  const system = (calls: unknown[]) => (calls[0] as { messages: { content: string }[] }).messages[0].content;
+
+  it("lets the general chat use general knowledge without personal facts, but never an invented amount", async () => {
+    const { calls, fetcher } = stub(() => completion("**Der Mount Everest** ist 8.849 Meter hoch. Du hast übrigens 5.000 € gespart."));
+    const reply = await answerFreeQuestion({ question: "Wie hoch ist der Mount Everest?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
+    expect(reply.text).toBe("Der Mount Everest ist 8.849 Meter hoch.");
+    expect(system(calls)).toContain("lockeren Chat");
+  });
+
+  it("keeps specialists strictly to the facts and their own voice", async () => {
+    const { calls, fetcher } = stub(() => completion("Dir bleiben 420 €. Der Mount Everest ist 8.849 Meter hoch."));
+    const reply = await answerFreeQuestion({ question: "Was bleibt?", facts: { budget: { left: 420 } }, agent: "budget" }, { config, fetcher });
+    expect(reply.text).toBe("Dir bleiben 420 €.");
+    expect(system(calls)).toContain("Monatsplan");
+    expect(system(calls)).toContain("Beginne mit der direkten Antwort");
+  });
+
+  it("turns Markdown and lists into plain chat text", () => {
+    expect(tidyAnswer("## Kurz gesagt\n- **Netflix** kostet 13,99 €\n- Spotify kostet `10,99 €`")).toBe("Kurz gesagt Netflix kostet 13,99 € Spotify kostet 10,99 €");
   });
 });

@@ -20,6 +20,7 @@ import { cancelAnswer } from "./cancel";
 import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
 import { pulseAnswer } from "./pulse";
+import { payrollAnswer } from "./payroll";
 import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
 import { whatIfAnswer } from "./whatif-answer";
@@ -460,6 +461,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "contracts": return contractsAnswer(state, text, asOf, () => answerQuestion(state, text, asOf, context.hints, (context.previous ?? []).map(normalizeMessage)), context.page);
     case "context": return contextAnswer(state, text, context.page);
     case "insights": return insightsAnswer(state, dashboard, asOf, context.insights);
+    case "payroll": return payrollAnswer(state);
     case "budget_plan": {
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;

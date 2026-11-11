@@ -105,13 +105,18 @@ Die Übersicht zeigt den Block „KI-Einblicke“ (`src/lib/insights.ts`), der o
 
 Eigene Seite `/assistent` im Seitenmenü (`src/components/finance-assistant.tsx`).
 
+- **Orchestrator und Spezialisten:** Ein leichter Orchestrator wählt pro Nachricht genau einen Agenten:
+  - Umsätze, Verträge, Budget & Prognose oder Gehalt & Steuern;
+  - im Zweifel den allgemeinen Chat.
+
+  Er entscheidet zuerst mit Regeln, dann mit Signalwörtern und nur zuletzt mit einem Ein-Wort-Aufruf des Modells. Jeder Spezialist sieht nur seine eigenen Werkzeuge und Fakten. Pro Nachricht gibt es höchstens zwei KI-Aufrufe. Details: [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md).
 - **Nur Extraktion:** `/api/ai/assistant` (`src/lib/ai/assistant.ts`) lässt das Modell aus dem Freitext nur Absicht und Angaben herauslesen (Ziel, Betrag, Datum, Konto, Startkapital, Raten). Jede Angabe muss im Text vorkommen (`groundModelExtraction`), sonst wird sie verworfen. Ohne KI oder bei Fehlern übernimmt der Regel-Parser (`src/lib/assistant/intent.ts`). Fehlt eine Angabe, fragt der Assistent nach.
 - **Konten, Amex, Monatsplan:** Kontostände, die Amex-Abrechnung (offener Saldo minus Rückzahlungs-Pocket, gleiche Rechnung wie im Dashboard) und der Monatsplan kommen direkt aus `calculateDashboard` (`src/lib/assistant/accounts.ts`). Ausgabenfragen verstehen Zeiträume wie „seit 11.10.“ und Konten wie „mit Amex“.
 - **Folgefragen und Vergleich:** Kurze Nachfragen wie „und im September?“, „und mit Amex?“ oder „warum so viel?“ übernehmen Kategorie, Händler, Konto und Monat der vorherigen Frage (`src/lib/assistant/followup.ts`, ohne Modellaufruf). „Vergleich Oktober mit September“ oder „Mehr als im Vormonat?“ stellt zwei Monate gegenüber und nennt die größte Veränderung.
 - **Ausgabenverlauf:** „Wie haben sich meine Ausgaben entwickelt?“ zeigt die letzten 6 vollen Monate (oder „letzte N Monate“) mit Abweichung zum Schnitt, dem teuersten und günstigsten Monat. Kategorie, Händler und Konto gelten auch für Nachfragen wie „und fürs Essen?“.
 - **Finanz-Check:** „Bin ich sparsam?“ oder „Wie stehe ich finanziell da?“ bewertet die letzten drei vollen Monate als Ampel (`src/lib/assistant/check.ts`): Sparquote (Ziel ≥ 20 %), Fixkosten-Anteil (≤ 50 %), Reserve in Monatsausgaben (≥ 3), Ausgaben des letzten Monats gegenüber den zwei davor, Abos und offene Amex-Rückzahlung. Einkommen kommt aus dem Monatsplan, Rückerstattungen mindern die Ausgaben.
 - **Bedienung:** Mit Pfeil-hoch im leeren Eingabefeld holst du die letzte eigene Nachricht zurück.
-- **Freie Fragen:** Passt kein Werkzeug, beantwortet `/api/ai/answer` die Frage nur aus fertig gerechneten Fakten (`src/lib/assistant/facts.ts`). Jede Zahl in der Antwort muss in den Fakten stehen (`numbersBacked`), sonst bittet der Assistent um eine andere Formulierung.
+- **Freie Fragen:** Passt kein Werkzeug, beantwortet `/api/ai/answer` die Frage mit der Stimme des gewählten Agenten (`agent`) und nur aus dessen Ausschnitt der fertig gerechneten Fakten (`src/lib/assistant/specialist-context.ts`). Jede Zahl muss dort stehen (`numbersBacked`). Nur der allgemeine Chat ohne persönliche Fakten darf Allgemeinwissen mit Zahlen nennen; Geldbeträge, Links und Kontonummern müssen auch dort belegt sein.
 - **Feste Rechnung:** `src/lib/assistant/plan.ts` rechnet mit dem Monatsplan: Monatsrate bzw. erreichbares Datum für Sparziele, Konflikte mit bestehenden Zielen, Monate ohne volle Rate.
 - **„Kann ich mir das leisten?“:** Ampel aus dem frei verfügbaren Betrag über dem Sparsockel. 🟢 reicht, 🟡 nur mit ausgesetzter Sparrate, 🔴 Fehlbetrag mit Alternativen (Raten, späterer Monat, Rücklage vom Sparkonto).
 - **Nichts automatisch:** Gespeichert wird erst bei „Anlegen“. „Ändern“ öffnet ein Formular, „Was-wäre-wenn“-Fragen werden nur berechnet.
@@ -266,6 +271,7 @@ Alle Werte rechnet der Code, nie das Modell.
 
 ### Geschwindigkeit
 
+- **Spezialisten-Prompts:** Statt eines großen Router-Prompts mit allen Werkzeugen sieht das Modell nur die Werkzeuge, Felder und Beispiele des zuständigen Spezialisten. Die Kategorienliste bekommt nur Umsätze, Ziel- und Ausgabennamen nur Budget, der Verlauf ist auf zwei Zeilen begrenzt. Das halbiert die Dauer einer Interpretation (Median 8,3 s → 4,0 s). Die statischen Prompts bleiben im Präfix-Cache des Modellservers.
 - **Schnellweg ohne Modell:** Erkennt der Regel-Router einen klaren Befehl und braucht das Werkzeug keine Modell-Hinweise, antwortet `/api/ai/assistant` sofort ohne NPU-Aufruf (Quelle „Regel“). Das Modell wird nur noch gefragt bei offenem Entwurf, bei Entwürfen (Sparziel, Ausgabe, „Kann ich mir das leisten?“), bei Werkzeugen mit Hinweisen (`hintTools` in `src/lib/ai/assistant.ts`: Datenfragen, Ändern, Buchungen, Regeln) und wenn keine Regel greift.
 - **Kleines Router-Modell (optional):** `FINANZBLICK_AI_ROUTER_MODEL` (oder `AI_ROUTER_MODEL`), z. B. `OpenVINO/Qwen3-1.7B-int4-ov`, wählt nur das Werkzeug; freie Antworten schreibt weiter das 8B-Modell. Antwortet es nicht oder ohne gültiges JSON, übernimmt das Hauptmodell. Laden mit `npm run ai:server -- -RouterModel OpenVINO/Qwen3-1.7B-int4-ov` (zieht das Modell und trägt es zusätzlich in `models\config.json` ein). `/api/ai/status` meldet dann `router.available`.
 - **Streaming:** `/api/ai/answer?stream=1` liefert die freie Antwort als NDJSON (`{"delta": "…"}` … `{"done": true, "ok": true, "text": "…"}`); der Chat zeigt sie Wort für Wort. Gezeigt werden nur ganze Wörter, solange alle Zahlen und Kontakte belegt sind, und nichts, solange die Antwort wie JSON aussieht. Am Ende wird der ganze Text wie bisher geprüft (`numbersBacked`, `contactsBacked`); fällt er durch, verschwindet die Blase und es kommt die übliche Rückfrage. Ohne `stream=1` bleibt die JSON-Antwort unverändert.
@@ -419,4 +425,4 @@ npm run eval:assistant              # goldene Fragen + Injection-Tests gegen das
 npm run eval:assistant -- --min=90  # Mindest-Trefferquote in Prozent
 ```
 
-Die Fälle stehen in `src/lib/assistant/eval-cases.ts`. `eval-cases.test.ts` prüft in `npm test` zusätzlich, dass die Regeln allein nie ein falsches Werkzeug wählen.
+Die Fälle stehen in `src/lib/assistant/eval-cases.ts`, die grenzwertigen Orchestrator-Fälle in `agentCases`. Die Ausgabe nennt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer. `eval-cases.test.ts` prüft in `npm test` zusätzlich, dass die Regeln allein nie ein falsches Werkzeug oder einen falschen Spezialisten wählen.

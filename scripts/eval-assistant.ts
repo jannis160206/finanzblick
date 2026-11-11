@@ -2,7 +2,7 @@ import { answerFreeQuestion, streamFreeAnswer } from "../src/lib/ai/answer";
 import { interpretAssistantMessage } from "../src/lib/ai/assistant";
 import { aiStatus } from "../src/lib/ai/client";
 import { readAiConfig } from "../src/lib/ai/config";
-import { injectionCases, routerCases, writingTools, type EvalCase } from "../src/lib/assistant/eval-cases";
+import { agentCases, injectionCases, routerCases, writingTools, type EvalCase } from "../src/lib/assistant/eval-cases";
 
 // Measures how well the assistant understands real wording with the local model, and whether hidden instructions can steer it.
 // Usage: npm run eval:assistant [-- --min=90]  (exit code 1 below the minimum hit rate)
@@ -16,27 +16,52 @@ if (!status.available) {
   process.exit(2);
 }
 
-type Outcome = { item: EvalCase; tool?: string; rule?: string; ok: boolean; ms: number };
+// Counts the model calls of one message: the orchestrator allows at most one per interpretation.
+function counting() {
+  const counter = { calls: 0 };
+  const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => { counter.calls += 1; return fetch(input, init); }) as typeof fetch;
+  return { counter, fetcher };
+}
+
+type Outcome = { item: EvalCase; tool?: string; rule?: string; agent: string; via: string; calls: number; ok: boolean; ms: number };
 async function run(item: EvalCase): Promise<Outcome> {
   const request = { message: item.message, asOf, context, ...(item.history ? { history: item.history } : {}) };
+  const { counter, fetcher } = counting();
   const started = performance.now();
-  const reply = await interpretAssistantMessage(request, { config });
+  const reply = await interpretAssistantMessage(request, { config, fetcher });
   const ms = Math.round(performance.now() - started);
   const rule = await interpretAssistantMessage(request, { config: { ...config, enabled: false } });
-  return { item, tool: reply.tool, rule: rule.tool, ok: !!reply.tool && (item.tools as string[]).includes(reply.tool), ms };
+  return { item, tool: reply.tool, rule: rule.tool, agent: reply.agent, via: reply.via, calls: counter.calls,
+    ok: !!reply.tool && (item.tools as string[]).includes(reply.tool), ms };
 }
 
 const results: Outcome[] = [];
 for (const item of routerCases) {
   const outcome = await run(item);
   results.push(outcome);
-  console.log(`${outcome.ok ? "✓" : "✗"} ${item.message.padEnd(62)} → ${outcome.tool ?? "–"}${outcome.ok ? "" : ` (erwartet ${item.tools.join("/")})`} · ${outcome.ms} ms`);
+  console.log(`${outcome.ok ? "✓" : "✗"} ${item.message.padEnd(62)} → ${outcome.agent}/${outcome.tool ?? "–"}${outcome.ok ? "" : ` (erwartet ${item.tools.join("/")})`} · ${outcome.via} · ${outcome.calls} KI · ${outcome.ms} ms`);
 }
 const hits = results.filter((item) => item.ok).length;
 const ruleHits = results.filter((item) => item.rule && (item.item.tools as string[]).includes(item.rule)).length;
 const rescued = results.filter((item) => item.ok && !(item.rule && (item.item.tools as string[]).includes(item.rule))).length;
 const rate = Math.round(hits / results.length * 100);
 const median = [...results.map((item) => item.ms)].sort((a, b) => a - b)[Math.floor(results.length / 2)];
+const modelTimes = results.filter((item) => item.calls > 0).map((item) => item.ms).sort((a, b) => a - b);
+const maxCalls = Math.max(...results.map((item) => item.calls));
+
+console.log("\nOrchestrator, grenzwertige Fragen:");
+let agentHits = 0;
+const routeTimes: number[] = [];
+for (const item of agentCases) {
+  const { counter, fetcher } = counting();
+  const started = performance.now();
+  const reply = await interpretAssistantMessage({ message: item.message, asOf, context }, { config, fetcher });
+  const ms = Math.round(performance.now() - started);
+  if (reply.via === "model" || reply.via === "fallback") routeTimes.push(ms);
+  const ok = item.agents.includes(reply.agent);
+  if (ok) agentHits += 1;
+  console.log(`${ok ? "✓" : "✗"} ${item.message.padEnd(62)} → ${reply.agent}${reply.tool ? `/${reply.tool}` : ""} · ${reply.via} · ${counter.calls} KI · ${ms} ms`);
+}
 
 console.log("\nVersteckte Anweisungen:");
 let injectionFailures = 0;
@@ -59,15 +84,29 @@ const streamStart = performance.now();
 let firstWord: number | undefined;
 let streamed = false;
 try {
-  for await (const event of streamFreeAnswer({ question: "Wie viel Geld habe ich insgesamt gespart?", facts: { totalSavings: 12345.67 } }, { config })) {
+  for await (const event of streamFreeAnswer({ question: "Wie viel Geld habe ich insgesamt gespart?", facts: { totalSavings: 12345.67 }, agent: "budget" }, { config })) {
     if ("delta" in event) firstWord ??= Math.round(performance.now() - streamStart);
     else if ("done" in event) streamed = event.ok;
   }
 } catch {
   // Reported below as not streamed.
 }
+const chatStart = performance.now();
+let chatFirst: number | undefined;
+let chatText = "";
+try {
+  for await (const event of streamFreeAnswer({ question: "Hey, wie war dein Tag so?", facts: { today: asOf }, agent: "general" }, { config })) {
+    if ("delta" in event) chatFirst ??= Math.round(performance.now() - chatStart);
+    else if ("done" in event && event.ok) chatText = event.text ?? "";
+  }
+} catch {
+  // Reported below.
+}
+console.log(`${chatText ? "✓" : "✗"} Allgemeiner Chat · erstes Wort nach ${chatFirst ?? "–"} ms · „${chatText.slice(0, 90)}“`);
 console.log(`${streamed ? "✓" : "✗"} Freie Antwort gestreamt · erstes Wort nach ${firstWord ?? "–"} ms · fertig nach ${Math.round(performance.now() - streamStart)} ms`);
 
 console.log(`\nTrefferquote ${hits}/${results.length} (${rate} %) · nur Regeln ${ruleHits}/${results.length} · von der KI gerettet ${rescued} · Median ${median} ms`);
+console.log(`Mit KI: ${modelTimes.length} Fragen · Median ${modelTimes[Math.floor(modelTimes.length / 2)] ?? 0} ms · höchstens ${maxCalls} KI-Aufruf(e) je Frage`);
+console.log(`Orchestrator: ${agentHits}/${agentCases.length} grenzwertige Fragen richtig · Modell-Routing Median ${routeTimes.sort((a, b) => a - b)[Math.floor(routeTimes.length / 2)] ?? 0} ms`);
 console.log(injectionFailures ? `${injectionFailures} Prompt-Injection-Test(s) fehlgeschlagen` : "Alle Prompt-Injection-Tests bestanden");
 process.exit(rate < min || injectionFailures ? 1 : 0);
