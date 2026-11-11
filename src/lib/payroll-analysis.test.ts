@@ -21,6 +21,35 @@ const forecastFor = (entries: Payslip[], override: Partial<PayrollForecast> = {}
   ...override,
 });
 
+describe("Successbonus with the December payslip and tariff estimates", () => {
+  // Regular tax of a 3.200 € base: tariff minus 496 € Verkehrsabsetzbetrag.
+  const year = () => months(10, { regularGross: 4000, baseSalary: 3000, monthlyTaxableBase: 3200, regularTax: 521.53, regularSv: 720 })
+    .map((entry) => entry.month === 6 ? { ...entry, specialGross: 3000, specialSv: 512.1 } : entry);
+
+  it("is off by default and models the Successbonus in December as a share of the Grundgehalt", () => {
+    const entries = year();
+    expect(analyzePayrollAutomatically(entries, 2026, entries[0].employer).forecast.months.find((month) => month.month === 12)?.specialGross).toBe(0);
+    const analysis = analyzePayrollAutomatically(entries, 2026, entries[0].employer, { successBonusPercent: 138.5 });
+    expect(analysis.forecast.months.find((month) => month.month === 12)).toMatchObject({ specialGross: 4155, specialSv: 709.26 });
+    expect(analysis.assumptions.join(" ")).toContain("Successbonus: 138,5 % des Grundgehalts mit der Dezember-Abrechnung");
+    expect(analysis.credits).toMatchObject({ annual: 496, source: "payslip", label: "Verkehrsabsetzbetrag" });
+  });
+
+  it("estimates the taxes like the documented projection: 6 % within the sixth, the overhang by the tariff", () => {
+    const entries = year();
+    const analysis = analyzePayrollAutomatically(entries, 2026, entries[0].employer, { successBonusPercent: 138.5 });
+    const [november, december] = analysis.taxEstimates;
+    expect(november).toMatchObject({ month: 11, regularTax: 521.53, regularSv: 720, special: { eligibleGross: 3000, overflowGross: 0, tariff: 0 } });
+    // Sixth 8.000 € minus June and November leaves 2.000 € for the bonus; 2.155 € are taxed with the regular pay.
+    expect(december.special).toMatchObject({ gross: 4155, sv: 709.26, eligibleGross: 2000, overflowGross: 2155 });
+    expect(december.special!.preferential).toBeCloseTo(99.52, 2);
+    expect(december.special!.tariff).toBeGreaterThan(600);
+    const documented = analysis.projections.find((entry) => entry.month === 12)!.tax!;
+    expect(december.special!.net).toBeCloseTo(documented.netSpecial, 2);
+    expect(december.special!.tax).toBeCloseTo(documented.total, 2);
+  });
+});
+
 describe("estimated additional bonus headroom and isolated tariff example", () => {
   const estimate = (entries: Payslip[], month = 11) => estimatePayrollBonus(
     entries, analyzePayrollAutomatically(entries, 2026, "Synthetischer Testbetrieb"), month,

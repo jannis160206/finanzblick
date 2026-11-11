@@ -72,12 +72,16 @@ export function payrollCategory(row: PayrollSource): "Gehalt" | "Rufbereitschaft
   return row.amount < 500 ? "Rufbereitschaft" : "Gehalt";
 }
 
-export const isSpecialSalaryMonth = (month: string) => [3, 7, 12].includes(Number(month.slice(5, 7)));
+// Payout months with special payments: January (Successbonus with December's pay), March, July and December.
+export const isSpecialSalaryMonth = (month: string) => [1, 3, 7, 12].includes(Number(month.slice(5, 7)));
 
 export function earlySpecialSalary(row: PayrollSource, nextMonth: string): boolean {
-  // The March salary in the supplied payroll arrives on February 25. Keep
-  // the existing 26th–30th rule elsewhere; never shift the on-call allowance.
-  return !!row.date && Number(row.date.slice(8, 10)) === 25 &&
+  // The March salary in the supplied payroll arrives on February 25; December's
+  // salary may come before Christmas, from the 20th, and still funds January.
+  // Keep the existing 26th–30th rule elsewhere; never shift the on-call allowance.
+  const day = Number(row.date?.slice(8, 10));
+  const early = day === 25 || (nextMonth.endsWith("-01") && day >= 20 && day < 25);
+  return !!row.date && early &&
     employer.test(payrollText(row)) && payrollPeriod(row) === row.date.slice(0, 7) &&
     isSpecialSalaryMonth(nextMonth);
 }

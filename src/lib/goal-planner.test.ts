@@ -299,12 +299,17 @@ describe("planning context", () => {
     const context = goalPlanningContext(state, calculateDashboard(state), state.settings.asOf);
     const special = context.forecast["2026-12"];
     expect(special).toBeGreaterThan(1500);
-    expect(context.forecast["2027-01"]).toBeUndefined();
     expect(context.capacity["2026-12"]).toBe(Math.floor(2000 + special - Math.round((2000 + special) * 0.1)));
-    expect(context.capacity["2027-01"]).toBe(1800);
+    // The Successbonus comes with the December payslip: January is almost double too.
+    const bonus = context.forecast["2027-01"];
+    expect(bonus).toBeGreaterThan(1500);
+    expect(context.capacity["2027-01"]).toBe(Math.floor(2000 + bonus - Math.round((2000 + bonus) * 0.1)));
+    expect(context.capacity["2027-02"]).toBe(1800);
     state.settings.savingsRate = 0.3;
     const saving = goalPlanningContext(state, calculateDashboard(state), state.settings.asOf);
-    expect(saving.capacity["2027-01"]).toBe(1400);
+    expect(saving.capacity["2027-02"]).toBe(1400);
+    state.settings.successBonusPercent = 0;
+    expect(goalPlanningContext(state, calculateDashboard(state), state.settings.asOf).forecast["2027-01"]).toBeUndefined();
   });
 
   it("allows every pocket except the goal's own and stores the dialog's settings within their limits", () => {

@@ -8,8 +8,27 @@ import {
   type PayrollForecast,
   type PayrollForecastMonth,
 } from "@/lib/payslip-schema";
+import {
+  monthlyTariff,
+  monthlyWageTax,
+  preferentialTax,
+  specialFreeLimit as freeLimit,
+  specialPaymentSv,
+  specialPaymentTax,
+  wageTaxCredits,
+  type SpecialPaymentState,
+  type SpecialPaymentTax,
+  type WageTaxCredits,
+} from "@/lib/wage-tax-at";
 
 export type PayrollYear = 2026 | 2027;
+
+/** Successbonus paid with the December payslip (Auszahlung im Jänner), in percent of the Grundgehalt. */
+export const DEFAULT_SUCCESS_BONUS_PERCENT = 138.5;
+export const successBonusPercent = (settings?: { successBonusPercent?: number }) =>
+  settings?.successBonusPercent ?? DEFAULT_SUCCESS_BONUS_PERCENT;
+/** Payroll model choices: the Successbonus is off unless a caller passes it (from the settings). */
+export type PayrollModelOptions = { successBonusPercent?: number };
 
 export const payrollTaxSources = [
   { label: "RIS · § 67 EStG · Sonderzahlungen", href: "https://www.ris.bka.gv.at/NormDokument.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004570&Paragraf=67&FassungVom=2026-09-18" },
@@ -75,6 +94,14 @@ export type PayrollAnalysis = {
   yearEnd?: PayrollProjection;
 };
 
+/** Estimated taxes of a forecast month by the Austrian tariff, also where the documented basis is incomplete. */
+export type PayrollTaxEstimate = {
+  month: number;
+  regularTax?: number;
+  regularSv?: number;
+  special?: SpecialPaymentTax;
+};
+
 export type AutomaticPayrollAnalysis = PayrollAnalysis & {
   mode: "automatic-standard-model";
   assumptions: string[];
@@ -87,6 +114,9 @@ export type AutomaticPayrollAnalysis = PayrollAnalysis & {
   }[];
   estimatedHistoryMonths: number[];
   unresolvedSixthMonths: number[];
+  /** Tax credits as the own payroll applies them (or the statutory Verkehrsabsetzbetrag). */
+  credits: WageTaxCredits;
+  taxEstimates: PayrollTaxEstimate[];
 };
 
 export type PayrollBonusEstimate = {
@@ -118,12 +148,7 @@ const money = (value: number) => cents(value) / 100;
 const sum = (values: number[]) => values.reduce((total, value) => total + cents(value), 0) / 100;
 const sameMoney = (left: number, right: number) => cents(left) === cents(right);
 const unique = (values: string[]) => [...new Set(values)];
-const freeLimit = (year: number) => year === 2026 ? 2615 : 2675;
-
-function standardSpecialSv2026(gross: number, precedingGross: number): number {
-  const rate = gross <= 2225 ? 0.1412 : gross <= 2427 ? 0.1512 : gross <= 2630 ? 0.1612 : 0.1707;
-  return money(Math.min(gross, Math.max(0, 13860 - precedingGross)) * rate);
-}
+const standardSpecialSv2026 = specialPaymentSv;
 
 const REGULAR_SPIKE = 1.25;
 
@@ -149,6 +174,7 @@ export function defaultPayrollForecast(
   payslips: Payslip[],
   year: PayrollYear,
   employer: string,
+  options: PayrollModelOptions = {},
 ): PayrollForecast {
   const selected = selectedPayslips(payslips, year, employer);
   const latest = selected.at(-1);
@@ -169,7 +195,8 @@ export function defaultPayrollForecast(
     months: latest && reference && distinctPeriods && contextSupported && payslipSchema.safeParse(latest).success
       ? Array.from({ length: 12 - latest.month }, (_, index) => {
         const month = latest.month + index + 1;
-        const specialGross = month === 6 || month === 11 ? latest.baseSalary ?? 0 : 0;
+        const specialGross = month === 6 || month === 11 ? latest.baseSalary ?? 0
+          : month === 12 ? successBonusGross(latest, options) : 0;
         const specialSv = year === 2026 && previousSpecialGross !== undefined && specialGross > 0
           ? standardSpecialSv2026(specialGross, previousSpecialGross)
           : undefined;
@@ -184,6 +211,12 @@ export function defaultPayrollForecast(
       })
       : [],
   };
+}
+
+/** Successbonus of the December payslip: a share of the documented Grundgehalt, 0 without one. */
+export function successBonusGross(latest: Pick<Payslip, "baseSalary">, options: PayrollModelOptions): number {
+  const percent = options.successBonusPercent ?? 0;
+  return latest.baseSalary && percent > 0 ? money(latest.baseSalary * percent / 100) : 0;
 }
 
 function mergeForecast(
@@ -396,31 +429,6 @@ function historicalUtilization(entries: Payslip[]): Utilization {
   return { used, taxable, exempt, issues: unique(issues) };
 }
 
-function annualTariff(taxable: number, year: PayrollYear): number {
-  const bounds = year === 2026
-    ? [13539, 21992, 36458, 70365, 104859, 1000000, Infinity]
-    : [13846, 22491, 37285, 71960, 107236, 1000000, Infinity];
-  const rates = [0, 0.2, 0.3, 0.4, 0.48, 0.5, 0.55];
-  let tax = 0;
-  let lower = 0;
-  for (const [index, upper] of bounds.entries()) {
-    tax += Math.max(0, Math.min(taxable, upper) - lower) * rates[index];
-    lower = upper;
-    if (taxable <= upper) break;
-  }
-  return tax;
-}
-
-function monthlyTariff(base: number, year: PayrollYear): number {
-  return annualTariff(Math.max(0, base * 12 - 132), year) / 12;
-}
-
-function preferentialTax(base: number): number {
-  return Math.min(Math.max(0, base - 620), 24380) * 0.06
-    + Math.min(Math.max(0, base - 25000), 25000) * 0.27
-    + Math.min(Math.max(0, base - 50000), 33333) * 0.3575;
-}
-
 function tariffIncrement(
   netOverflow: number,
   month: PayrollForecastMonth,
@@ -499,16 +507,18 @@ export function analyzePayroll(
   year: PayrollYear,
   employer: string,
   savedForecast?: PayrollForecast,
+  options: PayrollModelOptions = {},
 ): PayrollAnalysis {
-  return analyzePayrollScenario(payslips, year, employer, savedForecast, false);
+  return analyzePayrollScenario(payslips, year, employer, savedForecast, false, options);
 }
 
 export function analyzePayrollAutomatically(
   payslips: Payslip[],
   year: PayrollYear,
   employer: string,
+  options: PayrollModelOptions = {},
 ): AutomaticPayrollAnalysis {
-  const analysis = analyzePayrollScenario(payslips, year, employer, undefined, true);
+  const analysis = analyzePayrollScenario(payslips, year, employer, undefined, true, options);
   const hasSpecialPaymentModel = (analysis.latest?.baseSalary ?? 0) > 0;
   if (analysis.latest && analysis.latest.month < 12 && !hasSpecialPaymentModel) {
     analysis.issues.push("Kein positiver, ausdrücklich belegter Grundgehaltsbetrag für das Sonderzahlungsmodell. Bitte eine passende lesbare PDF-Abrechnung hochladen; laufendes Brutto oder LSt-Basis ersetzen diesen Nachweis nicht.");
@@ -545,15 +555,62 @@ export function analyzePayrollAutomatically(
       }
     }
   }
+  const credits = wageTaxCredits(entries, year);
+  const percent = options.successBonusPercent ?? 0;
   return {
     ...analysis,
     mode: "automatic-standard-model",
-    assumptions: [...automaticPayrollAssumptions],
+    assumptions: [
+      ...automaticPayrollAssumptions,
+      ...(percent > 0 && hasSpecialPaymentModel
+        ? [`Successbonus: ${String(percent).replace(".", ",")} % des Grundgehalts mit der Dezember-Abrechnung (Auszahlung im Jänner) als sonstiger Bezug – eine Einstellung, kein belegter Anspruch.`]
+        : []),
+    ],
     hasSpecialPaymentModel,
     sixthEstimates,
     estimatedHistoryMonths,
     unresolvedSixthMonths,
+    credits,
+    taxEstimates: taxEstimates(entries, analysis, sixthEstimates, credits),
   };
+}
+
+/**
+ * Taxes of every forecast month by the Austrian tariff with the learned tax credits: regular Lohnsteuer and SV, and
+ * for special payments SV, 6 % within the Jahressechstel and the tariff on the overhang. Unlike the documented
+ * projections this also works when earlier sixth use is only estimated (all earlier special payments count).
+ */
+function taxEstimates(
+  entries: Payslip[],
+  analysis: PayrollAnalysis,
+  sixths: AutomaticPayrollAnalysis["sixthEstimates"],
+  credits: WageTaxCredits,
+): PayrollTaxEstimate[] {
+  const latest = analysis.latest;
+  if (!latest || analysis.contextIssues.length) return [];
+  const year = analysis.forecast.year;
+  const reference = regularReference(entries) ?? latest;
+  const svRate = reference.regularSv !== undefined && reference.regularGross > 0 ? reference.regularSv / reference.regularGross : undefined;
+  const specials = entries.filter((entry) => entry.specialGross > 0);
+  let state: SpecialPaymentState = {
+    used: analysis.actual?.usedSixth ?? sum(specials.map((entry) => entry.specialGross)),
+    taxable: analysis.actual?.specialTaxableYtd
+      ?? sum(specials.map((entry) => entry.specialGross - (entry.specialSv ?? specialPaymentSv(entry.specialGross, 0)))),
+    svGross: cumulativeSpecialSvGross(entries) ?? sum(entries.map((entry) => sum([entry.specialGross, entry.unresolvedSixthBonus ?? 0]))),
+  };
+  return analysis.forecast.months.map((month) => {
+    const regularSv = svRate === undefined ? undefined : money(month.regularGross * svRate);
+    const base = month.monthlyTaxableBase ?? reference.monthlyTaxableBase;
+    const regularTax = base === undefined ? undefined : monthlyWageTax(base, year, credits.monthly);
+    if (month.specialGross <= 0) return { month: month.month, regularTax, regularSv };
+    const sixth = sixths.find((entry) => entry.month === month.month)?.sixth ?? money(month.regularGross * 2);
+    const { tax, after } = specialPaymentTax(
+      { gross: month.specialGross, sv: month.specialSv, sixth, base: base ?? money(month.regularGross - (regularSv ?? month.regularGross * 0.18)) },
+      state, year, credits.monthly,
+    );
+    state = after;
+    return { month: month.month, regularTax, regularSv, special: tax };
+  });
 }
 
 export function estimatePayrollBonus(
@@ -641,6 +698,7 @@ function analyzePayrollScenario(
   employer: string,
   savedForecast: PayrollForecast | undefined,
   automatic: boolean,
+  options: PayrollModelOptions,
 ): PayrollAnalysis {
   const entries = selectedPayslips(payslips, year, employer);
   const latest = entries.at(-1);
@@ -648,7 +706,7 @@ function analyzePayrollScenario(
   const contextIssues = payrollContextMessages(entries);
   issues.push(...contextIssues);
   const forecast = mergeForecast(
-    defaultPayrollForecast(payslips, year, employer), savedForecast, issues,
+    defaultPayrollForecast(payslips, year, employer, options), savedForecast, issues,
     cumulativeSpecialSvGross(entries),
   );
   const result: PayrollAnalysis = {

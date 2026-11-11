@@ -362,7 +362,7 @@ export function bookingMonth(row: Transaction): string {
   const month = monthKey(row.date);
   if (row.amount <= 0) return month;
   const day = Number(row.date.slice(8, 10));
-  if (day < 25 || day > 30) return month;
+  if (day < 20 || day > 30) return month;
   const nextMonth = addMonths(month, 1);
   return ((day >= 26 && day <= 30) || earlySpecialSalary(row, nextMonth)) &&
     classify(row).category === "Gehalt"

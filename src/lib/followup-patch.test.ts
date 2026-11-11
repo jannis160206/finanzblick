@@ -109,6 +109,13 @@ describe("assigned salary month", () => {
     expect(bookingMonth(row("year", "Gehalt", 3000, "2026-12-28"))).toBe("2027-01");
     for (const day of [25, 31]) expect(bookingMonth(row("pay", "Gehalt", 3000, `2026-08-${day}`))).toBe("2026-08");
     expect(bookingMonth(row("bonus", "Bonus", 3000, "2026-08-28"))).toBe("2026-08");
+    // December's salary (with the Successbonus) may arrive before Christmas and still funds January.
+    const december = (date: string, period = "12/2026") => row("dec", `TTS TeamTalentSolutions Gehalt ${period}`, 5000, date);
+    for (const day of [20, 22, 24]) expect(bookingMonth(december(`2026-12-${day}`))).toBe("2027-01");
+    expect(bookingMonth(december("2026-12-19"))).toBe("2026-12");
+    expect(bookingMonth(december("2026-12-22", "11/2026"))).toBe("2026-12");
+    expect(bookingMonth(row("other", "Gehalt", 3000, "2026-12-22"))).toBe("2026-12");
+    expect(bookingMonth({ ...december("2026-11-22"), description: "TTS TeamTalentSolutions Gehalt 11/2026" })).toBe("2026-11");
     const state = createSeed(); state.settings.asOf = "2026-09-14";
     state.financeRows = [{ id: "salary", label: "Gehalt", kind: "income", values: { "2026-08": 2500, "2026-09": 3000 } }];
     const imported = commitStatementImport(state, [row("pay", "Gehalt", 3000, "2026-08-28")]);

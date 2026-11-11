@@ -1,6 +1,13 @@
 import { actualBookings, addMonths, bookingMonth, classify } from "@/lib/calc";
 import { currency, monthLabel, percent } from "@/lib/format";
-import { analyzePayrollAutomatically, type AutomaticPayrollAnalysis, type PayrollYear } from "@/lib/payroll-analysis";
+import {
+  analyzePayrollAutomatically,
+  regularReference,
+  successBonusGross,
+  successBonusPercent,
+  type AutomaticPayrollAnalysis,
+  type PayrollYear,
+} from "@/lib/payroll-analysis";
 import { payrollCategory } from "@/lib/payroll";
 import { payslipIncome } from "@/lib/payslip-income";
 import { payrollPatterns, type PayrollPattern, payrollProfile } from "@/lib/payroll-pattern";
@@ -8,6 +15,7 @@ import { payslipHold } from "@/lib/payslip-validation";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { planningEndMonth } from "@/lib/planning-range";
 import type { AppState } from "@/lib/types";
+import { specialPaymentTax, wageTaxCredits, type SpecialPaymentState, type SpecialPaymentTax } from "@/lib/wage-tax-at";
 
 export const salaryParts = ["salary", "onCall", "overtime", "holidayWork", "special"] as const;
 export type SalaryPart = (typeof salaryParts)[number];
@@ -37,7 +45,7 @@ export type SalaryForecast = {
   months: SalaryForecastMonth[];
 };
 
-/** Net share of a modelled special payment without a tax projection: 17,07 % SV, then about 6 % Lohnsteuer (§ 67 EStG). */
+/** Net share of a modelled special payment when no tax estimate is possible: 17,07 % SV, then about 6 % Lohnsteuer. */
 export const SPECIAL_NET_RATIO = 0.78;
 // A persistent change of the regular net salary by more than 3 % counts as a raise (or cut).
 const STEP = 0.03;
@@ -152,17 +160,26 @@ function salaryLevels(history: SalaryInflow[]) {
 
 const partLabel: Record<VariablePart, string> = { onCall: "Rufbereitschaft", overtime: "Überstunden", holidayWork: "Feiertagsarbeit" };
 const monthName = (month: number) => monthLabel(`2026-${String(month).padStart(2, "0")}`).split(" ")[0];
+const percentText = (value: number) => `${String(value).replace(".", ",")} %`;
+/** How the Lohnsteuer of a modelled special payment came about. */
+const taxNote = (tax: SpecialPaymentTax) => tax.overflowGross > 0
+  ? `${currency(tax.overflowGross)} über dem Sechstel nach Tarif`
+  : tax.tax === 0 ? "steuerfrei im Jahressechstel" : "6 % im Jahressechstel";
 
 /**
  * Salary forecast per future budget month (the payout month, one after the Abrechnungsmonat), aligned to today's
  * salary level. Older months – also payslips of the reference year 2025 – only give the pattern: special payments and
  * holiday work repeat the same month of the latest year with data, scaled to the current salary. On-call pay is its
  * normal level and extra hours their typical (median) amount, so a single month with much holiday work or overtime is
- * not spread over every month. Every value says where it comes from.
+ * not spread over every month. Modelled special payments are taxed by the Austrian tariff (§ 67 EStG); the
+ * Successbonus comes with the December payslip and is paid out in January, so earlier bonuses in other months are not
+ * repeated. Every value says where it comes from.
  */
 export function salaryForecast(state: AppState, options: { today?: string; until?: string } = {}): SalaryForecast {
   const today = options.today ?? state.settings.asOf;
   const current = today.slice(0, 7);
+  const bonus = successBonusPercent(state.settings);
+  const successLabel = `Successbonus ${percentText(bonus)} des Grundgehalts mit dem Dezember-Lohn`;
   const until = options.until ?? planningEndMonth(today);
   const stored = state.payslips ?? [];
   // Payslips held back for contradictions do not shape the forecast either.
@@ -208,35 +225,79 @@ export function salaryForecast(state: AppState, options: { today?: string; until
     const payrollMonth = Number(payroll.slice(5, 7));
     const year = Number(payroll.slice(0, 4));
     if (!latestPayslip || (year !== 2026 && year !== 2027)) return undefined;
-    const analysis = analyses.get(year) ?? analyzePayrollAutomatically(payslips, year, latestPayslip.employer);
+    const analysis = analyses.get(year) ?? analyzePayrollAutomatically(payslips, year, latestPayslip.employer, { successBonusPercent: bonus });
     analyses.set(year, analysis);
     if (!analysis.latest || payrollMonth <= analysis.latest.month) return undefined;
     const gross = analysis.forecast.months.find((entry) => entry.month === payrollMonth)?.specialGross ?? 0;
     if (gross <= 0) return { amount: 0, reason: "keine Sonderzahlung im Modell" };
+    const label = payrollMonth === 12 ? successLabel : `Modell: ${currency(gross)} brutto im ${monthName(payrollMonth)}`;
     const net = analysis.projections.find((entry) => entry.month === payrollMonth)?.tax?.netSpecial;
-    return net !== undefined
-      ? { amount: euros(net), reason: `Modell: Sonderzahlung ${monthName(payrollMonth)} lt. Steuerprognose` }
-      : { amount: euros(gross * SPECIAL_NET_RATIO), reason: `Modell: ${currency(gross)} brutto im ${monthName(payrollMonth)}, netto ≈ 78 %` };
+    if (net !== undefined) return { amount: euros(net), reason: `${label} · lt. Steuerprognose` };
+    const estimate = analysis.taxEstimates.find((entry) => entry.month === payrollMonth)?.special;
+    return estimate
+      ? { amount: euros(estimate.net), reason: `${label} · ${taxNote(estimate)}` }
+      : { amount: euros(gross * SPECIAL_NET_RATIO), reason: `${label}, netto ≈ 78 %` };
   };
   const profile = latestPayslip ? payrollProfile(payslips, latestPayslip.employer) : undefined;
+  const ratio = profile?.specialRatio ?? 1;
+  const modelYears = new Map<number, Map<number, SpecialPaymentTax>>();
+  /** A whole model year from scratch: June and November special payments, then the Successbonus, taxed in turn. */
+  const modelYear = (year: number) => {
+    const known = modelYears.get(year);
+    if (known || !latestPayslip?.baseSalary) return known ?? new Map<number, SpecialPaymentTax>();
+    const own = payslips.filter((entry) => payrollEmployerKey(entry.employer) === payrollEmployerKey(latestPayslip.employer))
+      .sort((a, b) => a.year - b.year || a.month - b.month);
+    const reference = regularReference(own) ?? latestPayslip;
+    const credits = wageTaxCredits(own, year).monthly;
+    const base = reference.monthlyTaxableBase ?? reference.regularGross * 0.82;
+    const result = new Map<number, SpecialPaymentTax>();
+    let before: SpecialPaymentState = { used: 0, taxable: 0, svGross: 0 };
+    for (const [month, gross] of [[6, latestPayslip.baseSalary * ratio], [11, latestPayslip.baseSalary * ratio],
+      [12, successBonusGross(latestPayslip, { successBonusPercent: bonus })]] as const) {
+      if (gross <= 0) continue;
+      const { tax, after } = specialPaymentTax({ gross: cents(gross), sixth: reference.regularGross * 2, base }, before, year, credits);
+      result.set(month, tax);
+      before = after;
+    }
+    modelYears.set(year, result);
+    return result;
+  };
   /**
    * Without the same month of an earlier year: a special payment in June and November (paid out in July and
-   * December), as large as the own payslips showed it (share of the Grundgehalt), else one Grundgehalt.
+   * December), as large as the own payslips showed it (share of the Grundgehalt), else one Grundgehalt, and the
+   * Successbonus with the December payslip (paid out in January).
    */
   const baseModel = (month: string): SalaryValue => {
-    const payrollMonth = Number(addMonths(month, -1).slice(5, 7));
+    const payroll = addMonths(month, -1);
+    const payrollMonth = Number(payroll.slice(5, 7));
     if (!latestPayslip) return { amount: 0, reason: "keine Abrechnung für das Modell" };
-    const due = payrollMonth === 6 || payrollMonth === 11;
-    if (due && latestPayslip.baseSalary) {
-      const ratio = profile?.specialRatio ?? 1;
+    const due = payrollMonth === 6 || payrollMonth === 11 || (payrollMonth === 12 && bonus > 0);
+    const tax = due && latestPayslip.baseSalary ? modelYear(Number(payroll.slice(0, 4))).get(payrollMonth) : undefined;
+    if (tax && payrollMonth === 12) return { amount: euros(tax.net), reason: `${successLabel} · ${taxNote(tax)}` };
+    if (tax) {
       const share = Math.round(ratio * 100);
       return {
-        amount: euros(latestPayslip.baseSalary * ratio * SPECIAL_NET_RATIO),
-        reason: share === 100 ? `Modell: Grundgehalt im ${monthName(payrollMonth)}, netto ≈ 78 %`
-          : `Muster: ${share} % des Grundgehalts im ${monthName(payrollMonth)} lt. eigenen Abrechnungen, netto ≈ 78 %`,
+        amount: euros(tax.net),
+        reason: share === 100 ? `Modell: Grundgehalt im ${monthName(payrollMonth)} · ${taxNote(tax)}`
+          : `Muster: ${share} % des Grundgehalts im ${monthName(payrollMonth)} lt. eigenen Abrechnungen · ${taxNote(tax)}`,
       };
     }
     return { amount: 0, reason: due ? "kein Grundgehalt belegt" : "keine Sonderzahlung im Modell" };
+  };
+  /** The Successbonus is paid out in January: special payments of other months besides July and December are not repeated. */
+  const bonusMonth = (month: string) => bonus > 0 && month.slice(5) === "01";
+  const movedBonus = (month: string) => bonus > 0 && !bonusMonth(month) && month.slice(5) !== "07" && month.slice(5) !== "12";
+  const specialFor = (month: string): SalaryValue => {
+    const previous = sameMonth(month);
+    const modelled = taxModel(month);
+    if (modelled && (modelled.amount > 0 || !previous?.special)) return modelled;
+    if (previous && previous.special > 0 && movedBonus(month)) {
+      return { amount: 0, reason: `Prämie wie ${short(previous.month)} kommt jetzt mit dem Dezember-Lohn (Jänner)` };
+    }
+    if (!previous || (bonusMonth(month) && previous.special <= 0)) return baseModel(month);
+    return previous.special > 0
+      ? { amount: euros(previous.special * factor(previous)), reason: `wie ${short(previous.month)}${raised(previous)}` }
+      : { amount: 0, reason: `${short(previous.month)} ohne Sonderzahlung` };
   };
   const salary: SalaryValue = {
     amount: euros(level),
@@ -248,12 +309,7 @@ export function salaryForecast(state: AppState, options: { today?: string; until
   const overtime = typical("overtime", true);
   const months: SalaryForecastMonth[] = [];
   for (let month = [current, addMonths(actualThrough, 1)].sort()[1]; month <= until; month = addMonths(month, 1)) {
-    const previous = sameMonth(month);
-    const modelled = taxModel(month);
-    const special: SalaryValue = modelled && (modelled.amount > 0 || !previous?.special) ? modelled
-      : !previous ? baseModel(month) : previous.special > 0
-        ? { amount: euros(previous.special * factor(previous)), reason: `wie ${short(previous.month)}${raised(previous)}` }
-        : { amount: 0, reason: `${short(previous.month)} ohne Sonderzahlung` };
+    const special = specialFor(month);
     const holidayMonth = sameMonth(month, "holidayWork");
     const holidayAmount = holidayMonth ? euros(holidayMonth.holidayWork * factor(holidayMonth)) : 0;
     const holidayWork: SalaryValue = holidayMonth

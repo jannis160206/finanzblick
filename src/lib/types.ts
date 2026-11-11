@@ -337,6 +337,8 @@ export const settingsSchema = z
       .optional(),
     // Payslip import: look up unclear terms (only the term itself) on Wikipedia when the local glossary is not enough. Off by default.
     payslipTermLookup: z.boolean().optional(),
+    // Successbonus with the December payslip (paid out in January) in percent of the Grundgehalt; 0 turns it off. Default 138,5 %.
+    successBonusPercent: z.number().min(0).max(500).optional(),
   })
   .refine((value) => value.asOf >= value.baselineDate, {
     message: "Stichtag darf nicht vor dem Ist-Datum liegen",

@@ -80,7 +80,13 @@ describe("salary forecast", () => {
     expect(byMonth["2026-12"].special.reason).toMatch(/^Modell/);
     expect(byMonth["2026-12"].special.amount).toBeGreaterThan(2200);
     expect(byMonth["2026-12"].special.amount).toBeLessThan(3150);
-    expect(byMonth["2027-01"].special.amount).toBe(0);
+    // The Successbonus (138,5 % of the Grundgehalt) comes with the December payslip and is paid out in January.
+    expect(byMonth["2027-01"].special.reason).toMatch(/^Successbonus 138,5\s% des Grundgehalts mit dem Dezember-Lohn · .* über dem Sechstel nach Tarif$/);
+    expect(byMonth["2027-01"].special.amount).toBeGreaterThan(1500);
+    expect(byMonth["2027-01"].special.amount).toBeLessThan(Math.round(3150 * 1.385 * SPECIAL_NET_RATIO));
+    const off = payslipState();
+    off.settings = { ...off.settings, successBonusPercent: 0 };
+    expect(salaryForecast(off).months.find((month) => month.month === "2027-01")!.special.amount).toBe(0);
     expect(byMonth["2026-12"].total).toBe(2218 + 211 + 70 + byMonth["2026-12"].special.amount);
     expect(byMonth["2026-12"].salary.reason).toBe("laufendes Netto lt. Abrechnung Okt. 2026");
   });
@@ -106,10 +112,13 @@ describe("salary forecast", () => {
     state.settings = { ...state.settings, asOf: "2027-02-10", baselineDate: "2027-02-01" };
     state.payslips = [{ year: 2027, month: 1, employer, monthlyPayroll: true, baseSalary: 3000, regularGross: 3000, specialGross: 0, netPay: 2100 }];
     const months = Object.fromEntries(salaryForecast(state).months.map((month) => [month.month, month.special]));
-    expect(months["2027-07"].amount).toBe(Math.round(3000 * SPECIAL_NET_RATIO));
-    expect(months["2027-07"].reason).toMatch(/^Modell: .*Juni.*78\s%/);
-    expect(months["2027-12"].amount).toBe(Math.round(3000 * SPECIAL_NET_RATIO));
+    // SV 17,07 %, the year's first special payment keeps 620 € tax-free, then 6 %; the second one pays 6 % on all.
+    expect(months["2027-07"]).toEqual({ amount: 2376, reason: "Modell: 3.000,00\u00a0€ brutto im Juni · 6 % im Jahressechstel" });
+    expect(months["2027-12"]).toEqual({ amount: 2339, reason: "Modell: 3.000,00\u00a0€ brutto im November · 6 % im Jahressechstel" });
     expect(months["2027-08"].amount).toBe(0);
+    // With both payments the sixth is used up: the Successbonus is taxed by the tariff.
+    expect(months["2028-01"].reason).toMatch(/^Successbonus .* über dem Sechstel nach Tarif$/);
+    expect(months["2028-01"].amount).toBeLessThan(Math.round(3000 * 1.385 * 0.7));
   });
 
   it("learns normal on-call pay and keeps holiday work and single extra-hour months out of every month", () => {
@@ -172,12 +181,27 @@ describe("salary forecast", () => {
     // June 2025 paid 120 % of the Grundgehalt as special payment; there is no November of an earlier year.
     state.payslips = [slip(2025, 6, { specialGross: 3600, specialSv: 615, specialTax: 141.9, netPay: 4943.1 }), slip(2026, 1), slip(2026, 2)];
     const december = salaryForecast(state).months.find((month) => month.month === "2027-12")!;
-    expect(december.special).toEqual({ amount: Math.round(3000 * 1.2 * SPECIAL_NET_RATIO), reason: "Muster: 120 % des Grundgehalts im November lt. eigenen Abrechnungen, netto ≈ 78 %" });
+    // Two payments of 120 % exceed the sixth of two regular months: the overhang is taxed by the tariff.
+    expect(december.special).toEqual({ amount: 2534, reason: "Muster: 120 % des Grundgehalts im November lt. eigenen Abrechnungen · 1.200,00\u00a0€ über dem Sechstel nach Tarif" });
     const broken = slip(2026, 2, { netPay: 2600 });
     state.payslips = [slip(2026, 1), broken];
     expect(salaryForecast(state).actualThrough).toBe("2026-02");
     state.payrollBudget = { confirmed: [payslipFingerprint(broken)] };
     expect(salaryForecast(state).actualThrough).toBe("2026-03");
+  });
+
+  it("does not repeat a bonus of another month: it now comes with the December payslip, paid out in January", () => {
+    const state = payslipState();
+    // A bonus with the February payslip, paid out in March 2026.
+    state.payslips = state.payslips!.map((entry) => entry.month === 2
+      ? { ...entry, unresolvedSixthBonus: 3000, specialSv: 423.6, regularTax: 1400, netPay: 3976.4 } : entry);
+    const march = (percent?: number) => {
+      const copy = { ...state, settings: { ...state.settings, successBonusPercent: percent } };
+      return salaryForecast(copy).months.find((month) => month.month === "2027-03")!.special;
+    };
+    expect(salaryForecast(state).history.find((item) => item.month === "2026-03")!.special).toBeGreaterThan(0);
+    expect(march()).toEqual({ amount: 0, reason: "Prämie wie März 2026 kommt jetzt mit dem Dezember-Lohn (Jänner)" });
+    expect(march(0).reason).toMatch(/^wie März 2026/);
   });
 
   it("forecasts nothing without salary data", () => {
