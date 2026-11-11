@@ -2,11 +2,13 @@ import { ZodError } from "zod";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { queueLedgerReview } from "@/lib/import/review";
 import { applyPayslipIncome } from "@/lib/payslip-income";
-import { payrollEmployerKey, payslipSchema, type Payslip } from "@/lib/payslip-schema";
+import { payslipLogEntry, type PayslipLogFile } from "@/lib/payslip-log";
+import { isReferencePayslip, payrollEmployerKey, payslipSchema, type Payslip, type PayslipImport } from "@/lib/payslip-schema";
 import { preparePayslipMerge } from "@/lib/payslip-storage";
 import { synchronizePlan } from "@/lib/planning";
 import type { AccountDatabase } from "@/lib/server/database";
 import { isAccountError } from "@/lib/server/errors";
+import { appendPayslipLogFile } from "@/lib/server/payslip-log-store";
 import { readUserSecret, userSecretInfo } from "@/lib/server/user-secrets";
 import { appStateSchema, type AppState } from "@/lib/types";
 import { inboxFilePath, listInbox, markInboxItem, removeInboxItem } from "./inbox";
@@ -83,6 +85,9 @@ export async function processDriveInbox(
   const passwordAt = stored?.updatedAt ?? 0;
   let password: string | null | undefined;
   let handled = 0;
+  let saved = 0;
+  const files: PayslipLogFile[] = [];
+  const report: PayslipImport = { drafts: [], issues: [] };
   for (const item of items) {
     if (signal?.aborted || handled >= MAX_PER_RUN) break;
     if (item.waiting === "conflict" || (item.waiting === "password" && (item.passwordAt ?? 0) === passwordAt)) {
@@ -94,6 +99,7 @@ export async function processDriveInbox(
       await recordInboxOutcome(database, userId, item.id, outcome, note);
       await removeInboxItem(database, userId, item.id);
       run[outcome]++;
+      files.push({ name: item.name, outcome, note });
     };
     try {
       if (password === undefined) password = stored ? await readUserSecret(database, userId, "payslip-password").catch(() => null) : null;
@@ -101,8 +107,11 @@ export async function processDriveInbox(
       if (parsed.status === "locked") {
         await markInboxItem(database, userId, item.id, { waiting: "password", passwordAt });
         run.waiting++;
+        files.push({ name: item.name, outcome: "waiting", note: password ? "Gespeichertes Passwort passt nicht." : "Passwort fehlt." });
         continue;
       }
+      report.drafts.push(...parsed.result.drafts);
+      report.issues.push(...parsed.result.issues.map((issue) => `${item.name}: ${issue}`));
       if (!parsed.result.drafts.length) { await finish("skipped", "Keine Lohnabrechnung erkannt."); continue; }
       const entries = parsed.result.drafts.flatMap((draft) => {
         const entry = payslipSchema.safeParse(draft);
@@ -113,13 +122,21 @@ export async function processDriveInbox(
       if (result === "conflict") {
         await markInboxItem(database, userId, item.id, { waiting: "conflict" });
         run.waiting++;
+        files.push({ name: item.name, outcome: "waiting", note: "Abweichende Werte – Ersetzen in der App bestätigen." });
         continue;
       }
-      await finish("imported", result === "imported" ? "Im Hintergrund übernommen." : "Bereits vorhanden.");
+      if (result === "imported") saved += entries.length;
+      const reference = entries.every(isReferencePayslip);
+      await finish("imported", result !== "imported" ? "Bereits vorhanden."
+        : reference ? "Als Referenz übernommen – nicht im Budget." : "Im Hintergrund übernommen.");
     } catch (error) {
       if (signal?.aborted) break;
       await finish("failed", failureText(error));
     }
+  }
+  if (files.length) {
+    const message = `Google Drive im Hintergrund: ${run.imported} übernommen, ${run.waiting} warten, ${run.skipped} übersprungen, ${run.failed} fehlgeschlagen.`;
+    await appendPayslipLogFile(database, userId, payslipLogEntry({ source: "drive-background", message, files, report, stored: saved })).catch(() => undefined);
   }
   return run;
 }

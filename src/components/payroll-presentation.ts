@@ -1,9 +1,14 @@
 import {
   analyzePayrollAutomatically,
   estimatePayrollBonus,
+  type AutomaticPayrollAnalysis,
+  type PayrollYear,
 } from "@/lib/payroll-analysis";
-import { payrollYearMonths, type PayrollStripMonth } from "@/lib/payroll-overview";
-import type { Payslip } from "@/lib/payslip-schema";
+import { payrollBreakdown } from "@/lib/payroll-overview";
+import { payrollPattern } from "@/lib/payroll-pattern";
+import { payslipIncome, type PayslipIncome } from "@/lib/payslip-income";
+import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
+import { salaryParts, type SalaryForecast, type SalaryForecastMonth } from "@/lib/salary-forecast";
 import { currency, monthLabel } from "@/lib/format";
 
 export const payrollPeriod = (year: number, month: number) =>
@@ -27,7 +32,7 @@ export const payrollEstimate = (
 
 export function payrollPresentation(
   payslips: Payslip[],
-  year: Payslip["year"],
+  year: PayrollYear,
   employer: string,
   asOf: string,
 ) {
@@ -78,7 +83,7 @@ export function payrollPresentation(
 }
 export type PayrollPresentation = ReturnType<typeof payrollPresentation>;
 
-export type PayrollMonthStatus = PayrollStripMonth["kind"];
+export type PayrollMonthStatus = "actual" | "forecast" | "missing" | "open";
 
 export const payrollStatusLabel: Record<PayrollMonthStatus, string> = {
   actual: "belegt",
@@ -87,19 +92,37 @@ export const payrollStatusLabel: Record<PayrollMonthStatus, string> = {
   open: "offen",
 };
 
+export type PayoutPartKey = (typeof salaryParts)[number];
+
+export const payoutPartLabel: Record<PayoutPartKey, string> = {
+  salary: "Gehalt",
+  onCall: "Rufbereitschaft",
+  overtime: "Überstunden",
+  holidayWork: "Feiertagsarbeit",
+  special: "Sonderzahlung",
+};
+
+/** Net share of one payout; forecasts say where the amount comes from. */
+export type PayoutPart = { key: PayoutPartKey; amount: number; reason?: string };
+
 export type PayrollMonthDetails =
   | {
       kind: "actual";
+      entry: Payslip;
+      /** Paid out net; missing when the payslip neither prints nor allows an exact net. */
       net?: number;
+      parts: PayoutPart[];
       regularGross: number;
       specialGross: number;
       tax?: number;
       sv?: number;
-      /** Only for the latest payslip: the documented Jahressechstel. */
+      /** Only for the latest payslip of its tax year: the documented Jahressechstel. */
       sixth?: number;
     }
   | {
       kind: "forecast";
+      net?: number;
+      parts: PayoutPart[];
       regularGross?: number;
       /** `undefined` while the special-payment model is unknown, 0 when none is planned. */
       specialGross?: number;
@@ -107,68 +130,104 @@ export type PayrollMonthDetails =
     };
 
 export type PayrollMonthTile = {
+  /** Auszahlungsmonat 1–12 of the shown year. */
   month: number;
   label: string;
+  /** Abrechnungsmonat paid out in this month: always the month before. */
+  payroll: { year: number; month: number; label: string };
   status: PayrollMonthStatus;
   special: boolean;
-  /** Net when the payslip prints it, otherwise gross (always gross for forecasts). */
+  /** Payslip of a reference year (2025): pattern for forecasts only, never in the budget. */
+  reference: boolean;
+  /** Net payout; gross only when no net is known. */
   headline?: { metric: "net" | "gross"; value: number };
   /** Present for months that can be opened. */
   details?: PayrollMonthDetails;
 };
 
+export type PayrollTileSources = {
+  view: PayrollPresentation;
+  /** Analysis of the previous tax year: its December payslip is paid out in January. */
+  previous?: AutomaticPayrollAnalysis;
+  payslips: readonly Payslip[];
+  employer: string;
+  /** Net forecast by budget month – the same values the budget update proposes. */
+  forecast?: SalaryForecast;
+};
+
+const periodIndex = (year: number, month: number) => year * 12 + month - 1;
+const shown = (parts: PayoutPart[]) => parts.filter((part) => part.key === "salary" || part.amount > 0);
+const incomeParts = (income: PayslipIncome) => shown(salaryParts.map((key) => ({ key, amount: income[key] })));
+const forecastParts = (month: SalaryForecastMonth) =>
+  shown(salaryParts.map((key) => ({ key, amount: month[key].amount, reason: month[key].reason })));
+
 /**
- * Twelve month tiles from documented payslips and the existing automatic forecast. Only rearranges values the
- * analysis already computed; nothing is estimated here.
+ * Twelve tiles by Auszahlungsmonat: the October payslip is paid in November, December's in January of the next year.
+ * Documented months come from the payslips, later months from the salary forecast and the payroll model.
  */
-export function payrollMonthTiles(
-  view: PayrollPresentation,
-  entries: readonly Payslip[],
-): PayrollMonthTile[] {
-  const { analysis, actual, year } = view;
-  const latest = entries.reduce((last, entry) => Math.max(last, entry.month), 0);
-  return payrollYearMonths(entries, analysis.forecast.months).map((entry): PayrollMonthTile => {
-    const label = monthLabel(payrollPeriod(year, entry.month));
-    if (entry.kind === "actual") {
-      const { breakdown } = entry;
+export function payrollMonthTiles({ view, previous, payslips, employer, forecast }: PayrollTileSources): PayrollMonthTile[] {
+  const { year, analysis } = view;
+  const key = payrollEmployerKey(employer);
+  const own = payslips.filter((entry) => payrollEmployerKey(entry.employer) === key);
+  const pattern = payrollPattern(own);
+  const periods = own.map((entry) => periodIndex(entry.year, entry.month));
+  const first = Math.min(...periods);
+  const last = Math.max(...periods);
+  return Array.from({ length: 12 }, (_, index): PayrollMonthTile => {
+    const month = index + 1;
+    const payroll = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+    const tile = {
+      month,
+      label: monthLabel(payrollPeriod(year, month)),
+      payroll: { ...payroll, label: monthLabel(payrollPeriod(payroll.year, payroll.month)) },
+      special: false,
+      reference: false,
+    };
+    const model = payroll.year === year ? analysis : previous;
+    const entry = own.find((candidate) => candidate.year === payroll.year && candidate.month === payroll.month);
+    if (entry) {
+      const income = payslipIncome(entry, pattern);
+      const breakdown = payrollBreakdown(entry);
       return {
-        month: entry.month,
-        label,
+        ...tile,
         status: "actual",
-        special: entry.special,
-        headline:
-          breakdown.net === undefined
-            ? { metric: "gross", value: breakdown.gross }
-            : { metric: "net", value: breakdown.net },
+        reference: isReferencePayslip(entry),
+        special: breakdown.special !== undefined,
+        headline: income ? { metric: "net", value: income.net } : { metric: "gross", value: breakdown.gross },
         details: {
           kind: "actual",
-          net: breakdown.net,
-          regularGross: breakdown.regular.gross,
+          entry,
+          net: income?.net,
+          parts: income ? incomeParts(income) : [],
+          regularGross: entry.regularGross,
           specialGross: breakdown.special?.gross ?? 0,
           tax: breakdown.tax,
           sv: breakdown.sv,
-          sixth: actual?.month === entry.month ? actual.sixth : undefined,
+          sixth: model?.actual?.month === payroll.month ? model.actual.sixth : undefined,
         },
       };
     }
-    const sixth = analysis.sixthEstimates.find((estimate) => estimate.month === entry.month);
-    // A projected sixth without a forecast row still deserves its month details instead of a blank tile.
-    if (entry.kind === "forecast" || (entry.kind === "open" && latest > 0 && entry.month > latest && sixth)) {
-      const planned = analysis.forecast.months.find((candidate) => candidate.month === entry.month);
-      return {
-        month: entry.month,
-        label,
-        status: "forecast",
-        special: entry.kind === "forecast" && entry.special,
-        ...(entry.kind === "forecast" ? { headline: { metric: "gross" as const, value: entry.gross } } : {}),
-        details: {
-          kind: "forecast",
-          regularGross: planned?.regularGross,
-          specialGross: analysis.hasSpecialPaymentModel ? planned?.specialGross : undefined,
-          sixth,
-        },
-      };
-    }
-    return { month: entry.month, label, status: entry.kind, special: false };
+    const at = periodIndex(payroll.year, payroll.month);
+    if (at < last) return { ...tile, status: at > first ? "missing" : "open" };
+    const planned = forecast?.months.find((candidate) => candidate.month === payrollPeriod(year, month));
+    const gross = model?.forecast.months.find((candidate) => candidate.month === payroll.month);
+    const sixth = own.length ? model?.sixthEstimates.find((candidate) => candidate.month === payroll.month) : undefined;
+    if (!planned && !gross && !sixth) return { ...tile, status: "open" };
+    return {
+      ...tile,
+      status: "forecast",
+      special: planned ? planned.special.amount > 0 : (gross?.specialGross ?? 0) > 0,
+      ...(planned
+        ? { headline: { metric: "net" as const, value: planned.total } }
+        : gross ? { headline: { metric: "gross" as const, value: gross.regularGross + gross.specialGross } } : {}),
+      details: {
+        kind: "forecast",
+        net: planned?.total,
+        parts: planned ? forecastParts(planned) : [],
+        regularGross: gross?.regularGross,
+        specialGross: model?.hasSpecialPaymentModel ? gross?.specialGross : undefined,
+        sixth,
+      },
+    };
   });
 }

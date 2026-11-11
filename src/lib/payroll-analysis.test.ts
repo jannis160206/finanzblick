@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzePayroll, analyzePayrollAutomatically, defaultPayrollForecast, estimatePayrollBonus, payrollTaxSources } from "@/lib/payroll-analysis";
+import { analyzePayroll, analyzePayrollAutomatically, defaultPayrollForecast, estimatePayrollBonus, payrollTaxSources, regularReference } from "@/lib/payroll-analysis";
 import type { Payslip, PayrollForecast } from "@/lib/payslip-schema";
 
 const slip = (month: number, override: Partial<Payslip> = {}): Payslip => ({
@@ -258,8 +258,9 @@ describe("automatic document-driven payroll model", () => {
     expect(result.projections).toEqual([]);
     expect(result.nextSpecial).toBeUndefined();
     expect(result.estimatedHistoryMonths).toEqual([2]);
-    expect(result.sixthEstimates.find((entry) => entry.month === 9)?.sixth).toBe(6476.19);
-    expect(result.sixthEstimates.at(-1)?.sixth).toBe(6857.14);
+    // August (4.000 €) is a one-off spike: the estimate continues with a usual month (3.000 €).
+    expect(result.sixthEstimates.find((entry) => entry.month === 9)?.sixth).toBe(6253.97);
+    expect(result.sixthEstimates.at(-1)?.sixth).toBe(6190.48);
     expect(entries).toEqual(original);
   });
 
@@ -522,6 +523,21 @@ describe("payroll actual aggregation", () => {
     ];
     expect(analyze(entries).actual).toMatchObject({ month: 1, regularGrossYtd: 3100 });
     expect(defaultPayrollForecast(entries, 2026, "Synthetischer Testbetrieb").months[0].regularGross).toBe(3100);
+  });
+
+  it("projects the regular gross of a usual month at today's Grundgehalt, not a one-off overtime spike", () => {
+    const entries = [
+      slip(1, { baseSalary: 3000, regularGross: 3400, monthlyTaxableBase: 2800 }),
+      slip(2, { baseSalary: 3200, regularGross: 3650, monthlyTaxableBase: 3000 }),
+      slip(3, { baseSalary: 3200, regularGross: 3600, monthlyTaxableBase: 2950 }),
+      slip(4, { baseSalary: 3200, regularGross: 6400, monthlyTaxableBase: 5200 }),
+    ];
+    expect(regularReference(entries)?.month).toBe(3);
+    const months = defaultPayrollForecast(entries, 2026, "Synthetischer Testbetrieb").months;
+    expect(months[0]).toMatchObject({ month: 5, regularGross: 3600, monthlyTaxableBase: 2950 });
+    expect(months.find((entry) => entry.month === 6)?.specialGross).toBe(3200);
+    expect(regularReference(entries.slice(0, 2))?.month).toBe(2);
+    expect(regularReference([])).toBeUndefined();
   });
 
   it("rejects duplicate periods rather than double counting", () => {

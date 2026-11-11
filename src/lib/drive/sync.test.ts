@@ -7,7 +7,7 @@ import { AccountError } from "@/lib/server/errors";
 import { resetSecretKeyCache } from "@/lib/server/secrets";
 import { listInbox, readInboxFile } from "./inbox";
 import { driveStatus, readDriveLink, saveDriveConnection } from "./store";
-import { chooseDriveFolder, driveOverview, driveSyncDue, recordInboxOutcome, retryDriveFiles, syncDrive } from "./sync";
+import { chooseDriveFolder, driveOverview, driveSyncDue, recheckDrivePayslips, recordInboxOutcome, retryDriveFiles, syncDrive } from "./sync";
 
 const config = { clientId: "id", clientSecret: "secret", redirectUri: "http://localhost:3000/api/auth/callback/google" };
 let directory: string;
@@ -107,6 +107,21 @@ it("follows pagination and records browser outcomes, which a retry clears", asyn
   await retryDriveFiles(database, "alice");
   await syncDrive(database, "alice", config, { fetcher: drive.fetcher });
   expect(drive.downloads.slice(5)).toEqual(["slip-0001"]);
+});
+
+it("fetches every handled payslip again on recheck, but no statements and nothing still in the inbox", async () => {
+  const drive = fakeDrive([
+    amexFolder([{ id: "amex-pdf-1", name: "Oktober.pdf", md5Checksum: "a1" }]),
+    payslipFolder([{ id: "slip-0001", name: "Lohnzettel 12-2025.pdf", md5Checksum: "p1" }, { id: "slip-0002", name: "Lohnzettel 10-2026.pdf", md5Checksum: "p2" }]),
+  ]);
+  const enqueue = vi.fn(async () => "job");
+  await syncDrive(database, "alice", config, { fetcher: drive.fetcher, enqueue });
+  await recordInboxOutcome(database, "alice", "slip-0001", "imported");
+  await recheckDrivePayslips(database, "alice");
+  await syncDrive(database, "alice", config, { fetcher: drive.fetcher, enqueue });
+  expect(drive.downloads).toEqual(["amex-pdf-1", "slip-0001", "slip-0002", "slip-0001"]);
+  expect(enqueue).toHaveBeenCalledOnce();
+  expect(await recheckDrivePayslips(database, "bob")).toBeNull();
 });
 
 it("keeps a backlog instead of failing when the statement queue is full", async () => {

@@ -2,6 +2,10 @@ import { z } from "zod";
 
 const amount = z.number().min(0).max(1_000_000_000).multipleOf(0.01);
 export const payrollYearSchema = z.union([z.literal(2026), z.literal(2027)]);
+/** Payslips of 2025 are kept as reference for forecasts; tax analysis and budget start in 2026. */
+export const payslipYearSchema = z.union([z.literal(2025), payrollYearSchema]);
+export const FIRST_PAYROLL_YEAR = 2026;
+export const isReferencePayslip = (entry: { year: number }) => entry.year < FIRST_PAYROLL_YEAR;
 export const payrollContextIssueSchema = z.enum([
   "buag", "apprentice", "employment-ended", "context-unknown",
 ]);
@@ -20,7 +24,7 @@ export function payrollContextMessages(entries: readonly { payrollContextIssues?
 }
 
 export const payslipSchema = z.object({
-  year: payrollYearSchema,
+  year: payslipYearSchema,
   month: z.number().int().min(1).max(12),
   employer: z.string().trim().min(1).max(120),
   regularGross: amount,

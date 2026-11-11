@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { PayslipImportPanel } from "@/components/payslip-import";
+import { PayslipSummary } from "@/components/payslip-summary";
 import { PayslipUploadButton, PayslipUploadProvider } from "@/components/payslip-upload";
 import { SecurityModeProvider } from "@/components/security-mode-provider";
 import { createSeed } from "@/lib/seed";
@@ -33,7 +33,7 @@ it("keeps automatic payslip analysis open through the native Explorer focus cycl
   render(<SecurityModeProvider>
     <PayslipUploadProvider onImported={vi.fn()}>
       <PayslipUploadButton />
-      <PayslipImportPanel year={2026} employer="" />
+      <PayslipSummary />
     </PayslipUploadProvider>
   </SecurityModeProvider>);
   fireEvent.click(screen.getByRole("button", { name: "Abrechnungen hochladen" }));

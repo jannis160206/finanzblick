@@ -450,9 +450,15 @@ describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
   });
 
   it("does not turn an unsupported year into the selected or current year", () => {
-    const result = parsePayslipPages([page({ year: 2025 })]);
+    const result = parsePayslipPages([page({ year: 2024 })]);
     expect(result.drafts[0].year).toBeUndefined();
-    expect(result.issues.join()).toMatch(/nur 2026 und 2027/);
+    expect(result.issues.join()).toMatch(/2025 \(als Referenz\), 2026 und 2027/);
+  });
+
+  it("reads 2025 payslips as reference without an issue", () => {
+    const result = parsePayslipPages([page({ year: 2025 })]);
+    expect(result.drafts[0]).toMatchObject({ year: 2025 });
+    expect(result.issues.join()).not.toMatch(/Abrechnungsjahr/);
   });
 
   it("accepts the second supported year and numeric month headers", () => {

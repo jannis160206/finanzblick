@@ -50,6 +50,29 @@ describe("payslip income for the month plan", () => {
     expect(result.applied[0]).toMatchObject({ payrollMonth: "2026-10", month: "2026-11", net: 2800, computed: false });
   });
 
+  it("learns normal on-call pay and books the payout above it as holiday work and extra hours", () => {
+    const history = [7, 8, 9].map((month) => ({ ...base, month, baseSalary: 3000, regularGross: 3300, onCallGross: 300 }));
+    const october = { ...base, baseSalary: 3000, regularGross: 5400, onCallGross: 400, netPay: 3700, advancePay: 2200, payout: 1500 };
+    const holidayRows: FinanceRow[] = [...rows, { id: "income-7", label: "Feiertagsarbeit", kind: "income", values: {} }];
+    const result = applyPayslipIncome({ financeRows: holidayRows, payslips: history } as AppState, [october]);
+    expect(result.applied[0]).toMatchObject({ salary: 2200, onCall: 187.5, holidayWork: 62.5, overtime: 1250, advanced: true });
+    expect(value(result, "income-5")).toBe(2200);
+    expect(value(result, "income-6")).toBe(187.5);
+    expect(value(result, "income-7")).toBe(1312.5);
+    const overtimeRows: FinanceRow[] = [...holidayRows, { id: "income-9", label: "Überstunden", kind: "income", values: {} }];
+    const split = applyPayslipIncome({ financeRows: overtimeRows, payslips: history } as AppState, [october]);
+    expect([value(split, "income-6"), value(split, "income-7"), value(split, "income-9")]).toEqual([187.5, 62.5, 1250]);
+    const paidAtOnce = { ...october, advancePay: undefined, payout: undefined };
+    const plain = applyPayslipIncome({ financeRows: holidayRows, payslips: history } as AppState, [paidAtOnce]);
+    expect([value(plain, "income-5"), value(plain, "income-6"), value(plain, "income-7")]).toEqual([3425.92, 205.56, 68.52]);
+  });
+
+  it("keeps 2025 payslips as reference out of the month plan", () => {
+    const result = applyPayslipIncome(state(), [{ ...base, year: 2025, month: 12, netPay: 2600 }]);
+    expect(result).toMatchObject({ reference: ["2025-12"], applied: [], changed: false });
+    expect(value(result, "income-5", "2026-01")).toBeUndefined();
+  });
+
   it("uses the transferred salary as Gehalt and the Auszahlung as Rufbereitschaft", () => {
     const entry = { ...base, netPay: 4465.31, onCallGross: 500.62, advancePay: 2658.31, payout: 1800 };
     const result = applyPayslipIncome(state(), [entry]);

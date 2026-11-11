@@ -50,8 +50,8 @@ const freeId = (rows: readonly FinanceRow[], id: string) => {
 
 /**
  * Proposals that bring the income rows in line with the salary forecast for the months after the last real pay,
- * plus clean-ups from the current month on: a special payment that also stands in "Weitere Einnahmen"/"Sonstiges"
- * (±10 %), and forecast overtime in months a payslip already wrote (the payslip keeps overtime in the salary).
+ * plus a clean-up from the current month on: a special payment that also stands in "Weitere Einnahmen"/"Sonstiges"
+ * (±10 %).
  */
 export function budgetCorrections(state: AppState, forecast: SalaryForecast = salaryForecast(state)): BudgetCorrection[] {
   const rows = salaryRows(state.financeRows);
@@ -84,10 +84,7 @@ export function budgetCorrections(state: AppState, forecast: SalaryForecast = sa
     if (rows.special || month.special.amount > 0) add(specialRow, "special", key, value(rows.special, key), month.special.amount, month.special.reason);
     plannedSpecial.set(key, month.special.amount);
   }
-  const paid = new Set(forecast.history.filter((item) => item.source === "payslip").map((item) => item.month));
   for (let month = current; month <= planningEndMonth(state.settings.asOf); month = addMonths(month, 1)) {
-    if (rows.overtime && paid.has(month) && value(rows.overtime, month) > 0)
-      add(rows.overtime, "overtime", month, value(rows.overtime, month), 0, "in der Abrechnung im Gehalt enthalten");
     const special = plannedSpecial.get(month) ?? value(rows.special, month);
     if (special <= 0) continue;
     const duplicate = rows.other.filter((row) => value(row, month) > 0 && Math.abs(value(row, month) - special) <= special * 0.1)

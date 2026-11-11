@@ -82,11 +82,10 @@ describe("budget corrections", () => {
     expect(duplicates[0]).toMatchObject({ rowId: "income-other", label: "Sonstiges", reason: expect.stringMatching(/^doppelt zur Sonderzahlung 2\.400,00\s€$/) });
   });
 
-  it("clears forecast overtime once a payslip wrote the month (overtime is part of its salary)", () => {
+  it("keeps overtime that a payslip wrote into a paid month", () => {
     const current = state([income("income-salary", "Gehalt", { "2026-11": 2600 }), income("income-overtime", "Überstunden", { "2026-11": 71, "2026-12": 71 })]);
     const items = budgetCorrections(current, forecast([month("2026-12", { overtime: 71 })], ["2026-11"]));
-    expect(items.filter((item) => item.rowId === "income-overtime").map((item) => [item.month, item.to, item.reason]))
-      .toEqual([["2026-11", 0, "in der Abrechnung im Gehalt enthalten"]]);
+    expect(items.filter((item) => item.rowId === "income-overtime")).toEqual([]);
   });
 
   it("applies only the confirmed items, creates rows and skips values changed in the meantime", () => {

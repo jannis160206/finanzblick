@@ -28,6 +28,7 @@ let inbox: DriveInboxItem[];
 let expired: boolean;
 let missing: Set<string>;
 const reports: { id: string; body: unknown }[] = [];
+const logged: { source: string }[] = [];
 const names: string[] = [];
 
 beforeAll(() => {
@@ -52,10 +53,15 @@ beforeEach(() => {
   sessionStorage.clear();
   missing = new Set();
   reports.length = 0;
+  logged.length = 0;
   names.length = 0;
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
     expect(new Headers(init.headers).get("X-Finanzblick-Account")).toBe("own-account");
     if (url === "/api/drive/inbox") return Response.json({ items: inbox, ...(expired ? { expired: true } : {}) });
+    if (url === "/api/payslip-log") {
+      logged.push(JSON.parse(String(init.body)) as { source: string });
+      return Response.json({ stored: true });
+    }
     const id = decodeURIComponent(url.split("/").at(-1) ?? "");
     if (init.method === "POST") {
       reports.push({ id, body: JSON.parse(String(init.body)) });
@@ -92,6 +98,11 @@ it("reads waiting Drive payslips with the regular import and reports each result
     { id: "note-0001", body: { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." } },
   ]);
   expect(fixture.state.payslips).toEqual([october]);
+  expect(logged).toEqual([expect.objectContaining({
+    source: "drive",
+    files: [{ name: "Lohnzettel Oktober.pdf", outcome: "imported" }, { name: "Steuerbescheid.pdf", outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }],
+    issues: ["Datei 2: Kein Lohnzettel"],
+  })]);
 });
 
 it("drops vanished files and reads again on request", async () => {

@@ -59,7 +59,7 @@ describe("salary forecast", () => {
     expect(payslipInflow({ ...payslips()[4], baseSalary: undefined })!.known.overtime).toBe(false);
   });
 
-  it("forecasts every budget month after the last payslip from today's salary level, averages and last year's months", () => {
+  it("forecasts every budget month after the last payslip from today's salary level, typical amounts and last year's months", () => {
     const forecast = salaryForecast(payslipState());
     expect(forecast.actualThrough).toBe("2026-11");
     expect(forecast.months[0].month).toBe("2026-12");
@@ -67,8 +67,9 @@ describe("salary forecast", () => {
     expect(forecast.raise).toEqual({ factor: 1.0475, since: "2026-02" });
     const byMonth = Object.fromEntries(forecast.months.map((month) => [month.month, month]));
     for (const month of forecast.months) expect(month.salary.amount).toBe(2218);
-    expect(byMonth["2027-03"].onCall).toEqual({ amount: 214, reason: "Ø 10 Monate · inkl. Erhöhung" });
-    expect(byMonth["2027-03"].overtime.amount).toBe(71);
+    // On-call is a flat rate: its typical net amount, not raised with the Grundgehalt.
+    expect(byMonth["2027-03"].onCall).toEqual({ amount: 211, reason: "üblich lt. 10 Monaten" });
+    expect(byMonth["2027-03"].overtime).toEqual({ amount: 70, reason: "üblich lt. 10 Monaten · inkl. Erhöhung" });
     expect(byMonth["2027-07"].special).toEqual({ amount: 2460, reason: "wie Juli 2026" });
     expect(byMonth["2027-02"].special).toMatchObject({ amount: 0, reason: expect.stringContaining("ohne Sonderzahlung") });
     // December has no month of last year: the payroll model's November special payment, paid out in December.
@@ -76,7 +77,7 @@ describe("salary forecast", () => {
     expect(byMonth["2026-12"].special.amount).toBeGreaterThan(2200);
     expect(byMonth["2026-12"].special.amount).toBeLessThan(3150);
     expect(byMonth["2027-01"].special.amount).toBe(0);
-    expect(byMonth["2026-12"].total).toBe(2218 + 214 + 71 + byMonth["2026-12"].special.amount);
+    expect(byMonth["2026-12"].total).toBe(2218 + 211 + 70 + byMonth["2026-12"].special.amount);
     expect(byMonth["2026-12"].salary.reason).toBe("laufendes Netto lt. Abrechnung Okt. 2026");
   });
 
@@ -105,6 +106,56 @@ describe("salary forecast", () => {
     expect(months["2027-07"].reason).toMatch(/^Modell: .*Juni.*78\s%/);
     expect(months["2027-12"].amount).toBe(Math.round(3000 * SPECIAL_NET_RATIO));
     expect(months["2027-08"].amount).toBe(0);
+  });
+
+  it("learns normal on-call pay and keeps holiday work and single extra-hour months out of every month", () => {
+    const state = payslipState();
+    // October: on-call on public holidays (400 instead of 300) and a single month with many extra hours.
+    state.payslips = state.payslips!.map((entry) => entry.month === 10
+      ? { ...entry, onCallGross: 400, regularGross: entry.regularGross + 100 + 3000, netPay: (entry.netPay ?? 0) + 1900 } : entry);
+    const forecast = salaryForecast(state);
+    const november = forecast.history.find((item) => item.month === "2026-11")!;
+    expect(november.holidayWork).toBeGreaterThan(40);
+    expect(november.overtime).toBeGreaterThan(1500);
+    expect(november.onCall).toBeLessThan(200);
+    const byMonth = Object.fromEntries(forecast.months.map((month) => [month.month, month]));
+    expect(byMonth["2027-03"].onCall.amount).toBe(211);
+    expect(byMonth["2027-03"].overtime.amount).toBe(70);
+    expect(byMonth["2027-11"].holidayWork).toMatchObject({ amount: Math.round(november.holidayWork), reason: "wie Nov. 2026" });
+    expect(byMonth["2027-05"].holidayWork).toEqual({ amount: 0, reason: "Mai 2026 ohne Feiertagsarbeit" });
+  });
+
+  it("uses 2025 payslips only as pattern: scaled to today's salary, never as the salary level", () => {
+    const state = payslipState();
+    // December 2025 (paid in January 2026) on a lower salary, with holiday work and a bonus in the advance.
+    state.payslips = [...state.payslips!, {
+      year: 2025, month: 12, employer, monthlyPayroll: true, baseSalary: 2800, regularGross: 3200, onCallGross: 400,
+      regularSv: 560, regularTax: 380, specialGross: 0, netPay: 2260,
+    }];
+    const forecast = salaryForecast(state);
+    expect(forecast.history.find((item) => item.month === "2026-01")).toMatchObject({ source: "payslip", reference: true });
+    const january = forecast.months.find((month) => month.month === "2027-01")!;
+    expect(january.salary.amount).toBe(2218);
+    expect(january.holidayWork.amount).toBeGreaterThan(0);
+    expect(january.holidayWork.reason).toMatch(/^wie Jän\. 2026 · \+/);
+  });
+
+  it("splits holiday work from on-call bookings and moves a bonus paid with the salary to special payments", () => {
+    const state = payslipState();
+    state.settings = { ...state.settings, asOf: "2027-02-05", baselineDate: "2027-02-01" };
+    state.transactions = [
+      booking("2026-11-27", "Gehalt 11/2026 Team Talent Solutions", 2218 + 2600),
+      { ...booking("2027-01-12", "Rufbereitschaft 12/2026 Team Talent Solutions", 650), category: "Rufbereitschaft" },
+      booking("2026-12-29", "Gehalt 12/2026 Team Talent Solutions", 2218),
+    ];
+    const forecast = salaryForecast(state);
+    const january = forecast.history.find((item) => item.month === "2027-01");
+    expect(january?.source).toBe("bank");
+    expect(january?.onCall).toBeCloseTo(211.27, 2);
+    expect(january?.holidayWork).toBeCloseTo(438.73, 2);
+    const december = forecast.history.find((item) => item.month === "2026-12");
+    expect(december?.salary).toBeCloseTo(2218.31, 2);
+    expect(december?.special).toBeCloseTo(2599.69, 2);
   });
 
   it("forecasts nothing without salary data", () => {

@@ -8,6 +8,7 @@ import {
   Landmark,
   Mail,
   Palette,
+  ScrollText,
   Shield,
   ShieldCheck,
   TriangleAlert,
@@ -38,6 +39,7 @@ export const settingsGroups: SettingsGroup[] = [
   ] },
   { id: "abrechnungen", label: "Abrechnungen", icon: FileLock2, items: [
     { id: "pdf-passwort", label: "PDF-Passwort", icon: KeyRound, keywords: "lohnzettel lohnabrechnung gehalt passwort pdf verschlüsselt geschützt entsperren speichern" },
+    { id: "import-protokoll", label: "Import-Protokoll", icon: ScrollText, keywords: "lohnzettel abrechnung import protokoll log json fehler hinweise debug" },
   ] },
   { id: "daten", label: "Daten", icon: DatabaseBackup, items: [
     { id: "sicherung", label: "Sicherung", icon: DatabaseBackup, keywords: "backup excel export import wiederherstellen abgleich server konflikt" },

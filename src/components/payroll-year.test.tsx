@@ -91,11 +91,11 @@ it("moves the focus card, month select and month list to the clicked column", ()
   const months = within(screen.getByRole("list", { name: "Monate 2026" }));
   const rows = months.getAllByRole("listitem");
   expect(rows).toHaveLength(12);
-  expect(rows[0].getAttribute("aria-current")).toBe("true");
-  expect(within(rows[0]).getByText("belegt")).toBeTruthy();
-  expect(within(rows[1]).getByText("fehlt")).toBeTruthy();
+  // Tiles follow the payout: the January payslip is paid in February.
+  expect(rows[1].getAttribute("aria-current")).toBe("true");
+  expect(within(rows[1]).getByText("belegt")).toBeTruthy();
+  expect(within(rows[2]).getByText("fehlt")).toBeTruthy();
   expect(within(rows[5]).getByText("geschätzt")).toBeTruthy();
-  // March prints no net: the tile falls back to a clearly labelled gross amount.
-  expect(within(rows[2]).getByRole("button").textContent?.replace(/\s/g, " ")).toContain("März 2026, brutto 4.000 €, belegt");
-  expect(within(rows[2]).getByText("brutto")).toBeTruthy();
+  // March prints no net: gross minus printed tax and SV gives the exact payout.
+  expect(within(rows[3]).getByRole("button").textContent?.replace(/\s/g, " ")).toContain("April 2026, netto 2.780 €, belegt, Abrechnung März 2026");
 });

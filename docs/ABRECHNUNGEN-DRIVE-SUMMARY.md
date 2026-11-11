@@ -1,6 +1,6 @@
 # Abrechnungen, Google Drive & Planung – Zusammenfassung
 
-Stand: 10.11.2026 · Grundlage: `docs/ABRECHNUNGEN-DRIVE-PLAN.md`
+Stand: 11.11.2026 · Grundlage: `docs/ABRECHNUNGEN-DRIVE-PLAN.md`
 
 Der Plan wurde **ohne ausdrückliche Rückmeldung** umgesetzt: Die Freigabe-Rückfrage kam mit „Nutzer nicht verfügbar – autonom weiterarbeiten“ zurück. Gearbeitet wurde deshalb mit den 14 Annahmen aus Abschnitt 7 des Plans. Jede davon lässt sich nachträglich ändern; die Annahmen stehen in der Tabelle unten.
 
@@ -18,7 +18,8 @@ Jeder Meilenstein ist ein eigener Commit auf einem eigenen, gestapelten Branch (
 | M5 Sonderzahlung & Jahressechstel | `drive/m5-sixth` | `384d86b` | Karten, 12er-Monatsraster, Progressive Disclosure |
 | M6 Regeln & Planung | `drive/m6-rules` | `60dade9` | Verträge, Sparziel-Logik, Gehaltsprognose, Trade Republic nur per API, Mittagessen |
 | M7 Feinschliff | `drive/m7-polish` | `8fd9598` | Hinweis bei abgelaufener Freigabe, Logging, Rate-Limits, diese Zusammenfassung |
-| M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | siehe Branch | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
+| M8 Einrichtung & Hintergrund-Lohnzettel | `drive/m8-setup` | `794f66b` | Statusanzeige, Weiterleitung localhost ↔ 127.0.0.1, Lohnzettel aus Drive ohne offenen Browser |
+| M9 Gehalt & Steuern aufgeräumt | `payroll/cleanup` | siehe Branch | Monatslogik nach Auszahlung, 2025 als Referenz, Prognose am aktuellen Gehalt, Rufbereitschaft ≠ Feiertagsarbeit/Überstunden, Import-Protokoll |
 
 Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen und jeweils gegen den Vorgänger öffnen.
 
@@ -107,6 +108,44 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
   - Bleibt für die App: Lohnzettel, zu denen kein gespeichertes Passwort passt (ein später gespeichertes Passwort wird automatisch erneut versucht), und Lohnzettel, die gespeicherte abweichende Werte ersetzen würden (nie ohne Bestätigung).
   - Ohne laufenden Worker liest die geöffnete App die Inbox nach 20 Minuten selbst, nach „Jetzt prüfen“ sofort.
 
+### M9 – Gehalt & Steuern aufgeräumt und Gehaltslogik korrigiert
+- **Seite**:
+  - Die Steuer-Mappe ist von der Seite entfernt. Die Auswertung bleibt über den Assistenten erreichbar (`src/lib/tax-folder.ts` unverändert).
+  - Importhinweise, „Automatisch gelesene Werte“ und die Tabelle „Gespeicherte Abrechnungen“ sind weg. Am Ende steht eine kurze Zusammenfassung („10 Abrechnungen übernommen · zuletzt Oktober 2026“) mit **Budget aktualisieren** und **Erneut prüfen**.
+  - Die Monatsübersicht mit Kacheln ist die Hauptansicht ganz oben; „Sonderzahlung & Jahressechstel“ bleibt unverändert modern.
+  - Eine Abrechnung entfernt man jetzt in den Details ihres Monats.
+- **Import-Protokoll**:
+  - Jeder Import (Upload, zentraler Import, Drive im Browser oder im Hintergrund, „Erneut prüfen“) schreibt einen strukturierten JSON-Eintrag. Er enthält Quelle, Dateien mit Ergebnis, Hinweise, gelesene Entwürfe mit Feldern, Anzahl gespeicherter Abrechnungen und Referenzmonate.
+  - Im Kontomodus liegt das Protokoll in `payslip-logs/<id>.json` neben der Datenbank (0600, max. 200 Einträge), Route `/api/payslip-log`. Im Browsermodus liegt es in `localStorage` (max. 50 Einträge).
+  - Einstellungen → Abrechnungen → **Import-Protokoll** zeigt die letzten Einträge mit „JSON herunterladen“ und „Leeren“.
+- **Monatslogik**:
+  - Die Kacheln zeigen den **Auszahlungsmonat**: Die Oktober-Abrechnung erscheint im November, die Dezember-Abrechnung im Jänner. Die Budget-Einträge folgen schon dieser Regel; vorher zeigten die Kacheln den Abrechnungsmonat und wirkten dadurch einen Monat zu früh.
+  - Geschätzte Kacheln nutzen dieselbe Gehaltsprognose wie „Budget aktualisieren“, damit Kachel und Budget übereinstimmen.
+- **2025 als Referenz**:
+  - Schema und Parser akzeptieren 2025. Das ist die einzige, minimale Änderung in `src/lib/import/payslip.ts`: Jahresprüfung plus Hinweistext. Weiterhin gilt: kein Jahr vor 2025, und Steuerjahre bleiben 2026/2027.
+  - 2025-Abrechnungen werden gespeichert, als „Referenz“ angezeigt und nie ins Budget eingetragen, auch nicht im Hintergrund. Fehlermeldungen lösen sie keine aus.
+- **Prognose am aktuellen Gehalt**:
+  - Das Jahresmodell schreibt die letzte *übliche* Abrechnung zum aktuellen Grundgehalt fort, nicht einfach die letzte. Ein Monat mit mehr als 25 % über dem Median, z. B. Oktober mit vielen Überstunden, ist kein Maßstab mehr. Das gilt auch für die Sechstel-Schätzungen.
+  - Die Gehaltsprognose rechnet Rufbereitschaft und Überstunden als **Median** statt Durchschnitt. Die pauschale Rufbereitschaft wird nicht mit der Gehaltserhöhung skaliert.
+  - Feiertagsarbeit kommt nur aus dem gleichen Monat des Vorjahres. 2025-Daten dienen dabei nur als skaliertes Muster.
+  - Eine mit dem Gehalt überwiesene Prämie (Gehaltseingang über 140 % des Niveaus) zählt als Sonderzahlung.
+- **Rufbereitschaft ≠ Feiertagsarbeit ≠ Überstunden** (`src/lib/payroll-pattern.ts`):
+  - Die normale Rufbereitschaft wird je Arbeitgeber gelernt: häufigster Betrag der letzten zwölf Abrechnungen.
+  - Mehr Rufbereitschaft auf einer Abrechnung bedeutet Feiertagsdienste und zählt als Feiertagsarbeit.
+  - Brutto über Grundgehalt, Rufbereitschaft und Feiertagsarbeit zählt als Überstunden.
+  - Bei Akonto + Auszahlung wird die Auszahlung nach diesen Bruttoanteilen aufgeteilt, statt komplett in „Rufbereitschaft“ zu landen.
+  - Bankbuchungen ohne Abrechnung: Rufbereitschaft über 125 % des Üblichen gilt als Feiertagsarbeit.
+- **Budget-Korrektur**: Die Regel, die Überstunden in bereits abgerechneten Monaten auf 0 setzte, ist entfallen, weil die Abrechnung sie jetzt selbst getrennt einträgt.
+- **Erneut prüfen**:
+  - trägt alle gespeicherten Abrechnungen neu ins Budget ein (mit der neuen Aufteilung);
+  - lässt bei verbundenem Drive alle Lohnzettel aus „Abrechnungen“ erneut lesen (neue Aktion `recheck` in `/api/drive`);
+  - protokolliert den Lauf.
+- **Mit echten Daten geprüft** (nur lokal, nichts davon ist im Repository):
+  - Die normale Rufbereitschaft wird korrekt erkannt.
+  - Der Oktober-Ausreißer wird als Feiertagsarbeit und Überstunden erkannt statt als Rufbereitschaft.
+  - Die Prognose für November und Dezember setzt das übliche laufende Brutto statt des Oktober-Werts an.
+  - Monatssummen im Budget bleiben gleich, nur die Aufteilung ändert sich.
+
 ## Einrichtung Google Drive
 
 1. **Google Cloud Console**:
@@ -177,6 +216,7 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 - **Bereits vorher rote E2E-Specs** schlagen identisch fehl. Das wurde gegen den Stand vor M6 nachgeprüft; die Ursache sind veraltete Selektoren aus der Zeit vor dem UI-Umbau.
   - `seasonal-theme.spec.ts`, `ux-cut.spec.ts` (Browsermodus);
   - `pockets-workspace.spec.ts`, `budget-workspace.spec.ts`, `savings-transfer-status.spec.ts`, `settings-design.spec.ts`, mobiler Teil von `profile.spec.ts` (Kontomodus).
+- **Nach M9**: `npm run typecheck`, `npm run lint` und `npm run build` Exit 0, `npm test` 5089 bestanden, 5 erwartet fehlschlagend, 3 übersprungen. Neu: Lernmuster Rufbereitschaft, Aufteilung Feiertagsarbeit/Überstunden (auch bei Akonto), 2025-Referenz (Parser, Budget, Hintergrund-Import), übliche Referenzabrechnung im Jahresmodell, Median-/Saisonprognose, Prämie als Sonderzahlung, Kacheln nach Auszahlungsmonat, Import-Protokoll (Bibliothek, Dateispeicher, Route), Drive-`recheck`. E2E bestanden: `payslip-safety.spec.ts`, `payroll-workspace.spec.ts` (320/390/1440 px) und `salary-settings.spec.ts` für Gehalt & Steuern (375/768/1440 px, hell/dunkel, axe). Ein Kachel-Test im Kontomodus schlug einmal wegen automatisch nachgefüllter Monatsbudgets fehl und lief bei der Wiederholung durch (bekannter Reload-Effekt, nicht payroll-bezogen).
 - **Hinweis zu Kontomodus-E2E**: Viele Specs in einem Lauf lösen das Login-Rate-Limit aus („Zu viele Versuche“). Deshalb in kleineren Gruppen mit jeweils frischer Test-Datenbank ausführen.
 
 ## Offene Punkte und Grenzen
@@ -188,4 +228,8 @@ Gepusht wurde nichts. Für Stacked-PRs die Branches in dieser Reihenfolge pushen
 - **Gleichzeitiger Abruf** von Worker und „Jetzt prüfen“ ist nur innerhalb eines Prozesses gesperrt. Doppelte Übernahmen verhindert die Inhalts-Dublettenprüfung.
 - **Bestehende Klartext-Secrets** der Mail- und Bankanbindung wurden nicht angefasst (außerhalb des Umfangs). Sie ließen sich mit `src/lib/server/secrets.ts` nachziehen.
 - **Bereits vorher rote E2E-Specs** (siehe oben) sollten in einem eigenen Schritt an das neue UI angepasst werden.
+- **2025-Abrechnungen aus Drive**: Die zwölf PDFs aus 2025 sind passwortgeschützt, und auf dem Server ist noch kein PDF-Passwort gespeichert. Bisher wurden sie stillschweigend verworfen. Nach dem Speichern des Passworts (Einstellungen → Abrechnungen) und **Erneut prüfen** werden sie als Referenz übernommen und verfeinern die Prognose (Feiertagsarbeit pro Monat, Sonderzahlungen). Bis dahin stützt sich die Prognose auf die 2026-Abrechnungen und Gehaltseingänge.
+- **Prognose-Korrekturen im Budget** werden nicht automatisch geschrieben, sondern über **Budget aktualisieren** zur Bestätigung angeboten.
+- **Ohne Budgetzeile „Überstunden“** landen Überstunden aus der Auszahlung (Akonto-Fall) in „Feiertagsarbeit“. „Budget aktualisieren“ schlägt die Zeile vor, sobald die Prognose Überstunden enthält. Danach trennt **Erneut prüfen** auch die abgerechneten Monate in diese Zeile.
+- **Monate vor der letzten Abrechnung ohne Abrechnung** zählen als „fehlt“, auch über den Jahreswechsel hinweg, z. B. wenn schon eine Jänner-Abrechnung des Folgejahres vorliegt.
 - `src/lib/import/statements.test.ts`: Nur eine Testerwartung wurde an die neue Mittagessen-Regel angepasst (Revolut SPAR 12:00 → Mittagessen). Die Import-Logik ist unverändert.

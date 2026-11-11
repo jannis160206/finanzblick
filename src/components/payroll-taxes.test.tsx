@@ -60,6 +60,7 @@ function selectPdf(files = [file()]) {
   fireEvent.change(screen.getByLabelText("Lohnabrechnungen als PDF auswählen"), { target: { files } });
 }
 const moneyText = (value: number) => currency(value).replace(/\s/g, " ");
+const importLog = () => JSON.parse(localStorage.getItem("finanzblick.payslip-log") ?? "[]") as { source: string; issues?: string[]; files?: { name: string }[]; message: string }[];
 function expectNoManualInputs() {
   expect(screen.queryByRole("spinbutton")).toBeNull();
   expect(screen.queryByRole("checkbox")).toBeNull();
@@ -142,7 +143,8 @@ it("automatically imports selected PDFs without a form and keeps bank data untou
   const actual = within(screen.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }));
   expect(actual.getAllByText(moneyText(6000)).length).toBeGreaterThan(0);
   expect(actual.getByText(`Stand: ${monthLabel("2026-01")}`)).toBeTruthy();
-  const february = screen.getByRole("button", { name: /^Februar 2026, brutto/ });
+  // The January payslip is paid out in February.
+  const february = screen.getByRole("button", { name: /^Februar 2026, netto 2\.260\s€, belegt, Abrechnung Jänner 2026/ });
   expect(february.getAttribute("aria-expanded")).toBe("false");
   expect(screen.queryByRole("region", { name: monthLabel("2026-02") })).toBeNull();
   fireEvent.click(february);
@@ -222,8 +224,13 @@ it("attributes deduplicated document warnings while automatically importing vali
   render(<Fixture />);
   selectPdf([file("private-first.pdf"), file("private-second.pdf")]);
   await waitFor(() => expect(latest.payslips).toHaveLength(2));
-  expect(screen.getAllByText(`Datei 1: ${firstIssue}`)).toHaveLength(1);
-  expect(screen.getAllByText(`Datei 2: ${secondIssue}`)).toHaveLength(1);
+  // Import hints go to the JSON log, not onto the page.
+  expect(screen.queryByText(/Kontrollwert/)).toBeNull();
+  await waitFor(() => expect(importLog()).toHaveLength(1));
+  const [entry] = importLog();
+  expect(entry.issues).toEqual([`Datei 1: ${firstIssue}`, `Datei 2: ${secondIssue}`]);
+  expect(entry.files?.map((item) => item.name)).toEqual(["private-first.pdf", "private-second.pdf"]);
+  expect(entry.source).toBe("upload");
   expect(localStorage.getItem("payroll-test")).not.toContain("private-first.pdf");
 });
 
@@ -235,9 +242,10 @@ it("imports complete months but never guesses the gross split of unknown wage co
   render(<Fixture />);
   selectPdf();
   await waitFor(() => expect(latest.payslips).toEqual([january]));
-  expect(screen.getByRole("alert").textContent).toContain("nicht übernommen");
-  expect(screen.getByRole("alert").textContent).toContain(monthLabel("2026-02"));
-  expect(screen.getByText(/Lohnart 1509/)).toBeTruthy();
+  expect(screen.getByRole("alert").textContent).toContain(`${monthLabel("2026-02")} nicht übernommen`);
+  expect(screen.getByRole("link", { name: "Import-Protokoll" }).getAttribute("href")).toBe("/einstellungen#import-protokoll");
+  expect(screen.queryByText(/Lohnart 1509/)).toBeNull();
+  await waitFor(() => expect(importLog()[0]?.issues?.[0]).toMatch(/Lohnart 1509/));
   expectNoManualInputs();
   expect(screen.queryByRole("button", { name: "Abrechnung übernehmen" })).toBeNull();
 });
@@ -391,7 +399,8 @@ it("removes the technical assumptions and sources block while keeping forecast a
   expect(screen.queryByText(/Automatisches Standardmodell mit unbestätigten Annahmen/)).toBeNull();
   expect(screen.queryByRole("link", { name: /RIS · § 67/, hidden: true })).toBeNull();
   const months = within(screen.getByRole("list", { name: "Monate 2026" }));
-  expect(months.getAllByRole("button", { expanded: false })).toHaveLength(12);
+  // January pays December 2025, which is not stored: only the following eleven months can be opened.
+  expect(months.getAllByRole("button", { expanded: false })).toHaveLength(11);
 });
 
 it("replaces provisional values with the computed sixth when February closes the historical gap", async () => {
@@ -425,7 +434,7 @@ it("automatically saves a recognized February bonus and displays its sixth range
   const forecast = within(screen.getByRole("region", { name: "Jahressechstel Prognose" }));
   expect(forecast.getByText(`${moneyText(6011.11)} – ${moneyText(6233.33)}`)).toBeTruthy();
   expect(forecast.getByText(`${moneyText(6008.33)} – ${moneyText(6175)}`)).toBeTruthy();
-  expect(screen.getByText(/Datei 1: Seite 1 \(02\/2026\): VEB-Prämie erkannt/).closest("details")?.open).toBe(false);
+  await waitFor(() => expect(importLog()[0]?.issues).toEqual(["Datei 1: Seite 1 (02/2026): VEB-Prämie erkannt; Sechstelzuordnung bleibt offen."]));
   expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(3);
   expectNoManualInputs();
 });
@@ -447,8 +456,8 @@ it("removes an explicitly selected payroll without changing bank transactions", 
     { year: 2026 as const, employer: january.employer, months: [], standardPayrollConfirmed: true },
   ] };
   render(<Fixture initial={initial} />);
-  fireEvent.click(screen.getByText("Gespeicherte Abrechnungen (1)"));
-  fireEvent.click(screen.getByRole("button", { name: "Abrechnung entfernen: 1/2026" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Februar 2026, netto/ }));
+  fireEvent.click(screen.getByRole("button", { name: `Abrechnung ${monthLabel("2026-01")} entfernen` }));
   const dialog = within(screen.getByRole("dialog", { name: "Lohnabrechnung entfernen?" }));
   fireEvent.click(dialog.getByRole("button", { name: "Entfernen" }));
   expect(latest.payslips).toEqual([]);
@@ -526,11 +535,41 @@ it("filters years and employers without merging their payroll data or saving vie
   expect(localStorage.getItem("payroll-test")).toBeNull();
 });
 
-it("keeps saved records collapsed, shows no upload area and keeps the upload action in the header", () => {
+it("shows a short summary instead of records, read values or the Steuer-Mappe and keeps the upload action in the header", () => {
   render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
-  const records = within(screen.getByRole("region", { name: "Abrechnungen" }));
-  expect(records.getByText("Gespeicherte Abrechnungen (8)").closest("details")?.open).toBe(false);
+  const summary = within(screen.getByRole("region", { name: "Abrechnungen" }));
+  expect(summary.getByRole("heading", { name: "8 Abrechnungen übernommen" })).toBeTruthy();
+  expect(summary.getByText(`zuletzt ${monthLabel("2026-08")}`)).toBeTruthy();
+  expect(summary.getByRole("button", { name: "Erneut prüfen" })).toBeTruthy();
+  for (const removed of [/Gespeicherte Abrechnungen/, /Automatisch gelesene Werte/, /Importhinweise/, /Steuer-Mappe/, /Spenden/])
+    expect(screen.queryByText(removed)).toBeNull();
   expect(screen.queryByLabelText("PDF-Passwort")).toBeNull();
   expect(screen.queryByText("Passwortgeschützte PDF")).toBeNull();
   expect(screen.getByRole("button", { name: "Abrechnungen hochladen" }).closest("[role=group]")?.getAttribute("aria-label")).toBe("Abrechnungsauswahl");
+});
+
+it("re-applies stored payslips to the budget on \"Erneut prüfen\" and logs the check", async () => {
+  const initial = { ...seed(), payslips: [january] };
+  render(<Fixture initial={initial} />);
+  expect(latest.financeRows.find((row) => row.id === "income-salary")?.values["2026-02"]).toBeUndefined();
+  fireEvent.click(screen.getByRole("button", { name: "Erneut prüfen" }));
+  await waitFor(() => expect(latest.financeRows.find((row) => row.id === "income-salary")?.values["2026-02"]).toBe(2260));
+  expect(await screen.findByText("1 Abrechnung im Budget abgeglichen.")).toBeTruthy();
+  await waitFor(() => expect(importLog().map((entry) => entry.source)).toEqual(["recheck"]));
+  expect(latest.payslips).toEqual([january]);
+});
+
+it("keeps an uploaded 2025 payslip as reference: stored, shown in January, never in the budget", async () => {
+  const december: Payslip = { ...january, year: 2025, month: 12, netPay: 2300 };
+  pdf.parse.mockResolvedValueOnce({ drafts: [december], issues: [] });
+  const initial = { ...seed(), payslips: [january] };
+  render(<Fixture initial={initial} />);
+  selectPdf();
+  await waitFor(() => expect(latest.payslips).toHaveLength(2));
+  expect(latest.financeRows).toEqual(initial.financeRows);
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(await screen.findByText(/1 Abrechnung aus 2025 als Referenz gespeichert – nicht im Budget\./)).toBeTruthy();
+  expect(screen.getByLabelText<HTMLSelectElement>("Steuerjahr").value).toBe("2026");
+  expect(screen.getByRole("button", { name: /^Jänner 2026, netto 2\.300\s€, Referenz, Abrechnung Dezember 2025/ })).toBeTruthy();
+  expect(within(screen.getByRole("region", { name: "Abrechnungen" })).getByText(/1 aus 2025 als Referenz/)).toBeTruthy();
 });

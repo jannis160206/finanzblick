@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSecretKeyCache } from "@/lib/server/secrets";
-import { addInboxItem, listInbox } from "@/lib/drive/inbox";
-import { markDriveLink, readDriveLink, saveDriveConnection } from "@/lib/drive/store";
+import { addInboxItem, listInbox, removeInboxItem } from "@/lib/drive/inbox";
+import { markDriveLink, readDriveLink, recordInboxOutcome, saveDriveConnection } from "@/lib/drive/store";
 import { syncDrive } from "@/lib/drive/sync";
 import type { AccountDatabase } from "@/lib/server/database";
 
@@ -86,6 +86,15 @@ describe("/api/drive", () => {
     await DELETE(new Request(`${origin}/api/drive`, { method: "DELETE", headers: headers({ Origin: origin }) }));
     const gone = await post({ action: "sync" });
     expect(gone.status).toBe(409);
+    expect((await post({ action: "recheck" })).status).toBe(409);
+  });
+
+  it("fetches imported payslips again on recheck", async () => {
+    await post({ action: "sync" });
+    await recordInboxOutcome(host, "alice", "slip-0001", "imported");
+    await removeInboxItem(host, "alice", "slip-0001");
+    expect(await (await post({ action: "sync" })).json()).toMatchObject({ result: { folders: { payslips: { added: 0 } } } });
+    expect(await (await post({ action: "recheck" })).json()).toMatchObject({ result: { folders: { payslips: { added: 1 } } }, status: { inbox: 1 } });
   });
 
   it("forgets the connection and waiting payslips when disconnecting", async () => {

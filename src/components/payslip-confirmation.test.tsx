@@ -2,7 +2,9 @@
 import { StrictMode, useReducer, useState } from "react";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PayslipImportPanel } from "@/components/payslip-import";
+import { useFinance } from "@/components/finance-provider";
+import { PayslipRemoveDialog, type PayslipRemoval } from "@/components/payslip-remove-dialog";
+import { PayslipSummary } from "@/components/payslip-summary";
 import { PayslipUploadProvider } from "@/components/payslip-upload";
 import { usePayslipMutation } from "@/components/payslip-mutation";
 import { createSeed } from "@/lib/seed";
@@ -37,7 +39,17 @@ const correction = { ...january, regularGross: 3100 };
 const forecast: PayrollForecast = {
   year: 2026, employer: january.employer, months: [], standardPayrollConfirmed: true,
 };
-const element = () => <PayslipUploadProvider onImported={fixture.imported}><PayslipImportPanel year={2026} employer={january.employer} /></PayslipUploadProvider>;
+// The payroll page opens the removal from a month's details; this harness offers it for the first stored payslip.
+function Removal() {
+  const { state } = useFinance();
+  const [target, setTarget] = useState<PayslipRemoval | null>(null);
+  const entry = state.payslips?.[0];
+  return <>
+    {entry && <button type="button" onClick={(event) => setTarget({ entry, trigger: event.currentTarget })}>Abrechnung entfernen: 1/2026</button>}
+    <PayslipRemoveDialog target={target} onClose={() => setTarget(null)} />
+  </>;
+}
+const element = () => <PayslipUploadProvider onImported={fixture.imported}><PayslipSummary /><Removal /></PayslipUploadProvider>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -52,8 +64,6 @@ beforeEach(() => {
 afterEach(cleanup);
 
 function openDelete() {
-  const summary = screen.getByText("Gespeicherte Abrechnungen (1)");
-  if (!summary.closest("details")?.open) fireEvent.click(summary);
   fireEvent.click(screen.getByRole("button", { name: "Abrechnung entfernen: 1/2026" }));
   return screen.getByRole("dialog", { name: "Lohnabrechnung entfernen?" });
 }

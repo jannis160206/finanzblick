@@ -193,17 +193,12 @@ for (const width of [1440, 390, 320]) {
       .getByRole("button", { name: "Abrechnungen hochladen", exact: true })
       .click();
     expect((await chooser).isMultiple()).toBe(true);
-    const records = page.getByText("Gespeicherte Abrechnungen (9)", {
-      exact: true,
-    });
-    await records.focus();
-    await page.keyboard.press("Enter");
-    await expect(
-      page.getByRole("button", {
-        name: "Abrechnung entfernen: 9/2026",
-        exact: true,
-      }),
-    ).toBeVisible();
+    // A short summary replaces records, read values and import hints; the Steuer-Mappe is gone.
+    const summary = page.getByRole("region", { name: "Abrechnungen", exact: true });
+    await expect(summary.getByRole("heading", { name: "11 Abrechnungen übernommen" })).toBeVisible();
+    await expect(summary.getByRole("button", { name: "Erneut prüfen", exact: true })).toBeVisible();
+    for (const removed of ["Gespeicherte Abrechnungen", "Automatisch gelesene Werte", "Steuer-Mappe"])
+      await expect(page.getByText(removed)).toHaveCount(0);
     await details(page);
     await page
       .getByRole("group", { name: "Steuerbeispiel", exact: true })
@@ -231,9 +226,7 @@ for (const width of [1440, 390, 320]) {
     await expect(
       page.getByRole("region", { name: "Jahressechstel Abrechnungsstand" }),
     ).toContainText(currency(6000));
-    await expect(
-      page.getByText("Gespeicherte Abrechnungen (1)", { exact: true }),
-    ).toBeVisible();
+    await expect(monthTile(page, "2026-02")).toContainText("belegt");
     await noOverflow(page);
     await page.getByLabel("Steuerjahr", { exact: true }).selectOption("2027");
     await expect(
@@ -304,11 +297,11 @@ for (const width of [1440, 390]) {
     ).toBe(4500);
     await page.reload();
     await unlock(page);
-    await page
-      .getByText("Gespeicherte Abrechnungen (10)", { exact: true })
-      .click();
+    // The October payslip is paid out in November: its tile offers the removal.
+    const november = monthTile(page, "2026-11");
+    await november.click();
     const trigger = page.getByRole("button", {
-      name: "Abrechnung entfernen: 10/2026",
+      name: `Abrechnung ${monthLabel("2026-10")} entfernen`,
       exact: true,
     });
     await trigger.click();
@@ -325,12 +318,11 @@ for (const width of [1440, 390]) {
       .getByRole("button", { name: "Entfernen", exact: true })
       .click();
     await expect(deleting).toHaveCount(0);
+    // The fixture also holds January 2027: without October, November's payslip is a real gap and focus returns to the overview.
+    await expect(page.locator("#payroll-months")).toBeFocused();
     await expect(
-      page.getByRole("region", {
-        name: "Abrechnungen",
-        exact: true,
-      }),
-    ).toBeFocused();
+      page.getByRole("list", { name: "Monate 2026", exact: true }).getByRole("listitem").nth(10),
+    ).toContainText(`${monthLabel("2026-11")}, Abrechnung ${monthLabel("2026-10")} fehlt`);
     await expect(
       page.getByText("Synchronisiert", { exact: true }),
     ).toBeAttached();
@@ -462,15 +454,17 @@ for (const width of [1440, 390]) {
     await expect(page.getByText("Berechnungsdetails, Annahmen & Quellen", { exact: true })).toHaveCount(0);
     const months = page.getByRole("list", { name: "Monate 2026", exact: true });
     await expect(months.getByRole("listitem")).toHaveCount(12);
-    await expect(months.getByRole("button", { expanded: false })).toHaveCount(12);
+    // Tiles follow the payout: January pays the missing December 2025, February the January payslip.
+    await expect(months.getByRole("button", { expanded: false })).toHaveCount(11);
+    await expect(monthTile(page, "2026-02")).toContainText("belegt");
     // Grid instead of a list: 6 tiles per row on desktop, 3 on phones.
     const tops = await months
       .getByRole("listitem")
       .evaluateAll((items) => items.map((item) => Math.round(item.getBoundingClientRect().top)));
     expect(tops.filter((top) => top === tops[0])).toHaveLength(width >= 1024 ? 6 : 3);
-    let tile = monthTile(page, "2026-01");
-    for (const month of model.forecast.months) {
-      const period = `2026-${String(month.month).padStart(2, "0")}`;
+    let tile = monthTile(page, "2026-02");
+    for (const month of model.forecast.months.filter((entry) => entry.month < 12)) {
+      const period = `2026-${String(month.month + 1).padStart(2, "0")}`;
       const label = monthLabel(period);
       tile = monthTile(page, period);
       await expect(tile).toContainText(month.specialGross > 0 ? "mit Sonderzahlung" : "geschätzt");
@@ -480,7 +474,8 @@ for (const width of [1440, 390]) {
       const card = page.getByRole("region", { name: label, exact: true });
       await expect(card).toBeVisible();
       await expect(card.getByLabel(`${label} Laufendes Brutto`, { exact: true })).toHaveText(currency(month.regularGross));
-      await expect(card.getByLabel(`${label} Sonderzahlung`, { exact: true })).toHaveText(
+      await expect(card.getByText(`Abrechnung ${monthLabel(`2026-${String(month.month).padStart(2, "0")}`)}`, { exact: true })).toBeVisible();
+      await expect(card.getByLabel(`${label} Sonderzahlung brutto`, { exact: true })).toHaveText(
         month.specialGross > 0 ? currency(month.specialGross) : "Keine geplant",
       );
       await expect(card.locator("header").getByText("Sonderzahlung", { exact: true })).toHaveCount(month.specialGross > 0 ? 1 : 0);

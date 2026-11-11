@@ -150,6 +150,17 @@ export async function retryDriveFiles(database: AccountDatabase, userId: string)
   }));
 }
 
+/**
+ * "Erneut prüfen": every payslip from "Abrechnungen" is fetched again on the next check, e.g. after the parser learned
+ * reference years. Files still waiting in the inbox stay as they are; duplicates are ignored when they are merged.
+ */
+export async function recheckDrivePayslips(database: AccountDatabase, userId: string) {
+  return markDriveLink(database, userId, (link) => ({
+    ...link,
+    processed: (link.processed ?? []).filter((entry) => entry.kind !== "payslips" || entry.outcome === "inbox"),
+  }));
+}
+
 export async function linkedDriveUsers(database: AccountDatabase): Promise<string[]> {
   try {
     return (await readdir(join(dirname(database.path), "drive-links")))

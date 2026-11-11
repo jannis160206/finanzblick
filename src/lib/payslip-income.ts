@@ -1,5 +1,6 @@
 import { fixedRowCategory } from "@/lib/fixed";
-import type { Payslip } from "@/lib/payslip-schema";
+import { payrollPatterns, variablePay, type PayrollPattern } from "@/lib/payroll-pattern";
+import { isReferencePayslip, payrollEmployerKey, payslipKey, type Payslip } from "@/lib/payslip-schema";
 import type { AppState, FinanceRow } from "@/lib/types";
 
 export type PayslipIncome = {
@@ -9,9 +10,15 @@ export type PayslipIncome = {
   month: string;
   net: number;
   salary: number;
+  /** Normal on-call pay (flat rate). */
   onCall: number;
+  /** Holiday work, including on-call above the normal level. */
   holidayWork: number;
+  /** Other extra hours above Grundgehalt, on-call and holiday work. */
+  overtime: number;
   special: number;
+  /** Salary was transferred in advance; the rest (on-call, holiday work, overtime) comes as a separate payout. */
+  advanced: boolean;
   computed: boolean;
   /** False for payslips stored before on-call shares were read: the existing on-call split is kept. */
   splitKnown: boolean;
@@ -20,10 +27,14 @@ export type PayslipIncome = {
 const cents = (value: number) => Math.round(value * 100);
 const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 const SPECIAL_ROW = /sonderzahl|urlaubs(?:geld|zuschuss)|weihnachts|1[34]\.\s*(?:monats)?(?:gehalt|lohn)/i;
+const OVERTIME_ROW = /[üu]e?berstunden|mehrleistung/i;
 export const SPECIAL_ROW_ID = "income-special-payments";
 
-/** Splits one payslip's net pay into the month-plan income rows. Amounts are euros. */
-export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
+/**
+ * Splits one payslip's net pay into the month-plan income rows. Amounts are euros. With the employer's pattern,
+ * on-call pay above its normal level counts as holiday work instead of on-call.
+ */
+export function payslipIncome(entry: Payslip, pattern?: PayrollPattern): PayslipIncome | undefined {
   const bonus = cents(entry.unresolvedSixthBonus ?? 0);
   const specialGross = cents(entry.specialGross);
   const specialDeductions = specialGross || bonus ? cents(entry.specialSv ?? NaN) + cents(entry.specialTax ?? 0) : 0;
@@ -48,18 +59,21 @@ export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
   const regularNet = net - special;
   const regularGross = cents(entry.regularGross) + bonus;
   const share = (gross: number) => regularGross > 0 ? Math.round(regularNet * gross / regularGross) : 0;
-  let onCall = share(cents(entry.onCallGross ?? 0));
-  let holidayWork = share(cents(entry.holidayWorkGross ?? 0));
-  let salary = regularNet - onCall - holidayWork;
+  const pay = variablePay(entry, pattern);
+  let onCall = share(cents(pay.onCall));
+  let holidayWork = share(cents(pay.holiday));
+  let overtime = share(cents(pay.overtime));
+  let salary = regularNet - onCall - holidayWork - overtime;
   const advance = cents(entry.advancePay ?? NaN);
-  if (Number.isFinite(advance) && entry.payout !== undefined && advance <= regularNet) {
-    // Salary was transferred in advance; the remaining payout is on-call pay (holiday work by its gross share).
+  const advanced = Number.isFinite(advance) && entry.payout !== undefined && advance <= regularNet;
+  if (advanced) {
+    // Salary was transferred in advance; the remaining payout is split by the gross of its variable parts.
     salary = advance;
     const rest = regularNet - advance;
-    const onCallGross = cents(entry.onCallGross ?? 0);
-    const holidayGross = cents(entry.holidayWorkGross ?? 0);
-    holidayWork = onCallGross + holidayGross > 0 ? Math.round(rest * holidayGross / (onCallGross + holidayGross)) : 0;
-    onCall = rest - holidayWork;
+    const variable = cents(pay.onCall) + cents(pay.holiday) + cents(pay.overtime);
+    holidayWork = variable > 0 ? Math.round(rest * cents(pay.holiday) / variable) : 0;
+    overtime = variable > 0 ? Math.round(rest * cents(pay.overtime) / variable) : 0;
+    onCall = rest - holidayWork - overtime;
   }
   const next = entry.month === 12 ? { year: entry.year + 1, month: 1 } : { year: entry.year, month: entry.month + 1 };
   return {
@@ -69,22 +83,26 @@ export function payslipIncome(entry: Payslip): PayslipIncome | undefined {
     salary: salary / 100,
     onCall: onCall / 100,
     holidayWork: holidayWork / 100,
+    overtime: overtime / 100,
     special: special / 100,
+    advanced,
     computed,
     splitKnown: entry.netPay !== undefined || entry.onCallGross !== undefined || entry.holidayWorkGross !== undefined ||
       entry.advancePay !== undefined,
   };
 }
 
-type Rows = { salary?: FinanceRow; onCall?: FinanceRow; holidayWork?: FinanceRow; special?: FinanceRow };
+type Rows = { salary?: FinanceRow; onCall?: FinanceRow; holidayWork?: FinanceRow; overtime?: FinanceRow; special?: FinanceRow };
 
 function payrollRows(rows: FinanceRow[]): Rows {
   const income = rows.filter((row) => row.kind === "income" && !row.fixedSource);
+  const extra = (row: FinanceRow) => SPECIAL_ROW.test(row.label) || OVERTIME_ROW.test(row.label);
   return {
     special: income.find((row) => SPECIAL_ROW.test(row.label)),
-    salary: income.find((row) => !SPECIAL_ROW.test(row.label) && fixedRowCategory(row) === "Gehalt"),
-    onCall: income.find((row) => fixedRowCategory(row) === "Rufbereitschaft" && !/feiertag/i.test(row.label)),
+    salary: income.find((row) => !extra(row) && fixedRowCategory(row) === "Gehalt"),
+    onCall: income.find((row) => !extra(row) && fixedRowCategory(row) === "Rufbereitschaft" && !/feiertag/i.test(row.label)),
     holidayWork: income.find((row) => /feiertag/i.test(row.label)),
+    overtime: income.find((row) => !SPECIAL_ROW.test(row.label) && OVERTIME_ROW.test(row.label)),
   };
 }
 
@@ -92,14 +110,21 @@ function payrollRows(rows: FinanceRow[]): Rows {
  * Writes payslip net pay into the income rows of the following month on the "Monate" page
  * (the October payslip is paid out and planned in November).
  * Only payroll rows are set; other income such as "Sonstiges" stays untouched. Re-applying
- * the same payslip yields the same values.
+ * the same payslip yields the same values. Payslips of reference years (2025) only feed forecasts.
  */
 export function applyPayslipIncome(state: AppState, entries: readonly Payslip[]) {
   const applied: PayslipIncome[] = [];
   const skipped: string[] = [];
+  const reference: string[] = [];
+  const incoming = new Set(entries.map(payslipKey));
+  const patterns = payrollPatterns([...(state.payslips ?? []).filter((entry) => !incoming.has(payslipKey(entry))), ...entries]);
   let rows = state.financeRows;
   for (const entry of [...entries].sort((a, b) => a.year - b.year || a.month - b.month)) {
-    const income = payslipIncome(entry);
+    if (isReferencePayslip(entry)) {
+      reference.push(monthKey(entry.year, entry.month));
+      continue;
+    }
+    const income = payslipIncome(entry, patterns.get(payrollEmployerKey(entry.employer)));
     if (!income) {
       skipped.push(monthKey(entry.year, entry.month));
       continue;
@@ -116,14 +141,15 @@ export function applyPayslipIncome(state: AppState, entries: readonly Payslip[])
       found = payrollRows(rows);
     }
     let salary = income.salary;
-    let { onCall, holidayWork } = income;
+    let { onCall, holidayWork, overtime } = income;
     if (!income.splitKnown) {
       const existing = (row?: FinanceRow) => row?.values[income.month] ?? 0;
       const kept = existing(found.onCall) + existing(found.holidayWork);
-      if (kept >= 0 && kept < salary) {
+      if (kept >= 0 && kept < salary + overtime) {
         onCall = existing(found.onCall);
         holidayWork = existing(found.holidayWork);
-        salary = Math.round((salary - kept) * 100) / 100;
+        salary = Math.round((salary + overtime - kept) * 100) / 100;
+        overtime = 0;
       }
     }
     const targets = new Map<string, number>();
@@ -133,7 +159,9 @@ export function applyPayslipIncome(state: AppState, entries: readonly Payslip[])
     };
     assign(found.special, income.special);
     assign(found.onCall, onCall);
-    assign(found.holidayWork, holidayWork);
+    // The separate payout (booked as on-call by the bank) keeps holiday work and extra hours apart from on-call.
+    assign(found.holidayWork ?? (income.advanced ? found.onCall : undefined), holidayWork);
+    assign(found.overtime ?? (income.advanced ? found.holidayWork ?? found.onCall : undefined), overtime);
     targets.set(found.salary!.id, Math.round((salary + (targets.get(found.salary!.id) ?? 0)) * 100) / 100);
     rows = rows.map((row) => {
       if (!targets.has(row.id)) return row;
@@ -146,5 +174,5 @@ export function applyPayslipIncome(state: AppState, entries: readonly Payslip[])
     applied.push(income);
   }
   const changed = JSON.stringify(rows) !== JSON.stringify(state.financeRows);
-  return { state: changed ? { ...state, financeRows: rows } : state, applied, skipped, changed };
+  return { state: changed ? { ...state, financeRows: rows } : state, applied, skipped, reference, changed };
 }

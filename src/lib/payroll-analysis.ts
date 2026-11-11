@@ -107,7 +107,7 @@ export type PayrollBonusEstimate = {
 
 const automaticPayrollAssumptions = [
   "Automatisches Standardmodell mit unbestätigten Annahmen, keine bestätigte Steuerberechnung: Neu hochgeladene Abrechnungen ersetzen Modellmonate und aktualisieren die übrige Vorausschau.",
-  "Laufendes Brutto und belegte laufende LSt-Basis werden aus der neuesten Abrechnung unverändert fortgeschrieben. Variable Bezüge und künftige Gehaltsänderungen sind damit nicht vorhergesagt.",
+  "Laufendes Brutto und belegte laufende LSt-Basis werden aus der neuesten üblichen Abrechnung zum aktuellen Grundgehalt fortgeschrieben; einzelne Monate mit vielen Überstunden oder Feiertagsarbeit sind kein Maßstab. Künftige Gehaltsänderungen sind damit nicht vorhergesagt.",
   "Nur bei ausdrücklich erkanntem Grundgehalt: je ein Grundgehalt im Juni und November. Zahlungsmonate und Höhe sind feste Modellannahmen, kein belegter vertraglicher Anspruch.",
   "Die Steuerrechnung unterstellt unveränderte feste Absetzbeträge, keine einkommensabhängigen Begünstigungen, reguläre volle Abrechnungsmonate und nur normale Urlaubs-/Weihnachtszahlungen nach § 67 Abs. 1/2. Diese Voraussetzungen sind nicht durch das Modell bestätigt.",
   "Die SV-Vorlage gilt nur unter der unbestätigten Annahme homogener, vollversicherter Angestelltenbezüge, nicht für Lehrlinge, gemischte SV-Zahlungen, Arbeitgeberwechsel oder andere Sonderfälle.",
@@ -118,11 +118,24 @@ const money = (value: number) => cents(value) / 100;
 const sum = (values: number[]) => values.reduce((total, value) => total + cents(value), 0) / 100;
 const sameMoney = (left: number, right: number) => cents(left) === cents(right);
 const unique = (values: string[]) => [...new Set(values)];
-const freeLimit = (year: PayrollYear) => year === 2026 ? 2615 : 2675;
+const freeLimit = (year: number) => year === 2026 ? 2615 : 2675;
 
 function standardSpecialSv2026(gross: number, precedingGross: number): number {
   const rate = gross <= 2225 ? 0.1412 : gross <= 2427 ? 0.1512 : gross <= 2630 ? 0.1612 : 0.1707;
   return money(Math.min(gross, Math.max(0, 13860 - precedingGross)) * rate);
+}
+
+const REGULAR_SPIKE = 1.25;
+
+// The latest payslip at today's Grundgehalt whose regular gross is not a one-off spike.
+export function regularReference(selected: Payslip[]): Payslip | undefined {
+  const latest = selected.at(-1);
+  if (!latest) return undefined;
+  const peers = latest.baseSalary === undefined ? selected : selected.filter((entry) => entry.baseSalary === latest.baseSalary);
+  const values = peers.map((entry) => entry.regularGross).sort((left, right) => left - right);
+  const half = Math.floor(values.length / 2);
+  const median = values.length % 2 ? values[half] : (values[half - 1] + values[half]) / 2;
+  return peers.findLast((entry) => entry.regularGross <= median * REGULAR_SPIKE) ?? latest;
 }
 
 function selectedPayslips(payslips: Payslip[], year: PayrollYear, employer: string) {
@@ -139,20 +152,21 @@ export function defaultPayrollForecast(
 ): PayrollForecast {
   const selected = selectedPayslips(payslips, year, employer);
   const latest = selected.at(-1);
+  const reference = regularReference(selected);
   const distinctPeriods = new Set(selected.map(payslipKey)).size === selected.length;
   const contextSupported = !payrollContextMessages(selected).length;
   let previousSpecialGross = cumulativeSpecialSvGross(selected);
-  const taxableBase = latest?.monthlyTaxableBase === undefined ? undefined
-    : latest.unresolvedSixthBonus
-      ? latest.specialGross === 0 && latest.specialSv !== undefined
-        ? money(latest.monthlyTaxableBase - latest.unresolvedSixthBonus + latest.specialSv)
+  const taxableBase = reference?.monthlyTaxableBase === undefined ? undefined
+    : reference.unresolvedSixthBonus
+      ? reference.specialGross === 0 && reference.specialSv !== undefined
+        ? money(reference.monthlyTaxableBase - reference.unresolvedSixthBonus + reference.specialSv)
         : undefined
-      : latest.monthlyTaxableBase;
+      : reference.monthlyTaxableBase;
   return {
     year,
     employer: employer.trim(),
     standardPayrollConfirmed: false,
-    months: latest && distinctPeriods && contextSupported && payslipSchema.safeParse(latest).success
+    months: latest && reference && distinctPeriods && contextSupported && payslipSchema.safeParse(latest).success
       ? Array.from({ length: 12 - latest.month }, (_, index) => {
         const month = latest.month + index + 1;
         const specialGross = month === 6 || month === 11 ? latest.baseSalary ?? 0 : 0;
@@ -162,7 +176,7 @@ export function defaultPayrollForecast(
         if (previousSpecialGross !== undefined) previousSpecialGross = sum([previousSpecialGross, specialGross]);
         return {
           month,
-          regularGross: latest.regularGross,
+          regularGross: reference.regularGross,
           specialGross,
           ...(specialSv === undefined ? {} : { specialSv }),
           ...(taxableBase === undefined || taxableBase < 0 ? {} : { monthlyTaxableBase: taxableBase }),
@@ -505,6 +519,7 @@ export function analyzePayrollAutomatically(
   let unresolvedSixthMonths: number[] = [];
   if (analysis.latest && !analysis.contextIssues.length && !consistencyIssues(entries).length && entries.every((entry) => entry.monthlyPayroll)) {
     const latest = analysis.latest;
+    const ongoing = regularReference(entries)?.regularGross ?? latest.regularGross;
     const anchor = entries.findLast((entry) => entry.regularGrossYtd !== undefined);
     const uncertain = entries.filter((entry) => entry.month > (anchor?.month ?? 0) && entry.unresolvedSixthBonus);
     unresolvedSixthMonths = uncertain.map((entry) => entry.month);
@@ -522,7 +537,7 @@ export function analyzePayrollAutomatically(
     if (regular > 0) {
       // Indicative sixth values never fill actual history or enable a tax calculation.
       for (let month = latest.month; month <= 12; month++) {
-        if (month > latest.month) regular = sum([regular, latest.regularGross]);
+        if (month > latest.month) regular = sum([regular, ongoing]);
         sixthEstimates.push({
           month, sixth: money(regular / month * 2), regularGrossYtd: regular,
           ...(uncertainGross > 0 ? { sixthUpper: money(sum([regular, uncertainGross]) / month * 2) } : {}),

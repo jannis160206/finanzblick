@@ -3,7 +3,8 @@ import { currency, monthLabel, percent } from "@/lib/format";
 import { analyzePayrollAutomatically, type AutomaticPayrollAnalysis, type PayrollYear } from "@/lib/payroll-analysis";
 import { payrollCategory } from "@/lib/payroll";
 import { payslipIncome } from "@/lib/payslip-income";
-import type { Payslip } from "@/lib/payslip-schema";
+import { payrollPatterns, type PayrollPattern } from "@/lib/payroll-pattern";
+import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { planningEndMonth } from "@/lib/planning-range";
 import type { AppState } from "@/lib/types";
 
@@ -17,6 +18,8 @@ export type SalaryInflow = Record<SalaryPart, number> & {
   source: "payslip" | "bank";
   /** Grundgehalt printed on the payslip; a change marks a raise. */
   base?: number;
+  /** From a payslip of a reference year (2025): a pattern for forecasts, never a budget value. */
+  reference?: boolean;
   /** Whether the part could be read; bank bookings carry no overtime or holiday-work split. */
   known: Record<VariablePart, boolean>;
 };
@@ -39,6 +42,8 @@ export const SPECIAL_NET_RATIO = 0.78;
 const STEP = 0.03;
 // A salary booking above 140 % of the regular level contains a special payment.
 const SPIKE = 1.4;
+// An on-call booking above 125 % of the normal on-call pay contains holiday work.
+const HOLIDAY = 1.25;
 const cents = (value: number) => Math.round(value * 100) / 100;
 const euros = (value: number) => Math.max(0, Math.round(value));
 const short = (month: string) => monthLabel(month, true);
@@ -53,37 +58,26 @@ const emptyInflow = (month: string, source: SalaryInflow["source"]): SalaryInflo
 });
 
 /**
- * Splits a payslip like the month plan does and separates overtime/Mehrleistungen: regular gross above the
- * Grundgehalt without on-call and holiday work, converted to net in proportion to the regular net pay.
+ * Splits a payslip like the month plan does: normal on-call, holiday work (incl. on-call above its normal level),
+ * other extra hours and special payments, each as net share of the payout.
  */
-export function payslipInflow(entry: Payslip): SalaryInflow | undefined {
-  const income = payslipIncome(entry);
+export function payslipInflow(entry: Payslip, pattern?: PayrollPattern): SalaryInflow | undefined {
+  const income = payslipIncome(entry, pattern);
   if (!income) return undefined;
-  const regularGross = entry.regularGross + (entry.unresolvedSixthBonus ?? 0);
-  const extraGross = entry.baseSalary
-    ? Math.max(0, entry.regularGross - entry.baseSalary - (entry.onCallGross ?? 0) - (entry.holidayWorkGross ?? 0)) : 0;
-  const regularNet = income.salary + income.onCall + income.holidayWork;
-  let overtime = regularGross > 0 ? cents(regularNet * extraGross / regularGross) : 0;
-  let { salary, onCall } = income;
-  // With an advance transfer the salary is the fixed part; extra pay is in the remaining payout.
-  if (entry.advancePay !== undefined && entry.payout !== undefined && cents(salary) === cents(entry.advancePay)) {
-    overtime = Math.min(overtime, onCall);
-    onCall = cents(onCall - overtime);
-  } else {
-    overtime = Math.min(overtime, salary);
-    salary = cents(salary - overtime);
-  }
   return {
-    month: income.month, source: "payslip", salary, onCall, overtime, holidayWork: income.holidayWork, special: income.special,
+    month: income.month, source: "payslip", salary: income.salary, onCall: income.onCall, overtime: income.overtime,
+    holidayWork: income.holidayWork, special: income.special,
     ...(entry.baseSalary ? { base: entry.baseSalary } : {}),
+    ...(isReferencePayslip(entry) ? { reference: true } : {}),
     known: { onCall: income.splitKnown, overtime: !!entry.baseSalary, holidayWork: income.splitKnown },
   };
 }
 
 function payslipInflows(payslips: readonly Payslip[]) {
   const result = new Map<string, SalaryInflow>();
+  const patterns = payrollPatterns(payslips);
   for (const entry of payslips) {
-    const inflow = payslipInflow(entry);
+    const inflow = payslipInflow(entry, patterns.get(payrollEmployerKey(entry.employer)));
     if (!inflow) continue;
     const existing = result.get(inflow.month);
     if (!existing) { result.set(inflow.month, inflow); continue; }
@@ -94,8 +88,11 @@ function payslipInflows(payslips: readonly Payslip[]) {
   return result;
 }
 
-/** Salary bookings of the bank (Gehalt, Rufbereitschaft, special payments) per budget month, for months without a payslip. */
-function bankInflows(state: AppState, today: string) {
+/**
+ * Salary bookings of the bank (Gehalt, Rufbereitschaft, special payments) per budget month, for months without a
+ * payslip. The bank books holiday work as on-call; above the normal on-call pay it counts as holiday work.
+ */
+function bankInflows(state: AppState, today: string, normalOnCall?: number) {
   const since = `${addMonths(today.slice(0, 7), -26)}-01`;
   const current = today.slice(0, 7);
   const rows = actualBookings({
@@ -118,7 +115,14 @@ function bankInflows(state: AppState, today: string) {
     inflow.known.onCall = month < current;
     result.set(month, inflow);
   }
-  for (const [month, inflow] of result) if (inflow.salary <= 0) result.delete(month);
+  for (const [month, inflow] of result) {
+    if (inflow.salary <= 0) { result.delete(month); continue; }
+    if (normalOnCall && inflow.known.onCall && inflow.onCall > normalOnCall * HOLIDAY) {
+      inflow.holidayWork = cents(inflow.onCall - normalOnCall);
+      inflow.onCall = cents(normalOnCall);
+      inflow.known.holidayWork = true;
+    }
+  }
   return result;
 }
 
@@ -149,10 +153,11 @@ const partLabel: Record<VariablePart, string> = { onCall: "Rufbereitschaft", ove
 const monthName = (month: number) => monthLabel(`2026-${String(month).padStart(2, "0")}`).split(" ")[0];
 
 /**
- * Salary forecast per future budget month from the pay of the last twelve months (payslips, otherwise salary
- * bookings), scaled to today's salary level. Special payments and holiday work repeat the same month of the latest
- * year with data; without one the special payment comes from the payroll model (June/November → July/December).
- * On-call pay and overtime are twelve-month averages. Every value says where it comes from.
+ * Salary forecast per future budget month (the payout month, one after the Abrechnungsmonat), aligned to today's
+ * salary level. Older months – also payslips of the reference year 2025 – only give the pattern: special payments and
+ * holiday work repeat the same month of the latest year with data, scaled to the current salary. On-call pay is its
+ * normal level and extra hours their typical (median) amount, so a single month with much holiday work or overtime is
+ * not spread over every month. Every value says where it comes from.
  */
 export function salaryForecast(state: AppState, options: { today?: string; until?: string } = {}): SalaryForecast {
   const today = options.today ?? state.settings.asOf;
@@ -160,7 +165,8 @@ export function salaryForecast(state: AppState, options: { today?: string; until
   const until = options.until ?? planningEndMonth(today);
   const payslips = state.payslips ?? [];
   const fromPayslips = payslipInflows(payslips);
-  const fromBank = bankInflows(state, today);
+  const onCallNet = [...fromPayslips.values()].filter((item) => item.known.onCall && item.onCall > 0).slice(-12).map((item) => item.onCall);
+  const fromBank = bankInflows(state, today, onCallNet.length ? median(onCallNet) : undefined);
   const history = [...new Set([...fromPayslips.keys(), ...fromBank.keys()])].sort()
     .map((month) => fromPayslips.get(month) ?? fromBank.get(month)!)
     .filter((item) => item.salary > 0);
@@ -168,7 +174,8 @@ export function salaryForecast(state: AppState, options: { today?: string; until
   const { levels, current: level, currentFrom } = salaryLevels(history);
   for (const item of history) {
     const own = levels.get(item.month)!;
-    if (item.source === "bank" && item.salary > own * SPIKE) {
+    // A transfer far above the level (a bonus paid with the salary) is a special payment, not salary.
+    if (item.salary > own * SPIKE) {
       item.special = cents(item.special + item.salary - own);
       item.salary = cents(own);
     }
@@ -180,34 +187,38 @@ export function salaryForecast(state: AppState, options: { today?: string; until
   const raised = (item: SalaryInflow) => Math.abs(factor(item) - 1) >= 0.005 ? ` · ${factor(item) > 1 ? "+" : ""}${percent(factor(item) - 1)}` : "";
   const actualThrough = history.at(-1)!.month;
   const recent = history.filter((item) => item.month > addMonths(actualThrough, -12));
-  const average = (part: VariablePart): SalaryValue => {
+  /** Typical amount: the median, so single months with holiday work or many extra hours do not lift every month. */
+  const typical = (part: "onCall" | "overtime", scale: boolean): SalaryValue => {
     const known = recent.filter((item) => item.known[part]);
     if (!known.length) return { amount: 0, reason: `keine Daten zu ${partLabel[part]}` };
-    const amount = euros(known.reduce((sum, item) => sum + item[part] * factor(item), 0) / known.length);
-    const scaled = known.some((item) => Math.abs(factor(item) - 1) >= 0.005);
-    return { amount, reason: `Ø ${known.length} ${known.length === 1 ? "Monat" : "Monate"}${scaled ? " · inkl. Erhöhung" : ""}` };
+    const amount = euros(median(known.map((item) => item[part] * (scale ? factor(item) : 1))));
+    const scaled = scale && known.some((item) => Math.abs(factor(item) - 1) >= 0.005);
+    return { amount, reason: `üblich lt. ${known.length} ${known.length === 1 ? "Monat" : "Monaten"}${scaled ? " · inkl. Erhöhung" : ""}` };
   };
   const sameMonth = (month: string, part?: VariablePart) => history.findLast((item) =>
     item.month < month && item.month.slice(5) === month.slice(5) && (!part || item.known[part]));
   const analyses = new Map<PayrollYear, AutomaticPayrollAnalysis>();
   const latestPayslip = [...payslips].sort((a, b) => a.year - b.year || a.month - b.month).at(-1);
-  const modelled = (month: string): SalaryValue => {
+  /** Special payment of the running tax year from the payroll model with the current Grundgehalt. */
+  const taxModel = (month: string): SalaryValue | undefined => {
     const payroll = addMonths(month, -1);
     const payrollMonth = Number(payroll.slice(5, 7));
-    if (!latestPayslip) return { amount: 0, reason: "keine Abrechnung für das Modell" };
     const year = Number(payroll.slice(0, 4));
-    if (year === 2026 || year === 2027) {
-      const analysis = analyses.get(year) ?? analyzePayrollAutomatically(payslips, year, latestPayslip.employer);
-      analyses.set(year, analysis);
-      const gross = analysis.latest ? analysis.forecast.months.find((entry) => entry.month === payrollMonth)?.specialGross ?? 0 : 0;
-      if (gross > 0) {
-        const net = analysis.projections.find((entry) => entry.month === payrollMonth)?.tax?.netSpecial;
-        return net !== undefined
-          ? { amount: euros(net), reason: `Modell: Sonderzahlung ${monthName(payrollMonth)} lt. Steuerprognose` }
-          : { amount: euros(gross * SPECIAL_NET_RATIO), reason: `Modell: ${currency(gross)} brutto im ${monthName(payrollMonth)}, netto ≈ 78 %` };
-      }
-      if (analysis.latest && payrollMonth > analysis.latest.month) return { amount: 0, reason: "keine Sonderzahlung im Modell" };
-    }
+    if (!latestPayslip || (year !== 2026 && year !== 2027)) return undefined;
+    const analysis = analyses.get(year) ?? analyzePayrollAutomatically(payslips, year, latestPayslip.employer);
+    analyses.set(year, analysis);
+    if (!analysis.latest || payrollMonth <= analysis.latest.month) return undefined;
+    const gross = analysis.forecast.months.find((entry) => entry.month === payrollMonth)?.specialGross ?? 0;
+    if (gross <= 0) return { amount: 0, reason: "keine Sonderzahlung im Modell" };
+    const net = analysis.projections.find((entry) => entry.month === payrollMonth)?.tax?.netSpecial;
+    return net !== undefined
+      ? { amount: euros(net), reason: `Modell: Sonderzahlung ${monthName(payrollMonth)} lt. Steuerprognose` }
+      : { amount: euros(gross * SPECIAL_NET_RATIO), reason: `Modell: ${currency(gross)} brutto im ${monthName(payrollMonth)}, netto ≈ 78 %` };
+  };
+  /** Without a year of data: Grundgehalt in June and November (paid out in July and December). */
+  const baseModel = (month: string): SalaryValue => {
+    const payrollMonth = Number(addMonths(month, -1).slice(5, 7));
+    if (!latestPayslip) return { amount: 0, reason: "keine Abrechnung für das Modell" };
     if ((payrollMonth === 6 || payrollMonth === 11) && latestPayslip.baseSalary) {
       return { amount: euros(latestPayslip.baseSalary * SPECIAL_NET_RATIO), reason: `Modell: Grundgehalt im ${monthName(payrollMonth)}, netto ≈ 78 %` };
     }
@@ -218,18 +229,22 @@ export function salaryForecast(state: AppState, options: { today?: string; until
     reason: currentFrom.source === "payslip" ? `laufendes Netto lt. Abrechnung ${short(addMonths(currentFrom.month, -1))}`
       : `laufendes Netto lt. Gehaltseingang ${short(currentFrom.month)}`,
   };
-  const onCall = average("onCall");
-  const overtime = average("overtime");
+  // On-call pay is a flat rate and does not grow with a raise; extra hours do.
+  const onCall = typical("onCall", false);
+  const overtime = typical("overtime", true);
   const months: SalaryForecastMonth[] = [];
   for (let month = [current, addMonths(actualThrough, 1)].sort()[1]; month <= until; month = addMonths(month, 1)) {
     const previous = sameMonth(month);
-    const special: SalaryValue = !previous ? modelled(month) : previous.special > 0
-      ? { amount: euros(previous.special * factor(previous)), reason: `wie ${short(previous.month)}${raised(previous)}` }
-      : { amount: 0, reason: `${short(previous.month)} ohne Sonderzahlung` };
+    const modelled = taxModel(month);
+    const special: SalaryValue = modelled && (modelled.amount > 0 || !previous?.special) ? modelled
+      : !previous ? baseModel(month) : previous.special > 0
+        ? { amount: euros(previous.special * factor(previous)), reason: `wie ${short(previous.month)}${raised(previous)}` }
+        : { amount: 0, reason: `${short(previous.month)} ohne Sonderzahlung` };
     const holidayMonth = sameMonth(month, "holidayWork");
+    const holidayAmount = holidayMonth ? euros(holidayMonth.holidayWork * factor(holidayMonth)) : 0;
     const holidayWork: SalaryValue = holidayMonth
-      ? { amount: euros(holidayMonth.holidayWork * factor(holidayMonth)), reason: `wie ${short(holidayMonth.month)}${raised(holidayMonth)}` }
-      : average("holidayWork");
+      ? { amount: holidayAmount, reason: holidayAmount > 0 ? `wie ${short(holidayMonth.month)}${raised(holidayMonth)}` : `${short(holidayMonth.month)} ohne Feiertagsarbeit` }
+      : { amount: 0, reason: "kein Vorjahresmonat mit Daten" };
     months.push({
       month, salary, onCall, overtime, holidayWork, special,
       total: salary.amount + onCall.amount + overtime.amount + holidayWork.amount + special.amount,

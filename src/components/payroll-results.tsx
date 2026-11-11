@@ -648,8 +648,8 @@ function BonusCard({ view }: { view: PayrollPresentation }) {
   );
 }
 
-/** "Sonderzahlung & Jahressechstel": next payment, sixth, bonus room and – as children – the month overview. */
-export function PayrollResults({ view, children }: { view: PayrollPresentation; children?: ReactNode }) {
+/** "Sonderzahlung & Jahressechstel": next payment, sixth and bonus room. */
+export function PayrollResults({ view }: { view: PayrollPresentation }) {
   return (
     <section aria-labelledby="payroll-special-title" className="min-w-0 space-y-4 pt-2">
       <div className="flex items-center gap-0.5">
@@ -666,7 +666,6 @@ export function PayrollResults({ view, children }: { view: PayrollPresentation; 
         <SixthCard view={view} />
         <BonusCard view={view} />
       </div>
-      {children}
     </section>
   );
 }

@@ -255,8 +255,8 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     if (period.month && period.year) location += ` (${String(period.month).padStart(2, "0")}/${period.year})`;
     if (period.month) draft.month = period.month;
     else issue("Abrechnungsmonat nicht eindeutig lesbar.");
-    if (period.year === 2026 || period.year === 2027) draft.year = period.year;
-    else issue(period.year ? "Abrechnungsjahr wird nicht unterstützt; nur 2026 und 2027 sind vorgesehen." : "Abrechnungsjahr nicht eindeutig lesbar.");
+    if (period.year === 2025 || period.year === 2026 || period.year === 2027) draft.year = period.year;
+    else issue(period.year ? "Abrechnungsjahr wird nicht unterstützt; vorgesehen sind 2025 (als Referenz), 2026 und 2027." : "Abrechnungsjahr nicht eindeutig lesbar.");
     draft.employer = findEmployer(lines.slice(0, tableIndex < 0 ? undefined : tableIndex));
     if (!draft.employer) issue("Arbeitgeber nicht eindeutig erkannt; eine vollständige Abrechnung mit lesbarem Firmenkopf wird benötigt.");
     draft.monthlyPayroll = payrollDays(lines);

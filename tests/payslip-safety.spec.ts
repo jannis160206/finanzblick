@@ -12,18 +12,31 @@ test.beforeAll(async () => {
   const result = await build({
     stdin: {
       contents: `
-        import React, { StrictMode, useEffect, useReducer } from "react";
+        import React, { StrictMode, useEffect, useReducer, useState } from "react";
         import { createRoot } from "react-dom/client";
         import { FixtureFinanceContext } from "@/components/finance-provider";
-        import { PayslipImportPanel } from "@/components/payslip-import";
+        import { PayslipSummary } from "@/components/payslip-summary";
+        import { PayslipRemoveDialog } from "@/components/payslip-remove-dialog";
+        import { PayslipUploadProvider } from "@/components/payslip-upload";
+        import { createSeed } from "@/lib/seed";
         import { PayrollResults } from "@/components/payroll-results";
         import { payrollPresentation } from "@/components/payroll-presentation";
         import { parsePayslipPages } from "./src/lib/import/payslip";
         import { payslipSchema } from "@/lib/payslip-schema";
         import { positionedLine, syntheticContextPage } from "./tests/fixtures/payslip-context";
         const january = ${JSON.stringify(january)};
+        // The payroll page removes a payslip from its month details; here the first stored payslip offers it.
+        function Removal({ state }) {
+          const [target, setTarget] = useState(null);
+          const entry = state.payslips?.[0];
+          return <>
+            {entry && <button type="button" onClick={(event) => setTarget({ entry, trigger: event.currentTarget })}>Abrechnung entfernen: 1/2026</button>}
+            <PayslipRemoveDialog target={target} onClose={() => setTarget(null)} />
+          </>;
+        }
         function Fixture() {
           const [state, update] = useReducer((current, updater) => updater(current), {
+            ...createSeed(),
             payslips: [january],
             payrollForecasts: [{ year: 2026, employer: january.employer, standardPayrollConfirmed: true, months: [] }]
           });
@@ -42,7 +55,10 @@ test.beforeAll(async () => {
             };
           }, [state]);
           return <FixtureFinanceContext.Provider value={{ state, update, storageError: null }}>
-            <PayslipImportPanel year={2026} employer={january.employer} onImported={() => { window.imported = true; }} />
+            <PayslipUploadProvider onImported={() => { window.imported = true; }}>
+              <PayslipSummary />
+              <Removal state={state} />
+            </PayslipUploadProvider>
             <PayrollResults view={payrollPresentation(state.payslips, 2026, january.employer, "2026-05-01")} />
           </FixtureFinanceContext.Provider>;
         }
@@ -57,7 +73,8 @@ test.beforeAll(async () => {
     format: "iife",
     platform: "browser",
     jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"test"' },
+    // next/link reads build-time flags that Next inlines; the isolated bundle has no process object.
+    define: { "process.env.NODE_ENV": '"test"', "process.env": "{}" },
     plugins: [{
       name: "synthetic-isolated-payroll",
       setup(builder) {
@@ -83,7 +100,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/*", (route) => route.abort());
   await page.setContent("<html><body><div id='root'></div></body></html>");
   await page.addScriptTag({ content: bundle });
-  await expect(page.getByText("Gespeicherte Abrechnungen (1)")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "1 Abrechnung übernommen" })).toBeVisible();
 });
 
 async function refresh(page: import("@playwright/test").Page) {
@@ -106,7 +123,6 @@ async function snapshot(page: import("@playwright/test").Page) {
 test("refreshed deletion rejects stale review; Escape, close and cancel are mutation-free", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.getByText("Gespeicherte Abrechnungen (1)").click();
   await page.getByRole("button", { name: "Abrechnung entfernen: 1/2026" }).click();
   const dialog = page.getByRole("dialog", { name: "Lohnabrechnung entfernen?" });
   await refresh(page);

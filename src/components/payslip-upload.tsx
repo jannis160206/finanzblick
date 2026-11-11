@@ -15,6 +15,8 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { isPayslipMutationRejection, usePayslipMutation } from "@/components/payslip-mutation";
 import { useImportInbox } from "@/components/use-import-inbox";
 import { usePayslipPasswordStore, type PayslipPasswordStore } from "@/components/payslip-password";
+import { usePayslipLogStore } from "@/components/payslip-log";
+import { payslipLogEntry, type PayslipLogSource } from "@/lib/payslip-log";
 import { parsePayslipPdf, PayslipPasswordError } from "@/lib/import/payslip";
 import { payslipKey, payslipSchema, payrollEmployerKey, type Payslip, type PayslipDraft, type PayslipImport } from "@/lib/payslip-schema";
 import { assertPayslipReview, capturePayslipReview, PayslipMutationError, preparePayslipMerge, type PayslipReview } from "@/lib/payslip-storage";
@@ -38,7 +40,9 @@ export function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncom
   const done = parts.length ? `Ins Budget eingetragen – ${parts.join(", ")}.` : "";
   const skipped = result.skipped.length
     ? `Netto nicht eindeutig für Abrechnung ${result.skipped.map((month) => monthLabel(month)).join(", ")} – im Folgemonat bitte manuell eintragen.` : "";
-  return [done, skipped].filter(Boolean).join(" ");
+  const reference = result.reference.length
+    ? `${result.reference.length === 1 ? "1 Abrechnung" : `${result.reference.length} Abrechnungen`} aus 2025 als Referenz gespeichert – nicht im Budget.` : "";
+  return [done, skipped, reference].filter(Boolean).join(" ");
 }
 
 type LockedFile = { file: File; index: number; wrong: boolean };
@@ -53,8 +57,13 @@ export type PayslipReadOptions = {
   source?: string;
   /** Automatic reads wait instead of replacing an open password or replacement dialog. */
   background?: boolean;
+  /** Origin in the import log; Drive reads default to "drive", everything else to "upload". */
+  log?: PayslipLogSource;
 };
-type Batch = { size: number; skipped: Set<number>; unrecognized: Set<number>; source?: string; onSettled?: (result: PayslipBatchResult) => void };
+type Batch = {
+  size: number; names: string[]; skipped: Set<number>; unrecognized: Set<number>; source?: string; log: PayslipLogSource;
+  report?: PayslipImport; stored?: number; onSettled?: (result: PayslipBatchResult) => void;
+};
 
 type PayslipUploadValue = {
   busy: boolean;
@@ -93,6 +102,7 @@ export function EnsurePayslipUpload({ children }: { children: ReactNode }) {
 export function PayslipUploadProvider({ onImported, children }: { onImported?: (entry: Payslip) => void; children: ReactNode }) {
   const { state, update, storageError, ready } = useFinance();
   const passwordStore = usePayslipPasswordStore();
+  const logStore = usePayslipLogStore();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -102,7 +112,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
   const fileInput = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
   const request = useRef(0);
-  const live = useRef({ state, update, storageError, onImported });
+  const live = useRef({ state, update, storageError, onImported, logStore });
   const batch = useRef<Batch | null>(null);
   const [listeners] = useState(() => new Set<(entry: Payslip) => void>());
   const subscribe = useCallback((listener: (entry: Payslip) => void) => {
@@ -110,21 +120,24 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
     return () => { listeners.delete(listener); };
   }, [listeners]);
   const mutate = usePayslipMutation(state, update);
-  useEffect(() => { live.current = { state, update, storageError, onImported }; }, [state, update, storageError, onImported]);
+  useEffect(() => { live.current = { state, update, storageError, onImported, logStore }; }, [state, update, storageError, onImported, logStore]);
   useEffect(() => () => { request.current++; }, []);
-  useImportInbox("payslip", ready !== false && !storageError, (files) => { void readFiles(files); });
+  useImportInbox("payslip", ready !== false && !storageError, (files) => { void readFiles(files, { log: "import" }); });
 
   function settle(outcome: "imported" | "skipped" | "failed", message: string) {
     const current = batch.current;
     batch.current = null;
-    if (!current?.onSettled) return;
-    current.onSettled({
-      message,
-      files: Array.from({ length: current.size }, (_, index): PayslipFileOutcome =>
-        current.skipped.has(index) ? { outcome: "skipped", note: "Passwort fehlt." }
-          : current.unrecognized.has(index) && outcome !== "failed" ? { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }
-            : outcome === "imported" ? { outcome } : { outcome, note: message }),
+    if (!current) return;
+    const files = Array.from({ length: current.size }, (_, index): PayslipFileOutcome =>
+      current.skipped.has(index) ? { outcome: "skipped", note: "Passwort fehlt." }
+        : current.unrecognized.has(index) && outcome !== "failed" ? { outcome: "skipped", note: "Keine Lohnabrechnung erkannt." }
+          : outcome === "imported" ? { outcome } : { outcome, note: message });
+    const entry = payslipLogEntry({
+      source: current.log, message, report: current.report, stored: current.stored,
+      files: files.map((file, index) => ({ name: current.names[index] ?? `Datei ${index + 1}`, ...file })),
     });
+    live.current.logStore.append(entry).catch(() => undefined);
+    current.onSettled?.({ message, files });
   }
 
   function storeEntries(entries: Payslip[], allowReplace: boolean, review?: PayslipReview, extra = "") {
@@ -155,6 +168,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
             : forecast),
       };
     }, () => {
+      if (batch.current) batch.current.stored = merged.changed.length;
       const newest = entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0];
       currentFinance.onImported?.(newest);
       for (const listener of listeners) listener(newest);
@@ -186,6 +200,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
       throw new Error("Keine Lohnabrechnung erkannt. Vollständige Original-PDF mit lesbarem Text nötig.");
     }
     setReport(combined);
+    if (batch.current) batch.current.report = combined;
     const entries = combined.drafts.flatMap((draft) => {
       const parsed = payslipSchema.safeParse(draft);
       return parsed.success ? [parsed.data] : [];
@@ -233,7 +248,10 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
       return;
     }
     const replaced = batch.current;
-    batch.current = { size: files.length, skipped: new Set(), unrecognized: new Set(), source: options.source, onSettled: options.onSettled };
+    batch.current = {
+      size: files.length, names: files.map((file) => file.name), skipped: new Set(), unrecognized: new Set(), source: options.source,
+      log: options.log ?? (options.source ? "drive" : "upload"), onSettled: options.onSettled,
+    };
     replaced?.onSettled?.({ files: [], busy: true, message: "Durch einen neuen Import ersetzt." });
     if (!files.length || files.length > MAX_FILES || files.some((file) => !/\.pdf$/i.test(file.name))) {
       const message = `Bitte 1 bis ${MAX_FILES} PDF-Lohnabrechnungen auswählen.`;

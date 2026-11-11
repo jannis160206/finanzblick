@@ -5,6 +5,7 @@ import { AccountDatabase } from "@/lib/server/database";
 import { resetSecretKeyCache } from "@/lib/server/secrets";
 import { blankTestState, createTestDirectory } from "@/lib/server/test-support";
 import { writeUserSecret } from "@/lib/server/user-secrets";
+import { readPayslipLogFile } from "@/lib/server/payslip-log-store";
 import type { Payslip } from "@/lib/payslip-schema";
 import { addInboxItem, listInbox } from "./inbox";
 import type { PayslipRead, PayslipReader } from "./payslip-runtime";
@@ -66,6 +67,25 @@ it("imports payslips without a browser exactly like an upload and leaves nothing
   await processDriveInbox(accounts, userId, { read: reader({ "slip-again": ok(october) }) });
   expect(accounts.getFinance(userId).revision).toBe(before + 1);
   expect((await outcomes())["slip-again"]).toEqual(["imported", "Bereits vorhanden."]);
+});
+
+it("stores 2025 payslips only as reference and logs every background run", async () => {
+  await waiting("slip-2025", "slip-locked");
+  const read = reader({ "slip-2025": ok({ ...october, year: 2025, month: 12 }), "slip-locked": { status: "locked" } });
+  expect(await processDriveInbox(accounts, userId, { read })).toMatchObject({ imported: 1, waiting: 1 });
+  const { state } = accounts.getFinance(userId);
+  expect(state?.payslips).toEqual([{ ...october, year: 2025, month: 12 }]);
+  expect(state?.financeRows.find((row) => row.id === "income-salary")?.values["2026-01"]).toBeUndefined();
+  expect((await outcomes())["slip-2025"]).toEqual(["imported", "Als Referenz übernommen – nicht im Budget."]);
+  const [entry] = await readPayslipLogFile(accounts, userId);
+  expect(entry).toMatchObject({
+    source: "drive-background",
+    stored: 1,
+    reference: ["2025-12"],
+    files: [{ name: "slip-2025.pdf", outcome: "imported" }, { name: "slip-locked.pdf", outcome: "waiting", note: "Passwort fehlt." }],
+  });
+  await processDriveInbox(accounts, userId, { read });
+  expect(await readPayslipLogFile(accounts, userId)).toHaveLength(1);
 });
 
 it("keeps a protected payslip for the browser until a new stored password opens it", async () => {

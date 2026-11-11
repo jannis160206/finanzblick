@@ -28,6 +28,7 @@ import { BankConnections } from "@/components/bank-connections";
 import { MailConnection } from "@/components/mail-connection";
 import { DriveConnection } from "@/components/drive-connection";
 import { PayslipPasswordSettings } from "@/components/payslip-password-settings";
+import { PayslipLogSettings } from "@/components/payslip-log-settings";
 import { seasonalPreferenceSchema } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { defaultSeasonalPreference, type SeasonalPreference } from "@/lib/seasonal-theme";
@@ -111,6 +112,7 @@ export function Settings() {
     email: <MailConnection />,
     "google-drive": <DriveConnection />,
     "pdf-passwort": <PayslipPasswordSettings />,
+    "import-protokoll": <PayslipLogSettings />,
     jahreszeit: <SettingsSection id="jahreszeit" title="Erscheinungsbild" icon={Palette}>
       <ThemePicker preference={saved} suggested={suggestedTheme} onChoose={chooseTheme} />
       <form className="mt-6 border-t border-border/60 pt-6" onSubmit={(event) => {
