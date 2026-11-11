@@ -5,6 +5,7 @@ import { Download, ScrollText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
+import { ToggleRow } from "@/components/ui/premium-dialog";
 import { useFinance } from "@/components/finance-provider";
 import { downloadPayslipLog, usePayslipLogStore } from "@/components/payslip-log";
 import { currency } from "@/lib/format";
@@ -59,6 +60,20 @@ function LearnedProfile() {
   );
 }
 
+/** Off by default: unclear terms are explained by the local glossary; only with consent the term goes to Wikipedia. */
+function TermLookupToggle() {
+  const { state, update, storageError } = useFinance();
+  return (
+    <ToggleRow
+      checked={state.settings.payslipTermLookup === true}
+      disabled={!!storageError}
+      onCheckedChange={(checked) => update((current) => ({ ...current, settings: { ...current.settings, payslipTermLookup: checked } }))}
+      label="Unklare Begriffe online nachschlagen"
+      description="Nur wenn das lokale Glossar nicht reicht (z. B. „VEB-Prämie“): der Begriff allein – nie Beträge oder Namen – geht an die deutschsprachige Wikipedia. Ergebnis im Protokoll."
+    />
+  );
+}
+
 /** Every payslip import as structured JSON for troubleshooting; the payroll page only shows a short summary. */
 export function PayslipLogSettings() {
   const store = usePayslipLogStore();
@@ -92,13 +107,15 @@ export function PayslipLogSettings() {
   return (
     <SettingsSection id="import-protokoll" title="Import-Protokoll" icon={ScrollText}
       description={store.scope === "account" ? "Ergebnisse jedes Abrechnungs-Imports als JSON – gespeichert auf deinem Server." : "Ergebnisse jedes Abrechnungs-Imports als JSON – nur in diesem Browser."}>
+      <div className="space-y-4">
+      <LearnedProfile />
+      <TermLookupToggle />
       {failed ? (
         <p className="text-sm text-muted-foreground">Protokoll nicht erreichbar.</p>
       ) : !entries ? (
         <div role="status" className="h-12 rounded-2xl bg-muted/60 motion-safe:animate-pulse"><span className="sr-only">Wird geladen …</span></div>
       ) : (
         <div className="space-y-4">
-          <LearnedProfile />
           {recent.length ? (
             <ol aria-label="Letzte Importe" className="divide-y divide-border/70 rounded-2xl border border-border/70 bg-background/40">
               {recent.map((entry) => (
@@ -124,6 +141,7 @@ export function PayslipLogSettings() {
           </div>
         </div>
       )}
+      </div>
     </SettingsSection>
   );
 }

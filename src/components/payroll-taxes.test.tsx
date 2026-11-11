@@ -435,6 +435,10 @@ it("automatically saves a recognized February bonus and displays its sixth range
   expect(forecast.getByText(`${moneyText(6011.11)} – ${moneyText(6233.33)}`)).toBeTruthy();
   expect(forecast.getByText(`${moneyText(6008.33)} – ${moneyText(6175)}`)).toBeTruthy();
   await waitFor(() => expect(importLog()[0]?.issues).toEqual(["Datei 1: Seite 1 (02/2026): VEB-Prämie erkannt; Sechstelzuordnung bleibt offen."]));
+  // The glossary explains the term; without consent nothing is looked up online.
+  expect((importLog()[0] as { lookups?: unknown[] }).lookups).toEqual(expect.arrayContaining([
+    expect.objectContaining({ term: "VEB-Prämie", source: "glossar" }), { term: "VEB-Prämie", source: "nicht-nachgeschlagen" },
+  ]));
   expect(within(screen.getByRole("region", { name: "Steuer nächste Sonderzahlung" })).getAllByText("Noch offen")).toHaveLength(3);
   expectNoManualInputs();
 });
@@ -598,4 +602,21 @@ it("keeps a contradicting payslip out of the budget, marks it for review and tak
   expect(latest.payrollBudget?.confirmed).toHaveLength(1);
   expect(screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, belegt/ })).toBeTruthy();
   expect(summary.queryByRole("button", { name: /^Abrechnung .* prüfen$/ })).toBeNull();
+});
+
+it("looks up an unclear term on Wikipedia after the import only when allowed", async () => {
+  const fetcher = vi.fn(async () => Response.json({ hit: { topic: "VEB-Prämie", title: "Prämie", text: "Eine Prämie …", url: "https://de.wikipedia.org/wiki/Pr%C3%A4mie", source: "Wikipedia" } }));
+  vi.stubGlobal("fetch", fetcher);
+  try {
+    pdf.parse.mockResolvedValueOnce({ drafts: [{ ...january, month: 2 }], issues: ["Seite 1 (02/2026): VEB-Prämie erkannt."] });
+    const initial = seed();
+    initial.settings.payslipTermLookup = true;
+    render(<Fixture initial={initial} />);
+    selectPdf();
+    await waitFor(() => expect(importLog()).toHaveLength(1));
+    expect(fetcher).toHaveBeenCalledWith("/api/knowledge?q=VEB-Pr%C3%A4mie", expect.objectContaining({ cache: "no-store" }));
+    expect((importLog()[0] as { lookups?: unknown[] }).lookups).toContainEqual({ term: "VEB-Prämie", source: "wikipedia", title: "Prämie", text: "Eine Prämie …", url: "https://de.wikipedia.org/wiki/Pr%C3%A4mie" });
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

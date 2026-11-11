@@ -6,6 +6,8 @@ import { syncPayrollBudget } from "@/lib/payroll-budget";
 import { applyPayslipIncome } from "@/lib/payslip-income";
 import { payslipLogEntry, type PayslipLogFile } from "@/lib/payslip-log";
 import { validatePayslips, type PayslipValidation } from "@/lib/payslip-validation";
+import { glossaryLookups, lookupPendingTerms } from "@/lib/payslip-terms";
+import type { KnowledgeHit } from "@/lib/web/knowledge";
 import { isReferencePayslip, payrollEmployerKey, payslipSchema, type Payslip, type PayslipImport } from "@/lib/payslip-schema";
 import { preparePayslipMerge } from "@/lib/payslip-storage";
 import { synchronizePlan } from "@/lib/planning";
@@ -81,6 +83,9 @@ function commit(database: AccountDatabase, userId: string, entries: Payslip[]): 
   }
 }
 
+/** The Wikipedia lookup of the in-process MCP server (search_knowledge); loaded only when a term is unclear and lookups are allowed. */
+const lookupOnline = async (term: string) => (await import("@/lib/web/mcp-client")).fetchKnowledge(term);
+
 const failureText = (error: unknown) =>
   error instanceof ZodError ? "Die Abrechnung konnte nicht übernommen werden."
     : error instanceof Error && error.message ? error.message.slice(0, 300) : "Die Abrechnung konnte nicht übernommen werden.";
@@ -92,9 +97,9 @@ const failureText = (error: unknown) =>
 export async function processDriveInbox(
   database: AccountDatabase,
   userId: string,
-  options: { read?: PayslipReader; signal?: AbortSignal } = {},
+  options: { read?: PayslipReader; signal?: AbortSignal; lookup?: (term: string) => Promise<KnowledgeHit | null | undefined> } = {},
 ): Promise<DriveInboxRun> {
-  const { read = readPayslipInChild, signal } = options;
+  const { read = readPayslipInChild, signal, lookup = lookupOnline } = options;
   const run: DriveInboxRun = { imported: 0, waiting: 0, skipped: 0, failed: 0 };
   const items = await listInbox(database, userId);
   if (!items.length) return run;
@@ -161,8 +166,13 @@ export async function processDriveInbox(
   if (files.length) {
     const message = `Google Drive im Hintergrund: ${run.imported} übernommen, ${run.waiting} warten, ${run.skipped} übersprungen, ${run.failed} fehlgeschlagen.` +
       (held.length ? ` ${held.length} zur Prüfung markiert.` : "") + (budget.length ? ` Budget automatisch aktualisiert (${budget.length} Werte).` : "");
+    const { lookups, pending } = glossaryLookups(
+      [...report.issues, ...validation.flatMap((item) => item.checks.map((check) => check.message))],
+      { online: database.getFinance(userId).state?.settings.payslipTermLookup === true },
+    );
+    if (pending.length) lookups.push(...await lookupPendingTerms(pending, lookup));
     await appendPayslipLogFile(database, userId, payslipLogEntry({
-      source: "drive-background", message, files, report, stored: saved, validation, held,
+      source: "drive-background", message, files, report, stored: saved, validation, held, lookups,
       ...(budget.length || held.length ? { budget: { applied: budget.length, held, changes: budget.map((item) => ({ row: item.label, month: item.month, from: item.from, to: item.to, reason: item.reason })) } } : {}),
     })).catch(() => undefined);
   }

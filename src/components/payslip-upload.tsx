@@ -15,7 +15,9 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { isPayslipMutationRejection, usePayslipMutation } from "@/components/payslip-mutation";
 import { useImportInbox } from "@/components/use-import-inbox";
 import { usePayslipPasswordStore, type PayslipPasswordStore } from "@/components/payslip-password";
-import { usePayslipLogStore } from "@/components/payslip-log";
+import { lookupKnowledgeTerm, usePayslipLogStore } from "@/components/payslip-log";
+import { glossaryLookups, lookupPendingTerms } from "@/lib/payslip-terms";
+import type { PayslipLogLookup } from "@/lib/payslip-log";
 import { payslipLogEntry, type PayslipLogSource } from "@/lib/payslip-log";
 import { validatePayslips } from "@/lib/payslip-validation";
 import { parsePayslipPdf, PayslipPasswordError } from "@/lib/import/payslip";
@@ -139,12 +141,18 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
       const parsed = payslipSchema.safeParse(draft);
       return parsed.success ? [parsed.data] : [];
     });
-    const entry = payslipLogEntry({
-      source: current.log, message, report: current.report, stored: current.stored,
-      validation: validatePayslips(complete, live.current.state.payslips ?? []), held: current.held,
+    const validation = validatePayslips(complete, live.current.state.payslips ?? []);
+    const write = (lookups: PayslipLogLookup[]) => live.current.logStore.append(payslipLogEntry({
+      source: current.log, message, report: current.report, stored: current.stored, validation, held: current.held, lookups,
       files: files.map((file, index) => ({ name: current.names[index] ?? `Datei ${index + 1}`, ...file })),
-    });
-    live.current.logStore.append(entry).catch(() => undefined);
+    })).catch(() => undefined);
+    // Terms named in the hints: the glossary explains them; unclear ones are looked up online only when allowed.
+    const { lookups, pending } = glossaryLookups(
+      [...(current.report?.issues ?? []), ...validation.flatMap((item) => item.checks.map((check) => check.message))],
+      { online: live.current.state.settings.payslipTermLookup === true },
+    );
+    if (pending.length) void lookupPendingTerms(pending, lookupKnowledgeTerm).then((found) => write([...lookups, ...found]));
+    else void write(lookups);
     current.onSettled?.({ message, files });
   }
 

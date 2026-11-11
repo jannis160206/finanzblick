@@ -335,6 +335,8 @@ export const settingsSchema = z
       .refine((keeps) => Object.keys(keeps).every((key) => !/^giro(?:konto)?$/i.test(key.trim())),
         "Für das Girokonto gibt es keinen Behalten-Betrag.")
       .optional(),
+    // Payslip import: look up unclear terms (only the term itself) on Wikipedia when the local glossary is not enough. Off by default.
+    payslipTermLookup: z.boolean().optional(),
   })
   .refine((value) => value.asOf >= value.baselineDate, {
     message: "Stichtag darf nicht vor dem Ist-Datum liegen",

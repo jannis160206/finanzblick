@@ -106,6 +106,23 @@ it("stores a contradicting payslip without putting it into the budget and logs w
   expect(entry.budget).toMatchObject({ held: ["2026-10"] });
 });
 
+it("explains unclear terms from the glossary and looks them up online only when the user allowed it", async () => {
+  const veb = (passwords: string[]) => ({ status: "ok" as const, result: { drafts: [october], issues: ["Seite 1 (10/2026): VEB-Prämie erkannt."] }, passwords });
+  const lookup = vi.fn(async () => ({ topic: "VEB-Prämie", title: "Prämie", text: "Eine Prämie …", url: "https://de.wikipedia.org/wiki/Pr%C3%A4mie", source: "Wikipedia" }));
+  await waiting("slip-veb-1");
+  await processDriveInbox(accounts, userId, { read: reader({ "slip-veb-1": veb }), lookup });
+  expect(lookup).not.toHaveBeenCalled();
+  expect((await readPayslipLogFile(accounts, userId))[0].lookups).toEqual(expect.arrayContaining([
+    expect.objectContaining({ term: "VEB-Prämie", source: "glossar" }), { term: "VEB-Prämie", source: "nicht-nachgeschlagen" },
+  ]));
+  const { state, revision } = accounts.getFinance(userId);
+  accounts.putFinance(userId, { ...state!, settings: { ...state!.settings, payslipTermLookup: true } }, revision);
+  await waiting("slip-veb-2");
+  await processDriveInbox(accounts, userId, { read: reader({ "slip-veb-2": veb }), lookup });
+  expect(lookup).toHaveBeenCalledWith("VEB-Prämie");
+  expect((await readPayslipLogFile(accounts, userId)).at(-1)?.lookups).toContainEqual({ term: "VEB-Prämie", source: "wikipedia", title: "Prämie", text: "Eine Prämie …", url: "https://de.wikipedia.org/wiki/Pr%C3%A4mie" });
+});
+
 it("keeps a protected payslip for the browser until a new stored password opens it", async () => {
   await waiting("slip-locked");
   const read = reader({ "slip-locked": (passwords) => passwords.includes("synthetisch-123") ? ok(october) : { status: "locked" } });
