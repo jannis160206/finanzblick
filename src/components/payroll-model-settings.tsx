@@ -46,7 +46,7 @@ export function PayrollModelSettings() {
 
   const facts: [string, string][] = [
     ["Lohnsteuer", wageTaxCaption(year)],
-    ["Absetzbeträge", `${credits.label} · ${payrollWholeMoney(credits.annual)} pro Jahr${credits.source === "payslip" ? " lt. Abrechnung" : ""}`],
+    ["Absetzbeträge", `${credits.label} · ${payrollWholeMoney(credits.annual)} pro Jahr${credits.source === "payslip" && !credits.label.endsWith("lt. Abrechnung") ? " lt. Abrechnung" : ""}`],
     ["Sonderzahlungen", "620 € steuerfrei, 6 % im Jahressechstel, darüber nach Tarif"],
   ];
   return (

@@ -555,7 +555,9 @@ export function analyzePayrollAutomatically(
       }
     }
   }
-  const credits = wageTaxCredits(entries, year);
+  // Credits as the employer applied them, also from earlier years while the year has no payslip yet.
+  const employerKey = payrollEmployerKey(employer);
+  const credits = wageTaxCredits(payslips.filter((entry) => entry.year <= year && payrollEmployerKey(entry.employer) === employerKey), year);
   const percent = options.successBonusPercent ?? 0;
   return {
     ...analysis,

@@ -33,6 +33,8 @@ describe("Successbonus with the December payslip and tariff estimates", () => {
     expect(analysis.forecast.months.find((month) => month.month === 12)).toMatchObject({ specialGross: 4155, specialSv: 709.26 });
     expect(analysis.assumptions.join(" ")).toContain("Successbonus: 138,5 % des Grundgehalts mit der Dezember-Abrechnung");
     expect(analysis.credits).toMatchObject({ annual: 496, source: "payslip", label: "Verkehrsabsetzbetrag" });
+    // A year without payslips takes the credits the employer applied before, with that year's Verkehrsabsetzbetrag.
+    expect(analyzePayrollAutomatically(entries, 2027, entries[0].employer).credits).toMatchObject({ annual: 508, source: "payslip" });
   });
 
   it("estimates the taxes like the documented projection: 6 % within the sixth, the overhang by the tariff", () => {
