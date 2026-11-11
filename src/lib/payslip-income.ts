@@ -41,6 +41,8 @@ export function payslipIncome(entry: Payslip, pattern?: PayrollPattern): Payslip
   const bonus = cents(entry.unresolvedSixthBonus ?? 0);
   const specialGross = cents(entry.specialGross);
   const specialDeductions = specialGross || bonus ? cents(entry.specialSv ?? NaN) + cents(entry.specialTax ?? 0) : 0;
+  // Back-pay for earlier months ("Nachtrag") reaches the account with this payslip and counts as salary.
+  const backPay = entry.backPayGross ? Math.max(0, cents(entry.backPayGross) - cents(entry.backPayDeductions ?? 0)) : 0;
   let net = entry.netPay === undefined ? NaN : cents(entry.netPay);
   // With an advance transfer, what reaches the account is "bereits überwiesen" + "Auszahlung" (after e.g. Betriebsrat).
   if (entry.advancePay !== undefined && entry.payout !== undefined) net = cents(entry.advancePay) + cents(entry.payout);
@@ -49,7 +51,7 @@ export function payslipIncome(entry: Payslip, pattern?: PayrollPattern): Payslip
     // Without a printed "Netto" only an exact reconstruction is used; tax on special payments must be known.
     if (specialGross && entry.specialTax === undefined) return undefined;
     net = cents(entry.regularGross) + specialGross + bonus - cents(entry.regularSv ?? NaN) -
-      cents(entry.regularTax ?? NaN) - specialDeductions;
+      cents(entry.regularTax ?? NaN) - specialDeductions + backPay;
   }
   if (!Number.isFinite(net) || net <= 0) return undefined;
   const specialKnown = !specialGross || (entry.specialSv !== undefined && entry.specialTax !== undefined);
@@ -57,11 +59,12 @@ export function payslipIncome(entry: Payslip, pattern?: PayrollPattern): Payslip
     (bonus ? cents(entry.specialSv ?? NaN) : 0);
   // Without the special-payment tax, the printed net minus the reconstructed regular net is the special share.
   const specialNet = specialKnown ? specialGross - cents(entry.specialSv ?? 0) - cents(entry.specialTax ?? 0)
-    : Number.isFinite(regularOnly) ? net - regularOnly : 0;
+    : Number.isFinite(regularOnly) ? net - regularOnly - backPay : 0;
   const special = Math.max(0, Math.min(net, specialGross, specialNet));
   const regularNet = net - special;
   const regularGross = cents(entry.regularGross) + bonus;
-  const share = (gross: number) => regularGross > 0 ? Math.round(regularNet * gross / regularGross) : 0;
+  const ownNet = regularNet - Math.min(regularNet, backPay);
+  const share = (gross: number) => regularGross > 0 ? Math.round(ownNet * gross / regularGross) : 0;
   const pay = variablePay(entry, pattern);
   let onCall = share(cents(pay.onCall));
   let holidayWork = share(cents(pay.holiday));

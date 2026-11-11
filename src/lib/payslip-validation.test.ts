@@ -19,6 +19,16 @@ describe("payslip validation", () => {
     expect(result.passed).toEqual(["net-range", "net-balance", "transfers", "components", "tax-rate", "sv-rate"]);
   });
 
+  it("counts back-pay for earlier months in the net balance and notes it", () => {
+    const backPay = slip({ backPayGross: 200, backPayDeductions: 70, netPay: 2877.2, payout: 472.2 });
+    const result = validatePayslip(backPay);
+    expect(result.consistent).toBe(true);
+    expect(result.passed).toContain("net-balance");
+    expect(result.checks).toEqual([{ id: "back-pay", level: "info", message: "Nachzahlung für Vormonate 200,00\u00a0€ brutto – getrennt vom Monatswert." }]);
+    expect(ids(validatePayslip({ ...backPay, backPayGross: undefined, backPayDeductions: undefined }), "error")).toEqual(["net-balance"]);
+    expect(ids(validatePayslip(slip({ estimated: true })), "info")).toEqual(["estimated"]);
+  });
+
   it("holds back clear contradictions and only notes plausible differences", () => {
     expect(ids(validatePayslip(slip({ netPay: 3047.2, payout: 642.2 })), "error")).toEqual(["net-balance"]);
     expect(validatePayslip(slip({ netPay: 2707.2, payout: 302.2 }))).toMatchObject({

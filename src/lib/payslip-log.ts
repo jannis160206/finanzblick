@@ -17,6 +17,8 @@ const draftSchema = z.object({
   employer: text(200).optional(),
   complete: z.boolean(),
   reference: z.boolean().optional(),
+  /** Some values were estimated (not safely readable). */
+  estimated: z.boolean().optional(),
   fields: z.record(text(40), z.number().finite()).optional(),
 });
 
@@ -100,6 +102,7 @@ export function payslipLogEntry(input: {
       ...(draft.employer ? { employer: clip(draft.employer, 200) } : {}),
       complete: parsed.success,
       ...(parsed.success && isReferencePayslip(parsed.data) ? { reference: true } : {}),
+      ...(draft.estimated ? { estimated: true } : {}),
       ...(Object.keys(fields).length ? { fields } : {}),
     };
   });

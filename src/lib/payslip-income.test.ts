@@ -21,6 +21,18 @@ const state = (financeRows = rows) => ({ financeRows }) as AppState;
 const value = (result: { state: AppState }, id: string, month = "2026-11") =>
   result.state.financeRows.find((row) => row.id === id)?.values[month];
 
+describe("back-pay for earlier months", () => {
+  it("adds the net back-pay to the salary without changing on-call or overtime", () => {
+    const own = { ...base, baseSalary: 3200, onCallGross: 400, netPay: 2720 };
+    const plain = payslipIncome(own)!;
+    const backPay = payslipIncome({ ...own, backPayGross: 200, backPayDeductions: 70, netPay: 2850 })!;
+    expect(backPay.net).toBe(2850);
+    expect(backPay.salary).toBeCloseTo(plain.salary + 130, 2);
+    expect(backPay.onCall).toBe(plain.onCall);
+    expect(backPay.overtime).toBe(plain.overtime);
+  });
+});
+
 describe("payslip net pay parsing", () => {
   it("reads the printed Netto line", () => {
     const entry = payslipSchema.parse(parsePayslipPages([syntheticContextPage("")]).drafts[0]);

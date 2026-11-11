@@ -113,6 +113,7 @@ function grossFigures(tile: PayrollMonthTile): Figure[] {
       },
       printed("Lohnsteuer", details.tax),
       printed("SV", details.sv),
+      ...(details.entry.backPayGross ? [printed("Nachzahlung Vormonate", details.entry.backPayGross)] : []),
       ...(details.sixth === undefined ? [] : [printed("Jahressechstel", details.sixth)]),
     ];
   }
@@ -244,7 +245,7 @@ function MonthDetail({ tile, onClose, onRemove, onConfirm }: {
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-2xs text-muted-foreground">
         <p>
           {tile.reference
-            ? "Nur Muster für die Prognose – nicht im Budget."
+            ? `Nur Muster für die Prognose${entry?.estimated ? " – teilweise geschätzt" : ""} – nicht im Budget.`
             : tile.review ? "Details im Import-Protokoll."
               : details?.kind === "forecast"
                 ? details.tax !== undefined ? "Geschätzt nach Lohnsteuertarif – genau erst mit der Abrechnung." : "Lohnsteuer und SV erst mit der Abrechnung."

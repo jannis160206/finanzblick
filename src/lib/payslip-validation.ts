@@ -42,7 +42,8 @@ export function validatePayslip(entry: Payslip, history: readonly Payslip[] = []
   const passed: string[] = [];
   const add = (id: string, level: PayslipCheckLevel, message: string) => checks.push({ id, level, message });
   const bonus = entry.unresolvedSixthBonus ?? 0;
-  const gross = sum(entry.regularGross, entry.specialGross, bonus);
+  // Back-pay for earlier months is part of the printed Brutto and Netto, not of the month's own values.
+  const gross = sum(entry.regularGross, entry.specialGross, bonus, entry.backPayGross);
   const net = entry.netPay;
 
   if (net !== undefined) {
@@ -53,7 +54,7 @@ export function validatePayslip(entry: Payslip, history: readonly Payslip[] = []
   const specialKnown = entry.specialGross === 0 || (entry.specialSv !== undefined && entry.specialTax !== undefined);
   const bonusKnown = !bonus || entry.specialSv !== undefined;
   if (net !== undefined && entry.regularSv !== undefined && entry.regularTax !== undefined && specialKnown && bonusKnown) {
-    const rest = sum(gross, -entry.regularSv, -entry.regularTax, -(entry.specialSv ?? 0), -(entry.specialTax ?? 0), -net);
+    const rest = sum(gross, -entry.regularSv, -entry.regularTax, -(entry.specialSv ?? 0), -(entry.specialTax ?? 0), -(entry.backPayDeductions ?? 0), -net);
     const limit = Math.max(50, gross * 0.02);
     if (Math.abs(rest) > limit) {
       add("net-balance", "error", `Brutto − SV − Lohnsteuer ergibt ${currency(sum(net, rest))}, gedruckt sind ${currency(net)} Netto (Differenz ${currency(rest)}).`);
@@ -133,6 +134,9 @@ export function validatePayslip(entry: Payslip, history: readonly Payslip[] = []
       add("special-size", "warning", `Sonderzahlung ${currency(entry.specialGross)} ist mehr als das 2,5-Fache des Grundgehalts.`);
     }
   }
+
+  if (entry.backPayGross) add("back-pay", "info", `Nachzahlung für Vormonate ${currency(entry.backPayGross)} brutto – getrennt vom Monatswert.`);
+  if (entry.estimated) add("estimated", "info", "Einige Werte waren nicht eindeutig lesbar und sind geschätzt.");
 
   const recent = own.filter((other) => index(other) > index(entry) - 13).map((other) => other.regularGross).filter((value) => value > 0);
   if (recent.length >= 3 && entry.regularGross > median(recent) * 1.5) {

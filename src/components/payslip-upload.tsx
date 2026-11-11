@@ -23,6 +23,7 @@ import { validatePayslips } from "@/lib/payslip-validation";
 import { parsePayslipPdf, PayslipPasswordError } from "@/lib/import/payslip";
 import { payslipKey, payslipSchema, payrollEmployerKey, type Payslip, type PayslipDraft, type PayslipImport } from "@/lib/payslip-schema";
 import { assertPayslipReview, capturePayslipReview, PayslipMutationError, preparePayslipMerge, type PayslipReview } from "@/lib/payslip-storage";
+import { completeReferenceDrafts } from "@/lib/payslip-estimate";
 import { applyPayslipIncome } from "@/lib/payslip-income";
 import { FinanceStorageError } from "@/lib/finance-storage";
 import { currency, monthLabel } from "@/lib/format";
@@ -213,6 +214,10 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
       combined.issues.push(...[...new Set(parsed.issues)].map((issue) => `Datei ${fileIndex + 1}: ${issue}`));
     });
     if (combined.drafts.length > 240) throw new Error("Max. 240 Lohnabrechnungen je Import.");
+    // Reference payslips read only in part are completed from the own payslips' pattern and marked as estimated.
+    const completed = completeReferenceDrafts(combined.drafts, live.current.state.payslips ?? []);
+    combined.drafts = completed.drafts;
+    combined.issues.push(...completed.notes);
     const skippedNote = skipped ? `${skipped} von ${files.length} Datei(en) ohne Passwort übersprungen.` : "";
     if (!combined.drafts.length) {
       if (skipped === files.length) { setNotice("Import abgebrochen – keine Datei geöffnet."); settle("skipped", "Passwort fehlt."); return; }

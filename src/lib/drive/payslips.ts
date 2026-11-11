@@ -4,6 +4,7 @@ import { queueLedgerReview } from "@/lib/import/review";
 import type { BudgetCorrection } from "@/lib/budget-corrections";
 import { syncPayrollBudget } from "@/lib/payroll-budget";
 import { applyPayslipIncome } from "@/lib/payslip-income";
+import { completeReferenceDrafts } from "@/lib/payslip-estimate";
 import { payslipLogEntry, type PayslipLogFile } from "@/lib/payslip-log";
 import { validatePayslips, type PayslipValidation } from "@/lib/payslip-validation";
 import { glossaryLookups, lookupPendingTerms } from "@/lib/payslip-terms";
@@ -135,10 +136,12 @@ export async function processDriveInbox(
         files.push({ name: item.name, outcome: "waiting", note: password ? "Gespeichertes Passwort passt nicht." : "Passwort fehlt." });
         continue;
       }
-      report.drafts.push(...parsed.result.drafts);
-      report.issues.push(...parsed.result.issues.map((issue) => `${item.name}: ${issue}`));
+      // Reference payslips read only in part are completed from the own payslips' pattern and marked as estimated.
+      const completed = completeReferenceDrafts(parsed.result.drafts, database.getFinance(userId).state?.payslips ?? []);
+      report.drafts.push(...completed.drafts);
+      report.issues.push(...[...parsed.result.issues, ...completed.notes].map((issue) => `${item.name}: ${issue}`));
       if (!parsed.result.drafts.length) { await finish("skipped", "Keine Lohnabrechnung erkannt."); continue; }
-      const entries = parsed.result.drafts.flatMap((draft) => {
+      const entries = completed.drafts.flatMap((draft) => {
         const entry = payslipSchema.safeParse(draft);
         return entry.success ? [entry.data] : [];
       });
@@ -156,7 +159,7 @@ export async function processDriveInbox(
       if (result === "imported") saved += entries.length;
       const reference = entries.every(isReferencePayslip);
       await finish("imported", result !== "imported" ? "Bereits vorhanden."
-        : reference ? "Als Referenz übernommen – nicht im Budget."
+        : reference ? `Als Referenz übernommen${entries.some((entry) => entry.estimated) ? " (teilweise geschätzt)" : ""} – nicht im Budget.`
           : kept.length ? "Gespeichert, zur Prüfung markiert – Zahlen widersprechen sich, nicht im Budget." : "Im Hintergrund übernommen.");
     } catch (error) {
       if (signal?.aborted) break;

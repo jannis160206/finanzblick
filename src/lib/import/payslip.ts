@@ -35,6 +35,15 @@ const PAYOUT = /^(?:(?:zur\s+)?auszahlung(?:sbetrag)?|auszahlungs?betrag|überwe
 const ADVANCE = /\b(?:akonto|vorschuss|abschlag(?:szahlung)?|bereits\s+(?:aus)?(?:bezahlt|überwiesen))\b/i;
 const EXPENSE = /^(?:(?:telearbeits|homeoffice)[- ]?pauschale|reisekostenersatz|fahrtkostenersatz|kilometergeld|diäten)\s+(?:frei|steuerfrei|§\s*26(?:\s+estg)?)$/i;
 const INFORMATIONAL = /^(?:freibetrag\s*§\s*68\s*\(\s*[12]\s*\)|(?:telearbeits|homeoffice)[- ]?tage)$/i;
+// "Nachtrag für Mai": back-pay for an earlier month (e.g. a retroactive raise), listed after the month's own wages.
+const BACK_PAY = /^(?:nachtrag|nachzahlung|differenz(?:zahlung)?)\s+(?:für|f\.)\s+\S/i;
+const BACK_PAY_DEDUCTION = /^(?:sv|l(?:ohn)?st)[- ]?beitrag\s+(?:lfd\.?|laufend|sz|sonderzahlung(?:en)?)\s+vormonate?$/i;
+const FIELD_LABELS: Partial<Record<keyof PayslipDraft, string>> = {
+  baseSalary: "Grundgehalt", regularSv: "SV laufend", specialSv: "SV Sonderzahlung", regularTax: "Lohnsteuer laufend",
+  specialTax: "Lohnsteuer Sonderzahlung", monthlyTaxableBase: "LSt-Bemessungsgrundlage", reportedSixth: "Jahressechstel",
+  usedSixth: "Sechstelverbrauch", regularGrossYtd: "Brutto kumuliert", specialGrossYtd: "Sonderzahlungen kumuliert",
+  specialTaxableYtd: "Sonderzahlungs-Steuerbasis kumuliert",
+};
 const CORPORATION = /^(?!.*(?:personal|versicher|arbeitnehmer|dienstnehmer|iban|@|\d{4})).*[a-zäöü].*\b(?:gmbh(?:\s*&\s*co\.?\s*kg)?|ag|kg|og|e\.?\s*u\.?)$/i;
 
 function clean(value: string): string {
@@ -303,6 +312,9 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
     }
     let regular = 0;
     let special = 0;
+    let backPay = 0;
+    let backPayDeductions = 0;
+    let backPaySection: string | undefined;
     let listedGross = 0;
     let wageCount = 0;
     let regularCount = 0;
@@ -351,6 +363,12 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           if (value === undefined) issue("Ein Sozialversicherungsbeitrag ist nicht eindeutig lesbar und bleibt unbekannt.");
           else record(/\b(?:lfd\.?|laufend)$/i.test(label) ? "regularSv" : "specialSv", Math.abs(value));
         }
+        if (BACK_PAY_DEDUCTION.test(label)) {
+          if (value === undefined) {
+            complete = false;
+            issue("Ein Beitrag für Vormonate ist nicht eindeutig lesbar; die Nachzahlung bleibt unbekannt.");
+          } else backPayDeductions += Math.abs(value);
+        }
         if (/^l(?:ohn)?st[- ]?beitrag\s+(?:sz|sonderzahlung(?:en)?)$/i.test(label)) {
           if (value !== undefined) record("specialTax", Math.abs(value));
           if (value !== 0 || cell(line, layout, "tax") !== 0) bonusEvidenceComplete = false;
@@ -363,6 +381,10 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
           else issue("Lohnsteuer-Bemessungsgrundlage nicht eindeutig lesbar und bleibt unbekannt.");
         }
         if (!active || !label) continue;
+        if (value === undefined && BACK_PAY.test(label)) {
+          backPaySection = label.toLocaleLowerCase("de-AT");
+          continue;
+        }
         if (INFORMATIONAL.test(label) && value === undefined) {
           const reduction = cell(line, layout, "tax");
           if (/^freibetrag/i.test(label)) {
@@ -379,7 +401,7 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
         }
         const code = [...line.items].sort((a, b) => a.x - b.x).map((item) => clean(item.text))
           .find((item) => /^\d{3,5}(?:\s|$)/.test(item))?.match(/^\d{3,5}/)?.[0];
-        const component = `${code ?? "?"}|${label.toLocaleLowerCase("de-AT")}`;
+        const component = `${backPaySection ?? ""}|${code ?? "?"}|${label.toLocaleLowerCase("de-AT")}`;
         if (components.has(component)) {
           complete = false;
           issue("Bezugsbestandteil mehrfach vorhanden; eine mögliche Korrektur wird nicht automatisch verrechnet.");
@@ -387,7 +409,11 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
         components.add(component);
         const svBase = cell(line, layout, "sv");
         const taxBase = cell(line, layout, "tax");
-        if (REGULAR.test(label)) {
+        if (backPaySection && (REGULAR.test(label) || SPECIAL.test(label))) {
+          // Pay for an earlier month: kept apart, so the month's own values stay comparable.
+          backPay += value;
+          wageCount++;
+        } else if (REGULAR.test(label)) {
           regular += value;
           wageCount++;
           regularCount++;
@@ -439,21 +465,48 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
         }
       }
     }
+    // Reference payslips (2025) only shape forecasts: a plausible value with a note beats losing the whole month.
+    const reference = draft.year !== undefined && draft.year < 2026;
     for (const [field, values] of readings) {
-      if (values.length !== 1) issue("Mehrere Werte für dasselbe Betragsfeld; kein eindeutiger Wert übernommen.");
-      else Object.assign(draft, { [field]: values[0] / 100 });
+      if (values.length === 1) Object.assign(draft, { [field]: values[0] / 100 });
+      else if (reference) {
+        Object.assign(draft, { [field]: values.at(-1)! / 100 });
+        draft.estimated = true;
+        issue(`Mehrere Werte für ${FIELD_LABELS[field] ?? "ein Betragsfeld"}; als Referenz wurde der letzte Wert übernommen.`);
+      } else issue("Mehrere Werte für dasselbe Betragsfeld; kein eindeutiger Wert übernommen.");
     }
-    if (rendered.filter((line) => TITLE.test(line)).length !== 1 ||
-      rendered.some((line) => /\b(?:aufrollung|korrekturabrechnung|storno|nachverrechnung)\b/i.test(line))) {
+    const singleTitle = rendered.filter((line) => TITLE.test(line)).length === 1;
+    const correction = rendered.some((line) => /\b(?:aufrollung|korrekturabrechnung|storno|nachverrechnung)\b/i.test(line));
+    if (!singleTitle || correction) {
       complete = false;
       issue("Mehrere Abrechnungen oder eine Korrektur erkannt; bitte die gültige vollständige Monatsabrechnung einzeln hochladen.");
     }
-    if (complete) {
+    // A reference payslip whose components cannot be split safely: the SV bases give the month's gross.
+    const regularBase = regularSvBases.length === 1 ? regularSvBases[0] : undefined;
+    const specialSvBase = specialSvBases.length === 1 ? specialSvBases[0] : specialSvBases.length ? undefined : 0;
+    const estimate = !complete && reference && layout && singleTitle && !correction && gross !== undefined &&
+      regularBase !== undefined && regularBase > 0 && specialSvBase !== undefined && regularBase + specialSvBase <= gross + 100;
+    if (estimate) {
+      draft.estimated = true;
+      draft.regularGross = regularBase / 100;
+      draft.specialGross = specialSvBase / 100;
+      if (onCall) draft.onCallGross = onCall / 100;
+      if (holidayWork) draft.holidayWorkGross = holidayWork / 100;
+      issue("Als Referenz übernommen: laufendes Brutto und Sonderzahlung aus den SV-Bemessungsgrundlagen geschätzt.");
+    }
+    if (complete && backPay) {
+      draft.backPayGross = backPay / 100;
+      draft.backPayDeductions = backPayDeductions / 100;
+      issue("Nachzahlung für Vormonate erkannt; sie wird getrennt vom Monatswert übernommen.");
+    }
+    if (complete || estimate) {
       if (bonus > 0) {
         draft.unresolvedSixthBonus = bonus / 100;
         issue("VEB-Prämie erkannt: SV-Sonderzahlung und laufender Lohnsteuertarif. Ihre Sechstelzuordnung ist im Beleg nicht ausgewiesen; die Auswertung zeigt dafür eine Schätzspanne.");
       }
-      if (regularCount) {
+      if (estimate) {
+        // Gross and parts already come from the SV bases.
+      } else if (regularCount) {
         draft.regularGross = regular / 100;
         if (onCall) draft.onCallGross = onCall / 100;
         if (holidayWork) draft.holidayWorkGross = holidayWork / 100;
@@ -470,7 +523,9 @@ export function parsePayslipPages(pages: readonly PayslipPage[]): PayslipImport 
       }
       if (netCandidates.length === 1 && gross !== undefined && netCandidates[0] <= gross) draft.netPay = netCandidates[0] / 100;
       else if (netCandidates.length > 1) issue("Mehrere unterschiedliche Nettobeträge; das Netto wird aus Brutto, SV und Lohnsteuer berechnet.");
-      if (specialCount || (regularCount && draft.monthlyPayroll === true)) draft.specialGross = special / 100;
+      if (estimate) {
+        // Special payments come from the SV base as well.
+      } else if (specialCount || (regularCount && draft.monthlyPayroll === true)) draft.specialGross = special / 100;
       else issue("Fehlende Sonderzahlungen sind bei unklarem oder unvollständigem Monat nicht automatisch null.");
     }
     const key = `${period.year ?? "?"}-${period.month ?? "?"}|${draft.employer?.toLocaleLowerCase("de-AT") ?? "?"}`;

@@ -449,6 +449,45 @@ describe("positioned Austrian payslip parsing (entirely synthetic)", () => {
     expect(result.issues).toEqual([]);
   });
 
+  it("separates back-pay sections for earlier months from the month's own values", () => {
+    const backPay = (title: string, ...rows: PayslipLine[]) => [line(rows[0].y + 6, [89, title]), ...rows];
+    const rows = [
+      ...page().lines.filter((entry) => entry.y < 500 && entry.y > 360),
+      ...backPay("Nachtrag für Mai", wage(358, "1000", "Gehalt", "60,00")),
+      ...backPay("Nachtrag für Juni", wage(346, "1000", "Gehalt", "60,00"), wage(343, "3160", "ÜStd.ZS100%fr", "5,00"),
+        wage(341, "5020", "Sonderzahlung", "35,00")),
+    ];
+    const tail = [
+      line(305, [89, "SV Beitrag lfd Vormonate"], [379, "-21,70"], [451, "125,00"]),
+      line(303, [89, "SV Beitrag SZ Vormonate"], [379, "-6,00"], [451, "35,00"]),
+      line(300, [89, "LSt Beitrag lfd Vormonate"], [379, "-37,50"], [525, "125,00"]),
+    ];
+    const result = parsePayslipPages([page({ rows, gross: "3.558,00", tail })]);
+    expect(payslipSchema.parse(result.drafts[0])).toMatchObject({
+      regularGross: 3380, specialGross: 0, baseSalary: 2810.2, onCallGross: 302.75, regularSv: 604.32, regularTax: 411.6,
+      backPayGross: 160, backPayDeductions: 65.2,
+    });
+    expect(result.drafts[0].estimated).toBeUndefined();
+    expect(result.issues).toEqual(["Seite 1 (01/2026): Nachzahlung für Vormonate erkannt; sie wird getrennt vom Monatswert übernommen."]);
+    // A repeated component within one back-pay section is still not added up.
+    const repeated = [...rows, wage(340.5, "1000", "Gehalt", "60,00")];
+    expect(parsePayslipPages([page({ rows: repeated, gross: "3.618,00", tail })]).issues.join()).toMatch(/Bezugsbestandteil mehrfach/);
+  });
+
+  it("keeps budget years strict but completes 2025 reference payslips with the last value or the SV bases", () => {
+    const repeatedTax = [line(220, [89, "LSt Beitrag lfd"], [379, "-420,10"], [525, "2.720,00"])];
+    expect(parsePayslipPages([page({ tail: repeatedTax })]).drafts[0].regularTax).toBeUndefined();
+    const reference = parsePayslipPages([page({ year: 2025, tail: repeatedTax })]);
+    expect(reference.drafts[0]).toMatchObject({ regularTax: 420.1, monthlyTaxableBase: 2720, estimated: true });
+    expect(reference.issues.join()).toMatch(/Mehrere Werte für Lohnsteuer laufend; als Referenz wurde der letzte Wert übernommen/);
+    // A correction that does not reconcile: budget years stay incomplete, 2025 takes the gross from the SV bases.
+    const corrected = { rows: [wage(490, "1000", "Gehalt", "3.480,00"), wage(475, "1000", "Gehalt", "-100,00")], gross: "3.380,00" };
+    expect(parsePayslipPages([page(corrected)]).drafts[0].regularGross).toBeUndefined();
+    const estimated = parsePayslipPages([page({ ...corrected, year: 2025 })]);
+    expect(payslipSchema.parse(estimated.drafts[0])).toMatchObject({ regularGross: 3380, specialGross: 0, netPay: 2382.08, estimated: true });
+    expect(estimated.issues.join()).toMatch(/aus den SV-Bemessungsgrundlagen geschätzt/);
+  });
+
   it("does not turn an unsupported year into the selected or current year", () => {
     const result = parsePayslipPages([page({ year: 2024 })]);
     expect(result.drafts[0].year).toBeUndefined();

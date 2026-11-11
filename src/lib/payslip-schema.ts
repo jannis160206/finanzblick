@@ -49,6 +49,12 @@ export const payslipSchema = z.object({
   // "Bereits überwiesen" is the salary already paid; the remaining "Auszahlung" is the on-call pay.
   advancePay: amount.optional(),
   payout: amount.optional(),
+  // "Nachtrag für Mai": back-pay for earlier months paid with this payslip, kept out of the month's own values.
+  backPayGross: amount.optional(),
+  // SV and Lohnsteuer on that back-pay ("… Vormonate").
+  backPayDeductions: amount.optional(),
+  // Some values could not be read safely and were estimated (SV bases, the last of several values, own patterns).
+  estimated: z.boolean().optional(),
   monthlyPayroll: z.boolean(),
   payrollContextIssues: z.array(payrollContextIssueSchema).max(4)
     .refine((reasons) => new Set(reasons).size === reasons.length, "Kontextgründe dürfen nicht doppelt vorkommen.")
