@@ -15,11 +15,12 @@ import { PayrollYearCard } from "@/components/payroll-year";
 import { PayrollMonths, payrollMonthName } from "@/components/payroll-months";
 import { payrollMonthTiles, payrollPresentation } from "@/components/payroll-presentation";
 import { employerPayslips } from "@/lib/payroll-overview";
-import { analyzePayrollAutomatically, type PayrollYear } from "@/lib/payroll-analysis";
+import { analyzePayrollAutomatically, successBonusPercent, type PayrollYear } from "@/lib/payroll-analysis";
 import { confirmPayslip } from "@/lib/payroll-budget";
 import { monthLabel } from "@/lib/format";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { salaryForecast } from "@/lib/salary-forecast";
+import { wageTaxCaption } from "@/lib/wage-tax-at";
 
 const scopeKey = (year: number, employer: string) => `${year}|${payrollEmployerKey(employer)}`;
 const noPayslips: Payslip[] = [];
@@ -51,17 +52,21 @@ function PayrollWorkspace() {
     employers[0] ??
     "";
   const asOf = state.settings.asOf;
+  const bonus = successBonusPercent(state.settings);
+  const modelOptions = useMemo(() => ({ successBonusPercent: bonus }), [bonus]);
   // The analysis only depends on the payslips; picking another month must not recompute it.
-  const view = useMemo(() => payrollPresentation(payslips, year, employer, asOf), [payslips, year, employer, asOf]);
+  const view = useMemo(() => payrollPresentation(payslips, year, employer, asOf, modelOptions), [payslips, year, employer, asOf, modelOptions]);
   const entries = useMemo(() => employerPayslips(payslips, year, employer), [payslips, year, employer]);
   // A year without own payslips still shows the payouts of the latest employer (December is paid in January).
   const tileEmployer = employer || payslips.reduce<Payslip | undefined>((last, entry) =>
     !last || entry.year * 12 + entry.month > last.year * 12 + last.month ? entry : last, undefined)?.employer || "";
   const forecast = useMemo(() => salaryForecast(state), [state]);
   const previous = useMemo(
-    () => (year === 2027 ? analyzePayrollAutomatically(payslips, 2026, tileEmployer) : undefined),
-    [payslips, year, tileEmployer],
+    () => (year === 2027 ? analyzePayrollAutomatically(payslips, 2026, tileEmployer, modelOptions) : undefined),
+    [payslips, year, tileEmployer, modelOptions],
   );
+  const credits = view.analysis.credits;
+  const taxNote = `${wageTaxCaption(year)}${credits.label.startsWith("Absetzbeträge") ? " lt. Abrechnung" : ` (${credits.label})`}`;
   const confirmed = state.payrollBudget?.confirmed;
   const tiles = useMemo(
     () => payrollMonthTiles({ view, previous, payslips, employer: tileEmployer, forecast, confirmed }),
@@ -190,7 +195,7 @@ function PayrollWorkspace() {
           // Keyed by scope so an opened month never carries over to another year or employer.
           <PayrollMonths key={scope} year={year} tiles={tiles} selectedMonth={focusEntry?.month}
             onRemove={(entry, trigger) => setRemoval({ entry, trigger })} onConfirm={confirmEntry}
-            openRequest={openRequest} onOpened={clearOpenRequest} />
+            openRequest={openRequest} onOpened={clearOpenRequest} taxNote={taxNote} />
         )}
         {focusEntry ? (
           <>

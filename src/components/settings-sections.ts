@@ -1,4 +1,5 @@
 import {
+  BadgePercent,
   Bell,
   Building2,
   DatabaseBackup,
@@ -39,6 +40,7 @@ export const settingsGroups: SettingsGroup[] = [
   ] },
   { id: "abrechnungen", label: "Abrechnungen", icon: FileLock2, items: [
     { id: "pdf-passwort", label: "PDF-Passwort", icon: KeyRound, keywords: "lohnzettel lohnabrechnung gehalt passwort pdf verschlüsselt geschützt entsperren speichern" },
+    { id: "gehaltsmodell", label: "Gehaltsmodell", icon: BadgePercent, keywords: "successbonus bonus prämie dezember jänner sonderzahlung lohnsteuer tarif progressiv absetzbetrag verkehrsabsetzbetrag familienbonus" },
     { id: "import-protokoll", label: "Import-Protokoll", icon: ScrollText, keywords: "lohnzettel abrechnung import protokoll log json fehler hinweise debug" },
   ] },
   { id: "daten", label: "Daten", icon: DatabaseBackup, items: [

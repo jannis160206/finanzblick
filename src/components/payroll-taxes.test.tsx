@@ -70,6 +70,12 @@ function expectNoManualInputs() {
   expect(screen.queryByText(/Manuelle Jahressechstel-Berechnung/)).toBeNull();
 }
 
+// The bonus-room tests look at the room itself: without the Successbonus reserved for December.
+const withoutBonus = () => {
+  const state = seed();
+  state.settings.successBonusPercent = 0;
+  return state;
+};
 const bonusPayslips = () => Array.from({ length: 8 }, (_, index) => ({
   ...january, month: index + 1, regularGross: 4000, baseSalary: 3000,
   monthlyTaxableBase: 3200, regularTax: 500,
@@ -77,7 +83,7 @@ const bonusPayslips = () => Array.from({ length: 8 }, (_, index) => ({
 }));
 
 it("shows additional gross bonus room with the isolated tariff example collapsed by default", () => {
-  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
+  render(<Fixture initial={{ ...withoutBonus(), payslips: bonusPayslips() }} />);
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(moneyText(2000))).toBeTruthy();
   expect(bonus.getByText(/Auszahlung im November 2026/)).toBeTruthy();
@@ -98,7 +104,7 @@ it("shows additional gross bonus room with the isolated tariff example collapsed
 it("shows a conservative bonus range when February's sixth classification is unresolved", () => {
   const payslips = bonusPayslips().map((entry) => entry.month === 2
     ? { ...entry, unresolvedSixthBonus: 1000, specialSv: 141.2 } : entry);
-  render(<Fixture initial={{ ...seed(), payslips }} />);
+  render(<Fixture initial={{ ...withoutBonus(), payslips }} />);
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(`${moneyText(1000)} – ${moneyText(2166.67)}`)).toBeTruthy();
   expect(bonus.getByText(/vorsichtig am unteren Wert orientieren/)).toBeTruthy();
@@ -114,7 +120,7 @@ it("does not substitute zero bonus room or zero net when historical payrolls are
 });
 
 it("updates bonus headroom automatically when a newer payslip changes the model", async () => {
-  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
+  render(<Fixture initial={{ ...withoutBonus(), payslips: bonusPayslips() }} />);
   pdf.parse.mockResolvedValueOnce({ drafts: [{
     ...january, month: 9, regularGross: 5000, baseSalary: 3000, monthlyTaxableBase: 4000, regularTax: 700,
   }], issues: [] });
@@ -123,6 +129,23 @@ it("updates bonus headroom automatically when a newer payslip changes the model"
   const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
   expect(bonus.getByText(moneyText(2545.45))).toBeTruthy();
   expectNoManualInputs();
+});
+
+it("reserves the Successbonus, names the Austrian tax logic and estimates the taxes of forecast months", () => {
+  render(<Fixture initial={{ ...seed(), payslips: bonusPayslips() }} />);
+  const bonus = within(screen.getByRole("region", { name: "Zusätzlicher Prämien-Spielraum" }));
+  // November's Grundgehalt and 138,5 % of it with the December payslip use up the sixth.
+  expect(bonus.getByText("Geplante Sonderzahlungen").parentElement?.textContent).toContain(currency(3000 + 4155));
+  expect(bonus.queryByText(moneyText(2000))).toBeNull();
+  const months = within(screen.getByRole("region", { name: "Monatsübersicht" }));
+  expect(months.getByText("Lohnsteuertarif AT 2026 · progressiv + Absetzbeträge lt. Abrechnung")).toBeTruthy();
+  expect(screen.queryByText(/Steuerklasse/)).toBeNull();
+  fireEvent.click(months.getByRole("button", { name: /^Dezember 2026, netto .*geschätzt, mit Sonderzahlung/ }));
+  const december = within(screen.getByRole("region", { name: "Dezember 2026" }));
+  // 500 € regular tax by the tariff with the learned credits, 6 % of November's special payment after SV.
+  expect(december.getByText("Lohnsteuer · Schätzung")).toBeTruthy();
+  expect(december.getByLabelText("Dezember 2026 Lohnsteuer").textContent).toBe(currency(649.27));
+  expect(december.getByText(/Geschätzt nach Lohnsteuertarif/)).toBeTruthy();
 });
 
 it("automatically imports selected PDFs without a form and keeps bank data untouched", async () => {

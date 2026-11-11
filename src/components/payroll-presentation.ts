@@ -2,6 +2,7 @@ import {
   analyzePayrollAutomatically,
   estimatePayrollBonus,
   type AutomaticPayrollAnalysis,
+  type PayrollModelOptions,
   type PayrollYear,
 } from "@/lib/payroll-analysis";
 import { payrollBreakdown } from "@/lib/payroll-overview";
@@ -36,8 +37,9 @@ export function payrollPresentation(
   year: PayrollYear,
   employer: string,
   asOf: string,
+  options: PayrollModelOptions = {},
 ) {
-  const analysis = analyzePayrollAutomatically(payslips, year, employer);
+  const analysis = analyzePayrollAutomatically(payslips, year, employer, options);
   const { latest, actual } = analysis;
   const dashboardYear = Number(asOf.slice(0, 4));
   const nextMonth =
@@ -129,6 +131,9 @@ export type PayrollMonthDetails =
       regularGross?: number;
       /** `undefined` while the special-payment model is unknown, 0 when none is planned. */
       specialGross?: number;
+      /** Estimated by the Austrian tariff with the learned tax credits: regular and special payment together. */
+      tax?: number;
+      sv?: number;
       sixth?: { sixth: number; sixthUpper?: number };
     };
 
@@ -221,6 +226,8 @@ export function payrollMonthTiles({ view, previous, payslips, employer, forecast
     const planned = forecast?.months.find((candidate) => candidate.month === payrollPeriod(year, month));
     const gross = model?.forecast.months.find((candidate) => candidate.month === payroll.month);
     const sixth = own.length ? model?.sixthEstimates.find((candidate) => candidate.month === payroll.month) : undefined;
+    const taxes = own.length ? model?.taxEstimates.find((candidate) => candidate.month === payroll.month) : undefined;
+    const specialKnown = !gross?.specialGross || taxes?.special !== undefined;
     if (!planned && !gross && !sixth) return { ...tile, status: "open" };
     return {
       ...tile,
@@ -235,6 +242,10 @@ export function payrollMonthTiles({ view, previous, payslips, employer, forecast
         parts: planned ? forecastParts(planned) : [],
         regularGross: gross?.regularGross,
         specialGross: model?.hasSpecialPaymentModel ? gross?.specialGross : undefined,
+        ...(taxes?.regularTax !== undefined && specialKnown
+          ? { tax: Math.round((taxes.regularTax + (taxes.special?.tax ?? 0)) * 100) / 100 } : {}),
+        ...(taxes?.regularSv !== undefined && specialKnown
+          ? { sv: Math.round((taxes.regularSv + (taxes.special?.sv ?? 0)) * 100) / 100 } : {}),
         sixth,
       },
     };

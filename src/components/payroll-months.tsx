@@ -116,6 +116,8 @@ function grossFigures(tile: PayrollMonthTile): Figure[] {
       ...(details.sixth === undefined ? [] : [printed("Jahressechstel", details.sixth)]),
     ];
   }
+  const estimated = (label: string, value: number | undefined): Figure[] =>
+    value === undefined ? [] : [{ label: `${label} · Schätzung`, name: label, value: currency(value), known: true }];
   return [
     {
       label: "Laufendes Brutto",
@@ -127,6 +129,8 @@ function grossFigures(tile: PayrollMonthTile): Figure[] {
       value: details.specialGross === 0 ? "Keine geplant" : payrollMoney(details.specialGross),
       known: details.specialGross !== undefined && details.specialGross > 0,
     },
+    ...estimated("Lohnsteuer", details.tax),
+    ...estimated("SV", details.sv),
     {
       label: "Jahressechstel · Schätzung",
       name: "Jahressechstel",
@@ -242,7 +246,9 @@ function MonthDetail({ tile, onClose, onRemove, onConfirm }: {
           {tile.reference
             ? "Nur Muster für die Prognose – nicht im Budget."
             : tile.review ? "Details im Import-Protokoll."
-              : details?.kind === "forecast" ? "Lohnsteuer und SV erst mit der Abrechnung." : null}
+              : details?.kind === "forecast"
+                ? details.tax !== undefined ? "Geschätzt nach Lohnsteuertarif – genau erst mit der Abrechnung." : "Lohnsteuer und SV erst mit der Abrechnung."
+                : null}
         </p>
         {entry && (onRemove || (tile.review && onConfirm)) && <span className="-mr-2 flex flex-wrap items-center gap-1">
         {entry && tile.review && onConfirm && (
@@ -275,9 +281,12 @@ export function PayrollMonths({
   onConfirm,
   openRequest,
   onOpened,
+  taxNote,
 }: {
   year: number;
   tiles: PayrollMonthTile[];
+  /** Small caption naming the tax logic of the estimates, e.g. "Lohnsteuertarif AT 2026 · progressiv + Absetzbeträge". */
+  taxNote?: string;
   /** Abrechnungsmonat of the shown year that the page currently focuses. */
   selectedMonth?: number;
   onRemove?: (entry: Payslip, trigger: HTMLButtonElement) => void;
@@ -403,6 +412,7 @@ export function PayrollMonths({
         <div ref={panel} id={panelId} className="scroll-mt-24">
           {open && <MonthDetail key={open.month} tile={open} onClose={close} onRemove={onRemove} onConfirm={onConfirm} />}
         </div>
+        {taxNote && <p className="mt-3 text-2xs text-muted-foreground">{taxNote}</p>}
       </CardContent>
     </Card>
   );
