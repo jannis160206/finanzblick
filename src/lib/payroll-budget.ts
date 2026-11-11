@@ -33,7 +33,7 @@ export function autoBudgetCorrections(state: AppState, forecast: SalaryForecast 
  * Remembers what Finanzblick considers the right value of every forecast row and month (also those that already
  * matched), so a later hand-made change is recognised. Past months are forgotten.
  */
-function remember(state: AppState, forecast: SalaryForecast, now: number, keep: readonly BudgetCorrection[] = []): AppState {
+function remember(state: AppState, forecast: SalaryForecast, now: number | undefined, keep: readonly BudgetCorrection[] = []): AppState {
   const current = state.settings.asOf.slice(0, 7);
   const previous = state.payrollBudget ?? {};
   const targets: NonNullable<PayrollBudgetState["targets"]> = {};
@@ -47,15 +47,31 @@ function remember(state: AppState, forecast: SalaryForecast, now: number, keep: 
     targets[item.rowId] = { ...targets[item.rowId], [item.month]: item.to };
   }
   const kept = [...new Set([...(previous.kept ?? []), ...keep.map((item) => item.id)])].filter((id) => id.slice(-7) >= current).slice(-500);
-  const next: PayrollBudgetState = { ...previous, at: now, targets };
+  const next: PayrollBudgetState = { ...previous, ...(now !== undefined ? { at: now } : {}), targets };
   if (kept.length) next.kept = kept;
   else delete next.kept;
   return { ...state, payrollBudget: next };
 }
 
+/** Forecast targets not remembered yet (first run, new months): recorded without changing any value. */
+function unrecorded(state: AppState, forecast: SalaryForecast, review: readonly BudgetCorrection[]) {
+  const targets = state.payrollBudget?.targets ?? {};
+  const skip = new Set(review.map((item) => item.id));
+  return budgetCorrections(state, forecast, { all: true })
+    .some((item) => item.kind !== "duplicate" && !skip.has(item.id) && targets[item.rowId]?.[item.month] === undefined);
+}
+
+/** What the automatic budget would do now: values to write, values to review, targets still to remember. */
+export function planPayrollBudget(state: AppState, forecast: SalaryForecast = salaryForecast(state)) {
+  const { apply, review } = autoBudgetCorrections(state, forecast);
+  return { apply, review, record: !apply.length && unrecorded(state, forecast, review) };
+}
+
 /** Writes every budget value that may go in automatically. Unchanged state when there is nothing to do. */
 export function syncPayrollBudget(state: AppState, now = Date.now()): { state: AppState; applied: BudgetCorrection[]; review: BudgetCorrection[] } {
-  const { apply, review } = autoBudgetCorrections(state);
+  const forecast = salaryForecast(state);
+  const { apply, review, record } = planPayrollBudget(state, forecast);
+  if (record) return { state: remember(state, forecast, undefined), applied: [], review };
   if (!apply.length) return { state, applied: [], review };
   const written = applyBudgetCorrections(state, apply).state;
   return { state: remember(written, salaryForecast(written), now), applied: apply, review };

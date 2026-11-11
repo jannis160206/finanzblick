@@ -51,6 +51,18 @@ describe("automatic budget from payslips", () => {
     expect(autoBudgetCorrections(taken)).toEqual({ apply: [], review: [] });
   });
 
+  it("first only remembers the targets of a budget that is already current, so a later hand-made change is kept", () => {
+    const current = syncPayrollBudget(payslipState(), 1_000).state;
+    const fresh = { ...current, payrollBudget: undefined };
+    const recorded = syncPayrollBudget(fresh, 2_000);
+    expect(recorded.applied).toEqual([]);
+    expect(recorded.state.financeRows).toBe(fresh.financeRows);
+    expect(recorded.state.payrollBudget).toEqual({ targets: current.payrollBudget?.targets });
+    expect(syncPayrollBudget(recorded.state, 3_000).state).toBe(recorded.state);
+    const edited = setSalary(recorded.state, "2027-05", 1700);
+    expect(syncPayrollBudget(edited, 4_000)).toMatchObject({ applied: [], review: [{ id: "income-salary|2027-05" }] });
+  });
+
   it("only offers a special payment that also stands in another income row, never removes it on its own", () => {
     const base = syncPayrollBudget(payslipState(), 1_000).state;
     const special = base.financeRows.find((row) => row.id === "income-special-payments")!.values["2026-12"]!;

@@ -56,6 +56,9 @@ it("imports payslips without a browser exactly like an upload and leaves nothing
   expect(revision).toBe(before + 1);
   expect(state?.payslips).toEqual([october]);
   expect(state?.financeRows.find((row) => row.id === "income-salary")?.values["2026-11"]).toBe(2100);
+  // The forecast for the coming months went in automatically and is remembered in the stored state.
+  expect(state?.financeRows.find((row) => row.id === "income-salary")?.values["2026-12"]).toBe(2100);
+  expect(state?.payrollBudget?.targets?.["income-salary"]?.["2026-12"]).toBe(2100);
   expect(await listInbox(accounts, userId)).toEqual([]);
   expect(await outcomes()).toEqual({
     "slip-october": ["imported", "Im Hintergrund übernommen."],

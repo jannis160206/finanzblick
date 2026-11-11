@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Download, ScrollText, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
+import { useFinance } from "@/components/finance-provider";
 import { downloadPayslipLog, usePayslipLogStore } from "@/components/payslip-log";
+import { currency } from "@/lib/format";
+import { payrollProfile } from "@/lib/payroll-pattern";
 import type { PayslipLogEntry, PayslipLogSource } from "@/lib/payslip-log";
 
 const sourceLabel: Record<PayslipLogSource, string> = {
@@ -17,6 +20,44 @@ const sourceLabel: Record<PayslipLogSource, string> = {
   budget: "Budget automatisch",
 };
 const timeFormat = new Intl.DateTimeFormat("de-AT", { dateStyle: "medium", timeStyle: "short" });
+const monthFormat = new Intl.DateTimeFormat("de-AT", { month: "short", timeZone: "UTC" });
+const months = (list: number[]) => list.map((month) => monthFormat.format(new Date(Date.UTC(2026, month - 1, 15)))).join(", ");
+
+/** What Finanzblick learned from the own payslips and uses for checks and the forecast. */
+function LearnedProfile() {
+  const { state } = useFinance();
+  const payslips = state.payslips;
+  const profile = useMemo(() => {
+    const latest = (payslips ?? []).reduce<(NonNullable<typeof payslips>)[number] | undefined>((last, entry) =>
+      !last || entry.year * 12 + entry.month > last.year * 12 + last.month ? entry : last, undefined);
+    return latest ? payrollProfile(payslips ?? [], latest.employer) : undefined;
+  }, [payslips]);
+  if (!profile?.payslips) return null;
+  const rates = Object.entries(profile.onCallByYear).sort(([a], [b]) => Number(b) - Number(a));
+  const facts: [string, string][] = [
+    ["Rufbereitschaft", rates.length ? rates.map(([year, rate]) => `${currency(rate)} (${year})`).join(" · ") : "keine feste Pauschale erkannt"],
+    ["Feiertagsdienste", profile.holidayMonths.length ? months(profile.holidayMonths) : "keine erkannt"],
+    ["Sonderzahlungen", profile.specialMonths.length
+      ? `${months(profile.specialMonths)}${profile.specialRatio ? ` · ${Math.round(profile.specialRatio * 100)} % des Grundgehalts` : ""}` : "noch keine"],
+    ...(profile.bonusMonths.length ? [["Prämien", months(profile.bonusMonths)] as [string, string]] : []),
+    ["Auszahlung", profile.advance ? "Akonto + Restzahlung" : "eine Überweisung"],
+  ];
+  return (
+    <section aria-label="Gelernt aus deinen Abrechnungen" className="rounded-2xl border border-border/70 bg-background/40 px-4 py-3">
+      <h3 className="text-xs font-medium text-muted-foreground">
+        Gelernt aus {profile.payslips} Abrechnungen ({profile.years.length > 1 ? `${profile.years[0]}–${profile.years.at(-1)}` : profile.years[0]})
+      </h3>
+      <dl className="mt-2 grid gap-x-4 gap-y-1.5 text-sm sm:grid-cols-[auto_minmax(0,1fr)]">
+        {facts.map(([label, value]) => (
+          <div key={label} className="contents">
+            <dt className="text-muted-foreground">{label}</dt>
+            <dd className="min-w-0 [overflow-wrap:anywhere] max-sm:mb-1">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}
 
 /** Every payslip import as structured JSON for troubleshooting; the payroll page only shows a short summary. */
 export function PayslipLogSettings() {
@@ -57,6 +98,7 @@ export function PayslipLogSettings() {
         <div role="status" className="h-12 rounded-2xl bg-muted/60 motion-safe:animate-pulse"><span className="sr-only">Wird geladen …</span></div>
       ) : (
         <div className="space-y-4">
+          <LearnedProfile />
           {recent.length ? (
             <ol aria-label="Letzte Importe" className="divide-y divide-border/70 rounded-2xl border border-border/70 bg-background/40">
               {recent.map((entry) => (

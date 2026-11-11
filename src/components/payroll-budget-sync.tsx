@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { usePayslipLogStore } from "@/components/payslip-log";
 import { monthLabel } from "@/lib/format";
-import { autoBudgetCorrections, syncPayrollBudget } from "@/lib/payroll-budget";
+import { planPayrollBudget, syncPayrollBudget } from "@/lib/payroll-budget";
 import { payslipLogEntry } from "@/lib/payslip-log";
 
 // Waits until the data stops changing (an import writes in several steps), then updates the budget once.
@@ -21,10 +21,12 @@ export function PayrollBudgetSync() {
   useEffect(() => {
     if (ready === false || storageError) return;
     const timer = window.setTimeout(() => {
-      const { apply } = autoBudgetCorrections(state);
-      if (!apply.length) return;
+      const { apply, record } = planPayrollBudget(state);
+      if (!apply.length && !record) return;
       const now = Date.now();
       update((current) => syncPayrollBudget(current, now).state);
+      // First run or new months: only the targets are remembered, nothing in the budget changes.
+      if (!apply.length) return;
       const months = [...new Set(apply.map((item) => item.month))].sort();
       const range = months.length === 1 ? monthLabel(months[0]) : `${monthLabel(months[0], true)} – ${monthLabel(months.at(-1)!, true)}`;
       const message = `Budget aus Abrechnungen aktualisiert · ${apply.length === 1 ? "1 Wert" : `${apply.length} Werte`}`;

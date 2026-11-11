@@ -3,7 +3,8 @@ import { currency, monthLabel, percent } from "@/lib/format";
 import { analyzePayrollAutomatically, type AutomaticPayrollAnalysis, type PayrollYear } from "@/lib/payroll-analysis";
 import { payrollCategory } from "@/lib/payroll";
 import { payslipIncome } from "@/lib/payslip-income";
-import { payrollPatterns, type PayrollPattern } from "@/lib/payroll-pattern";
+import { payrollPatterns, type PayrollPattern, payrollProfile } from "@/lib/payroll-pattern";
+import { payslipHold } from "@/lib/payslip-validation";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { planningEndMonth } from "@/lib/planning-range";
 import type { AppState } from "@/lib/types";
@@ -69,7 +70,7 @@ export function payslipInflow(entry: Payslip, pattern?: PayrollPattern): SalaryI
     holidayWork: income.holidayWork, special: income.special,
     ...(entry.baseSalary ? { base: entry.baseSalary } : {}),
     ...(isReferencePayslip(entry) ? { reference: true } : {}),
-    known: { onCall: income.splitKnown, overtime: !!entry.baseSalary, holidayWork: income.splitKnown },
+    known: { onCall: income.splitKnown, overtime: !!entry.baseSalary, holidayWork: income.splitKnown && income.rated },
   };
 }
 
@@ -163,7 +164,9 @@ export function salaryForecast(state: AppState, options: { today?: string; until
   const today = options.today ?? state.settings.asOf;
   const current = today.slice(0, 7);
   const until = options.until ?? planningEndMonth(today);
-  const payslips = state.payslips ?? [];
+  const stored = state.payslips ?? [];
+  // Payslips held back for contradictions do not shape the forecast either.
+  const payslips = stored.filter((entry) => !payslipHold(entry, stored, state.payrollBudget?.confirmed));
   const fromPayslips = payslipInflows(payslips);
   const onCallNet = [...fromPayslips.values()].filter((item) => item.known.onCall && item.onCall > 0).slice(-12).map((item) => item.onCall);
   const fromBank = bankInflows(state, today, onCallNet.length ? median(onCallNet) : undefined);
@@ -215,14 +218,25 @@ export function salaryForecast(state: AppState, options: { today?: string; until
       ? { amount: euros(net), reason: `Modell: Sonderzahlung ${monthName(payrollMonth)} lt. Steuerprognose` }
       : { amount: euros(gross * SPECIAL_NET_RATIO), reason: `Modell: ${currency(gross)} brutto im ${monthName(payrollMonth)}, netto ≈ 78 %` };
   };
-  /** Without a year of data: Grundgehalt in June and November (paid out in July and December). */
+  const profile = latestPayslip ? payrollProfile(payslips, latestPayslip.employer) : undefined;
+  /**
+   * Without the same month of an earlier year: a special payment in June and November (paid out in July and
+   * December), as large as the own payslips showed it (share of the Grundgehalt), else one Grundgehalt.
+   */
   const baseModel = (month: string): SalaryValue => {
     const payrollMonth = Number(addMonths(month, -1).slice(5, 7));
     if (!latestPayslip) return { amount: 0, reason: "keine Abrechnung für das Modell" };
-    if ((payrollMonth === 6 || payrollMonth === 11) && latestPayslip.baseSalary) {
-      return { amount: euros(latestPayslip.baseSalary * SPECIAL_NET_RATIO), reason: `Modell: Grundgehalt im ${monthName(payrollMonth)}, netto ≈ 78 %` };
+    const due = payrollMonth === 6 || payrollMonth === 11;
+    if (due && latestPayslip.baseSalary) {
+      const ratio = profile?.specialRatio ?? 1;
+      const share = Math.round(ratio * 100);
+      return {
+        amount: euros(latestPayslip.baseSalary * ratio * SPECIAL_NET_RATIO),
+        reason: share === 100 ? `Modell: Grundgehalt im ${monthName(payrollMonth)}, netto ≈ 78 %`
+          : `Muster: ${share} % des Grundgehalts im ${monthName(payrollMonth)} lt. eigenen Abrechnungen, netto ≈ 78 %`,
+      };
     }
-    return { amount: 0, reason: payrollMonth === 6 || payrollMonth === 11 ? "kein Grundgehalt belegt" : "keine Sonderzahlung im Modell" };
+    return { amount: 0, reason: due ? "kein Grundgehalt belegt" : "keine Sonderzahlung im Modell" };
   };
   const salary: SalaryValue = {
     amount: euros(level),

@@ -43,6 +43,16 @@ it("updates the budget on its own once the data settles, with a short toast and 
   expect(entry).toMatchObject({ source: "budget", budget: { applied: expect.any(Number), changes: expect.arrayContaining([expect.objectContaining({ month: "2026-12", to: 2100 })]) } });
 });
 
+it("silently remembers the targets of a budget that is already current", () => {
+  const current = { ...syncPayrollBudget(payslipState(), 1).state, payrollBudget: undefined };
+  mount(current);
+  act(() => { vi.advanceTimersByTime(2000); });
+  expect(update).toHaveBeenCalledTimes(1);
+  expect(update.mock.calls[0][0](current).payrollBudget?.targets).toBeDefined();
+  expect(toast.success).not.toHaveBeenCalled();
+  expect(localStorage.getItem("finanzblick.payslip-log")).toBeNull();
+});
+
 it("stays quiet when the budget is current, while loading and when storage is unavailable", () => {
   mount(syncPayrollBudget(payslipState(), 1).state);
   act(() => { vi.advanceTimersByTime(2000); });

@@ -23,6 +23,8 @@ export type PayslipIncome = {
   computed: boolean;
   /** False for payslips stored before on-call shares were read: the existing on-call split is kept. */
   splitKnown: boolean;
+  /** The on-call flat rate of the payslip's year is known, so holiday work could be told apart from on-call. */
+  rated: boolean;
 };
 
 const cents = (value: number) => Math.round(value * 100);
@@ -90,6 +92,7 @@ export function payslipIncome(entry: Payslip, pattern?: PayrollPattern): Payslip
     computed,
     splitKnown: entry.netPay !== undefined || entry.onCallGross !== undefined || entry.holidayWorkGross !== undefined ||
       entry.advancePay !== undefined,
+    rated: pay.rated,
   };
 }
 

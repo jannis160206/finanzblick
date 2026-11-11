@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createSeed } from "./seed";
 import { payslipInflow, salaryForecast, SPECIAL_NET_RATIO } from "./salary-forecast";
+import { payrollPattern } from "./payroll-pattern";
+import { payslipFingerprint } from "./payslip-validation";
 import type { Payslip } from "./payslip-schema";
 import type { AppState, Transaction } from "./types";
 
@@ -55,7 +57,9 @@ describe("salary forecast", () => {
     expect(inflow.onCall).toBeCloseTo(211.27, 2);
     expect(inflow.overtime).toBeCloseTo(70.42, 2);
     expect(inflow.salary).toBeCloseTo(2218.31, 2);
-    expect(inflow.known).toEqual({ onCall: true, overtime: true, holidayWork: true });
+    // Without a learned flat rate holiday work cannot be told apart; with the pattern of the stored payslips it can.
+    expect(inflow.known).toEqual({ onCall: true, overtime: true, holidayWork: false });
+    expect(payslipInflow(payslips()[4], payrollPattern(payslips()))!.known.holidayWork).toBe(true);
     expect(payslipInflow({ ...payslips()[4], baseSalary: undefined })!.known.overtime).toBe(false);
   });
 
@@ -112,7 +116,7 @@ describe("salary forecast", () => {
     const state = payslipState();
     // October: on-call on public holidays (400 instead of 300) and a single month with many extra hours.
     state.payslips = state.payslips!.map((entry) => entry.month === 10
-      ? { ...entry, onCallGross: 400, regularGross: entry.regularGross + 100 + 3000, netPay: (entry.netPay ?? 0) + 1900 } : entry);
+      ? { ...entry, onCallGross: 400, regularGross: entry.regularGross + 100 + 3000, regularSv: 1250, regularTax: 1000, netPay: (entry.netPay ?? 0) + 1900 } : entry);
     const forecast = salaryForecast(state);
     const november = forecast.history.find((item) => item.month === "2026-11")!;
     expect(november.holidayWork).toBeGreaterThan(40);
@@ -127,11 +131,11 @@ describe("salary forecast", () => {
 
   it("uses 2025 payslips only as pattern: scaled to today's salary, never as the salary level", () => {
     const state = payslipState();
-    // December 2025 (paid in January 2026) on a lower salary, with holiday work and a bonus in the advance.
-    state.payslips = [...state.payslips!, {
-      year: 2025, month: 12, employer, monthlyPayroll: true, baseSalary: 2800, regularGross: 3200, onCallGross: 400,
-      regularSv: 560, regularTax: 380, specialGross: 0, netPay: 2260,
-    }];
+    // Autumn 2025 on a lower salary with its own on-call flat rate; December (paid in January 2026) with holiday work.
+    state.payslips = [...state.payslips!, ...[9, 10, 11, 12].map((month) => ({
+      year: 2025 as const, month, employer, monthlyPayroll: true, baseSalary: 2800, regularGross: month === 12 ? 3180 : 3080,
+      onCallGross: month === 12 ? 380 : 280, regularSv: 560, regularTax: 380, specialGross: 0, netPay: month === 12 ? 2240 : 2140,
+    }))];
     const forecast = salaryForecast(state);
     expect(forecast.history.find((item) => item.month === "2026-01")).toMatchObject({ source: "payslip", reference: true });
     const january = forecast.months.find((month) => month.month === "2027-01")!;
@@ -156,6 +160,24 @@ describe("salary forecast", () => {
     const december = forecast.history.find((item) => item.month === "2026-12");
     expect(december?.salary).toBeCloseTo(2218.31, 2);
     expect(december?.special).toBeCloseTo(2599.69, 2);
+  });
+
+  it("sizes modelled special payments like the own payslips did and ignores payslips held for contradictions", () => {
+    const state = createSeed();
+    state.settings = { ...state.settings, asOf: "2026-03-10", baselineDate: "2026-03-01" };
+    const slip = (year: 2025 | 2026, month: number, extra: Partial<Payslip> = {}): Payslip => ({
+      year, month, employer, monthlyPayroll: true, baseSalary: 3000, regularGross: 3000, specialGross: 0,
+      regularSv: 540, regularTax: 360, netPay: 2100, ...extra,
+    });
+    // June 2025 paid 120 % of the Grundgehalt as special payment; there is no November of an earlier year.
+    state.payslips = [slip(2025, 6, { specialGross: 3600, specialSv: 615, specialTax: 141.9, netPay: 4943.1 }), slip(2026, 1), slip(2026, 2)];
+    const december = salaryForecast(state).months.find((month) => month.month === "2027-12")!;
+    expect(december.special).toEqual({ amount: Math.round(3000 * 1.2 * SPECIAL_NET_RATIO), reason: "Muster: 120 % des Grundgehalts im November lt. eigenen Abrechnungen, netto ≈ 78 %" });
+    const broken = slip(2026, 2, { netPay: 2600 });
+    state.payslips = [slip(2026, 1), broken];
+    expect(salaryForecast(state).actualThrough).toBe("2026-02");
+    state.payrollBudget = { confirmed: [payslipFingerprint(broken)] };
+    expect(salaryForecast(state).actualThrough).toBe("2026-03");
   });
 
   it("forecasts nothing without salary data", () => {
