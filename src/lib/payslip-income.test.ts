@@ -3,6 +3,7 @@ import { parsePayslipPages } from "@/lib/import/payslip";
 import { applyPayslipIncome, payslipIncome } from "@/lib/payslip-income";
 import { payslipSchema, type Payslip } from "@/lib/payslip-schema";
 import { preparePayslipMerge } from "@/lib/payslip-storage";
+import { payslipFingerprint } from "@/lib/payslip-validation";
 import type { AppState, FinanceRow } from "@/lib/types";
 import { positionedLine, syntheticContextPage } from "../../tests/fixtures/payslip-context";
 
@@ -52,7 +53,7 @@ describe("payslip income for the month plan", () => {
 
   it("learns normal on-call pay and books the payout above it as holiday work and extra hours", () => {
     const history = [7, 8, 9].map((month) => ({ ...base, month, baseSalary: 3000, regularGross: 3300, onCallGross: 300 }));
-    const october = { ...base, baseSalary: 3000, regularGross: 5400, onCallGross: 400, netPay: 3700, advancePay: 2200, payout: 1500 };
+    const october = { ...base, baseSalary: 3000, regularGross: 5400, regularSv: 972, regularTax: 728, onCallGross: 400, netPay: 3700, advancePay: 2200, payout: 1500 };
     const holidayRows: FinanceRow[] = [...rows, { id: "income-7", label: "Feiertagsarbeit", kind: "income", values: {} }];
     const result = applyPayslipIncome({ financeRows: holidayRows, payslips: history } as AppState, [october]);
     expect(result.applied[0]).toMatchObject({ salary: 2200, onCall: 187.5, holidayWork: 62.5, overtime: 1250, advanced: true });
@@ -67,6 +68,15 @@ describe("payslip income for the month plan", () => {
     expect([value(plain, "income-5"), value(plain, "income-6"), value(plain, "income-7")]).toEqual([3425.92, 205.56, 68.52]);
   });
 
+  it("keeps a payslip whose numbers contradict each other out of the budget until it is confirmed", () => {
+    const broken = { ...base, netPay: 3400 };
+    const result = applyPayslipIncome(state(), [broken]);
+    expect(result).toMatchObject({ applied: [], changed: false, held: [{ period: "2026-10", consistent: false, checks: [{ id: "net-balance", level: "error" }] }] });
+    expect(value(result, "income-5")).toBe(2500);
+    const confirmed = { ...state(), payrollBudget: { confirmed: [payslipFingerprint(broken)] } } as AppState;
+    expect(applyPayslipIncome(confirmed, [broken])).toMatchObject({ held: [], applied: [{ net: 3400 }] });
+  });
+
   it("keeps 2025 payslips as reference out of the month plan", () => {
     const result = applyPayslipIncome(state(), [{ ...base, year: 2025, month: 12, netPay: 2600 }]);
     expect(result).toMatchObject({ reference: ["2025-12"], applied: [], changed: false });
@@ -74,7 +84,7 @@ describe("payslip income for the month plan", () => {
   });
 
   it("uses the transferred salary as Gehalt and the Auszahlung as Rufbereitschaft", () => {
-    const entry = { ...base, netPay: 4465.31, onCallGross: 500.62, advancePay: 2658.31, payout: 1800 };
+    const entry = { ...base, regularGross: 6500, regularSv: 1174.55, regularTax: 860.14, netPay: 4465.31, onCallGross: 500.62, advancePay: 2658.31, payout: 1800 };
     const result = applyPayslipIncome(state(), [entry]);
     expect(value(result, "income-5")).toBe(2658.31);
     expect(value(result, "income-6")).toBe(1800);

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BudgetUpdate, BudgetUpdateDialog } from "./budget-update-dialog";
+import { BudgetReview, BudgetUpdateDialog } from "./budget-update-dialog";
 import { useFinance } from "@/components/finance-provider";
 import { createSeed } from "@/lib/seed";
 import type { BudgetCorrection } from "@/lib/budget-corrections";
+import { syncPayrollBudget } from "@/lib/payroll-budget";
 import type { SalaryForecast } from "@/lib/salary-forecast";
 
 vi.mock("@/components/security-mode-provider", () => ({ useSecurityMode: () => ({ locked: false }) }));
@@ -26,10 +27,10 @@ const forecast: SalaryForecast = {
 
 function open(onApply = vi.fn()) {
   render(<BudgetUpdateDialog open items={items} forecast={forecast} disabled={false} onOpenChange={vi.fn()} onApply={onApply} />);
-  return { onApply, dialog: within(screen.getByRole("dialog", { name: "Budget aktualisieren" })) };
+  return { onApply, dialog: within(screen.getByRole("dialog", { name: "Budgetwerte prüfen" })) };
 }
 
-describe("Budget aktualisieren", () => {
+describe("Budgetwerte prüfen", () => {
   it("lists the proposals per row with old and new values, months with the same change in one line", () => {
     const { dialog } = open();
     expect(dialog.getByText(/^2\.500,00\s€$/, { selector: "dd" })).toBeTruthy();
@@ -60,34 +61,40 @@ describe("Budget aktualisieren", () => {
     ]);
   });
 
-  it("does not apply without a selection or while storage is unavailable", () => {
+  it("keeps everything when nothing is selected and does nothing while storage is unavailable", () => {
     const { dialog, onApply } = open();
     for (const name of ["Gehalt: alle abwählen", "Sonderzahlungen: alle abwählen", "Weitere Einnahmen: alle abwählen"])
       fireEvent.click(dialog.getByRole("button", { name }));
-    expect((dialog.getByRole("button", { name: "Übernehmen" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(dialog.getByText(/6 bleiben/)).toBeTruthy();
+    fireEvent.click(dialog.getByRole("button", { name: "Alle beibehalten" }));
+    expect(onApply).toHaveBeenCalledWith([]);
     cleanup();
     render(<BudgetUpdateDialog open items={items} forecast={forecast} disabled onOpenChange={vi.fn()} onApply={onApply} />);
     expect((within(screen.getByRole("dialog")).getByRole("button", { name: "Übernehmen" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(onApply).not.toHaveBeenCalled();
+    expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it("appears on the Budget page only when the forecast differs and applies through the finance state", () => {
-    const state = createSeed();
-    state.settings = { ...state.settings, asOf: "2026-11-10", baselineDate: "2026-11-01" };
+  it("shows no button while everything goes in automatically and offers only values changed by hand", () => {
+    const seed = createSeed();
+    seed.settings = { ...seed.settings, asOf: "2026-11-10", baselineDate: "2026-11-01" };
+    seed.payslips = [{ year: 2026, month: 10, employer: "Musterbetrieb GmbH", monthlyPayroll: true, regularGross: 3000, specialGross: 0, netPay: 2100 }];
     const update = vi.fn();
-    vi.mocked(useFinance).mockReturnValue({ state, update, storageError: null } as unknown as ReturnType<typeof useFinance>);
-    const { container } = render(<BudgetUpdate />);
+    const mock = (state: typeof seed) => vi.mocked(useFinance).mockReturnValue({ state, update, storageError: null } as unknown as ReturnType<typeof useFinance>);
+    mock(seed);
+    const { container } = render(<BudgetReview />);
     expect(container.textContent).toBe("");
+    expect(screen.queryByRole("button", { name: /Budget aktualisieren/ })).toBeNull();
     cleanup();
-    state.payslips = [{ year: 2026, month: 10, employer: "Musterbetrieb GmbH", monthlyPayroll: true, regularGross: 3000, specialGross: 0, netPay: 2100 }];
-    render(<BudgetUpdate />);
-    fireEvent.click(screen.getByRole("button", { name: /^Budget aktualisieren/ }));
-    const dialog = within(screen.getByRole("dialog", { name: "Budget aktualisieren" }));
-    expect(dialog.getByRole("checkbox", { name: /^Gehalt, Dez\. 2026 – Dez\. 2027: 2\.100,00\s€ statt 0,00\s€$/ })).toBeTruthy();
-    expect(update).not.toHaveBeenCalled();
+    const synced = syncPayrollBudget(seed, 1).state;
+    const edited = { ...synced, financeRows: synced.financeRows.map((row) => row.id === "income-salary" ? { ...row, values: { ...row.values, "2027-02": 1900 } } : row) };
+    mock(edited);
+    render(<BudgetReview />);
+    fireEvent.click(screen.getByRole("button", { name: "1 Budgetwert prüfen" }));
+    const dialog = within(screen.getByRole("dialog", { name: "Budgetwerte prüfen" }));
+    expect(dialog.getByRole("checkbox", { name: /^Gehalt, Februar 2027: 2\.100,00\s€ statt 1\.900,00\s€$/ })).toBeTruthy();
+    expect(dialog.getByText(/^von Hand geändert · /)).toBeTruthy();
     fireEvent.click(dialog.getByRole("button", { name: "Übernehmen" }));
-    expect(update).toHaveBeenCalledTimes(1);
-    const next = update.mock.calls[0][0](state);
-    expect(next.financeRows.find((row: { id: string }) => row.id === "income-salary").values).toMatchObject({ "2026-12": 2100, "2027-12": 2100 });
+    const next = update.mock.calls[0][0](edited);
+    expect(next.financeRows.find((row: { id: string }) => row.id === "income-salary").values["2027-02"]).toBe(2100);
   });
 });

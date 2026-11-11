@@ -7,12 +7,14 @@ import { cn } from "@/lib/utils";
 // Status is never color alone: every state has its own shape and a text label next to it (or for screen readers).
 const statusDot: Record<PayrollMonthStatus, string> = {
   actual: "rounded-full bg-success",
+  review: "rounded-full bg-warning ring-2 ring-warning/30",
   forecast: "rounded-full border-[1.5px] border-info",
   missing: "rotate-45 rounded-[1px] bg-warning",
   open: "rounded-full border border-dashed border-muted-foreground",
 };
 const statusBadge = {
   actual: "success",
+  review: "warning",
   forecast: "info",
   missing: "warning",
   open: "secondary",

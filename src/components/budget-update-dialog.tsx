@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Check, RefreshCw, TrendingUp } from "lucide-react";
+import { Check, ListChecks, TrendingUp } from "lucide-react";
 import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
@@ -11,7 +11,8 @@ import {
   DialogEmpty, PremiumDialog, PremiumDialogBody, PremiumDialogClose, PremiumDialogContent, PremiumDialogFooter, PremiumDialogHeader,
 } from "@/components/ui/premium-dialog";
 import { addMonths } from "@/lib/calc";
-import { applyBudgetCorrections, budgetCorrections, groupCorrections, type BudgetCorrection, type BudgetCorrectionGroup } from "@/lib/budget-corrections";
+import { groupCorrections, type BudgetCorrection, type BudgetCorrectionGroup } from "@/lib/budget-corrections";
+import { autoBudgetCorrections, reviewPayrollBudget } from "@/lib/payroll-budget";
 import { currency, monthLabel, percent } from "@/lib/format";
 import { salaryForecast, type SalaryForecast } from "@/lib/salary-forecast";
 import { cn } from "@/lib/utils";
@@ -37,28 +38,32 @@ const period = (run: Run) => run.items.length === 1 ? monthLabel(run.items[0].mo
   : `${monthLabel(run.items[0].month, true)} – ${monthLabel(run.items.at(-1)!.month, true)}`;
 const signed = (value: number) => `${value > 0 ? "+" : value < 0 ? "−" : ""}${currency(Math.abs(value))}`;
 
-/** Budget page entry: only shown when the salary forecast differs from the budget. */
-export function BudgetUpdate() {
+/**
+ * Budget values Finanzblick does not write on its own – changed by hand or possibly double – offered for review.
+ * Everything else from payslips and the salary forecast goes into the budget automatically (PayrollBudgetSync).
+ */
+export function BudgetReview({ className }: { className?: string }) {
   const { state, update, storageError } = useFinance();
   const forecast = useMemo(() => salaryForecast(state), [state]);
-  const items = useMemo(() => budgetCorrections(state, forecast), [state, forecast]);
+  const items = useMemo(() => autoBudgetCorrections(state, forecast).review, [state, forecast]);
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState(0);
   if (!items.length && !open) return null;
   return (
     <>
       {items.length > 0 && (
-        <Button type="button" variant="outline" size="sm" className="min-h-11" onClick={() => { setSession((current) => current + 1); setOpen(true); }}>
-          <RefreshCw aria-hidden="true" />Budget aktualisieren
-          <Badge>{items.length}<span className="sr-only"> Vorschläge</span></Badge>
+        <Button type="button" variant="outline" size="sm" className={cn("min-h-11", className)} onClick={() => { setSession((current) => current + 1); setOpen(true); }}>
+          <ListChecks aria-hidden="true" />{items.length === 1 ? "1 Budgetwert prüfen" : `${items.length} Budgetwerte prüfen`}
         </Button>
       )}
       <BudgetUpdateDialog key={session} open={open} items={items} forecast={forecast} disabled={!!storageError} onOpenChange={setOpen}
         onApply={(chosen) => {
-          const applied = applyBudgetCorrections(state, chosen).applied;
-          update((current) => applyBudgetCorrections(current, chosen).state);
+          const ids = new Set(chosen.map((item) => item.id));
+          const keep = items.filter((item) => !ids.has(item.id));
+          update((current) => reviewPayrollBudget(current, chosen, keep));
           setOpen(false);
-          toast.success(applied === 1 ? "Budget aktualisiert · 1 Wert" : `Budget aktualisiert · ${applied} Werte`);
+          toast.success([chosen.length ? `${chosen.length === 1 ? "1 Wert" : `${chosen.length} Werte`} übernommen` : "",
+            keep.length ? `${keep.length === 1 ? "1 Wert" : `${keep.length} Werte`} beibehalten` : ""].filter(Boolean).join(" · "));
         }} />
     </>
   );
@@ -84,8 +89,8 @@ export function BudgetUpdateDialog({ open, onOpenChange, items, forecast, disabl
   return (
     <PremiumDialog open={open} onOpenChange={onOpenChange}>
       <PremiumDialogContent size="lg" snapPoints={[0.92]}>
-        <PremiumDialogHeader icon={RefreshCw} title="Budget aktualisieren"
-          description="Gehaltsprognose aus Abrechnungen und Gehaltseingängen. Übernommen wird nur, was ausgewählt ist." />
+        <PremiumDialogHeader icon={ListChecks} title="Budgetwerte prüfen"
+          description="Von Hand geänderte Werte und mögliche Doppelungen übernimmt Finanzblick nicht selbst. Ausgewählte werden übernommen, die übrigen bleiben, wie sie sind." />
         <PremiumDialogBody className="space-y-5">
           {forecast.level && (
             <FinancialData as="dl" className="grid grid-cols-2 gap-2 text-sm">
@@ -109,10 +114,11 @@ export function BudgetUpdateDialog({ open, onOpenChange, items, forecast, disabl
         <PremiumDialogFooter>
           <FinancialData as="p" className="text-sm text-muted-foreground tabular-nums sm:mr-auto" aria-live="polite">
             {selected.length} {selected.length === 1 ? "Wert" : "Werte"} · <span className="font-semibold text-foreground">{signed(change)}</span>
+            {items.length > selected.length && <> · {items.length - selected.length} bleiben</>}
           </FinancialData>
           <PremiumDialogClose asChild><Button type="button" variant="outline">Abbrechen</Button></PremiumDialogClose>
-          <Button type="button" disabled={disabled || !selected.length} onClick={() => onApply(selected)}>
-            <Check aria-hidden="true" />Übernehmen
+          <Button type="button" disabled={disabled || !items.length} onClick={() => onApply(selected)}>
+            <Check aria-hidden="true" />{selected.length ? "Übernehmen" : "Alle beibehalten"}
           </Button>
         </PremiumDialogFooter>
       </PremiumDialogContent>

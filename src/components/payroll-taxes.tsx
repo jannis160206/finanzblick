@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, ReceiptText } from "lucide-react";
+import { toast } from "sonner";
 import { useFinance } from "@/components/finance-provider";
 import { PayslipRemoveDialog, type PayslipRemoval } from "@/components/payslip-remove-dialog";
 import { PayslipSummary } from "@/components/payslip-summary";
@@ -15,6 +16,8 @@ import { PayrollMonths, payrollMonthName } from "@/components/payroll-months";
 import { payrollMonthTiles, payrollPresentation } from "@/components/payroll-presentation";
 import { employerPayslips } from "@/lib/payroll-overview";
 import { analyzePayrollAutomatically, type PayrollYear } from "@/lib/payroll-analysis";
+import { confirmPayslip } from "@/lib/payroll-budget";
+import { monthLabel } from "@/lib/format";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
 import { salaryForecast } from "@/lib/salary-forecast";
 
@@ -22,7 +25,7 @@ const scopeKey = (year: number, employer: string) => `${year}|${payrollEmployerK
 const noPayslips: Payslip[] = [];
 
 function PayrollWorkspace() {
-  const { state } = useFinance();
+  const { state, update } = useFinance();
   const [year, setYear] = useState<PayrollYear>(
     state.settings.asOf.startsWith("2027") ? 2027 : 2026,
   );
@@ -30,6 +33,8 @@ function PayrollWorkspace() {
   // The chosen month only applies to the year and employer it was picked for; otherwise the latest payslip leads.
   const [focus, setFocus] = useState<{ scope: string; month: number } | null>(null);
   const [removal, setRemoval] = useState<PayslipRemoval | null>(null);
+  const [openRequest, setOpenRequest] = useState<{ month: number; seq: number } | null>(null);
+  const clearOpenRequest = useCallback(() => setOpenRequest(null), []);
   const payslips = state.payslips ?? noPayslips;
   const employers = [
     ...new Map(
@@ -57,10 +62,21 @@ function PayrollWorkspace() {
     () => (year === 2027 ? analyzePayrollAutomatically(payslips, 2026, tileEmployer) : undefined),
     [payslips, year, tileEmployer],
   );
+  const confirmed = state.payrollBudget?.confirmed;
   const tiles = useMemo(
-    () => payrollMonthTiles({ view, previous, payslips, employer: tileEmployer, forecast }),
-    [view, previous, payslips, tileEmployer, forecast],
+    () => payrollMonthTiles({ view, previous, payslips, employer: tileEmployer, forecast, confirmed }),
+    [view, previous, payslips, tileEmployer, forecast, confirmed],
   );
+  const reviewPayslip = (entry: Payslip) => {
+    const payout = entry.month === 12 ? { year: entry.year + 1, month: 1 } : { year: entry.year, month: entry.month + 1 };
+    if (payout.year === 2026 || payout.year === 2027) setYear(payout.year);
+    setSelectedEmployer(entry.employer);
+    setOpenRequest({ month: payout.month, seq: Date.now() });
+  };
+  const confirmEntry = (entry: Payslip) => {
+    update((current) => confirmPayslip(current, entry).state);
+    toast.success(`Abrechnung ${monthLabel(`${entry.year}-${String(entry.month).padStart(2, "0")}`)} ins Budget übernommen`);
+  };
   const showTiles = tiles.some((tile) => tile.status === "actual" || tile.status === "forecast");
   const scope = scopeKey(year, employer);
   const focusEntry =
@@ -173,7 +189,8 @@ function PayrollWorkspace() {
         {showTiles && (
           // Keyed by scope so an opened month never carries over to another year or employer.
           <PayrollMonths key={scope} year={year} tiles={tiles} selectedMonth={focusEntry?.month}
-            onRemove={(entry, trigger) => setRemoval({ entry, trigger })} />
+            onRemove={(entry, trigger) => setRemoval({ entry, trigger })} onConfirm={confirmEntry}
+            openRequest={openRequest} onOpened={clearOpenRequest} />
         )}
         {focusEntry ? (
           <>
@@ -203,7 +220,7 @@ function PayrollWorkspace() {
             </p>
           </section>
         )}
-        <PayslipSummary />
+        <PayslipSummary onReviewPayslip={reviewPayslip} />
       </div>
       <PayslipRemoveDialog target={removal} onClose={() => setRemoval(null)}
         fallbackFocus={() => (document.querySelector<HTMLElement>("#payroll-months button[aria-expanded=true]")

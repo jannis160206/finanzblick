@@ -7,7 +7,7 @@ import { salaryForecast, type SalaryForecast, type SalaryPart } from "@/lib/sala
 import type { AppState, FinanceRow } from "@/lib/types";
 
 export type BudgetCorrectionKind = SalaryPart | "duplicate";
-/** One proposed budget value: row and month, old → new, and why. Applied only after the user confirms. */
+/** One proposed budget value: row and month, old → new, and why. Applied automatically or after review (payroll-budget.ts). */
 export type BudgetCorrection = {
   id: string;
   rowId: string;
@@ -51,14 +51,15 @@ const freeId = (rows: readonly FinanceRow[], id: string) => {
 /**
  * Proposals that bring the income rows in line with the salary forecast for the months after the last real pay,
  * plus a clean-up from the current month on: a special payment that also stands in "Weitere Einnahmen"/"Sonstiges"
- * (±10 %).
+ * (±10 %). With `all`, rows and months that already match are listed too (from = to) – the full set of targets.
  */
-export function budgetCorrections(state: AppState, forecast: SalaryForecast = salaryForecast(state)): BudgetCorrection[] {
+export function budgetCorrections(state: AppState, forecast: SalaryForecast = salaryForecast(state), options: { all?: boolean } = {}): BudgetCorrection[] {
   const rows = salaryRows(state.financeRows);
   const result: BudgetCorrection[] = [];
   const current = state.settings.asOf.slice(0, 7);
   const add = (row: { id: string; label: string; create?: boolean }, kind: BudgetCorrectionKind, month: string, from: number, to: number, reason: string) => {
-    if (!BUDGET_MONTH.test(month) || Math.abs(cents(to) - cents(from)) < 100) return;
+    if (!BUDGET_MONTH.test(month) || (!options.all && Math.abs(cents(to) - cents(from)) < 100)) return;
+    if (options.all && row.create && to <= 0) return;
     result.push({ id: `${row.id}|${month}`, rowId: row.id, label: row.label, kind, ...(row.create ? { create: true as const } : {}), month, from, to: Math.max(0, to), reason });
   };
   const value = (row: FinanceRow | undefined, month: string) => row?.values[month] ?? 0;

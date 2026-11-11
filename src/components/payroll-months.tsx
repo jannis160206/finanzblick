@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Trash2, X } from "lucide-react";
+import { CheckCheck, Trash2, TriangleAlert, X } from "lucide-react";
 import { FinancialData } from "@/components/financial-data";
 import { notOnPayslip } from "@/components/payroll-focus";
 import {
@@ -30,6 +30,7 @@ const payrollMonthShort = (month: number) => monthShortFormat.format(monthDate(m
 
 const tileTone: Record<PayrollMonthStatus, string> = {
   actual: "border-border/80 bg-card",
+  review: "border-warning/60 bg-card",
   forecast: "border-dashed border-muted-foreground/45 bg-card",
   missing: "border-warning/30 bg-warning-soft",
   open: "border-dashed border-border bg-transparent",
@@ -46,7 +47,7 @@ const partTone: Record<PayoutPartKey, string> = {
 const statusText = (tile: PayrollMonthTile) => tile.reference ? "Referenz" : payrollStatusLabel[tile.status];
 
 function tileText(tile: PayrollMonthTile) {
-  const source = `Abrechnung ${tile.payroll.label}`;
+  const source = `Abrechnung ${tile.payroll.label}${tile.status === "review" ? ", nicht im Budget" : ""}`;
   if (tile.status === "missing") return `${tile.label}, ${source} fehlt`;
   if (!tile.headline) return `${tile.label}, ${tile.status === "open" ? "noch keine Abrechnung" : payrollStatusLabel[tile.status]}`;
   const metric = tile.headline.metric === "net" ? "netto" : "brutto";
@@ -170,10 +171,11 @@ function PayoutSplit({ tile }: { tile: PayrollMonthTile }) {
   );
 }
 
-function MonthDetail({ tile, onClose, onRemove }: {
+function MonthDetail({ tile, onClose, onRemove, onConfirm }: {
   tile: PayrollMonthTile;
   onClose: () => void;
   onRemove?: (entry: Payslip, trigger: HTMLButtonElement) => void;
+  onConfirm?: (entry: Payslip) => void;
 }) {
   const details = tile.details;
   const entry = details?.kind === "actual" ? details.entry : undefined;
@@ -207,6 +209,17 @@ function MonthDetail({ tile, onClose, onRemove }: {
           <span aria-label={`${tile.label} Netto`} className="amount text-2xl font-semibold tracking-tight">{currency(details.net)}</span>
         </p>
       )}
+      {tile.review && (
+        <div role="note" className="mt-4 rounded-xl border border-warning/50 bg-warning-soft px-3 py-2.5">
+          <p className="flex items-center gap-1.5 text-sm font-medium">
+            <TriangleAlert aria-hidden="true" className="size-4 shrink-0 text-warning" />
+            Nicht im Budget – die Zahlen passen nicht zusammen
+          </p>
+          <ul className="mt-1.5 space-y-1 pl-5.5 text-xs leading-relaxed">
+            {tile.review.slice(0, 3).map((check) => <li key={check.id}>{check.message}</li>)}
+          </ul>
+        </div>
+      )}
       <PayoutSplit tile={tile} />
       <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl bg-muted/40 p-3 @lg/months:grid-cols-3 @3xl/months:grid-cols-5">
         {grossFigures(tile).map((figure) => (
@@ -228,19 +241,27 @@ function MonthDetail({ tile, onClose, onRemove }: {
         <p>
           {tile.reference
             ? "Nur Muster für die Prognose – nicht im Budget."
-            : details?.kind === "forecast" ? "Lohnsteuer und SV erst mit der Abrechnung." : null}
+            : tile.review ? "Details im Import-Protokoll."
+              : details?.kind === "forecast" ? "Lohnsteuer und SV erst mit der Abrechnung." : null}
         </p>
+        {entry && (onRemove || (tile.review && onConfirm)) && <span className="-mr-2 flex flex-wrap items-center gap-1">
+        {entry && tile.review && onConfirm && (
+          <Button variant="outline" size="sm" onClick={() => onConfirm(entry)}>
+            <CheckCheck aria-hidden="true" />Ins Budget übernehmen
+          </Button>
+        )}
         {entry && onRemove && (
           <Button
             variant="ghost"
             size="sm"
-            className="-mr-2 text-muted-foreground hover:text-destructive"
+            className="text-muted-foreground hover:text-destructive"
             aria-label={`Abrechnung ${tile.payroll.label} entfernen`}
             onClick={(event) => onRemove(entry, event.currentTarget)}
           >
             <Trash2 aria-hidden="true" />Entfernen
           </Button>
         )}
+        </span>}
       </div>
     </FinancialData>
   );
@@ -251,25 +272,46 @@ export function PayrollMonths({
   tiles,
   selectedMonth,
   onRemove,
+  onConfirm,
+  openRequest,
+  onOpened,
 }: {
   year: number;
   tiles: PayrollMonthTile[];
   /** Abrechnungsmonat of the shown year that the page currently focuses. */
   selectedMonth?: number;
   onRemove?: (entry: Payslip, trigger: HTMLButtonElement) => void;
+  /** Takes a payslip held for review into the budget. */
+  onConfirm?: (entry: Payslip) => void;
+  /** Opens a payout month from outside (e.g. "Abrechnung prüfen" in the summary); `seq` makes repeated requests distinct. */
+  openRequest?: { month: number; seq: number } | null;
+  onOpened?: () => void;
 }) {
   const [openMonth, setOpenMonth] = useState<number | null>(null);
+  const [handledRequest, setHandledRequest] = useState<number | null>(null);
+  if (openRequest && openRequest.seq !== handledRequest) {
+    setHandledRequest(openRequest.seq);
+    setOpenMonth(openRequest.month);
+  }
   const buttons = useRef(new Map<number, HTMLButtonElement>());
   const panel = useRef<HTMLDivElement>(null);
   const open = tiles.find((tile) => tile.month === openMonth && tile.details);
   const panelId = `payroll-month-detail-${year}`;
-  const statuses = (["actual", "forecast", "missing", "open"] as const).filter((status) =>
+  const statuses = (["actual", "review", "forecast", "missing", "open"] as const).filter((status) =>
     tiles.some((tile) => tile.status === status && !tile.reference),
   );
   // Phones show the panel below four rows of tiles: bring it into view without animating the scroll.
   useEffect(() => {
     if (openMonth !== null) panel.current?.scrollIntoView?.({ block: "nearest" });
   }, [openMonth]);
+  // A month opened from outside also gets the focus, so keyboard and screen reader users land on it.
+  const focusedRequest = useRef<number | null>(null);
+  useEffect(() => {
+    if (handledRequest === null || focusedRequest.current === handledRequest) return;
+    focusedRequest.current = handledRequest;
+    if (openMonth !== null) buttons.current.get(openMonth)?.focus({ preventScroll: true });
+    onOpened?.();
+  }, [handledRequest, openMonth, onOpened]);
   const close = () => {
     const month = open?.month;
     setOpenMonth(null);
@@ -321,7 +363,7 @@ export function PayrollMonths({
           className="grid grid-cols-3 gap-1.5 @lg/months:grid-cols-4 @lg/months:gap-2 @3xl/months:grid-cols-6"
         >
           {tiles.map((tile) => {
-            const current = tile.status === "actual" && tile.payroll.year === year && tile.payroll.month === selectedMonth;
+            const current = (tile.status === "actual" || tile.status === "review") && tile.payroll.year === year && tile.payroll.month === selectedMonth;
             const expanded = open?.month === tile.month;
             const base = cn(
               "relative flex h-full min-h-[4.5rem] w-full min-w-0 flex-col gap-1 rounded-xl border px-2 pt-2.5 pb-2 text-left max-[359px]:px-1.5 @lg/months:px-3",
@@ -359,7 +401,7 @@ export function PayrollMonths({
           })}
         </FinancialData>
         <div ref={panel} id={panelId} className="scroll-mt-24">
-          {open && <MonthDetail key={open.month} tile={open} onClose={close} onRemove={onRemove} />}
+          {open && <MonthDetail key={open.month} tile={open} onClose={close} onRemove={onRemove} onConfirm={onConfirm} />}
         </div>
       </CardContent>
     </Card>

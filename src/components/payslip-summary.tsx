@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { CheckCircle2, LoaderCircle, RefreshCw } from "lucide-react";
+import { CheckCircle2, LoaderCircle, RefreshCw, TriangleAlert, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAccountWorkspace } from "@/components/account-context";
-import { BudgetUpdate } from "@/components/budget-update-dialog";
+import { BudgetReview } from "@/components/budget-update-dialog";
 import { requestDriveInbox } from "@/components/drive-inbox";
 import { useFinance } from "@/components/finance-provider";
 import { usePayslipLogStore } from "@/components/payslip-log";
@@ -15,12 +15,14 @@ import { Button } from "@/components/ui/button";
 import { accountRequest, AccountRequestError } from "@/lib/account-request";
 import type { DriveStatus } from "@/lib/drive/store";
 import { monthLabel } from "@/lib/format";
+import { heldPayslips } from "@/lib/payroll-budget";
 import { applyPayslipIncome } from "@/lib/payslip-income";
 import { payslipLogEntry } from "@/lib/payslip-log";
-import { isReferencePayslip, payslipSchema } from "@/lib/payslip-schema";
+import { isReferencePayslip, payslipSchema, type Payslip } from "@/lib/payslip-schema";
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 const period = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
+const syncedFormat = new Intl.DateTimeFormat("de-AT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 /** Asks Drive to fetch every payslip again; quietly does nothing without an account or a Drive connection. */
 async function recheckDrive(account: string | null): Promise<string> {
@@ -36,8 +38,11 @@ async function recheckDrive(account: string | null): Promise<string> {
   }
 }
 
-/** Short state of the stored payslips; details of every import go to the import log in the settings. */
-export function PayslipSummary() {
+/**
+ * Short state of the stored payslips and the automatic budget; details of every import go to the import log in the
+ * settings. Payslips held back for contradictions open in the month overview via `onReviewPayslip`.
+ */
+export function PayslipSummary({ onReviewPayslip }: { onReviewPayslip?: (entry: Payslip) => void }) {
   const { state, update, storageError } = useFinance();
   const { busy, error, notice, report, setMessage } = usePayslipUpload();
   const account = useAccountWorkspace()?.user.id ?? null;
@@ -50,6 +55,8 @@ export function PayslipSummary() {
   const latest = current.reduce<(typeof current)[number] | undefined>((last, entry) =>
     !last || entry.year * 12 + entry.month > last.year * 12 + last.month ? entry : last, undefined);
   const notTaken = report?.drafts.flatMap((draft, index) => payslipSchema.safeParse(draft).success ? [] : [payslipDraftLabel(draft, index)]) ?? [];
+  const held = useMemo(() => heldPayslips(state), [state]);
+  const syncedAt = state.payrollBudget?.at;
   const working = busy || checking;
 
   function recheck() {
@@ -61,13 +68,17 @@ export function PayslipSummary() {
       return synced.state;
     }, () => {
       void (async () => {
-        const budget = synced?.applied.length
+        const budget = [synced?.applied.length
           ? `${plural(synced.applied.length, "Abrechnung", "Abrechnungen")} im Budget abgeglichen.`
-          : "Keine Abrechnung fürs Budget.";
+          : "Keine Abrechnung fürs Budget.",
+        synced?.held.length ? `${plural(synced.held.length, "Abrechnung", "Abrechnungen")} zur Prüfung markiert.` : ""].filter(Boolean).join(" ");
         const message = [budget, await recheckDrive(account)].filter(Boolean).join(" ");
         setMessage({ notice: message, error: "" });
         toast.success(message);
-        logStore.append(payslipLogEntry({ source: "recheck", message, stored: 0 })).catch(() => undefined);
+        logStore.append(payslipLogEntry({
+          source: "recheck", message, stored: 0,
+          held: synced?.held.map((item) => item.period), validation: synced?.held,
+        })).catch(() => undefined);
         setChecking(false);
       })();
     }, (cause) => {
@@ -93,10 +104,21 @@ export function PayslipSummary() {
               {[latest ? `zuletzt ${monthLabel(period(latest.year, latest.month))}` : null,
                 reference ? `${reference} aus 2025 als Referenz` : null].filter(Boolean).join(" · ") || "Netto landet im Folgemonat im Budget."}
             </p>
+            <p className="mt-1 flex items-center gap-1 text-2xs text-muted-foreground">
+              <Wand2 aria-hidden="true" className="size-3 shrink-0" />
+              {syncedAt ? `Budget automatisch aktualisiert · ${syncedFormat.format(syncedAt)}` : "Budget wird automatisch aktualisiert"}
+            </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <BudgetUpdate />
+          {held.length > 0 && (
+            <Button variant="outline" size="sm" className="min-h-11 border-warning/60 hover:bg-warning-soft"
+              onClick={() => onReviewPayslip?.(held[0].entry)}>
+              <TriangleAlert aria-hidden="true" className="text-warning" />
+              {held.length === 1 ? `Abrechnung ${monthLabel(held[0].validation.period, true)} prüfen` : `${held.length} Abrechnungen prüfen`}
+            </Button>
+          )}
+          <BudgetReview />
           <Button variant="outline" size="sm" className="min-h-11" disabled={working || !!storageError} onClick={recheck}>
             <RefreshCw aria-hidden="true" className={checking ? "motion-safe:animate-spin" : undefined} />Erneut prüfen
           </Button>

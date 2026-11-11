@@ -1,6 +1,7 @@
 import { fixedRowCategory } from "@/lib/fixed";
 import { payrollPatterns, variablePay, type PayrollPattern } from "@/lib/payroll-pattern";
 import { isReferencePayslip, payrollEmployerKey, payslipKey, type Payslip } from "@/lib/payslip-schema";
+import { payslipHold, type PayslipValidation } from "@/lib/payslip-validation";
 import type { AppState, FinanceRow } from "@/lib/types";
 
 export type PayslipIncome = {
@@ -111,17 +112,25 @@ function payrollRows(rows: FinanceRow[]): Rows {
  * (the October payslip is paid out and planned in November).
  * Only payroll rows are set; other income such as "Sonstiges" stays untouched. Re-applying
  * the same payslip yields the same values. Payslips of reference years (2025) only feed forecasts.
+ * A payslip whose numbers contradict each other stays out of the budget (`held`) until the user confirms it.
  */
 export function applyPayslipIncome(state: AppState, entries: readonly Payslip[]) {
   const applied: PayslipIncome[] = [];
   const skipped: string[] = [];
   const reference: string[] = [];
+  const held: PayslipValidation[] = [];
   const incoming = new Set(entries.map(payslipKey));
-  const patterns = payrollPatterns([...(state.payslips ?? []).filter((entry) => !incoming.has(payslipKey(entry))), ...entries]);
+  const history = [...(state.payslips ?? []).filter((entry) => !incoming.has(payslipKey(entry))), ...entries];
+  const patterns = payrollPatterns(history);
   let rows = state.financeRows;
   for (const entry of [...entries].sort((a, b) => a.year - b.year || a.month - b.month)) {
     if (isReferencePayslip(entry)) {
       reference.push(monthKey(entry.year, entry.month));
+      continue;
+    }
+    const hold = payslipHold(entry, history, state.payrollBudget?.confirmed);
+    if (hold) {
+      held.push(hold);
       continue;
     }
     const income = payslipIncome(entry, patterns.get(payrollEmployerKey(entry.employer)));
@@ -174,5 +183,5 @@ export function applyPayslipIncome(state: AppState, entries: readonly Payslip[])
     applied.push(income);
   }
   const changed = JSON.stringify(rows) !== JSON.stringify(state.financeRows);
-  return { state: changed ? { ...state, financeRows: rows } : state, applied, skipped, reference, changed };
+  return { state: changed ? { ...state, financeRows: rows } : state, applied, skipped, reference, held, changed };
 }

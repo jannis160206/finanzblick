@@ -8,6 +8,7 @@ import { payrollBreakdown } from "@/lib/payroll-overview";
 import { payrollPattern } from "@/lib/payroll-pattern";
 import { payslipIncome, type PayslipIncome } from "@/lib/payslip-income";
 import { isReferencePayslip, payrollEmployerKey, type Payslip } from "@/lib/payslip-schema";
+import { payslipHold, type PayslipCheck } from "@/lib/payslip-validation";
 import { salaryParts, type SalaryForecast, type SalaryForecastMonth } from "@/lib/salary-forecast";
 import { currency, monthLabel } from "@/lib/format";
 
@@ -83,10 +84,12 @@ export function payrollPresentation(
 }
 export type PayrollPresentation = ReturnType<typeof payrollPresentation>;
 
-export type PayrollMonthStatus = "actual" | "forecast" | "missing" | "open";
+/** "review": documented, but kept out of the budget because the numbers contradict each other. */
+export type PayrollMonthStatus = "actual" | "review" | "forecast" | "missing" | "open";
 
 export const payrollStatusLabel: Record<PayrollMonthStatus, string> = {
   actual: "belegt",
+  review: "prüfen",
   forecast: "geschätzt",
   missing: "fehlt",
   open: "offen",
@@ -139,6 +142,8 @@ export type PayrollMonthTile = {
   special: boolean;
   /** Payslip of a reference year (2025): pattern for forecasts only, never in the budget. */
   reference: boolean;
+  /** Contradictions that keep the payslip out of the budget until the user confirms it. */
+  review?: PayslipCheck[];
   /** Net payout; gross only when no net is known. */
   headline?: { metric: "net" | "gross"; value: number };
   /** Present for months that can be opened. */
@@ -151,8 +156,10 @@ export type PayrollTileSources = {
   previous?: AutomaticPayrollAnalysis;
   payslips: readonly Payslip[];
   employer: string;
-  /** Net forecast by budget month – the same values the budget update proposes. */
+  /** Net forecast by budget month – the same values the automatic budget writes. */
   forecast?: SalaryForecast;
+  /** Fingerprints of payslips the user took into the budget despite contradictions. */
+  confirmed?: readonly string[];
 };
 
 const periodIndex = (year: number, month: number) => year * 12 + month - 1;
@@ -165,7 +172,7 @@ const forecastParts = (month: SalaryForecastMonth) =>
  * Twelve tiles by Auszahlungsmonat: the October payslip is paid in November, December's in January of the next year.
  * Documented months come from the payslips, later months from the salary forecast and the payroll model.
  */
-export function payrollMonthTiles({ view, previous, payslips, employer, forecast }: PayrollTileSources): PayrollMonthTile[] {
+export function payrollMonthTiles({ view, previous, payslips, employer, forecast, confirmed }: PayrollTileSources): PayrollMonthTile[] {
   const { year, analysis } = view;
   const key = payrollEmployerKey(employer);
   const own = payslips.filter((entry) => payrollEmployerKey(entry.employer) === key);
@@ -188,9 +195,11 @@ export function payrollMonthTiles({ view, previous, payslips, employer, forecast
     if (entry) {
       const income = payslipIncome(entry, pattern);
       const breakdown = payrollBreakdown(entry);
+      const hold = payslipHold(entry, payslips, confirmed);
       return {
         ...tile,
-        status: "actual",
+        status: hold ? "review" : "actual",
+        ...(hold ? { review: hold.checks.filter((check) => check.level === "error") } : {}),
         reference: isReferencePayslip(entry),
         special: breakdown.special !== undefined,
         headline: income ? { metric: "net", value: income.net } : { metric: "gross", value: breakdown.gross },

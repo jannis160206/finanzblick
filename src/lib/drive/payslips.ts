@@ -1,6 +1,8 @@
 import { ZodError } from "zod";
 import { createEmptyAccountState } from "@/lib/account-state";
 import { queueLedgerReview } from "@/lib/import/review";
+import type { BudgetCorrection } from "@/lib/budget-corrections";
+import { syncPayrollBudget } from "@/lib/payroll-budget";
 import { applyPayslipIncome } from "@/lib/payslip-income";
 import { payslipLogEntry, type PayslipLogFile } from "@/lib/payslip-log";
 import { validatePayslips, type PayslipValidation } from "@/lib/payslip-validation";
@@ -19,12 +21,16 @@ import { recordInboxOutcome } from "./store";
 const MAX_PER_RUN = 48;
 
 export type DriveInboxRun = { imported: number; waiting: number; skipped: number; failed: number };
-type Merge = { state: AppState; changed: number } | { conflict: true } | { unchanged: true };
+type Merge =
+  | { state: AppState; changed: number; held: PayslipValidation[]; budget: BudgetCorrection[] }
+  | { conflict: true }
+  | { unchanged: true };
 
 /**
  * The same merge as an upload in the browser: new or enriched payslips are stored, their net pay goes into the next
- * month's income rows, standard payroll forecasts of that employer and year need a fresh confirmation. A payslip
- * that would overwrite different stored values is left for the browser, where the user confirms the replacement.
+ * month's income rows (unless their numbers contradict each other), the salary forecast updates the coming months,
+ * standard payroll forecasts of that employer and year need a fresh confirmation. A payslip that would overwrite
+ * different stored values is left for the browser, where the user confirms the replacement.
  */
 export function mergeServerPayslips(state: AppState, entries: Payslip[]): Merge {
   const merged = preparePayslipMerge(state.payslips ?? [], entries);
@@ -39,25 +45,35 @@ export function mergeServerPayslips(state: AppState, entries: Payslip[]): Merge 
         ? { ...forecast, standardPayrollConfirmed: false }
         : forecast),
   } : income.state;
-  return { state: appStateSchema.parse(synchronizePlan(queueLedgerReview(next))), changed: merged.changed.length };
+  const budget = syncPayrollBudget(next);
+  return {
+    state: appStateSchema.parse(synchronizePlan(queueLedgerReview(budget.state))),
+    changed: merged.changed.length, held: income.held, budget: budget.applied,
+  };
 }
 
 class Stop {
   constructor(readonly result: "conflict" | "unchanged") {}
 }
 
-function commit(database: AccountDatabase, userId: string, entries: Payslip[]): "imported" | "unchanged" | "conflict" {
+type Commit = { result: "imported" | "unchanged" | "conflict"; held: PayslipValidation[]; budget: BudgetCorrection[] };
+
+function commit(database: AccountDatabase, userId: string, entries: Payslip[]): Commit {
   for (let attempt = 0; ; attempt++) {
+    let held: PayslipValidation[] = [];
+    let budget: BudgetCorrection[] = [];
     try {
       database.transformFinance(userId, (stored) => {
         const merged = mergeServerPayslips(stored ?? createEmptyAccountState(), entries);
         if ("conflict" in merged) throw new Stop("conflict");
         if ("unchanged" in merged) throw new Stop("unchanged");
+        held = merged.held;
+        budget = merged.budget;
         return merged.state;
       }, () => undefined);
-      return "imported";
+      return { result: "imported", held, budget };
     } catch (error) {
-      if (error instanceof Stop) return error.result;
+      if (error instanceof Stop) return { result: error.result, held: [], budget: [] };
       // Saved in the browser meanwhile: merge again on the newer state.
       if (isAccountError(error) && error.status === 409 && attempt < 2) continue;
       throw error;
@@ -89,6 +105,8 @@ export async function processDriveInbox(
   let saved = 0;
   const files: PayslipLogFile[] = [];
   const validation: PayslipValidation[] = [];
+  const held: string[] = [];
+  const budget: BudgetCorrection[] = [];
   const report: PayslipImport = { drafts: [], issues: [] };
   for (const item of items) {
     if (signal?.aborted || handled >= MAX_PER_RUN) break;
@@ -121,7 +139,9 @@ export async function processDriveInbox(
       });
       if (!entries.length) { await finish("failed", "Nicht vollständig erkannt."); continue; }
       validation.push(...validatePayslips(entries, database.getFinance(userId).state?.payslips ?? []));
-      const result = commit(database, userId, entries);
+      const { result, held: kept, budget: written } = commit(database, userId, entries);
+      held.push(...kept.map((item) => item.period));
+      budget.push(...written);
       if (result === "conflict") {
         await markInboxItem(database, userId, item.id, { waiting: "conflict" });
         run.waiting++;
@@ -131,15 +151,20 @@ export async function processDriveInbox(
       if (result === "imported") saved += entries.length;
       const reference = entries.every(isReferencePayslip);
       await finish("imported", result !== "imported" ? "Bereits vorhanden."
-        : reference ? "Als Referenz übernommen – nicht im Budget." : "Im Hintergrund übernommen.");
+        : reference ? "Als Referenz übernommen – nicht im Budget."
+          : kept.length ? "Gespeichert, zur Prüfung markiert – Zahlen widersprechen sich, nicht im Budget." : "Im Hintergrund übernommen.");
     } catch (error) {
       if (signal?.aborted) break;
       await finish("failed", failureText(error));
     }
   }
   if (files.length) {
-    const message = `Google Drive im Hintergrund: ${run.imported} übernommen, ${run.waiting} warten, ${run.skipped} übersprungen, ${run.failed} fehlgeschlagen.`;
-    await appendPayslipLogFile(database, userId, payslipLogEntry({ source: "drive-background", message, files, report, stored: saved, validation })).catch(() => undefined);
+    const message = `Google Drive im Hintergrund: ${run.imported} übernommen, ${run.waiting} warten, ${run.skipped} übersprungen, ${run.failed} fehlgeschlagen.` +
+      (held.length ? ` ${held.length} zur Prüfung markiert.` : "") + (budget.length ? ` Budget automatisch aktualisiert (${budget.length} Werte).` : "");
+    await appendPayslipLogFile(database, userId, payslipLogEntry({
+      source: "drive-background", message, files, report, stored: saved, validation, held,
+      ...(budget.length || held.length ? { budget: { applied: budget.length, held, changes: budget.map((item) => ({ row: item.label, month: item.month, from: item.from, to: item.to, reason: item.reason })) } } : {}),
+    })).catch(() => undefined);
   }
   return run;
 }

@@ -573,3 +573,29 @@ it("keeps an uploaded 2025 payslip as reference: stored, shown in January, never
   expect(screen.getByRole("button", { name: /^Jänner 2026, netto 2\.300\s€, Referenz, Abrechnung Dezember 2025/ })).toBeTruthy();
   expect(within(screen.getByRole("region", { name: "Abrechnungen" })).getByText(/1 aus 2025 als Referenz/)).toBeTruthy();
 });
+
+it("keeps a contradicting payslip out of the budget, marks it for review and takes it in after confirmation", async () => {
+  // Gross minus SV and tax is 2.260 €, but the payslip prints 2.700 € net.
+  const broken: Payslip = { ...january, netPay: 2700 };
+  pdf.parse.mockResolvedValueOnce({ drafts: [broken], issues: [] });
+  const initial = seed();
+  render(<Fixture initial={initial} />);
+  selectPdf();
+  await waitFor(() => expect(latest.payslips).toEqual([broken]));
+  expect(latest.financeRows).toEqual(initial.financeRows);
+  expect(await screen.findByText(/Zur Prüfung markiert, nicht im Budget: Abrechnung Jänner 2026/)).toBeTruthy();
+  const [entry] = importLog();
+  expect(entry).toMatchObject({ validation: [expect.objectContaining({ period: "2026-01", consistent: false, held: true })] });
+  const summary = within(screen.getByRole("region", { name: "Abrechnungen" }));
+  fireEvent.click(summary.getByRole("button", { name: "Abrechnung Jän. 2026 prüfen" }));
+  const tile = screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, prüfen, Abrechnung Jänner 2026, nicht im Budget/ });
+  await waitFor(() => expect(tile.getAttribute("aria-expanded")).toBe("true"));
+  expect(document.activeElement).toBe(tile);
+  const details = within(screen.getByRole("region", { name: monthLabel("2026-02") }));
+  expect(details.getByRole("note").textContent).toMatch(/Nicht im Budget – die Zahlen passen nicht zusammen.*gedruckt sind 2\.700,00\s€ Netto/);
+  fireEvent.click(details.getByRole("button", { name: "Ins Budget übernehmen" }));
+  await waitFor(() => expect(latest.financeRows.find((row) => row.id === "income-salary")?.values["2026-02"]).toBe(2700));
+  expect(latest.payrollBudget?.confirmed).toHaveLength(1);
+  expect(screen.getByRole("button", { name: /^Februar 2026, netto 2\.700\s€, belegt/ })).toBeTruthy();
+  expect(summary.queryByRole("button", { name: /^Abrechnung .* prüfen$/ })).toBeNull();
+});

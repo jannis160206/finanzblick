@@ -89,6 +89,20 @@ it("stores 2025 payslips only as reference and logs every background run", async
   expect(await readPayslipLogFile(accounts, userId)).toHaveLength(1);
 });
 
+it("stores a contradicting payslip without putting it into the budget and logs why", async () => {
+  await waiting("slip-broken-net");
+  const broken = { ...october, regularSv: 540, regularTax: 300, netPay: 2600 };
+  await processDriveInbox(accounts, userId, { read: reader({ "slip-broken-net": ok(broken) }) });
+  const { state } = accounts.getFinance(userId);
+  expect(state?.payslips).toEqual([broken]);
+  expect(state?.financeRows.find((row) => row.id === "income-salary")?.values["2026-11"]).toBeUndefined();
+  expect((await outcomes())["slip-broken-net"]).toEqual(["imported", "Gespeichert, zur Prüfung markiert – Zahlen widersprechen sich, nicht im Budget."]);
+  const [entry] = await readPayslipLogFile(accounts, userId);
+  expect(entry.message).toMatch(/1 zur Prüfung markiert\./);
+  expect(entry.validation).toEqual([expect.objectContaining({ period: "2026-10", consistent: false, held: true })]);
+  expect(entry.budget).toMatchObject({ held: ["2026-10"] });
+});
+
 it("keeps a protected payslip for the browser until a new stored password opens it", async () => {
   await waiting("slip-locked");
   const read = reader({ "slip-locked": (passwords) => passwords.includes("synthetisch-123") ? ok(october) : { status: "locked" } });

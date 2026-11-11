@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { Lightbulb, MessageSquareText } from "lucide-react";
-import { BudgetUpdate } from "@/components/budget-update-dialog";
+import { BudgetReview } from "@/components/budget-update-dialog";
 import { Months } from "@/components/months";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
@@ -47,7 +47,7 @@ export function BudgetPage() {
       title="Budget"
       initialView={year ? "year" : "month"}
       monthExtras={<BudgetSuggestionsPanel />}
-      actions={<BudgetUpdate />}
+      actions={<BudgetReview />}
     />
   );
 }

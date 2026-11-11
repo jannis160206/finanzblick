@@ -757,6 +757,20 @@ export const dismissedInsightSchema = z.object({
 }).strict();
 export type DismissedInsight = z.infer<typeof dismissedInsightSchema>;
 export const MAX_DISMISSED_INSIGHTS = 300;
+const payrollBudgetMonthSchema = z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/);
+/**
+ * Automatic budget from payslips: when it last ran, the target values it set per income row and month (a different
+ * value later means the user changed it by hand), corrections the user chose to keep as they are, and payslips the
+ * user confirmed despite a contradiction (key + fingerprint of exactly those values).
+ */
+export const payrollBudgetSchema = z.object({
+  at: z.number().int().nonnegative().optional(),
+  targets: z.record(z.string().min(1).max(200), z.record(payrollBudgetMonthSchema, z.number().finite())).optional(),
+  kept: z.array(z.string().min(1).max(220)).max(500).optional(),
+  confirmed: z.array(z.string().min(1).max(300)).max(240).optional(),
+}).strict();
+export type PayrollBudgetState = z.infer<typeof payrollBudgetSchema>;
+
 export const appStateSchema = z.object({
   version: z.literal(1),
   payslips: z.array(payslipSchema).max(240).refine(
@@ -801,6 +815,7 @@ export const appStateSchema = z.object({
     .max(1)
     .optional(),
   settings: settingsSchema,
+  payrollBudget: payrollBudgetSchema.optional(),
   transactions: z.array(transactionSchema).max(100_000).superRefine((rows, context) => {
     const seen = new Set<string>();
     rows.forEach((row, index) => {

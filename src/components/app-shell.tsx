@@ -30,6 +30,7 @@ import { GlobalSearch } from "@/components/shell/global-search";
 import { MotionProvider } from "@/components/motion/motion-provider";
 import { PayslipUploadProvider } from "@/components/payslip-upload";
 import { DriveInbox } from "@/components/drive-inbox";
+import { PayrollBudgetSync } from "@/components/payroll-budget-sync";
 import { useSeasonalTheme } from "@/components/seasonal-theme-provider";
 
 export function AppShell({
@@ -53,6 +54,7 @@ export function AppShell({
     <MotionProvider reduced={motionReduced === true}>
     <PayslipUploadProvider>
     <DriveInbox />
+    <PayrollBudgetSync />
     <div className="app-shell min-h-screen">
       <SeasonalScene />
       <a

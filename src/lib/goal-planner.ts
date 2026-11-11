@@ -1,7 +1,8 @@
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { accountsWithRules } from "@/lib/assistant/funds";
 import { monthBasis, planningHorizon } from "@/lib/assistant/plan";
-import { budgetCorrections, correctionDelta } from "@/lib/budget-corrections";
+import { correctionDelta } from "@/lib/budget-corrections";
+import { autoBudgetCorrections } from "@/lib/payroll-budget";
 import { accountKeep, corePocket, GOAL_SURPLUS, goalBalanceStatus, MAX_PLAN_SHARE, pocketKey } from "@/lib/goals";
 import { monthEndForecast } from "@/lib/month-forecast";
 import { emptyMonth, pocketNames, type AppState, type GoalPlanRow, type MonthInput, type Pocket, type SavingsGoal, type Settings } from "@/lib/types";
@@ -221,7 +222,8 @@ export function goalPlanningContext(state: AppState, dashboard: Dashboard, today
   for (let month = current; month <= horizon && months.length < 36; month = addMonths(month, 1)) months.push(month);
   const existing = goal ? dashboard.goals.find((item) => item.id === goal.id) : undefined;
   const forecast = monthEndForecast(state, dashboard, today);
-  const delta = correctionDelta(budgetCorrections(state));
+  // Values the automatic budget is about to write; hand-made values the user keeps are not overruled.
+  const delta = correctionDelta(autoBudgetCorrections(state).apply);
   const income: Record<string, number> = {};
   const capacity: Record<string, number> = {};
   for (const month of months) {

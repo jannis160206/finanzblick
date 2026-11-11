@@ -12,6 +12,7 @@ import {
 import { parsePayslipPdf } from "@/lib/import/payslip";
 import { payslipSchema, type Payslip } from "@/lib/payslip-schema";
 import { salaryForecast } from "@/lib/salary-forecast";
+import { payslipFingerprint } from "@/lib/payslip-validation";
 import {
   analyzePayrollAutomatically,
   estimatePayrollBonus,
@@ -74,6 +75,17 @@ it("pays December in January, keeps 2025 payslips as reference and marks gaps", 
   expect(tiles[4]).toMatchObject({ status: "forecast", details: { kind: "forecast", specialGross: undefined } });
   const empty = payrollMonthTiles({ view: payrollPresentation([], 2026, payrollEmployer, "2026-04-08"), payslips: [], employer: payrollEmployer });
   expect(empty.map((tile) => tile.status)).toEqual(Array(12).fill("open"));
+});
+
+it("marks a payslip with contradicting numbers for review until exactly its values are confirmed", () => {
+  const [january] = fixturePayslips();
+  const broken = { ...january, netPay: 3500 };
+  const { view } = tilesFor([broken], "2026-02-10");
+  const tiles = payrollMonthTiles({ view, payslips: [broken], employer: payrollEmployer });
+  expect(tiles[1]).toMatchObject({ status: "review", review: [{ id: "net-balance", level: "error" }] });
+  const confirmed = payrollMonthTiles({ view, payslips: [broken], employer: payrollEmployer, confirmed: [payslipFingerprint(broken)] });
+  expect(confirmed[1]).toMatchObject({ status: "actual" });
+  expect(confirmed[1].review).toBeUndefined();
 });
 
 it("rounds compact tile amounts to whole euros", () => {

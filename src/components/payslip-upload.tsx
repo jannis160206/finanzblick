@@ -43,7 +43,9 @@ export function payslipIncomeMessage(result: ReturnType<typeof applyPayslipIncom
     ? `Netto nicht eindeutig für Abrechnung ${result.skipped.map((month) => monthLabel(month)).join(", ")} – im Folgemonat bitte manuell eintragen.` : "";
   const reference = result.reference.length
     ? `${result.reference.length === 1 ? "1 Abrechnung" : `${result.reference.length} Abrechnungen`} aus 2025 als Referenz gespeichert – nicht im Budget.` : "";
-  return [done, skipped, reference].filter(Boolean).join(" ");
+  const held = result.held.length
+    ? `Zur Prüfung markiert, nicht im Budget: ${result.held.map((item) => `Abrechnung ${monthLabel(item.period)}`).join(", ")} – die Zahlen widersprechen sich.` : "";
+  return [done, skipped, reference, held].filter(Boolean).join(" ");
 }
 
 type LockedFile = { file: File; index: number; wrong: boolean };
@@ -63,7 +65,7 @@ export type PayslipReadOptions = {
 };
 type Batch = {
   size: number; names: string[]; skipped: Set<number>; unrecognized: Set<number>; source?: string; log: PayslipLogSource;
-  report?: PayslipImport; stored?: number; onSettled?: (result: PayslipBatchResult) => void;
+  report?: PayslipImport; stored?: number; held?: string[]; onSettled?: (result: PayslipBatchResult) => void;
 };
 
 type PayslipUploadValue = {
@@ -139,7 +141,7 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
     });
     const entry = payslipLogEntry({
       source: current.log, message, report: current.report, stored: current.stored,
-      validation: validatePayslips(complete, live.current.state.payslips ?? []),
+      validation: validatePayslips(complete, live.current.state.payslips ?? []), held: current.held,
       files: files.map((file, index) => ({ name: current.names[index] ?? `Datei ${index + 1}`, ...file })),
     });
     live.current.logStore.append(entry).catch(() => undefined);
@@ -174,7 +176,10 @@ export function PayslipUploadProvider({ onImported, children }: { onImported?: (
             : forecast),
       };
     }, () => {
-      if (batch.current) batch.current.stored = merged.changed.length;
+      if (batch.current) {
+        batch.current.stored = merged.changed.length;
+        batch.current.held = synced?.held.map((item) => item.period);
+      }
       const newest = entries.slice().sort((a, b) => b.year - a.year || b.month - a.month)[0];
       currentFinance.onImported?.(newest);
       for (const listener of listeners) listener(newest);
