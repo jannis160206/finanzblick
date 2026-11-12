@@ -28,6 +28,7 @@ export const pulseQuestion = (lower: string) =>
   /\bmonatsende\b|\bende des monats\b/.test(lower) && /bleib|übrig|uebrig|\bhab|stand|frei|ausgeben|reicht|minus|knapp/.test(lower) &&
     !/^(?:warum|wieso|weshalb)\b|\bimmer\b|\bjedes mal\b/.test(lower) ||
   /frei verfügbar|frei verfuegbar/.test(lower) ||
+  /^(?:wie ?viel|was) (?:geld )?(?:ist|hab ich|habe ich) (?:diesen monat |jetzt |aktuell )?noch frei\??$/.test(lower) ||
   /\bwo (?:gebe|geb|gab|habe|hab) ich (?:\S+ ){0,3}mehr (?:geld )?(?:\S+ )?als (?:im |letzten |vorigen |im letzten |im vorigen )?(?:monat|vormonat)\b|\bwo (?:sind|waren) (?:meine |die )?ausgaben (?:\S+ )?gestiegen\b/.test(lower) ||
   /^wie ?viel (?:kann|darf) ich (?:jetzt |diesen monat )?noch ausgeben\??$/.test(lower) ||
   /wo (?:gebe|geb) ich (?:\S+ ){0,2}(?:zu viel|mehr (?:geld )?(?:aus )?als (?:sonst|üblich|ueblich|normal))/.test(lower) ||
@@ -248,7 +249,7 @@ export function pulseAnswer(state: AppState, dashboard: Dashboard, today: string
     const largest = [...grouped].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([label, amount]) => `${label} ${currency(amount)}`).join(", ");
     parts.splice(due, 1);
     parts.unshift(`Noch abgebucht werden diesen Monat ${missing.length === 1 ? missing[0].label : `${missing.length} Fixkosten`} (${currency(round(missing.reduce((sum, item) => sum + item.amount, 0)))})${missing.length > 1 ? `, die größten: ${largest}` : ""}.`);
-  } else if (/monatsende|ende des monats|frei verfügbar|frei verfuegbar/.test(asked) || /noch ausgeben/.test(asked) && !/heute|pro tag|am tag|täglich|gehalt/.test(asked)) {
+  } else if (/monatsende|ende des monats|frei verfügbar|frei verfuegbar|noch frei\??$/.test(asked) || /noch ausgeben/.test(asked) && !/heute|pro tag|am tag|täglich|gehalt/.test(asked)) {
     // The month-end view replaces the opening sentence, so a shortfall is not stated twice.
     parts.splice(0, 1, monthEnd.status !== "ok"
       ? "Für eine Monatsende-Prognose fehlt mir ein aktueller Girokonto-Stand – dazu habe ich keine ausreichenden Daten. Importiere einen Kontoauszug oder sag mir z. B. „Merk dir: Girokonto 1.500 €“."

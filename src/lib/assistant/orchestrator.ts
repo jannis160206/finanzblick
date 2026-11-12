@@ -66,6 +66,21 @@ export const chatRequest = (input: string) => CHAT_REQUEST.test(normalizeMessage
 // "Kann man mit 3000 netto in Wien gut leben?" asks about people in general, not about the user's own data.
 export const generalQuestion = (lower: string) => /\bman\b/.test(lower) && !/\b(?:ich|mir|mich|mein\w*|wir|uns|unser\w*)\b/.test(lower);
 
+// Advice and explanation wording: "Lohnt sich …?", "Was ist …?", "Wie funktioniert …?", "Tipps".
+const adviceWords = /\b(?:hältst du von|haeltst du von|denkst du über|meinst du zu|lohnt sich|lohnen sich|sollte man|soll ich|sollte ich|was ist|was sind|was bedeutet|was heißt|wie funktioniert|unterschied|tipps?|regel|faustregel|erklär\w*|empfiehlst|empfehlung|sinnvoll|besser)\b/;
+
+/**
+ * The orchestrator's decision whether the local finance knowledge is searched. Only general finance knowledge needs it:
+ * a term for the knowledge tool, or a written answer about money or advice. Tools that compute from the user's data and
+ * every app action never wait for it, so normal answers stay as fast as before.
+ */
+export function wantsKnowledge(input: string, decision: { tool?: AssistantTool; agent: AgentId }): boolean {
+  if (decision.tool) return decision.tool === "knowledge";
+  const lower = normalizeMessage(input).toLowerCase();
+  if (lower.split(/\s+/).length < 2) return false;
+  return aboutMoney(lower) || adviceWords.test(lower) || generalQuestion(lower);
+}
+
 export const routeVias = ["rule", "signal", "model", "fallback"] as const;
 export type RouteVia = typeof routeVias[number];
 export const isRouteVia = (value: unknown): value is RouteVia => typeof value === "string" && (routeVias as readonly string[]).includes(value);

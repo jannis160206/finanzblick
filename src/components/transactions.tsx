@@ -466,7 +466,7 @@ const TransactionLedger = memo(function TransactionLedger({
       ),
     },
   ];
-  // eslint-disable-next-line react-hooks/incompatible-library -- TanStack state stays outside compiler memoization.
+  // TanStack state stays outside compiler memoization.
   const table = useReactTable({
     data,
     columns,

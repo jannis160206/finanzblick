@@ -22,7 +22,9 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const snapshot = account ? await serverFinanceSnapshot(account) : undefined;
   const initial = account ? { state: snapshot?.state ?? createEmptyAccountState(), warning: undefined } : await getInitialData();
   return <>
+    {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static bootstrap script from our own constant, runs before paint */}
     {!account && <script dangerouslySetInnerHTML={{ __html: seasonalThemeBootstrap }} />}
+    {/* biome-ignore lint/security/noDangerouslySetInnerHtml: static bootstrap script from our own constant, runs before paint */}
     <script dangerouslySetInnerHTML={{ __html: securityModeBootstrap }} />
     <SecurityModeProvider>
       <FinanceProvider key={account?.id ?? "local"} initialState={initial.state} initialRevision={snapshot?.revision}

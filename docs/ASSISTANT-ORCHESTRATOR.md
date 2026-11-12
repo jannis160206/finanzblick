@@ -44,7 +44,7 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
    - Fachfremde Themen bekommen ohne Modell ein freundliches Nein mit drei Finanzfragen als Vorschlag (siehe „Nur Finanzen und die App“).
    - Feste Antworten ohne Modell: Rechnen („15 % von 2400“), Navigation („Öffne die Verträge“), Farbschema, „Mein Konto ist leer“, „Lösche alle Buchungen“.
    - Kombinierte Fragen („Wie hoch ist mein Gehalt und wann kommt es?“) werden in Teile zerlegt; jeder Teil bekommt sein eigenes Werkzeug, höchstens ein Teil eine freie Antwort.
-   - Finanzbegriffe („Was ist ein ETF?“) schlägt `knowledge` in der Wikipedia nach; allgemeine Artikel sucht er nicht mehr.
+   - Finanzbegriffe („Was ist ein ETF?“) beantwortet `knowledge` zuerst aus dem lokalen Finanzwissen (siehe „Lokales Finanzwissen“); nur ohne sicheren Treffer schlägt er in der Wikipedia nach. Allgemeine Artikel sucht er nicht mehr.
    - Klare Befehle bestimmen das Werkzeug und damit den Eigentümer.
    - Folgefragen und gelernte Formulierungen werden wie bisher ohne Modell erkannt.
 2. **Signalwörter (0 Aufrufe):** Trifft die Nachricht die Wörter genau eines Spezialisten (z. B. „Sparkonto“, „Netto“, „Abo“), übernimmt dieser. Ohne jeden Geldbezug antwortet sofort der allgemeine Chat.
@@ -251,6 +251,49 @@ Ein offener Entwurf nimmt nur Antworten auf seine Frage an. Begrüßungen, fachf
 
 Weiter holprig: Unbekannte fachfremde Fragen, die die Wortlisten nicht kennen, beantwortet das kleine Modell mal mit einer Ablehnung, mal knapp inhaltlich. „Was kostet ein Kinobesuch?“ bekommt ohne belegbare Zahl keine Betragsantwort. Einmal blieb eine Antwort beim Modellserver hängen; das war nicht wiederholbar.
 
+## Live-Status und Chat-Oberfläche
+
+Statt eines festen „Denkt nach“ zeigt der Chat, was gerade passiert. Die Statuszeile steht über der laufenden Antwort und verschwindet mit der fertigen Antwort.
+
+- **Status je Schritt** (`src/lib/assistant/status.ts`):
+  - „Lese deine Nachricht…“, dann „Verstehe deine Frage…“, während der Orchestrator entscheidet;
+  - danach je Werkzeug, z. B. „Analysiere deine Buchungen…“, „Prüfe deine Verträge…“, „Berechne dein freies Budget…“, „Lese deine Lohnabrechnungen…“, „Suche passendes Wissen…“, „Hole aktuelle Marktdaten…“;
+  - „Formuliere die Antwort…“ während des Streamings.
+  - Ein Test stellt sicher, dass jedes Werkzeug einen Status hat.
+- **Drei Punkte** (`ThinkingDots`): eine Welle aus Heben, Wachsen und Aufhellen (Motion, 1,05 s, 0,15 s versetzt). Neue Statustexte gleiten aus einer leichten Unschärfe herein.
+- **Nachrichten:** neue Nachrichten federn herein (Feder 300/28, leichte Skalierung und Verschiebung, eigene von rechts). Gestreamte Wörter blenden einzeln aus einer leichten Unschärfe ein (CSS, nur `opacity` und `filter`).
+- **Aktionen unter Antworten:** Kopieren (mit „Kopiert“ für Screenreader), Neu generieren (nur bei der letzten KI-Antwort), Hilfreich/Nicht hilfreich. Ältere Antworten zeigen die Leiste auf Geräten mit Maus erst bei Hover oder Fokus.
+- **Eingabe:** wächst mit dem Text (`field-sizing: content`, höchstens 12 Zeilen). Enter sendet, Shift+Enter bricht um, und während einer IME-Eingabe sendet Enter nicht. Während der Antwort wird Senden zu **Stopp**: Die Anfrage wird abgebrochen, schon gestreamter Text bleibt mit „…“ stehen und lässt sich neu generieren.
+- **Leerer Chat:** Begrüßung „Wobei kann ich dir helfen?“ mit drei Vorschlägen („Was habe ich diesen Monat ausgegeben?“ → Umsätze, „Zeige mir meine Verträge“ → Verträge, „Wie viel ist noch frei?“ → Monats-Puls). Bis zur ersten Frage bleibt die Begrüßung im Blick; danach scrollt der Chat zur neuesten Nachricht.
+- **Weniger Bewegung:** Mit `prefers-reduced-motion` oder der Einstellung in der App gibt es nur kurze Überblendungen, keine Bewegung. Alle Animationen nutzen nur `transform`, `opacity` und `filter`.
+
+**Dateien:** `src/components/assistant-chat-parts.tsx` (Punkte, Statuszeile, Streaming-Text, Einblenden, leerer Chat, Aktionen, Senden/Stopp), `src/components/finance-assistant.tsx` (Ablauf, Abbruch, Neu generieren), `src/app/globals.css` (`.assistant-word`).
+
+## Lokales Finanzwissen (RAG)
+
+Ein kleiner, lokaler Wissensspeicher für allgemeine Finanzfragen („Wie viel sollte man als Notgroschen haben?“, „Was ist die 50/30/20-Regel?“, „Wann lohnt sich die Arbeitnehmerveranlagung?“). Ohne Server, ohne Cloud und ohne Framework.
+
+- **Wissen:** 51 kurze, geprüfte Abschnitte in `src/lib/knowledge-base/corpus.ts` zu Budget, Sparen, Anlegen, Schulden, Verträgen, Steuern (Österreich) und Bank. Zahlen zu Fristen und Steuern stammen aus denselben Quellen wie die App (`contract-types.ts`, `wage-tax-at.ts`).
+- **Einbettung:** `Qwen3-Embedding-0.6B` (int8, CPU) läuft im selben OpenVINO Model Server wie das Sprachmodell. Die Vektoren werden auf 512 Dimensionen gekürzt (Matryoshka) und liegen vorberechnet in `vectors.json` (etwa 140 KB). Fragen bekommen die Qwen3-Anweisung „Given a question about personal finance …“ vorangestellt.
+- **Speicher und Suche:** `sqlite-vec` als Erweiterung im eingebauten `node:sqlite`, im Arbeitsspeicher und erst bei der ersten Wissensfrage aufgebaut:
+  - Vektorsuche (`vec0`, Kosinus-Abstand);
+  - Stichwortsuche (FTS5, Trigramme, ohne Akzente);
+  - zusammengeführt mit Reciprocal Rank Fusion (k = 60).
+- **Knapper Kontext:** höchstens drei Treffer. Ein Treffer zählt nur, wenn er nah genug ist (Abstand ≤ 0,56, mit Stichwort-Treffer ≤ 0,59) und nicht weit hinter dem besten liegt.
+- **Ohne Einbettungsmodell:** Die Suche fällt auf Stichwörter in Titel und Suchwörtern zurück; die App läuft normal weiter.
+- **Wer entscheidet:** Der Orchestrator (`wantsKnowledge`). Gesucht wird nur bei allgemeinen Geld- und Ratfragen ohne eigenes Datenwerkzeug („Was ist …“, „Lohnt sich …“, „Tipps …“, „Regel …“). Fragen zu eigenen Daten und App-Aktionen warten nie darauf.
+- **Verwendung:**
+  - Beim Werkzeug `knowledge` beantwortet ein sicherer Treffer (Abstand ≤ 0,45) die Frage direkt, ohne Modell und ohne Internet, mit dem Hinweis „Aus dem lokalen Finanzwissen von Finanzblick“.
+  - Sonst gehen die Treffer als belegte Evidenz in die freie Antwort. Zahlen in der Antwort müssen darin belegt sein, und unter der Antwort steht dezent „Wissen: …“.
+  - Ohne Treffer bleibt alles wie vorher.
+- **Geschwindigkeit:**
+  - hybride Suche etwa 55 ms;
+  - Einbettung einer Frage etwa 90 ms (CPU);
+  - Zeitlimit 4 s, danach wird ohne Wissen geantwortet.
+- **Pflege:** Nach Änderungen am Wissen `npm run knowledge:index` ausführen (braucht den Modellserver). Ein Test schlägt fehl, solange Vektoren zu geänderten Abschnitten fehlen.
+
+**Dateien:** `src/lib/knowledge-base/` (`corpus.ts`, `query.ts`, `search.ts`, `vectors.ts`, `vectors.json`), `src/lib/ai/embeddings.ts`, `src/app/api/ai/knowledge/route.ts`, `scripts/knowledge-index.ts`, `wantsKnowledge` in `src/lib/assistant/orchestrator.ts`.
+
 ## Messung (Qwen3-8B, NPU, lokale Daten)
 
 | | vorher | nachher |
@@ -284,6 +327,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Korrekturen aus dem Chat-Test: `conversation.test.ts` (`converseOn`, Budget-Empfehlung), `payroll.test.ts`, `pulse.test.ts`, `copilot.test.ts`, `cancel.test.ts`, `learning.test.ts`, `smalltalk.test.ts`, `phrasing.test.ts`, `speed.test.ts`.
 - Korrekturen aus Chat-Test 2: `fixed-replies.test.ts` (feste Antworten, Rechnen, Rückfragen), `combined.test.ts` (kombinierte Fragen), `knowledge.test.ts` (Faktenfragen, allgemeine Artikel), `conversation.test.ts` (kopierte Sätze), `check.test.ts`, `everyday.test.ts`, `market.test.ts`, `insights.test.ts`, `orchestrator.test.ts`, `speed.test.ts` (Themenhinweise, knappe Faktenantwort).
 - Finanz-Fokus und App-Aktionen: `scope.test.ts` (fachfremde Themen, Geldbezug geht vor), `app-actions.test.ts` (jede neue Operation samt Rückgängig), `app-chat.test.ts` (Routing, Vertragsdialog Schritt für Schritt, Ja/Abbrechen, Buchungen, Monatsplan, Kontoregeln, Successbonus, Links).
+- Chat-Oberfläche und Wissen: `assistant-chat-parts.test.tsx` (Senden wird zu Stopp, Kopieren mit Rückmeldung, Vorschläge, Statuszeile), `knowledge-routing.test.ts` (wann Wissen gesucht wird, Status je Werkzeug), `search.test.ts` (hybride Suche, Schwellen, Stichwort-Rückfall, aktuelle Vektoren).
 - `npm run eval:assistant`: zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer.
 
 ## Grenzen
@@ -291,6 +335,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Die Signalwörter sind bewusst knapp gehalten. Was sie nicht eindeutig zuordnen, entscheidet das Modell oder, im Zweifel, der Chat.
 - Bestehende Regelfehler einzelner Werkzeuge bleiben, wo sie keine falsche Zuständigkeit verursachen.
 - Kombinierte Fragen werden nur geteilt, wenn jeder Teil für sich steht. Verweist ein Teil zurück („… und was kosten sie im Jahr?“), antwortet ein Agent auf beides.
-- Finanzbegriffe schlägt er online nach. Offline oder ohne Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.
+- Finanzbegriffe beantwortet er zuerst aus dem lokalen Wissen; was dort fehlt, schlägt er online nach. Offline und ohne lokalen Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.
+- Das lokale Wissen ist bewusst klein (51 Abschnitte) und allgemein; es ersetzt keine Steuer- oder Anlageberatung.
 - Die Themen-Prüfung arbeitet mit Wortlisten. Seltene fachfremde Fragen ohne bekanntes Wort gehen an den allgemeinen Chat, dessen Prompt ebenfalls nur Finanzen erlaubt.
 - Nicht im Chat: Buchungen von Hand anlegen (gibt es in der App nicht), Bank- und Google-Anmeldung, Datei-Uploads, Benachrichtigungen, Erscheinungsbild und Backups (nur Link zur Seite), „Alle Buchungen löschen“ und eine geteilte Buchung wieder ungeteilt stellen (beides geht auch in der App nicht). Beim Sparziel gibt es statt „So schnell wie möglich“ die Wahl zwischen Datum und Monatsrate.

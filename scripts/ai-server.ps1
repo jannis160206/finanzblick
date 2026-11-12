@@ -5,6 +5,8 @@ param(
   [string]$Model = "OpenVINO/Qwen3-8B-int4-cw-ov",
   # Optional small model for routing, e.g. "OpenVINO/Qwen3-1.7B-int4-ov"; set FINANZBLICK_AI_ROUTER_MODEL to the same name.
   [string]$RouterModel = "",
+  # Small embedding model for the local finance knowledge layer (CPU, ~600 MB); "" skips it, the app then searches by keyword only.
+  [string]$EmbeddingModel = "OpenVINO/Qwen3-Embedding-0.6B-int8-ov",
   [string]$Device = "NPU"
 )
 $ErrorActionPreference = "Stop"
@@ -22,7 +24,14 @@ function Add-Model([string]$Name) {
   & (Join-Path $ovms "ovms.exe") --add_to_config --config_path $config --model_name $Name `
     --model_path ($Name -replace "/", "\")
 }
+function Add-EmbeddingModel([string]$Name) {
+  & (Join-Path $ovms "ovms.exe") --pull --source_model $Name --model_repository_path models `
+    --target_device CPU --task embeddings --pooling LAST --cache_dir .ov_cache
+  & (Join-Path $ovms "ovms.exe") --add_to_config --config_path $config --model_name $Name `
+    --model_path ($Name -replace "/", "\")
+}
 if (-not (Test-Path $config)) { Add-Model $Model }
 if ($RouterModel -and -not ((Get-Content $config -Raw) -match [regex]::Escape("`"$RouterModel`""))) { Add-Model $RouterModel }
+if ($EmbeddingModel -and -not ((Get-Content $config -Raw) -match [regex]::Escape("`"$EmbeddingModel`""))) { Add-EmbeddingModel $EmbeddingModel }
 # Loopback only: booking texts must never leave this machine.
 & (Join-Path $ovms "ovms.exe") --rest_port $Port --rest_bind_address 127.0.0.1 --config_path $config

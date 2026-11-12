@@ -124,7 +124,7 @@ export function AccountForm({ mode, registrationEnabled = true, storageWarning =
       setPassword("");
       setConfirmation("");
       setShowPassword(false);
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Discard React state and caches from a previous account.
+      // A full reload is intended: discard React state and caches from a previous account.
       location.assign("/");
     } catch {
       setError("Verbindung fehlgeschlagen. Bitte prüfe deine Internetverbindung und versuche es erneut.");

@@ -276,7 +276,7 @@ export function FinanceProvider({
   const recovery = useRef({ attempts: 0, running: false });
   const handleCloudError = useCallback((error: unknown) => {
     if (error instanceof AccountSessionError) {
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Clear the previous account's in-memory ledger.
+      // A full reload is intended: clear the previous account's in-memory ledger.
       window.location.assign("/login");
       return;
     }
@@ -653,6 +653,7 @@ export function FinanceProvider({
     reconcileServer: reconcileAccount,
     loadServer: async () => {
       try {
+        // biome-ignore lint/correctness/useHookAtTopLevel: storage method, not a React hook
         const data = await cloud.useServer();
         dispatch({ type: "hydrate", data: data ?? createEmptyAccountState() });
       } catch (error) {

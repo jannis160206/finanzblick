@@ -42,6 +42,8 @@ Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufruf
 - Buchungen kategorisieren, umbenennen, löschen, taggen und mit Raphael teilen;
 - Sparziele Schritt für Schritt anlegen und ändern, geplante Ausgaben, Budgets, Monatsplan-Positionen und Monatswerte, Kontoregeln und den Successbonus.
 
+**Chat:** Während einer Antwort zeigt eine Statuszeile mit drei animierten Punkten, was gerade passiert („Analysiere deine Buchungen…“, „Suche passendes Wissen…“, „Formuliere die Antwort…“). Antworten streamen Wort für Wort, lassen sich kopieren, neu generieren und mit **Stopp** abbrechen. Das Eingabefeld wächst mit dem Text; der leere Chat bietet drei Startfragen an. Allgemeine Finanzfragen („Wie viel sollte man als Notgroschen haben?“) beantwortet er mit einem kleinen **lokalen Finanzwissen** (51 Abschnitte, `sqlite-vec` plus Stichwortsuche, höchstens drei Treffer, ohne Cloud).
+
 Jede Änderung erscheint zuerst als Vorschau und wird erst mit „Bestätigen“ oder einem kurzen „Ja“ gespeichert; „Abbrechen“ oder „Nein“ verwirft sie. Anmeldungen, Datei-Uploads, Benachrichtigungen und Backups öffnet er nur als Link zur passenden Seite. Eine versteckte, rein lesende Ansicht unter **Einstellungen → „Assistent-Orchestrator“** zeigt Aufbau, Agenten, die letzten Läufe und die Werkzeuge. Details: [docs/ASSISTANT-ORCHESTRATOR.md](docs/ASSISTANT-ORCHESTRATOR.md).
 
 ## Speicherung
@@ -392,11 +394,11 @@ Die Saison folgt dem lokalen Kalender (Fasching, Ostern, Sommer, Halloween, Weih
 
 ## Lokale KI
 
-Ein lokales Sprachmodell (Qwen3-8B auf der Intel-NPU über OpenVINO Model Server) ordnet offene Prüfungen selbst zu und holt Händlerlogos in den privaten `Logo/`-Ordner. Nur Fälle, bei denen es nicht sicher ist, bleiben zur manuellen Prüfung. `npm run ai:server` startet das Modell, `npm run mcp` stellt die Finanzwerkzeuge als MCP-Server bereit, `npm run mcp:web` liefert öffentliche Marktdaten (Inflation, Sparzinsen, Wechselkurse) und Begriffserklärungen aus der Wikipedia für den Finanz-Assistenten, der sich Gelerntes merkt, und `npm run ai:agent` bietet einen lokalen Chat. Details: [docs/local-ai.md](docs/local-ai.md).
+Ein lokales Sprachmodell (Qwen3-8B auf der Intel-NPU über OpenVINO Model Server) ordnet offene Prüfungen selbst zu und holt Händlerlogos in den privaten `Logo/`-Ordner. Nur Fälle, bei denen es nicht sicher ist, bleiben zur manuellen Prüfung. `npm run ai:server` startet das Modell, `npm run mcp` stellt die Finanzwerkzeuge als MCP-Server bereit, `npm run mcp:web` liefert öffentliche Marktdaten (Inflation, Sparzinsen, Wechselkurse) und Begriffserklärungen aus der Wikipedia für den Finanz-Assistenten, der sich Gelerntes merkt, und `npm run ai:agent` bietet einen lokalen Chat. Ein kleines Einbettungsmodell (Qwen3-Embedding-0.6B, CPU) im selben Modellserver durchsucht das lokale Finanzwissen; nach Änderungen daran `npm run knowledge:index` ausführen. Details: [docs/local-ai.md](docs/local-ai.md).
 
 ## Prüfungen
 
-`npm test`, `npm run typecheck`, `npm run lint` und `npm run test:e2e` prüfen Parser, Berechnung, Excel-Roundtrips und Browserabläufe. Anonymisierte Layout-Fixtures liegen unter `src/lib/import/fixtures`. Zusätzliche Tests lesen die privaten Originale aus `import-example`, falls dieser Ordner vorhanden ist.
+`npm test` (Vitest), `npm run typecheck` (nativer TypeScript-7-Compiler `tsc --noEmit`, inkrementell), `npm run lint` (Biome) und `npm run test:e2e` (Playwright) prüfen Parser, Berechnung, Excel-Roundtrips und Browserabläufe. `npm run check` führt Typprüfung und Tests nacheinander aus, `npm run format` formatiert mit Biome. Anonymisierte Layout-Fixtures liegen unter `src/lib/import/fixtures`. Zusätzliche Tests lesen die privaten Originale aus `import-example`, falls dieser Ordner vorhanden ist.
 
 Die bisherigen Browserabläufe laufen mit `npm run test:e2e` im lokalen Entwicklungsmodus ohne aktivierte Konten. `npm run build` prüft den Produktionsbuild. Produktion verlangt jetzt immer eine vollständige Kontokonfiguration und Anmeldung; die alten anonymen lokalen Browser-Fixtures sind dort nicht verwendbar.
 

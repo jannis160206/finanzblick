@@ -160,8 +160,19 @@ Umfang:
 | --- | --- | --- |
 | `motion` (^12, installiert 12.43.0) | Karten- und Fortschrittsanimationen (M3, M5) | Vorgabe „Framer Motion“; `motion` ist der offizielle Nachfolger-Paketname von `framer-motion` (gleiche Bibliothek, `motion/react`). Nur in Client-Inseln, über `LazyMotion` mit `domAnimation` (kleineres Bundle); reduzierte Bewegung wird respektiert. Bewusst Major 12 (stabile, React-19-kompatible API); ein Wechsel auf die neuere Major-Version 14 ist ein separates Upgrade. |
 
+Später ergänzt (Chat-Oberfläche, lokales Finanzwissen, Werkzeugkette, November 2026):
+
+| Paket | Zweck | Begründung |
+| --- | --- | --- |
+| `sqlite-vec` (^0.1.9, Laufzeit) | Vektorsuche für das lokale Finanzwissen | Kleine native SQLite-Erweiterung ohne eigene Abhängigkeiten. Läuft im eingebauten `node:sqlite` im Arbeitsspeicher, kein eigener Server und keine Datenbankänderung. Die Alternative LanceDB brächte eine deutlich größere native Bibliothek mit eigenem Speicherformat. |
+| `typescript` (^7.0.2, Entwicklung, ersetzt ^5) | Typprüfung | Der native TypeScript-7-Compiler prüft das ganze Projekt in rund 4 s, inkrementell in rund 1 s. Next.js 16.3 nutzt bei TS 7 automatisch die `tsc`-Kommandozeile. |
+| `@biomejs/biome` (^2.6.7, Entwicklung) | Lint und Formatierung | Ersetzt `eslint`, `eslint-config-next` und `prettier`. `typescript-eslint` unterstützt TypeScript 7 nicht. Biome prüft die rund 970 Dateien in unter einer Sekunde. Barrierefreiheit prüft weiterhin axe in den Browsertests. |
+
+Entfernt: `eslint`, `eslint-config-next`, `prettier`.
+
 Bewusst **nicht** hinzugefügt:
 
+- LangChain, LlamaIndex, Chroma oder ein eigener Vektor-Server – Einbettung, Suche und Zusammenführung sind rund 300 Zeilen eigener Code.
 - `cmdk` – die Command-Palette wird mit dem vorhandenen Radix-Dialog und einer zugänglichen Listbox gebaut.
 - `vaul` – mobile Sheets nutzen den vorhandenen Dialog mit Sheet-Variante.
 - Weitere shadcn-Pakete – shadcn-Komponenten sind kopierter Quellcode auf Basis des bereits installierten `radix-ui`.

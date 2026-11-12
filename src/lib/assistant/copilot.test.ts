@@ -36,7 +36,7 @@ describe("copilot routing", () => {
       ["Was ist mit den angezeigten Buchungen?", "context"], ["Fass die ausgewählten Buchungen zusammen", "context"],
       ["Wie viel ist das in Summe bei diesen Buchungen?", "context"], ["Was siehst du auf dieser Seite?", "context"],
       ["Was fällt dir auf?", "insights"], ["Gibt es Auffälligkeiten?", "insights"], ["Worauf sollte ich achten?", "insights"],
-      ["Wie viel kann ich noch ausgeben?", "pulse"], ["Wie viel bleibt am Monatsende?", "pulse"], ["Wie viel ist frei verfügbar?", "pulse"],
+      ["Wie viel kann ich noch ausgeben?", "pulse"], ["Wie viel bleibt am Monatsende?", "pulse"], ["Wie viel ist frei verfügbar?", "pulse"], ["Wie viel ist noch frei?", "pulse"],
       ["Wo gebe ich mehr aus als letzten Monat?", "pulse"],
     ];
     for (const [question, tool] of cases) expect(detectTool(question), question).toBe(tool);

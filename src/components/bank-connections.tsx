@@ -62,6 +62,7 @@ function BankWizard({ sessionKey, onDone, onClose }: { sessionKey: string; onDon
       form.id = "XS2A-Form";
       form.dataset.xs2a = sessionKey;
       container.current.appendChild(form);
+      // biome-ignore lint/correctness/useHookAtTopLevel: XS2A widget method, not a React hook
       xs2a.useBaseStyles();
       xs2a.finish(() => { if (active) onDone(); });
       xs2a.abort(() => { if (active) onClose(); });

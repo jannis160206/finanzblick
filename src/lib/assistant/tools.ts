@@ -292,6 +292,8 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/^(?:und )?(?:was|wie ?viel|wofür|wofuer)\s+(?:zahl|bezahl|überweis|ueberweis)e?\s+ich\b/.test(lower) && !/\b(?:soll|sollte|muss|müsste)\b/.test(lower)) return "query";
   // "Erklär mir meine Finanzen" is about the user's money, not about how the app works.
   if (/erklär|erklaer|versteh/.test(lower) && /\bmeine?[nrs]?\s+(?:finanzen|geld|ausgaben|lage|situation|konten|monat)\b/.test(lower)) return "check";
+  // "Wie funktioniert die 50/30/20-Regel?": a rule of thumb from the finance knowledge, not a page of the app.
+  if (/\b\d+\/\d+(?:\/\d+)?-?regel\b|\bfaustregel\b/.test(lower)) return "knowledge";
   if (explainPattern.test(lower)) return "explain";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
   if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";

@@ -6,7 +6,8 @@ Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledi
 
 | Teil | Aufgabe |
 | --- | --- |
-| OpenVINO Model Server (OVMS) | Stellt `Qwen3-8B-int4-cw-ov` auf der NPU als OpenAI-kompatible API unter `http://127.0.0.1:8000/v3` bereit |
+| OpenVINO Model Server (OVMS) | Stellt `Qwen3-8B-int4-cw-ov` auf der NPU als OpenAI-kompatible API unter `http://127.0.0.1:8000/v3` bereit, dazu `Qwen3-Embedding-0.6B-int8-ov` (CPU) unter `/v3/embeddings` |
+| `/api/ai/knowledge` | Durchsucht das lokale Finanzwissen hybrid (Vektor und Stichwort, höchstens drei Treffer); siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#lokales-finanzwissen-rag) |
 | `AiReviewAssistant` (Browser) | Schickt offene Prüfungen in Achterpaketen an `/api/ai/categorize` und übernimmt nur sichere Antworten |
 | `/api/ai/logo` | Sucht ein Händlerlogo (Wikidata/Commons, offizielle Webseite, Marken-Domain) und legt es in den privaten `Logo/`-Ordner |
 | `/api/ai/logos` | Sucht der Reihe nach Logos für alle Zahlungsempfänger, die noch keines haben (siehe „Händler-Logos“) |
@@ -28,6 +29,7 @@ npm run ai:server   # lädt OVMS-Modell beim ersten Start (~5 GB), danach nur St
 - Der erste NPU-Start kompiliert das Modell einige Minuten lang. Danach nutzt OVMS den Cache `.ov_cache`.
 - Bereit ist der Server, wenn `http://127.0.0.1:8000/v1/config` den Status `AVAILABLE` meldet.
 - Ohne NPU: Ordner `models` löschen und `npm run ai:server -- -Device GPU` (oder `CPU`) starten.
+- Das Einbettungsmodell für das lokale Finanzwissen (etwa 600 MB, CPU) lädt `ai-server.ps1` beim nächsten Start nach und trägt es in `config.json` ein. `npm run ai:server -- -EmbeddingModel ""` lässt es weg; die Wissenssuche nutzt dann nur Stichwörter.
 
 Optionale Variablen in `.env.local`:
 
@@ -36,6 +38,7 @@ Optionale Variablen in `.env.local`:
 | `FINANZBLICK_AI` | `true` | `false` schaltet die KI ab |
 | `FINANZBLICK_AI_URL` | `http://127.0.0.1:8000/v3` | Nur Loopback-Adressen sind erlaubt |
 | `FINANZBLICK_AI_MODEL` | `OpenVINO/Qwen3-8B-int4-cw-ov` | Modellname in OVMS |
+| `FINANZBLICK_AI_EMBEDDING_MODEL` | `OpenVINO/Qwen3-Embedding-0.6B-int8-ov` | Einbettungsmodell für das lokale Finanzwissen; `off` schaltet es ab (nur Stichwortsuche) |
 | `FINANZBLICK_AI_MIN_CONFIDENCE` | `90` | Mindestsicherheit (50–100) für automatische Übernahme |
 | `FINANZBLICK_AI_TIMEOUT_MS` | `180000` | Zeitlimit pro Modellanfrage |
 | `FINANZBLICK_MCP_USER` | `admin` | Konto, auf das MCP-Server, Agent und Hintergrund-Agent zugreifen |

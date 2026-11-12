@@ -69,7 +69,7 @@ function isQuotaError(error: unknown) {
   return error instanceof DOMException && (error.name === "QuotaExceededError" || error.name === "NS_ERROR_DOM_QUOTA_REACHED");
 }
 function withoutBaseState(cache: Cache): Cache {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Drop only the baseline copy.
+  // Drop only the baseline copy.
   const { baseState, ...rest } = cache;
   return rest;
 }

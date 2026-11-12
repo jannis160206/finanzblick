@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Brain, Bot, CalendarClock, Check, CircleHelp, Columns2, History, LoaderCircle, MessageSquareText, Pencil, PiggyBank, Send, Sparkles, ThumbsDown, ThumbsUp, Trash2, Undo2, X } from "lucide-react";
+import { Brain, CalendarClock, Check, CircleHelp, Columns2, History, Pencil, PiggyBank, Sparkles, Trash2, Undo2, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
+import { AssistantMark, ChatEmptyState, ComposerButton, MessageActions, MessageEnter, StatusLine, StreamingText } from "@/components/assistant-chat-parts";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { HomeOfficeCard } from "@/components/homeoffice-card";
@@ -25,7 +26,10 @@ import { cancelDraft, confirmDraft, continueContractDraft, contractStepReply, le
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
-import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
+import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, wantsKnowledge, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
+import { statusFor, workStatus } from "@/lib/assistant/status";
+import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
+import type { LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
 import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
 import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
 import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
@@ -51,15 +55,9 @@ import { cn } from "@/lib/utils";
 const learnableTools: AssistantTool[] = ["query", "accounts", "amex", "budget", "briefing", "check", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "explain", "memory", "changes"];
 type KnowledgeHit = { topic: string; title: string; text: string; url: string; source: string };
 
-const examples = [
-  "Wie viel hab ich im Oktober fürs Essen ausgegeben?",
-  "Ich will bis Juli 2027 3.000 € für Japan sparen, 500 € liegen schon am Sparkonto.",
-  "Kann ich mir im Mai einen Fernseher um 900 € leisten?",
-  "Was kann ich im Dashboard alles einstellen?",
-];
+// Shown before the first own message; each one goes straight to a tool.
+const starterPrompts = ["Was habe ich diesen Monat ausgegeben?", "Zeige mir meine Verträge", "Wie viel ist noch frei?"];
 const extraSources: string[] = [...extraSourceSchema.options];
-const intro = "Hallo! Ich bin dein Finanz-Assistent. Frag mich einfach, wie du es sagen würdest: zu deinen Ausgaben, deinen Sparzielen " +
-  "oder ob du dir etwas leisten kannst. Ich rechne alles mit deinen echten Zahlen und ändere nur etwas, wenn du bestätigst.";
 // Natural next questions after an answer, shown as quick replies.
 const followUps: Partial<Record<AssistantTool, string[]>> = {
   query: ["Mehr als im Vormonat?", "Was war meine größte Ausgabe dieses Jahr?", "Wo könnte ich kürzen?"],
@@ -82,7 +80,6 @@ const followUps: Partial<Record<AssistantTool, string[]>> = {
   context: ["Was fällt dir auf?", "Wo gebe ich mehr aus als letzten Monat?"],
   insights: ["Wie viel kann ich noch ausgeben?", "Welche Abos habe ich?"],
 };
-const thinkingSteps = ["Lese deine Nachricht", "Suche die passenden Daten", "Rechne nach", "Formuliere die Antwort"];
 const sameDay = (at: number, now: number) => new Date(at).toDateString() === new Date(now).toDateString();
 const lights = {
   green: { label: "Geht sich aus", dot: "🟢", tone: "border-emerald-500/40 bg-emerald-500/5" },
@@ -97,6 +94,8 @@ const listMonths = (months: string[]) => {
   return `Im ${text}${months.length > 4 ? ` und ${months.length - 4} weiteren Monaten` : ""}`;
 };
 const newId = () => crypto.randomUUID();
+// A request ends after its own time limit or when the user stops the answer, whichever comes first.
+const withTimeout = (ms: number, signal?: AbortSignal) => signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
 // What the user is looking at; pages add filters and selections, otherwise the route is enough.
 function pageContext(): AssistantPageContext | null {
   const published = currentAssistantContext();
@@ -151,14 +150,21 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }, [prompt?.text, prompt?.at]);
   // "Mehr dazu" on a hint asks right away; if the chat is busy, the question simply stays in the input.
   const autoSent = useRef<number | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: sends once per prompt; the latest send() and state are read at that moment
   useEffect(() => {
     if (!prompt?.send || !prompt.text || !ready || storageError || autoSent.current === prompt.at) return;
     autoSent.current = prompt.at;
     void send(undefined, prompt.text);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prompt?.at, prompt?.send, ready, storageError]);
   const [busy, setBusy] = useState(false);
-  const [streaming, setStreaming] = useState<string>();
+  const [streaming, setStreamingState] = useState<string>();
+  // The live status line while an answer is being worked on, and the handle that stops it.
+  const [status, setStatus] = useState<string>();
+  const activeRun = useRef<AbortController | null>(null);
+  const streamed = useRef<string | undefined>(undefined);
+  const setStreaming = (text?: string) => { streamed.current = text; setStreamingState(text); };
+  // Messages that were already there when the chat opened stay still; new ones spring in.
+  const [initialIds] = useState(() => new Set((state.assistantChat ?? []).map((item) => item.id)));
   const [editing, setEditing] = useState<string>();
   const [panel, setPanel] = useState<"changes" | "memory">();
   const endRef = useRef<HTMLDivElement>(null);
@@ -167,7 +173,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const marketCache = useRef(new Map<string, { at: number; value: MarketSnapshot }>());
   // The agent whose answer is streaming right now, for the label above the growing text.
   const [answering, setAnswering] = useState<AgentId>();
-  useEffect(() => { endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy, streaming]);
+  const started = messages.some((message) => message.role === "user");
+  // Before the first question the greeting stays in view; afterwards the newest message does.
+  useEffect(() => { if (started) endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [started, messages.length, busy, streaming, status]);
 
   const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) =>
     update((current) => {
@@ -185,7 +193,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         ...(suggestions ? { suggestions } : {}), ...run }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
-    meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms"> = {}) => {
+    meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources"> = {}) => {
     const suggestions = result.choices?.length ? result.choices : result.suggestions;
     const message = {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
@@ -195,6 +203,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(suggestions?.length ? { suggestions: [...new Set(suggestions)].map((item) => item.slice(0, 120)).slice(0, 4) } : {}),
       ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}), ...(meta.agent ? { agent: meta.agent } : {}),
       ...(meta.via ? { via: meta.via } : {}), ...(meta.ms !== undefined ? { ms: Math.max(0, Math.round(meta.ms)) } : {}),
+      ...(meta.sources?.length ? { sources: meta.sources.map((item) => item.slice(0, 80)).slice(0, 5) } : {}),
       ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
     };
@@ -226,6 +235,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   // Self-improvement: questions it could not answer before are tried again in the background, e.g. once the local model is back.
   const retried = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once when the data is ready, guarded by retried
   useEffect(() => {
     if (retried.current || !ready || storageError) return;
     retried.current = true;
@@ -250,7 +260,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         assistantPhrases: learnPhrase(next.assistantPhrases, item.text, item.tool), assistantGaps: resolveGap(next.assistantGaps, item.text, item.tool) }), current));
       toast.success(`Selbst nachgelernt · ${solved.length === 1 ? "1 offene Frage" : `${solved.length} offene Fragen`}`);
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, storageError]);
 
   // Checks the change against the current snapshot first, so the provider never receives an invalid state.
@@ -305,6 +314,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }
 
   // Proactive start: one weekly overview per day, built only from your own data.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once when the data is ready, guarded by briefed
   useEffect(() => {
     if (briefed.current || !ready || storageError) return;
     briefed.current = true;
@@ -321,12 +331,12 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     } catch {
       // The overview is optional; the chat still works without it.
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, storageError]);
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
-  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string) {
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal) {
     try {
+      setStatus(workStatus.answer);
       const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
@@ -336,7 +346,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const context = agent === "general" ? history : history.slice(-2);
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
-          method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+          method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
           body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence } : {}) }),
         });
         if (!response.ok) return undefined;
@@ -358,18 +368,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setStreaming(undefined);
       return await ask([]) ?? text;
     } catch {
-      setStreaming(undefined);
+      if (!signal?.aborted) setStreaming(undefined);
       return undefined;
     }
   }
 
   // Public market data from the finanzblick-web MCP server; only currency codes leave the browser, never personal data.
-  async function loadMarket(text: string): Promise<MarketSnapshot | undefined> {
+  async function loadMarket(text: string, signal?: AbortSignal): Promise<MarketSnapshot | undefined> {
     const codes = currenciesIn(text).sort().join(",");
     const cached = marketCache.current.get(codes);
     if (cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.value;
     try {
-      const response = await fetch(`/api/market?currencies=${encodeURIComponent(codes)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+      const response = await fetch(`/api/market?currencies=${encodeURIComponent(codes)}`, { cache: "no-store", signal: withTimeout(15000, signal) });
       if (!response.ok) return cached?.value;
       const value = await response.json() as MarketSnapshot;
       marketCache.current.set(codes, { at: Date.now(), value });
@@ -380,7 +390,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }
 
   // Terms are answered from learned knowledge; unknown or outdated ones are looked up once via the MCP server and remembered.
-  async function loadKnowledge(text: string, names: string[]) {
+  async function loadKnowledge(text: string, names: string[], signal?: AbortSignal) {
     const topics = knowledgeTopics(text, names, true);
     const found: AssistantKnowledge[] = [], fresh: AssistantKnowledge[] = [], used: string[] = [];
     let offline = false;
@@ -388,7 +398,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const stored = findKnowledge(state.assistantKnowledge, topic);
       if (stored && !isStale(stored)) { found.push(stored); used.push(stored.id); continue; }
       try {
-        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}`, { cache: "no-store", signal: withTimeout(15000, signal) });
         if (!response.ok) throw new Error();
         const { hit } = await response.json() as { hit?: KnowledgeHit | null };
         if (hit?.title && hit.text && hit.url) {
@@ -404,6 +414,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     if (fresh.length || used.length) update((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, fresh, used) }));
     return { found, fresh: fresh.map((entry) => entry.id), offline };
+  }
+
+  // The local finance knowledge (hybrid search on the server, no internet); nothing found or no answer means no extra context.
+  async function searchLocalKnowledge(question: string, signal?: AbortSignal): Promise<LocalKnowledgeSearch | undefined> {
+    setStatus(workStatus.knowledge);
+    try {
+      const response = await fetch("/api/ai/knowledge", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ question: question.slice(0, 500) }), signal: withTimeout(4000, signal) });
+      return response.ok ? await response.json() as LocalKnowledgeSearch : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   // A contract created step by step: the answer fills the open step; "Ja" on the preview saves it, "Abbrechen" drops it.
@@ -441,12 +463,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     return true;
   }
 
-  async function send(event?: FormEvent, preset?: string) {
+  // `without`: messages to leave out of this turn, e.g. the answer that is being regenerated.
+  async function send(event?: FormEvent, preset?: string, options: { without?: string[] } = {}) {
     event?.preventDefault();
     const text = (preset ?? input).trim().slice(0, 1000);
     if (!text || busy || storageError) return;
+    const thread = options.without?.length ? messages.filter((item) => !options.without!.includes(item.id)) : messages;
     // Only the latest answer's open draft takes follow-ups ("lieber 4000"); once the chat moved on, a new message is a new request.
-    const latest = messages.findLast((item) => item.role === "assistant");
+    const latest = thread.findLast((item) => item.role === "assistant");
     if (latest?.contractDraft && (latest.status === "question" || latest.status === "preview") && await continueContract(latest, text)) return;
     // "Ja" or "Nein" right below a preview does the same as its buttons.
     if (latest?.change && latest.status === "preview" && !latest.draft && !latest.contractDraft) {
@@ -471,6 +495,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     const pending = latest?.draft && (latest.status === "question" || latest.status === "preview")
       && !leavesDraft(text, missingField(latest.draft) === "name") ? latest.draft : undefined;
+    setStatus(workStatus.read);
     const asOf = state.settings.asOf;
     const startedAt = Date.now();
     // Rough duration of this run for the admin view, from sending to the answer.
@@ -478,7 +503,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // Short pause, so instant rule answers still read like a reply instead of a page jump.
     const settle = () => new Promise((resolve) => setTimeout(resolve, Math.max(0, 650 - (Date.now() - startedAt))));
     const names = knownNames();
-    const lastAnswer = messages.findLast((item) => item.role === "assistant");
+    const lastAnswer = thread.findLast((item) => item.role === "assistant");
     // Teaching own words: "Mit Japan meine ich Motorrad".
     const teaching = pending ? undefined : aliasTeaching(text);
     if (teaching) {
@@ -525,7 +550,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // "Erklär das nochmal" after small talk has nothing to explain: ask what is meant.
     const nothingToExplain = explainAgain(work) && (!lastAnswer || !lastAnswer.card && !lastAnswer.tool && lastAnswer.text.length < 160)
       ? { text: "Was soll ich dir genauer erklären? Frag mich einfach direkt danach.", suggestions: starterSuggestions } : undefined;
-    const chat = open ? smallTalk(text, { hour: new Date().getHours(), seed: messages.length, now: new Date() }) ?? fixed ?? nothingToExplain ??
+    const chat = open ? smallTalk(text, { hour: new Date().getHours(), seed: thread.length, now: new Date() }) ?? fixed ?? nothingToExplain ??
       (topic && "reply" in topic ? topic.reply : undefined) : undefined;
     if (chat) {
       if (fixed?.theme && chat === fixed) setTheme(fixed.theme);
@@ -538,16 +563,33 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       inputRef.current?.focus();
       return;
     }
-    const history = messages.slice(-6).map((item) => ({ role: item.role, text: item.text.slice(0, 500) }));
+    const history = thread.slice(-6).map((item) => ({ role: item.role, text: item.text.slice(0, 500) }));
     const goals = savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50);
     const planned = [...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth)
       .map((item) => item.name.slice(0, 100)))].slice(0, 60);
     setInput("");
     setBusy(true);
     save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
+    const controller = new AbortController();
+    activeRun.current = controller;
+    const { signal } = controller;
+    // Stopped by the user: what was already written stays as the answer, otherwise a short note.
+    const halted = (agent: AgentId = "general") => {
+      if (!signal.aborted) return false;
+      const partial = streamed.current?.trim();
+      setStreaming(undefined);
+      setAnswering(undefined);
+      setStatus(undefined);
+      setBusy(false);
+      activeRun.current = null;
+      addResult({ text: partial ? `${partial} …` : "Gestoppt. Frag gern noch einmal oder anders." }, partial ? "KI" : "Regel",
+        { agent, via: "rule", ms: elapsed(), ...(partial ? { tool: "free", asked: work } : {}) });
+      inputRef.current?.focus();
+      return true;
+    };
     let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
     // "und im September?" reuses the previous question instead of asking the model again.
-    const follow = pending ? undefined : resolveFollowUp(work, messages.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
+    const follow = pending ? undefined : resolveFollowUp(work, thread.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
     const learned = pending || follow || detectTool(work, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, work);
     // Two questions in one message are answered one after the other, each by its own agent.
@@ -557,24 +599,28 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         const partAgent: AgentId = part.tool ? toolOwner[part.tool] : routeBySignals(part.text, [...goals, ...planned])?.agent ?? "general";
         let result: AgentResult;
         if (part.tool) {
-          const market = part.tool === "market" || part.tool === "depot" ? await loadMarket(part.text) : undefined;
-          const knowledge = part.tool === "knowledge" ? await loadKnowledge(part.text, [...goals, ...planned]) : undefined;
+          setStatus(statusFor(part.tool, partAgent));
+          const market = part.tool === "market" || part.tool === "depot" ? await loadMarket(part.text, signal) : undefined;
+          const knowledge = part.tool === "knowledge" ? await loadKnowledge(part.text, [...goals, ...planned], signal) : undefined;
           try {
             result = executeTool(part.tool, part.text, { state, dashboard, asOf, market, knowledge, page: pageContext(), insights: extras?.copilot });
           } catch {
             result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
           }
         } else {
-          const said = await freeAnswer(work, history, partAgent, agentEvidence(partAgent, state, dashboard, asOf, part.text));
+          const said = await freeAnswer(work, history, partAgent, agentEvidence(partAgent, state, dashboard, asOf, part.text), signal);
           result = { text: said ?? "Den zweiten Teil beantworte ich gern extra – frag mich einfach noch einmal danach." };
         }
         await settle();
+        if (halted(partAgent)) return;
         addResult(result.suggestions ? result : { ...result, suggestions: part.tool ? followUps[part.tool] : agentSuggestions[partAgent] },
           part.tool ? "Regel" : "KI", { tool: part.tool ?? "free", asked: part.text, agent: partAgent, via: "rule", ms: elapsed() });
       }
       setStreaming(undefined);
       setAnswering(undefined);
+      setStatus(undefined);
       setBusy(false);
+      activeRun.current = null;
       inputRef.current?.focus();
       return;
     }
@@ -583,8 +629,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       reply = { tool: learned.tool, source: "Regel" };
       update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, learned.tool) }));
     } else try {
+      setStatus(workStatus.route);
       const response = await fetch("/api/ai/assistant", {
-        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
         body: JSON.stringify({ message: work, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned } }),
       });
       if (!response.ok) throw new Error();
@@ -600,6 +647,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
           question: draft ? missingQuestion(draft) : undefined, source: "Regel" };
       }
     }
+    if (halted()) return;
     const picked: AssistantTool | undefined = isAssistantTool(reply.tool) && !isDraftTool(reply.tool) && reply.tool !== "ask" ? reply.tool : undefined;
     // Explanations, opinions and advice get a written answer; a question never silently opens an edit or a form.
     const ruleTool = reply.source === "Regel" ? picked : detectTool(work, [...goals, ...planned]);
@@ -615,6 +663,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       : isAgentId(reply.agent) ? reply.agent : "general";
     const via: RouteVia = isRouteVia(reply.via) ? reply.via : "rule";
     const run = { agent, via };
+    setStatus(statusFor(tool ?? (reply.draft && !route.skipDraft ? reply.draft.action : undefined), agent));
     // Only the model understood this phrasing; remember it so the rules answer it directly next time.
     if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
       !detectTool(work, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
@@ -633,8 +682,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
-    const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent, agentEvidence(agent, state, dashboard, asOf, work)) : undefined;
+    // The orchestrator decides whether general finance knowledge helps; its few short hits go in as extra evidence.
+    const wisdom = !tool && !parsed?.success && wantsKnowledge(work, { agent }) ? await searchLocalKnowledge(work, signal) : undefined;
+    if (halted(agent)) return;
+    const evidence = [knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work)].filter(Boolean).join("\n\n") || undefined;
+    const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent, evidence, signal) : undefined;
     await settle();
+    if (halted(agent)) return;
     if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
       const operation = parseMemory(work);
@@ -642,18 +696,25 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       else addResult({ text: "Was soll ich mir merken? Zum Beispiel „Puffer immer 500 €“ oder „Mein Gehalt kommt am 25.“." }, reply.source, { ...run, ms: elapsed() });
     } else if (tool) {
       let result: AgentResult;
-      const market = tool === "market" || tool === "depot" ? await loadMarket(work) : undefined;
-      const knowledge = tool === "knowledge" && !knowledgeListQuestion(work.toLowerCase()) ? await loadKnowledge(work, [...goals, ...planned]) : undefined;
+      const market = tool === "market" || tool === "depot" ? await loadMarket(work, signal) : undefined;
+      const term = tool === "knowledge" && !knowledgeListQuestion(work.toLowerCase());
+      // Terms come from the local finance knowledge first; only what it does not cover is looked up online.
+      const local = term ? await searchLocalKnowledge(work, signal) : undefined;
+      const known = local ? confidentHit(local.hits, local.mode) : undefined;
+      const knowledge = term && !known ? await loadKnowledge(work, [...goals, ...planned], signal) : undefined;
+      if (halted(agent)) return;
+      setStatus(statusFor(tool, agent));
       try {
-        result = executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous, market, knowledge,
-          page: pageContext(), insights: extras?.copilot });
+        result = known ? localKnowledgeAnswer(known, local!.hits) : executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous,
+          market, knowledge, page: pageContext(), insights: extras?.copilot });
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
       // The tool computed the numbers; the model turns them into a direct answer to the actual question. The card stays.
       // A term without a reliable finance article keeps the tool's honest answer instead of a guess.
-      if (!(tool === "knowledge" && knowledge && !knowledge.found.length) && route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
-        const said = await freeAnswer(work, history, agent, evidenceText(result));
+      if (!known && !(tool === "knowledge" && knowledge && !knowledge.found.length) && route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
+        const said = await freeAnswer(work, history, agent, evidenceText(result), signal);
+        if (halted(agent)) return;
         if (said) result = { ...result, text: said };
       }
       addResult(withNotes(result.suggestions || result.change || result.undoId || result.choices ? result : { ...result, suggestions: followUps[tool] }), reply.source,
@@ -662,7 +723,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       // Affordability never opens a plan form: it checks the accounts that may be used and says OK or not OK.
       addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work, agent: "budget", via, ms: elapsed() });
     else if (parsed?.success) addDraftMessage(parsed.data, reply.source, { via, ms: elapsed() });
-    else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, ...run, ms: elapsed() });
+    else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, ...run, ms: elapsed(),
+      ...(wisdom?.hits.length ? { sources: wisdom.hits.map((hit) => hit.title) } : {}) });
     else {
       update((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
       addResult({ text: "Hm, da komme ich gerade nicht mit. Magst du es mir anders sagen? Die neue Formulierung merke ich mir für das nächste Mal. " +
@@ -676,8 +738,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     setStreaming(undefined);
     setAnswering(undefined);
+    setStatus(undefined);
     setBusy(false);
+    activeRun.current = null;
     inputRef.current?.focus();
+  }
+
+  // Stop: ends the running request; send() keeps what was already written.
+  const stop = () => activeRun.current?.abort();
+  // Ask the last question again without the old answer in the conversation.
+  function regenerate(message: AssistantMessage) {
+    const index = messages.findIndex((item) => item.id === message.id);
+    const question = messages.slice(0, index).findLast((item) => item.role === "user");
+    if (!question || busy) return;
+    const remove = messages.slice(messages.indexOf(question)).map((item) => item.id);
+    save((items) => items.filter((item) => !remove.includes(item.id)));
+    void send(undefined, question.text, { without: remove });
   }
 
   function createGoal(message: AssistantMessage, draft: AssistantDraft) {
@@ -755,12 +831,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       onRemoveGap={(text) => update((current) => ({ ...current, assistantGaps: (current.assistantGaps ?? []).filter((entry) => entry.text !== text) }))} />}
     </div>}
     <section className={panelMode ? "flex min-h-0 flex-1 flex-col border-t border-border/60" : "panel flex min-h-[60vh] flex-col p-4 sm:p-6"} aria-label="Chat mit dem Finanz-Assistenten">
-      <FinancialData className={panelMode ? "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6" : "flex flex-1 flex-col gap-4"} aria-live="polite">
-        <Bubble role="assistant" text={intro} />
-        {messages.length <= 1 && <QuickReplies items={examples} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
-        {messages.map((message) => <div key={message.id} className="flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
+      <FinancialData className={panelMode ? "flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6" : "flex flex-1 flex-col gap-5"} aria-live="polite">
+        {!started &&
+          <ChatEmptyState prompts={starterPrompts} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
+        {messages.map((message) => <MessageEnter key={message.id} animate={!initialIds.has(message.id)} mine={message.role === "user"}
+          className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
           data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
-          <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} faded={message.status === "dismissed"}>
+          <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} faded={message.status === "dismissed"}>
             {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
               onResult={storageError ? undefined : (result) => addResult(result, "Regel")} />}
           </Bubble>
@@ -794,82 +871,77 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
           </div>}
           {message.suggestions && !busy && message.id === messages.at(-1)?.id &&
             <QuickReplies items={message.suggestions} disabled={!!storageError} onPick={(text) => void send(undefined, text)} />}
-          {message.role === "assistant" && message.asked && !message.correcting && <div className="flex items-center gap-1 pl-11 text-2xs text-muted-foreground">
-            {message.feedback ? <span className="inline-flex items-center gap-1.5 px-1 py-1">
-              {message.feedback === "up" ? <ThumbsUp aria-hidden="true" className="size-3.5 text-primary" /> : <ThumbsDown aria-hidden="true" className="size-3.5" />}Danke für dein Feedback</span>
-              : <>
-                <button type="button" disabled={busy || !!storageError} onClick={() => giveFeedback(message, "up")} aria-label="Hilfreich" title="Hilfreich"
-                  className="rounded-md p-1.5 opacity-60 transition hover:bg-muted hover:opacity-100 focus-visible:opacity-100 disabled:opacity-30"><ThumbsUp aria-hidden="true" className="size-3.5" /></button>
-                <button type="button" disabled={busy || !!storageError} onClick={() => giveFeedback(message, "down")} aria-label="Nicht hilfreich" title="Nicht hilfreich – ich lerne daraus"
-                  className="rounded-md p-1.5 opacity-60 transition hover:bg-muted hover:opacity-100 focus-visible:opacity-100 disabled:opacity-30"><ThumbsDown aria-hidden="true" className="size-3.5" /></button>
-              </>}
-          </div>}
-        </div>)}
-        {busy && (streaming ? <div aria-live="polite" aria-busy="true"><Bubble role="assistant" text={streaming} source="KI" agent={answering} /></div> : <Thinking />)}
+          {message.role === "assistant" && message.status !== "dismissed" && <MessageActions text={message.text} disabled={busy || !!storageError}
+            // The newest answer keeps its actions in view; older ones show them on hover or focus, touch screens always.
+            className={cn(message.id !== messages.at(-1)?.id && "transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover/message:opacity-100 focus-within:opacity-100")}
+            onRegenerate={message.source === "KI" && message.asked && message.id === messages.at(-1)?.id && !message.change && !message.draft
+              ? () => regenerate(message) : undefined}
+            feedback={message.feedback} onFeedback={message.asked && !message.correcting ? (value) => giveFeedback(message, value) : undefined} />}
+        </MessageEnter>)}
+        {busy && <MessageEnter animate mine={false} className="flex items-start gap-3" aria-busy="true">
+          <AssistantMark />
+          {streaming ? <div className="min-w-0 max-w-[85%] rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
+            <StatusLine text={status ?? workStatus.answer} className="mb-1.5 flex" />
+            <span className="sr-only">Assistent: </span><StreamingText text={streaming} />
+            {answering && answering !== "general" && <span className="mt-1.5 flex items-center gap-1 text-2xs text-muted-foreground">
+              <Sparkles aria-hidden="true" className="size-3" />{agentLabel[answering]} · KI</span>}
+          </div>
+            : <div className="rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine text={status ?? workStatus.read} /></div>}
+        </MessageEnter>}
         <div ref={endRef} />
       </FinancialData>
-      <form onSubmit={send} className={panelMode ? "flex shrink-0 items-end gap-2 border-t border-border/60 px-4 pt-3 pb-1 sm:px-6" : "mt-5 flex items-end gap-2 border-t border-border/60 pt-4"}>
+      <form onSubmit={send} className={panelMode ? "shrink-0 px-4 pt-3 pb-1 sm:px-6" : "mt-5"}>
         <Label htmlFor="assistant-input" className="sr-only">Nachricht an den Finanz-Assistenten</Label>
-        <textarea id="assistant-input" ref={inputRef} value={input} rows={2} maxLength={1000} disabled={busy}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send(); return; }
-            if (event.key === "ArrowUp" && !input) {
-              const last = messages.findLast((item) => item.role === "user");
-              if (last) { event.preventDefault(); setInput(last.text); }
-            }
-          }}
-          aria-keyshortcuts="ArrowUp"
-          placeholder="z. B. „Was war meine größte Ausgabe dieses Jahr?“ oder „Schieb das Pickerl auf April“"
-          className="min-h-11 flex-1 resize-none rounded-xl border border-input bg-background/60 px-3 py-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" />
-        <Button type="submit" className="min-h-11" disabled={busy || !input.trim() || !!storageError}><Send aria-hidden="true" className="size-4" />Senden</Button>
+        <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-1.5 pl-4 shadow-card transition-[border-color,box-shadow] duration-200 focus-within:border-primary/60 focus-within:ring-4 focus-within:ring-primary/15">
+          <textarea id="assistant-input" ref={inputRef} value={input} rows={1} maxLength={1000} disabled={busy}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                // An input method (e.g. Japanese) confirms its text with Enter; that must not send yet.
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                void send();
+                return;
+              }
+              if (event.key === "ArrowUp" && !input) {
+                const last = messages.findLast((item) => item.role === "user");
+                if (last) { event.preventDefault(); setInput(last.text); }
+              }
+            }}
+            aria-keyshortcuts="ArrowUp"
+            placeholder="Frag nach Ausgaben, Verträgen, Budget …"
+            className="field-sizing-content max-h-48 min-h-10 w-full flex-1 resize-none bg-transparent py-2 text-sm leading-relaxed outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60" />
+          <ComposerButton busy={busy} disabled={!input.trim() || !!storageError} onStop={stop} />
+        </div>
       </form>
-      <p className={cn("mt-2 text-2xs text-muted-foreground", panelMode && "shrink-0 px-4 pb-4 sm:px-6")}>Jede Frage geht an den passenden Spezialisten (Umsätze, Verträge, Budget, Gehalt) oder in den Chat. Alle Zahlen rechnet der Code. Gespeichert wird nur nach deinem Klick, der Verlauf bleibt in deiner lokalen Datenbank.</p>
+      <p className={cn("mt-2 text-center text-2xs text-muted-foreground", panelMode && "shrink-0 px-4 pb-4 sm:px-6")}>Alle Zahlen rechnet der Code, nicht die KI. Ändern oder speichern tue ich nur nach deiner Bestätigung.</p>
     </section>
   </div>;
 }
 function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: boolean; onPick: (text: string) => void }) {
   return <div className="flex flex-wrap gap-2 pl-11" aria-label="Vorschläge">
     {[...new Set(items)].map((item) => <button key={item} type="button" disabled={disabled} onClick={() => onPick(item)}
-      className="assistant-reveal rounded-full border border-primary/25 bg-primary/5 px-3 py-1.5 text-left text-xs text-foreground/80 transition hover:border-primary/60 hover:bg-primary/10 hover:text-foreground disabled:opacity-50">{item}</button>)}
+      className="assistant-reveal min-h-9 rounded-2xl border border-border bg-card px-3.5 py-2 text-left text-xs leading-snug text-foreground/80 shadow-card transition-[background-color,border-color,color,transform] duration-150 hover:border-primary/50 hover:bg-primary/8 hover:text-foreground active:scale-[0.97] disabled:opacity-50 motion-reduce:active:scale-100">{item}</button>)}
   </div>;
 }
 
-// Live "thinking" state: spinning ring around the avatar, shimmering status text that walks through the steps.
-function Thinking() {
-  const [step, setStep] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => setStep((value) => Math.min(value + 1, thinkingSteps.length - 1)), 1400);
-    return () => clearInterval(timer);
-  }, []);
-  return <div className="assistant-reveal flex items-start gap-3" role="status" aria-live="polite">
-    <span className="relative flex size-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-      <LoaderCircle aria-hidden="true" className="absolute size-8 animate-spin text-primary/60 [animation-duration:1.1s] motion-reduce:animate-none" strokeWidth={1.5} />
-      <Sparkles aria-hidden="true" className="size-3.5 animate-pulse motion-reduce:animate-none" />
-    </span>
-    <div className="flex items-center gap-3 rounded-2xl bg-muted/50 px-4 py-2.5 text-sm">
-      <span className="assistant-shimmer font-medium">Denkt nach</span>
-      <span className="flex gap-1" aria-hidden="true">
-        {[0, 1, 2].map((dot) => <span key={dot} className="assistant-dot size-1.5 rounded-full bg-primary/70" style={{ animationDelay: `${dot * 160}ms` }} />)}
-      </span>
-      <span key={step} className="assistant-reveal text-xs text-muted-foreground">{thinkingSteps[step]} …</span>
+function Bubble({ role, text, source, agent, sources, faded, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; faded?: boolean; children?: React.ReactNode;
+}) {
+  if (role === "user") return <div className={cn("flex justify-end", faded && "opacity-60")}>
+    <div className="min-w-0 max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-card sm:max-w-[75%]">
+      <span className="sr-only">Du: </span><span className="whitespace-pre-line">{text}</span>
     </div>
   </div>;
-}
-
-function Bubble({ role, text, source, agent, faded, children }: {
-  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; faded?: boolean; children?: React.ReactNode;
-}) {
-  const mine = role === "user";
-  return <div className={cn("assistant-reveal flex items-start gap-3", mine && "flex-row-reverse", faded && "opacity-60")}>
-    <span className={cn("flex size-8 shrink-0 items-center justify-center rounded-xl", mine ? "bg-muted text-muted-foreground" : "bg-primary/10 text-primary")}>
-      {mine ? <MessageSquareText aria-hidden="true" className="size-4" /> : <Bot aria-hidden="true" className="size-4" />}
-    </span>
-    <div className={cn("min-w-0 rounded-2xl px-4 py-2.5 text-sm leading-relaxed", mine ? "max-w-[80%] bg-primary text-primary-foreground" : "bg-muted/50",
-      !mine && (children ? "max-w-[90%] flex-1 py-3.5" : "max-w-[80%]"))}>
-      <span className="sr-only">{mine ? "Du: " : "Assistent: "}</span><span className="whitespace-pre-line">{text}</span>
-      {(source === "KI" || agent && agent !== "general") && <span className="ml-2 inline-flex items-center gap-1 text-2xs text-muted-foreground">
-        {source === "KI" && <Sparkles aria-hidden="true" className="size-3" />}{[agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? "KI" : ""].filter(Boolean).join(" · ")}</span>}
+  const label = [agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? "KI" : ""].filter(Boolean).join(" · ");
+  return <div className={cn("flex items-start gap-3", faded && "opacity-60")}>
+    <AssistantMark />
+    <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
+      <span className="sr-only">Assistent: </span><span className="whitespace-pre-line">{text}</span>
+      {(label || sources?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+        {label && <span className="inline-flex items-center gap-1">{source === "KI" && <Sparkles aria-hidden="true" className="size-3" />}{label}</span>}
+        {sources?.length ? <span>Wissen: {sources.join(" · ")}</span> : null}
+      </span>}
       {children}
     </div>
   </div>;

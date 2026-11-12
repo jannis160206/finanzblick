@@ -56,7 +56,7 @@ export const SheetSurface = forwardRef<HTMLDivElement, SheetSurfaceProps>(functi
   const exiting = useRef(false);
   const busy = useRef(false);
 
-  const height = () => element.current?.offsetHeight ?? 0;
+  const height = useCallback(() => element.current?.offsetHeight ?? 0, []);
   const run = useCallback((target: number, transition = sheetSpring) => {
     if (mode !== "full") { y.set(target); return Promise.resolve(); }
     return animate(y, target, transition).then(() => undefined);
@@ -72,7 +72,7 @@ export const SheetSurface = forwardRef<HTMLDivElement, SheetSurfaceProps>(functi
     entered.current = true;
     if (mode === "full") { y.set(height() || window.innerHeight); void run(0); }
     else y.set(0);
-  }, [mode, run, y]);
+  }, [mode, run, y, height]);
 
   // Reopened while still sliding out (AnimatePresence revives the same element): slide back in instead of staying off-screen.
   useEffect(() => {
@@ -83,7 +83,7 @@ export const SheetSurface = forwardRef<HTMLDivElement, SheetSurfaceProps>(functi
     exiting.current = true;
     if (mode !== "full") { safeToRemove?.(); return; }
     void animate(y, height() + 24, exitTween).then(() => { if (exiting.current) safeToRemove?.(); });
-  }, [isPresent, safeToRemove, mode, run, y]);
+  }, [isPresent, safeToRemove, mode, run, y, height]);
 
   // The on-screen keyboard shrinks the visual viewport; the sheet moves up with it.
   useEffect(() => {

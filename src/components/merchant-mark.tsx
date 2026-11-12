@@ -69,7 +69,7 @@ function LocalMerchantLogo({
       )}
     >
       {/* Authenticated local images must bypass the Next image optimizer. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {/* biome-ignore lint/performance/noImgElement: small local logo files, already sized; next/image would add a resize round trip */}
       <img
         src={`${path}/logo${versionQuery}`}
         alt=""

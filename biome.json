@@ -1,0 +1,72 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+  "files": {
+    "includes": ["**", "!**/.next", "!**/out", "!**/build", "!**/next-env.d.ts", "!**/test-results", "!**/playwright-report", "!**/coverage", "!**/.local-data", "!**/public", "!**/*.svg"]
+  },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 180 },
+  "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always", "trailingCommas": "all" } },
+  "css": { "parser": { "tailwindDirectives": true } },
+  "linter": {
+    "enabled": true,
+    "domains": { "react": "recommended", "next": "recommended" },
+    "rules": {
+      "preset": "recommended",
+      "style": {
+        "noNonNullAssertion": "off",
+        "useImportType": "off",
+        "useTemplate": "off",
+        "noDescendingSpecificity": "off"
+      },
+      "suspicious": {
+        "noControlCharactersInRegex": "off",
+        "useIterableCallbackReturn": "off",
+        "noAssignInExpressions": "off",
+        "noArrayIndexKey": "off",
+        "noShadowRestrictedNames": "off",
+        "noImplicitAnyLet": "off",
+        "noMisleadingCharacterClass": "off",
+        "noExportsInTest": "off"
+      },
+      "correctness": {
+        "noComponentHookFactories": "off",
+        "noUnsafeFinally": "off",
+        "useJsxKeyInIterable": "off",
+        "noUnusedFunctionParameters": "off",
+        "usePlaywrightValidDescribeCallback": "off",
+        "useExhaustiveDependencies": { "level": "error", "options": { "reportUnnecessaryDependencies": false } }
+      },
+      "complexity": {
+        "noImportantStyles": "off",
+        "useOptionalChain": "off",
+        "useMathMinMax": "off",
+        "noUselessFragments": "off",
+        "useArrowFunction": "off",
+        "noUselessEscapeInRegex": "off",
+        "noUselessStringRaw": "off",
+        "useSimpleNumberKeys": "off",
+        "useIndexOf": "off"
+      },
+      "performance": {
+        "noAccumulatingSpread": "off",
+        "useDomNodeTextContent": "off"
+      },
+      "a11y": {
+        "useAriaPropsSupportedByRole": "off",
+        "useSemanticElements": "off",
+        "noLabelWithoutControl": "off",
+        "useButtonType": "off",
+        "useValidAriaRole": "off",
+        "useAriaPropsForRole": "off",
+        "useFocusableInteractive": "off",
+        "useKeyWithClickEvents": "off",
+        "noStaticElementInteractions": "off",
+        "noNoninteractiveTabindex": "off",
+        "noNoninteractiveElementToInteractiveRole": "off",
+        "noSvgWithoutTitle": "off",
+        "noAriaHiddenOnFocusable": "off"
+      }
+    }
+  },
+  "assist": { "enabled": false }
+}

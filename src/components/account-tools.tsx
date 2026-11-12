@@ -113,7 +113,7 @@ export function AccountLogout({ compact = false }: { compact?: boolean }) {
         if (!(error instanceof DOMException) && !(error instanceof FinanceStorageError)) throw error;
         destination = "/login?cache=unavailable";
       }
-      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- Clear the signed-out account's in-memory ledger.
+      // A full reload is intended: clear the signed-out account's in-memory ledger.
       window.location.assign(destination);
     } catch (error) {
       setError(financeStorageMessage(error));

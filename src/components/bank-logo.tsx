@@ -52,7 +52,7 @@ export function BankLogo({
       {monogram || <Landmark className={icon} strokeWidth={2.25} />}
       {showImage ? (
         // Same-origin, authenticated PNG: the Next image optimizer must not proxy it.
-        // eslint-disable-next-line @next/next/no-img-element
+        // biome-ignore lint/performance/noImgElement: small local logo files, already sized; next/image would add a resize round trip
         <img
           src={src}
           alt=""
