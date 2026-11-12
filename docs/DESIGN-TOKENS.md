@@ -79,7 +79,7 @@ Direkt verwendete Tailwind-Palettenfarben (außerhalb der Tokens, Zählung in `s
 
 - Dialoge 200 ms Fade/Zoom (`tw-animate-css`), Drawer Slide.
 - Seitenwechsel per View Transition (`.page-fade`, 140 ms aus / 200 ms ein, nicht auf `/umsaetze`).
-- Assistent: `assistant-reveal` 320 ms `cubic-bezier(0.22, 1, 0.36, 1)`, Shimmer, Tipp-Punkte.
+- Assistent: `assistant-reveal` 320 ms `cubic-bezier(0.22, 1, 0.36, 1)` für Vorschläge, `assistant-word` 300 ms (Deckkraft und 3 px Unschärfe) für gestreamte Wörter; Denk-Orb, Bots, BorderBeam (`forest`) und Metall-Ring (`silver`) aus Libraries.dev, siehe `docs/ASSISTANT-ORCHESTRATOR.md`.
 - Reduzierte Bewegung doppelt abgesichert: `prefers-reduced-motion` **und** `:root[data-reduce-motion="true"]` (App-Einstellung).
 
 ### 2.7 Komponenten-Inventar (UI-Basis)

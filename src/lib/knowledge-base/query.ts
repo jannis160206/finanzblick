@@ -14,13 +14,14 @@ const RRF_K = 60;
 export const EMBEDDING_QUERY_PREFIX = "Instruct: Given a question about personal finance, retrieve the passage that answers it\nQuery: ";
 
 const stopwords = new Set([
-  "aber", "alle", "allem", "also", "auch", "auf", "aus", "bei", "beim", "bin", "bis", "bitte", "da", "damit", "dann", "das", "dass", "dein", "deine",
+  "aber", "alle", "allem", "als", "also", "auch", "auf", "aus", "bei", "beim", "bin", "bis", "bitte", "da", "damit", "dann", "das", "dass", "dein", "deine",
   "dem", "den", "denn", "der", "des", "die", "dies", "diese", "dir", "doch", "dort", "du", "durch", "ein", "eine", "einem", "einen", "einer", "eines",
   "eigentlich", "erklär", "erkläre", "erklären", "es", "etwa", "etwas", "euch", "für", "fürs", "gibt", "gut", "habe", "haben", "hat", "hier", "ich",
   "ihr", "im", "immer", "in", "ins", "ist", "ja", "jetzt", "kann", "kannst", "kein", "keine", "können", "lohnt", "lohnen", "mal", "man", "mehr",
   "mein", "meine", "meinen", "meiner", "mich", "mir", "mit", "muss", "nach", "nicht", "noch", "nur", "oder", "ohne", "schon", "sehr", "sich", "sie",
   "sind", "soll", "sollte", "sollten", "über", "um", "und", "uns", "unter", "viel", "viele", "vom", "von", "vor", "wann", "war", "was", "weil", "wenn",
   "wer", "werden", "wie", "wieso", "wird", "wo", "wofür", "worauf", "zu", "zum", "zur", "eigentlich", "genau", "einfach", "kurz", "bedeutet", "heißt",
+  "warum", "weshalb", "welche", "welcher", "welches", "sein", "hast", "wäre", "würde", "dazu", "davon",
 ]);
 
 // German nouns and verbs change their endings ("Versicherungen", "kündigen"); the trigram index matches the stem inside words.

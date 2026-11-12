@@ -17,11 +17,13 @@ describe("knowledge decision of the orchestrator", () => {
 });
 
 describe("live status", () => {
-  it("names what each step does", () => {
-    expect(statusFor("query", "transactions")).toBe("Analysiere deine Buchungen…");
-    expect(statusFor("contracts", "contracts")).toBe("Prüfe deine Verträge…");
-    expect(statusFor("pulse", "budget")).toBe("Berechne dein freies Budget…");
-    expect(statusFor("knowledge", "general")).toBe(workStatus.knowledge);
-    expect(statusFor(undefined, "payroll")).toBe("Lese deine Lohnabrechnungen…");
+  it("names what each step does, how the orb moves and which agent works on it", () => {
+    expect(statusFor("query", "transactions")).toEqual({ text: "Analysiere deine Buchungen…", activity: "working", agent: "transactions" });
+    expect(statusFor("contracts", "contracts")).toMatchObject({ text: "Prüfe deine Verträge…", agent: "contracts" });
+    expect(statusFor("pulse", "budget")).toMatchObject({ text: "Berechne dein freies Budget…", activity: "solving" });
+    expect(statusFor("knowledge", "general")).toEqual({ ...workStatus.knowledge, agent: "general" });
+    expect(workStatus.knowledge.activity).toBe("searching");
+    expect(statusFor("booking", "transactions").activity).toBe("shaping");
+    expect(statusFor(undefined, "payroll")).toEqual({ text: "Lese deine Lohnabrechnungen…", activity: "solving", agent: "payroll" });
   });
 });

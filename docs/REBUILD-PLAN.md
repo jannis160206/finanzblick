@@ -170,6 +170,15 @@ Später ergänzt (Chat-Oberfläche, lokales Finanzwissen, Werkzeugkette, Novembe
 
 Entfernt: `eslint`, `eslint-config-next`, `prettier`.
 
+Chat-Effekte von Libraries.dev (November 2026), alle MIT, ohne eigene Laufzeit-Abhängigkeiten, nur React als Peer. Sie werden nur im Chat-Bundle geladen, das erst beim Öffnen des Assistenten nachkommt:
+
+| Paket | Zweck | Begründung |
+| --- | --- | --- |
+| `thinking-orbs` (^0.3.2) | Denk-Orb in der Statuszeile | Ersetzt die eigenen drei Punkte; eine Animation je Art der Arbeit (suchen, rechnen, schreiben …). 2D-Canvas, ruht bei reduzierter Bewegung und außerhalb des sichtbaren Bereichs. |
+| `bot-avatars` (^0.2.2) | Bots je Agent | Ersetzt das Stern-Symbol; Zustände `working`, `default` und `sleeping` zeigen, wer arbeitet. 2D-Canvas, eine gemeinsame Animationsschleife, kein WebGL. |
+| `border-beam` (^1.4.1) | Rahmen um laufende Antwort und offene Bestätigung | Reines CSS mit `@property`, ohne Canvas; bei reduzierter Bewegung aus. |
+| `metal-fx` (^2.0.11) | Metall-Ring um Senden/Stopp | Ein geteilter WebGL-Kontext für alle Instanzen. Liegt als Ebene hinter dem Knopf, damit der Knopf ohne WebGL weiter funktioniert; bei reduzierter Bewegung aus. |
+
 Bewusst **nicht** hinzugefügt:
 
 - LangChain, LlamaIndex, Chroma oder ein eigener Vektor-Server – Einbettung, Suche und Zusammenführung sind rund 300 Zeilen eigener Code.

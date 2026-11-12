@@ -253,21 +253,49 @@ Weiter holprig: Unbekannte fachfremde Fragen, die die Wortlisten nicht kennen, b
 
 ## Live-Status und Chat-Oberfläche
 
-Statt eines festen „Denkt nach“ zeigt der Chat, was gerade passiert. Die Statuszeile steht über der laufenden Antwort und verschwindet mit der fertigen Antwort.
+Statt eines festen „Denkt nach“ und des früheren Stern-Symbols zeigt der Chat, wer gerade arbeitet und was er tut. Die Statuszeile steht über der laufenden Antwort und verschwindet mit der fertigen Antwort. Die Effekte stammen aus den Libraries.dev-Paketen `thinking-orbs`, `bot-avatars`, `border-beam` und `metal-fx`.
 
 - **Status je Schritt** (`src/lib/assistant/status.ts`):
-  - „Lese deine Nachricht…“, dann „Verstehe deine Frage…“, während der Orchestrator entscheidet;
+  - „Lese deine Nachricht…“, dann „Verstehe deine Frage…“, während der Orchestrator entscheidet. Kennen die Regeln den Spezialisten schon, erscheinen sein Schritt und sein Bot sofort, auch während der Server noch Details liest;
   - danach je Werkzeug, z. B. „Analysiere deine Buchungen…“, „Prüfe deine Verträge…“, „Berechne dein freies Budget…“, „Lese deine Lohnabrechnungen…“, „Suche passendes Wissen…“, „Hole aktuelle Marktdaten…“;
   - „Formuliere die Antwort…“ während des Streamings.
   - Ein Test stellt sicher, dass jedes Werkzeug einen Status hat.
-- **Drei Punkte** (`ThinkingDots`): eine Welle aus Heben, Wachsen und Aufhellen (Motion, 1,05 s, 0,15 s versetzt). Neue Statustexte gleiten aus einer leichten Unschärfe herein.
+- **Denk-Orb** (`ThinkingOrb`, 20 px vor dem Statustext): Jeder Schritt trägt eine Art von Arbeit, die die Animation wählt:
+
+  | Art | Orb | Beispiele |
+  |---|---|---|
+  | Nachricht lesen | `listening` | „Lese deine Nachricht…“ |
+  | Orchestrator entscheidet | `connecting` | „Verstehe deine Frage…“ |
+  | Suchen | `searching` | „Suche passendes Wissen…“, „Hole aktuelle Marktdaten…“, „Suche Rückerstattungen…“ |
+  | Daten durchgehen | `working` | „Analysiere deine Buchungen…“, „Prüfe deine Verträge…“ |
+  | Rechnen | `solving` | „Berechne dein freies Budget…“, „Lese deine Lohnabrechnungen…“ |
+  | Änderung vorbereiten | `shaping` | „Bereite die Änderung vor…“, „Bereite den Vertrag vor…“ |
+  | Überblick zusammenstellen | `weaving` | „Stelle deinen Überblick zusammen…“ |
+  | Antwort schreiben | `composing` | „Formuliere die Antwort…“ |
+
+  Orb und Text wechseln mit einer kurzen Feder aus leichter Unschärfe. Der Orb ist Dekoration (`aria-hidden`); vorgelesen wird der Text.
+- **Bots je Agent** (`BotAvatar`):
+
+  | Agent | Bot |
+  |---|---|
+  | Orchestrator und allgemeiner Chat | `star` |
+  | Umsätze | `droid` |
+  | Verträge | `flower` |
+  | Budget & Prognose | `clover` |
+  | Gehalt & Steuern | `mech` |
+
+  Zustände: `working` hüpft neben der laufenden Antwort. Dabei wechselt der Bot vom Stern zum Spezialisten, sobald der Orchestrator entschieden hat. `default` schaut sich bei der neuesten Antwort um. `sleeping` döst im leeren Chat, bis man auf eine passende Startfrage zeigt. Ältere Antworten behalten ihre Pose ohne Animation, damit ein langer Verlauf keine Bilder mehr kostet. Im Verlauf sind die Bots Dekoration; im leeren Chat tragen sie die Namen des Teams.
+- **BorderBeam:** ein wandernder Lichtstreifen (`md`, Palette `forest` passend zum Mint der App) um die laufende Antwort; ein langsam atmender Rand (`pulse-inner`) um die neueste Änderung oder Vorschau, die auf „Bestätigen“ wartet. Nach der Entscheidung blendet er aus.
+- **MetalFx:** ein feiner Flüssigmetall-Ring (`circle`, `silver`) um Senden und Stopp, solange der Knopf etwas tun kann. Er liegt als eigene Ebene hinter dem Knopf: Der Knopf selbst hängt nie von WebGL ab und bleibt auch ohne den Effekt sichtbar und bedienbar.
 - **Nachrichten:** neue Nachrichten federn herein (Feder 300/28, leichte Skalierung und Verschiebung, eigene von rechts). Gestreamte Wörter blenden einzeln aus einer leichten Unschärfe ein (CSS, nur `opacity` und `filter`).
 - **Aktionen unter Antworten:** Kopieren (mit „Kopiert“ für Screenreader), Neu generieren (nur bei der letzten KI-Antwort), Hilfreich/Nicht hilfreich. Ältere Antworten zeigen die Leiste auf Geräten mit Maus erst bei Hover oder Fokus.
 - **Eingabe:** wächst mit dem Text (`field-sizing: content`, höchstens 12 Zeilen). Enter sendet, Shift+Enter bricht um, und während einer IME-Eingabe sendet Enter nicht. Während der Antwort wird Senden zu **Stopp**: Die Anfrage wird abgebrochen, schon gestreamter Text bleibt mit „…“ stehen und lässt sich neu generieren.
-- **Leerer Chat:** Begrüßung „Wobei kann ich dir helfen?“ mit drei Vorschlägen („Was habe ich diesen Monat ausgegeben?“ → Umsätze, „Zeige mir meine Verträge“ → Verträge, „Wie viel ist noch frei?“ → Monats-Puls). Bis zur ersten Frage bleibt die Begrüßung im Blick; danach scrollt der Chat zur neuesten Nachricht.
-- **Weniger Bewegung:** Mit `prefers-reduced-motion` oder der Einstellung in der App gibt es nur kurze Überblendungen, keine Bewegung. Alle Animationen nutzen nur `transform`, `opacity` und `filter`.
+- **Leerer Chat:** das Team als Bots (Stern in der Mitte, die vier Spezialisten daneben), Begrüßung „Wobei kann ich dir helfen?“ mit drei Vorschlägen („Was habe ich diesen Monat ausgegeben?“ → Umsätze, „Zeige mir meine Verträge“ → Verträge, „Wie viel ist noch frei?“ → Monats-Puls). Bis zur ersten Frage bleibt die Begrüßung im Blick; danach scrollt der Chat zur neuesten Nachricht.
+- **Weniger Bewegung:** Mit `prefers-reduced-motion` oder der Einstellung in der App gibt es nur kurze Überblendungen: Orb und Bots stehen still, BorderBeam und Metall-Ring sind aus. Alle eigenen Animationen nutzen nur `transform`, `opacity` und `filter`; Orb, Bots und Metall-Ring zeichnen auf Canvas bzw. WebGL und pausieren außerhalb des sichtbaren Bereichs.
+- **Hell und Dunkel:** Orb und Bots erkennen die `dark`-Klasse selbst; BorderBeam und MetalFx bekommen das Farbschema der App, weil sie sonst nur dem System folgen würden.
+- **Laden:** Der Chat wird erst beim Öffnen geladen (`next/dynamic`), die vier Pakete also auch.
 
-**Dateien:** `src/components/assistant-chat-parts.tsx` (Punkte, Statuszeile, Streaming-Text, Einblenden, leerer Chat, Aktionen, Senden/Stopp), `src/components/finance-assistant.tsx` (Ablauf, Abbruch, Neu generieren), `src/app/globals.css` (`.assistant-word`).
+**Dateien:** `src/components/assistant-chat-parts.tsx` (Bots, Orb-Statuszeile, Rahmen, Streaming-Text, Einblenden, leerer Chat, Aktionen, Senden/Stopp), `src/lib/assistant/status.ts` (Text, Art der Arbeit und Agent je Schritt), `src/components/finance-assistant.tsx` (Ablauf, Abbruch, Neu generieren), `src/app/globals.css` (`.assistant-word`).
 
 ## Lokales Finanzwissen (RAG)
 
@@ -327,7 +355,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Korrekturen aus dem Chat-Test: `conversation.test.ts` (`converseOn`, Budget-Empfehlung), `payroll.test.ts`, `pulse.test.ts`, `copilot.test.ts`, `cancel.test.ts`, `learning.test.ts`, `smalltalk.test.ts`, `phrasing.test.ts`, `speed.test.ts`.
 - Korrekturen aus Chat-Test 2: `fixed-replies.test.ts` (feste Antworten, Rechnen, Rückfragen), `combined.test.ts` (kombinierte Fragen), `knowledge.test.ts` (Faktenfragen, allgemeine Artikel), `conversation.test.ts` (kopierte Sätze), `check.test.ts`, `everyday.test.ts`, `market.test.ts`, `insights.test.ts`, `orchestrator.test.ts`, `speed.test.ts` (Themenhinweise, knappe Faktenantwort).
 - Finanz-Fokus und App-Aktionen: `scope.test.ts` (fachfremde Themen, Geldbezug geht vor), `app-actions.test.ts` (jede neue Operation samt Rückgängig), `app-chat.test.ts` (Routing, Vertragsdialog Schritt für Schritt, Ja/Abbrechen, Buchungen, Monatsplan, Kontoregeln, Successbonus, Links).
-- Chat-Oberfläche und Wissen: `assistant-chat-parts.test.tsx` (Senden wird zu Stopp, Kopieren mit Rückmeldung, Vorschläge, Statuszeile), `knowledge-routing.test.ts` (wann Wissen gesucht wird, Status je Werkzeug), `search.test.ts` (hybride Suche, Schwellen, Stichwort-Rückfall, aktuelle Vektoren).
+- Chat-Oberfläche und Wissen: `assistant-chat-parts.test.tsx` (ein Knopf für Senden und Stopp, Kopieren mit Rückmeldung, Team-Bots mit Namen, Vorschläge, Orb passend zur Arbeit), `knowledge-routing.test.ts` (wann Wissen gesucht wird, Text, Orb und Agent je Werkzeug), `search.test.ts` (hybride Suche, Schwellen, Stichwort-Rückfall, aktuelle Vektoren).
 - `npm run eval:assistant`: zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer.
 
 ## Grenzen

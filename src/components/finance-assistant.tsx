@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Brain, CalendarClock, Check, CircleHelp, Columns2, History, Pencil, PiggyBank, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { Brain, CalendarClock, Check, CircleHelp, Columns2, History, Pencil, PiggyBank, Trash2, Undo2, X } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
-import { AssistantMark, ChatEmptyState, ComposerButton, MessageActions, MessageEnter, StatusLine, StreamingText } from "@/components/assistant-chat-parts";
+import { AgentAvatar, ChatEmptyState, ComposerButton, GlowFrame, MessageActions, MessageEnter, StatusLine, StreamingText, WorkingAvatar } from "@/components/assistant-chat-parts";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { HomeOfficeCard } from "@/components/homeoffice-card";
@@ -27,7 +27,7 @@ import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOper
 import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
 import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, wantsKnowledge, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
-import { statusFor, workStatus } from "@/lib/assistant/status";
+import { statusFor, workStatus, type WorkStatus } from "@/lib/assistant/status";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
 import type { LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
 import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
@@ -56,7 +56,10 @@ const learnableTools: AssistantTool[] = ["query", "accounts", "amex", "budget", 
 type KnowledgeHit = { topic: string; title: string; text: string; url: string; source: string };
 
 // Shown before the first own message; each one goes straight to a tool.
-const starterPrompts = ["Was habe ich diesen Monat ausgegeben?", "Zeige mir meine Verträge", "Wie viel ist noch frei?"];
+const starterPrompts: { text: string; agent: AgentId }[] = [
+  { text: "Was habe ich diesen Monat ausgegeben?", agent: "transactions" }, { text: "Zeige mir meine Verträge", agent: "contracts" },
+  { text: "Wie viel ist noch frei?", agent: "budget" },
+];
 const extraSources: string[] = [...extraSourceSchema.options];
 // Natural next questions after an answer, shown as quick replies.
 const followUps: Partial<Record<AssistantTool, string[]>> = {
@@ -159,7 +162,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const [busy, setBusy] = useState(false);
   const [streaming, setStreamingState] = useState<string>();
   // The live status line while an answer is being worked on, and the handle that stops it.
-  const [status, setStatus] = useState<string>();
+  const [status, setStatus] = useState<WorkStatus>();
   const activeRun = useRef<AbortController | null>(null);
   const streamed = useRef<string | undefined>(undefined);
   const setStreaming = (text?: string) => { streamed.current = text; setStreamingState(text); };
@@ -174,6 +177,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // The agent whose answer is streaming right now, for the label above the growing text.
   const [answering, setAnswering] = useState<AgentId>();
   const started = messages.some((message) => message.role === "user");
+  // The newest answer's bot is awake; a result waiting for "Bestätigen" glows until it is decided.
+  const newest = busy ? undefined : messages.findLast((message) => message.role === "assistant");
+  const liveId = newest?.id;
+  const pendingId = newest?.status === "preview" && (newest.change || newest.draft) ? newest.id : undefined;
   // Before the first question the greeting stays in view; afterwards the newest message does.
   useEffect(() => { if (started) endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [started, messages.length, busy, streaming, status]);
 
@@ -336,7 +343,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
   async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal) {
     try {
-      setStatus(workStatus.answer);
+      setStatus({ ...workStatus.answer, agent });
       const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
@@ -418,7 +425,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   // The local finance knowledge (hybrid search on the server, no internet); nothing found or no answer means no extra context.
   async function searchLocalKnowledge(question: string, signal?: AbortSignal): Promise<LocalKnowledgeSearch | undefined> {
-    setStatus(workStatus.knowledge);
+    setStatus((current) => ({ ...workStatus.knowledge, agent: current?.agent }));
     try {
       const response = await fetch("/api/ai/knowledge", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500) }), signal: withTimeout(4000, signal) });
@@ -629,7 +636,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       reply = { tool: learned.tool, source: "Regel" };
       update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, learned.tool) }));
     } else try {
-      setStatus(workStatus.route);
+      // When the rules already know the specialist, its bot and step show while the server still reads the details.
+      const early = pending ? undefined : routeByRules(work, [...goals, ...planned]);
+      setStatus(early?.tool && !isDraftTool(early.tool) ? statusFor(early.tool, early.agent) : workStatus.route);
       const response = await fetch("/api/ai/assistant", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
         body: JSON.stringify({ message: work, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned } }),
@@ -837,16 +846,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         {messages.map((message) => <MessageEnter key={message.id} animate={!initialIds.has(message.id)} mine={message.role === "user"}
           className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
           data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
-          <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} faded={message.status === "dismissed"}>
+          <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} faded={message.status === "dismissed"}
+            live={message.id === liveId}>
             {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
               onResult={storageError ? undefined : (result) => addResult(result, "Regel")} />}
           </Bubble>
           {message.card?.kind === "homeoffice" && <div className="pl-11">
             <HomeOfficeCard card={message.card} state={state} disabled={!!storageError} onResult={(result) => addResult(result, "Regel")} /></div>}
           {message.change && message.status !== "dismissed" && <div className="pl-11">
-            <ChangeCard message={message} disabled={!!storageError} onApply={() => applyChange(message)}
-              onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
-              onUndo={() => message.change?.logId && undo(message.change.logId)} />
+            <GlowFrame kind="pending" active={message.status === "preview" && message.id === pendingId}>
+              <ChangeCard message={message} disabled={!!storageError} onApply={() => applyChange(message)}
+                onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
+                onUndo={() => message.change?.logId && undo(message.change.logId)} />
+            </GlowFrame>
           </div>}
           {message.undoId && !message.draft && !message.change && message.status !== "dismissed" && <div className="flex flex-wrap items-center gap-2 pl-11">
             {message.status === "preview" ? <>
@@ -863,11 +875,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
                 const question = missingQuestion(draft);
                 setMessage(message.id, { draft, status: question ? "question" : "preview", text: question ?? previewText(draft) });
               }} />
-              : <DraftCard key={`${message.id}:${JSON.stringify(message.draft)}`} message={message} state={state} dashboard={dashboard} disabled={!!storageError}
-                onEdit={() => setEditing(message.id)}
-                onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts gespeichert.")}
-                onCreateGoal={(draft) => createGoal(message, draft)} onCreateExpense={(draft) => createExpense(message, draft)}
-                onUndo={() => message.undoId && undo(message.undoId)} />}
+              : <GlowFrame kind="pending" active={message.status === "preview" && message.id === pendingId}>
+                <DraftCard key={`${message.id}:${JSON.stringify(message.draft)}`} message={message} state={state} dashboard={dashboard} disabled={!!storageError}
+                  onEdit={() => setEditing(message.id)}
+                  onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts gespeichert.")}
+                  onCreateGoal={(draft) => createGoal(message, draft)} onCreateExpense={(draft) => createExpense(message, draft)}
+                  onUndo={() => message.undoId && undo(message.undoId)} />
+              </GlowFrame>}
           </div>}
           {message.suggestions && !busy && message.id === messages.at(-1)?.id &&
             <QuickReplies items={message.suggestions} disabled={!!storageError} onPick={(text) => void send(undefined, text)} />}
@@ -879,14 +893,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
             feedback={message.feedback} onFeedback={message.asked && !message.correcting ? (value) => giveFeedback(message, value) : undefined} />}
         </MessageEnter>)}
         {busy && <MessageEnter animate mine={false} className="flex items-start gap-3" aria-busy="true">
-          <AssistantMark />
-          {streaming ? <div className="min-w-0 max-w-[85%] rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
-            <StatusLine text={status ?? workStatus.answer} className="mb-1.5 flex" />
-            <span className="sr-only">Assistent: </span><StreamingText text={streaming} />
-            {answering && answering !== "general" && <span className="mt-1.5 flex items-center gap-1 text-2xs text-muted-foreground">
-              <Sparkles aria-hidden="true" className="size-3" />{agentLabel[answering]} · KI</span>}
-          </div>
-            : <div className="rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine text={status ?? workStatus.read} /></div>}
+          <WorkingAvatar agent={status?.agent ?? answering ?? "general"} />
+          <GlowFrame kind="working" active className={streaming ? "min-w-0 max-w-[85%]" : "min-w-0"}>
+            {streaming ? <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
+              <StatusLine status={status ?? workStatus.answer} className="mb-1.5 flex" />
+              <span className="sr-only">Assistent: </span><StreamingText text={streaming} />
+              {answering && answering !== "general" && <span className="mt-1.5 block text-2xs text-muted-foreground">{agentLabel[answering]} · KI</span>}
+            </div>
+              : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status ?? workStatus.read} /></div>}
+          </GlowFrame>
         </MessageEnter>}
         <div ref={endRef} />
       </FinancialData>
@@ -925,8 +940,8 @@ function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: 
   </div>;
 }
 
-function Bubble({ role, text, source, agent, sources, faded, children }: {
-  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; faded?: boolean; children?: React.ReactNode;
+function Bubble({ role, text, source, agent, sources, faded, live, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; faded?: boolean; live?: boolean; children?: React.ReactNode;
 }) {
   if (role === "user") return <div className={cn("flex justify-end", faded && "opacity-60")}>
     <div className="min-w-0 max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-card sm:max-w-[75%]">
@@ -934,12 +949,13 @@ function Bubble({ role, text, source, agent, sources, faded, children }: {
     </div>
   </div>;
   const label = [agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? "KI" : ""].filter(Boolean).join(" · ");
+  // Only the newest answer's bot stays awake; older ones keep their pose, so a long chat costs no extra frames.
   return <div className={cn("flex items-start gap-3", faded && "opacity-60")}>
-    <AssistantMark />
+    <AgentAvatar agent={agent ?? "general"} still={!live} className="mt-0.5" />
     <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
       <span className="sr-only">Assistent: </span><span className="whitespace-pre-line">{text}</span>
       {(label || sources?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
-        {label && <span className="inline-flex items-center gap-1">{source === "KI" && <Sparkles aria-hidden="true" className="size-3" />}{label}</span>}
+        {label && <span>{label}</span>}
         {sources?.length ? <span>Wissen: {sources.join(" · ")}</span> : null}
       </span>}
       {children}

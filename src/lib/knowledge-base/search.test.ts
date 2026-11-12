@@ -51,6 +51,7 @@ describe("hybrid knowledge search", () => {
 describe("knowledge helpers", () => {
   it("extracts search words without filler words and with light stemming", () => {
     expect(keywordTerms("Was ist eigentlich ein ETF?")).toEqual(["etf"]);
+    expect(keywordTerms("Wie viel sollte man als Notgroschen haben?")).toEqual(["notgrosch"]);
     expect(keywordTerms("Wann kann ich meine Versicherungen kündigen?")).toEqual(["versicher", "kündig"]);
   });
 
