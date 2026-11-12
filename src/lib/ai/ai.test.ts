@@ -10,7 +10,7 @@ import {
 import { brandKey, decideReviewWithEvidence, similarAmount } from "./evidence";
 import { isLoopbackUrl } from "./config";
 import { logoFileName } from "./logo-finder";
-import { aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
+import { aiCategoryExamples, aiReviewCandidates, isAiEligibleReview } from "./review-candidates";
 
 const booking = (id: string, overrides: Partial<Transaction> = {}): Transaction => ({
   id, date: "2026-09-03", bank: "Raiffeisen", pocket: "Testkonto",
@@ -116,6 +116,9 @@ describe("evidence gate", () => {
     expect(brandKey({ description: "1051861566294/PAYPAL" })).toBeUndefined();
     expect(brandKey({ description: "PAYPAL *PAYPAL EEA 07517591951" })).toBeUndefined();
     expect(brandKey({ description: "HOTEL SCHLOSS SEEFELS" })).toBe("hotel schloss");
+    // Revolut's transfer direction is no brand: "To EUR MB:…" pocket moves must not look like one shop.
+    expect(brandKey({ description: "To Muster Autohaus GmbH & Co KG" })).toBe("to muster");
+    expect(brandKey({ description: "To EUR MB:0f1e2d3c-4b5a-4697-8877-665544332211" })).toBeUndefined();
     expect(similarAmount(-4.23, -1.74)).toBe(true);
     expect(similarAmount(-9.22, -67)).toBe(false);
     expect(similarAmount(-5, 5)).toBe(false);
@@ -158,6 +161,28 @@ describe("evidence gate", () => {
     expect(decideReviewWithEvidence(state, "shell", input("SHELL 8387 VILLACH", -6.4), undefined)).toMatchObject({ accepted: false });
   });
 
+  it("follows the household's habit for shops that share a keyword", () => {
+    const trafik = (id: string, name: string, amount: number) => booking(id, {
+      description: `TRAFIK ${name} 1234`, amount, category: "Freizeit", categoryOverride: true, manualCategory: true, reviewed: true,
+    });
+    const state = withOpen([trafik("t1", "NORD", -12), trafik("t2", "SÜD", -13)], [
+      booking("usual", { description: "TRAFIK WEST 1234", amount: -14 }),
+      booking("tiny", { description: "TRAFIK OST 1234", amount: -2 }),
+    ]);
+    expect(decideReviewWithEvidence(state, "usual", input("TRAFIK WEST 1234", -14), undefined))
+      .toMatchObject({ accepted: true, category: "Freizeit", source: "Historie" });
+    // Too few comparable choices to decide, but enough to keep the fixed "Trafik = Shopping" guess away.
+    expect(decideReviewWithEvidence(state, "tiny", input("TRAFIK OST 1234", -2), undefined)).toMatchObject({ accepted: false });
+  });
+
+  it("refines a broad keyword rule the way the household does", () => {
+    const state = withOpen([booking("tank", {
+      description: "TANKSTELLE 1234", amount: -60, category: "Tanken", categoryOverride: true, manualCategory: true, reviewed: true,
+    })], [booking("open", { description: "TANKSTELLE 1234", amount: -55 })]);
+    expect(decideReviewWithEvidence(state, "open", input("TANKSTELLE 1234", -55), undefined))
+      .toMatchObject({ accepted: true, category: "Tanken", source: "Regel" });
+  });
+
   it("reads the shop behind PayPal and Klarna", () => {
     expect(providerMerchant("PAYPAL *RENOVARO 06136922270")).toBe("Renovaro");
     expect(providerMerchant("PAYPAL *G2A COM LTD 4029357733")).toBe("G2A");
@@ -195,6 +220,18 @@ describe("evidence gate", () => {
     ], [booking("open", { description: "KANZIANUS AP 2372", amount: -10.95 })]);
     expect(decideReviewWithEvidence(state, "open", input("KANZIANUS AP 2372", -10.95), answer("Freizeit", "KANZIANUS AP")))
       .toMatchObject({ accepted: false });
+  });
+
+  it("shows the model the household's decisions about the shops it asks for", () => {
+    const decided = (id: string, description: string, category: Transaction["category"]) =>
+      booking(id, { description, category, categoryOverride: true, manualCategory: true, reviewed: true });
+    const state = fixture([
+      decided("lunch", "HOTSPOT 1234", "Freizeit"),
+      ...Array.from({ length: 6 }, (_, index) => decided(`recent${index}`, `LADEN NUMMER${"ABCDEF"[index]}`, "Shopping")),
+    ]);
+    expect(aiCategoryExamples(state, 3).map((example) => example.text)).not.toContain("HOTSPOT 1234");
+    expect(aiCategoryExamples(state, 3, [{ text: "Zahlungsreferenz: HOTSPOT 1234 D1 03.03." }])[0])
+      .toEqual({ text: "HOTSPOT 1234", category: "Freizeit" });
   });
 
   it("does not call small station receipts fuel", () => {

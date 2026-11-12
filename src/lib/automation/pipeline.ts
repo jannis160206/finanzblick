@@ -329,9 +329,14 @@ export function enrichTransaction(
     hasRecurringFuelEvidence(row)
       ? "Tanken"
       : undefined);
-  if (unnamedPurpose && match.method === "none" && !confirmedName) {
+  // A confirmed name says who, not what for: the purpose still applies when the bank's own text
+  // carries it ("Hotspot"), but not when only the confirmed name does ("HOTSPOT 1234" named "HOTSPOT").
+  const ownPurpose = !confirmedName ? unnamedPurpose
+    : recurringLunchCategory(evidence.text, row.date, row.amount) ??
+      (unnamedFuelPurpose(evidence.text, row.amount) && hasRecurringFuelEvidence(row) ? "Tanken" : undefined);
+  if (unnamedPurpose && match.method === "none" && ownPurpose === unnamedPurpose) {
     return transactionSchema.parse({
-      ...withoutMerchantIdentity(row),
+      ...(confirmedName ? row : withoutMerchantIdentity(row)),
       merchantLogo: false,
       category: unnamedPurpose,
       categoryOverride: true,

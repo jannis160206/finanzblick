@@ -23,6 +23,7 @@
     "pwa:icons": "tsx scripts/pwa-icons.ts",
     "benchmark:calculation": "tsx scripts/benchmark-calculation.ts",
     "benchmark:recognition": "tsx --env-file-if-exists=.env.local scripts/statement-recognition-benchmark.ts",
+    "eval:categories": "tsx --env-file-if-exists=.env.local scripts/categorization-eval.ts",
     "lint": "biome lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

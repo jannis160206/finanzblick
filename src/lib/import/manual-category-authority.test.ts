@@ -5,7 +5,7 @@ import { canonicalCategory } from "@/lib/categories";
 import { exportWorkbook, parseWorkbook } from "@/lib/excel";
 import { createSeed } from "@/lib/seed";
 import { personalAmount, reconcileSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
-import { applyMerchantRules, merchantRuleKey, rememberMerchants } from "./merchant-rules";
+import { applyMerchantRules, isShopTransferRule, merchantRuleKey, rememberMerchants } from "./merchant-rules";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview, repairMerchantBookings } from "./review";
 import { approveReviewedBooking } from "./approve-review";
 import { statementFingerprint } from "./identity";
@@ -55,6 +55,14 @@ describe("authoritative per-booking category selections", () => {
   ] as const)("keeps mandatory automatic/learned protections for %s", (description, expected) => {
     for (const manualCategory of [undefined, false])
       expect(classify(booking({ description, date: "2026-09-14", category: "Gesundheit", categoryOverride: true, manualCategory })).category).toBe(expected);
+  });
+
+  it("keeps a learned Trafik rule instead of the Shopping default", () => {
+    expect(classify(booking({ description: "TRAFIK NORD", category: "Freizeit", categoryOverride: true })).category).toBe("Freizeit");
+    expect(classify(booking({
+      description: "TRAFIK NORD", category: "Freizeit", categoryOverride: true,
+      automaticCategoryEvidence: { method: "merchant", category: "Freizeit" },
+    })).category).toBe("Shopping");
   });
 
   it("derives fixed, transfer and planning flags from the selected purpose, not bank wording", () => {
@@ -192,5 +200,34 @@ describe("authoritative per-booking category selections", () => {
     const transfer = reconcileSharedHoliday([shared, { ...incoming, category: "Transfer" }]);
     expect(transfer.receivables[0].status).toBe("Bezahlt");
     expect(personalAmount(transfer.bookings[1])).toBe(0);
+  });
+});
+
+describe("transfer notes that name a shop", () => {
+  const purchase = booking({
+    id: "buy", bank: "Revolut", pocket: "Persönliches Konto", description: "BILLA", amount: -8.5,
+    category: "Lebensmittel", categoryOverride: true, merchantAlias: "BILLA", merchantMatch: "alias",
+    automaticCategoryEvidence: { method: "merchant", category: "Lebensmittel" },
+  });
+
+  it("does not learn that every purchase at the shop is a transfer", () => {
+    const transfer = manual({
+      id: "pocket", bank: "Revolut", pocket: "Sparen", amount: 10, category: "Transfer intern", merchantAlias: "BILLA",
+      description: "Billa To EUR MB:1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d",
+    });
+    const saved = rememberMerchants(fixture([transfer, purchase]), [transfer]);
+    expect(saved.merchantRules ?? []).not.toContainEqual(expect.objectContaining({ key: "revolut|billa" }));
+    expect(saved.transactions.find((row) => row.id === "buy")?.category).toBe("Lebensmittel");
+  });
+
+  it("repairs purchases an earlier shop transfer rule misfiled", () => {
+    const state = {
+      ...fixture([{ ...purchase, category: "Transfer intern" }]),
+      merchantRules: [{ key: "revolut|billa", category: "Transfer intern" as const }],
+    };
+    const repaired = repairMerchantBookings(state);
+    expect(repaired.merchantRules).toEqual([]);
+    expect(classify(repaired.transactions[0]).category).toBe("Lebensmittel");
+    expect(isShopTransferRule({ key: "trade republic|trade republic", category: "Transfer" })).toBe(false);
   });
 });

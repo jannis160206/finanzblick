@@ -19,7 +19,8 @@ const SENSITIVE: readonly Category[] = ["Transfer", "Transfer intern", "Rückers
 
 const HINTS: Partial<Record<Category, string>> = {
   "Lebensmittel": "Supermarkt-Einkauf (BILLA, SPAR, Hofer, Lidl, Penny)",
-  "Mittagessen": "Mittagessen unter der Woche, Kantine, Mensa",
+  "Mittagessen": "Mittagessen unter der Woche, Kantine, Mensa, Hotspot (ein Lokal, kein WLAN)",
+  "Cafés & Snacks": "Café, Bäckerei, Snack; kleine Beträge an Tankstellen",
   "Restaurants": "Restaurant, Bar, Gasthaus, Fast Food vor Ort",
   "Lieferdienste": "Essenslieferung (Wolt, Foodora, Lieferando)",
   "Guthabenkarten": "Gutscheine, Prepaid-/Spielguthaben",

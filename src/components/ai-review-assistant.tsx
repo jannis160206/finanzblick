@@ -202,7 +202,7 @@ export function AiReviewAssistant() {
       try {
         const { results } = await postJson<{ results: AiCategorization[] }>("/api/ai/categorize", {
           bookings: batch.map((candidate) => candidate.input),
-          examples: aiCategoryExamples(latest.current),
+          examples: aiCategoryExamples(latest.current, undefined, batch.map((candidate) => candidate.input)),
         }, signal);
         const byRef = new Map(results.map((result) => [result.ref, result]));
         // Shops nobody knows yet: their industry from Wikidata or their website is independent evidence.

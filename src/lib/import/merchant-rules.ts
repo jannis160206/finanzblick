@@ -3,7 +3,8 @@ import { type AppState, type Transaction } from "@/lib/types";
 import { ambiguousMerchant, hasTerminalText, merchantKeyText, merchantText, recoverMerchant, unresolvedTerminal } from "./merchant-description";
 import { stripBankMetadata } from "./bank-description";
 import { payrollCategory } from "@/lib/payroll";
-import { canonicalCategory } from "@/lib/categories";
+import { bankOperation } from "@/lib/bank-operation";
+import { canonicalCategory, knownMerchantCategory, type Category } from "@/lib/categories";
 import { isIncomeCategory } from "@/lib/fixed";
 import { normalizeAccount } from "@/lib/accounts";
 import { hasCategoryChoice, hasManualCategory } from "@/lib/manual-category";
@@ -178,6 +179,30 @@ export function rememberMerchantRename(
   });
 }
 
+const isTransferCategory = (category: Category) => category === "Transfer" || category === "Transfer intern";
+const namesShop = (text: string) => {
+  const known = knownMerchantCategory(text, -1);
+  return !!known && known !== "Prüfen" && !isTransferCategory(known) && !isIncomeCategory(known);
+};
+
+// A shop is never a transfer. Such a rule was learned from a transfer whose note named the shop
+// ("Billa To EUR MB:…" was saved as Transfer intern) and must not turn every purchase there into one.
+export function isShopTransferRule(rule: { key: string; category: Category; identityOnly?: boolean }): boolean {
+  if (rule.identityOnly || !isTransferCategory(canonicalCategory(rule.category))) return false;
+  const key = storedMerchantKey(rule.key);
+  return namesShop(key.slice(key.indexOf("|") + 1));
+}
+
+// The purchase category an automatic shop booking had before a shop transfer rule overwrote it.
+export function misfiledShopTransfer(row: Transaction): Category | undefined {
+  if (hasCategoryChoice(row) || row.is_locked || !row.categoryOverride || !isTransferCategory(canonicalCategory(row.category)))
+    return undefined;
+  const evidence = row.automaticCategoryEvidence?.category;
+  if (!evidence || evidence === "Prüfen" || isTransferCategory(evidence) || isIncomeCategory(evidence)) return undefined;
+  if (bankOperation(row)?.kind === "internal-transfer") return undefined;
+  return namesShop([row.merchantAlias, row.description].filter(Boolean).join(" ")) ? evidence : undefined;
+}
+
 type ClassifyBooking = (row: Transaction) => ReturnType<typeof classify>;
 export type MerchantChoice = Pick<Transaction, "category" | "fixedCost" | "merchantAlias"> & { identityOnly?: boolean };
 
@@ -219,6 +244,7 @@ export function activeMerchantRules(state: AppState) {
   }
   return (state.merchantRules ?? []).filter(rule => {
     if (rule.identityOnly) return true;
+    if (isShopTransferRule(rule)) return false;
     const key = storedMerchantKey(rule.key);
     // Conflicting unnamed purposes stay open as automatic history grows.
     if (!rule.merchantAlias &&
@@ -261,7 +287,8 @@ function merchantChoices(rows: Transaction[], classifyBooking: ClassifyBooking =
     if (
       isSpecificMerchantKey(key) &&
       (row.merchantAlias || (!ambiguousMerchant(row) && !unresolvedTerminal(row.description))) &&
-      (!classifyBooking(row).isTransfer || chosenTransfer(row))
+      (!classifyBooking(row).isTransfer || chosenTransfer(row)) &&
+      !isShopTransferRule({ key, category: row.category })
     ) {
       const choice = {
         category: canonicalCategory(row.category),

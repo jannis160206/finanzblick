@@ -32,6 +32,22 @@ const booking = (
   ...patch,
 });
 const index = new MerchantIndex(seedMerchants);
+
+describe("Revolut money boxes", () => {
+  it("treats a pocket move as an internal transfer, even when its note names a shop", () => {
+    for (const description of [
+      "To EUR MB:0f1e2d3c-4b5a-4697-8877-665544332211",
+      "Billa To EUR MB:1a2b3c4d-5e6f-4a1b-9c2d-3e4f5a6b7c8d",
+    ]) {
+      const row = booking(description, {
+        bank: "Revolut", amount: 2.6, rawDetails: [description, "Bankverbindung (Enable Banking)"],
+      });
+      expect(bankOperation(row)).toEqual({ kind: "internal-transfer", category: "Transfer intern" });
+      expect(classify(row)).toMatchObject({ category: "Transfer intern", isTransfer: true });
+      expect(enrichTransaction(row, index)).toMatchObject({ category: "Transfer intern", merchantAlias: undefined });
+    }
+  });
+});
 const saturatedOperationIndex = (description: string) => {
   const text = normalizeMerchantText(description);
   return new MerchantIndex([

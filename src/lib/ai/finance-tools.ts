@@ -88,7 +88,7 @@ export async function categorizeOpenReviews(
       [candidate.reviewId, decideReviewWithEvidence(state, candidate.reviewId, candidate.input, undefined)]));
     const ask = batch.filter((candidate) => !direct.get(candidate.reviewId)?.accepted);
     const answers = ask.length
-      ? await categorizeBookings(ask.map((candidate) => candidate.input), aiCategoryExamples(state), { signal: options.signal })
+      ? await categorizeBookings(ask.map((candidate) => candidate.input), aiCategoryExamples(state, undefined, ask.map((candidate) => candidate.input)), { signal: options.signal })
       : [];
     const decisions: AiReviewDecision[] = [];
     const suggestions: AiSuggestionEntry[] = [];

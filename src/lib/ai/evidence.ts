@@ -1,5 +1,5 @@
 import { classify } from "@/lib/calc";
-import { allCategories, canonicalCategory, knownMerchantCategory, type Category } from "@/lib/categories";
+import { allCategories, canonicalCategory, knownMerchantCategory, merchantKeywords, type Category } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { isIncomeCategory } from "@/lib/fixed";
 import type { AppState, Transaction } from "@/lib/types";
@@ -20,6 +20,8 @@ const GENERIC_WORDS = new Set([
   "tankstelle", "pizzeria", "trafik", "kiosk", "markt", "filiale", "fil", "garage", "parkgarage", "parking",
   "the", "la", "le", "il", "el", "das", "der", "die", "zum", "zur", "am", "st", "sankt", "online", "sepa", "pos",
   "kartenzahlung", "zahlung", "gutschrift", "lastschrift", "überweisung", "ueberweisung", "dauerauftrag",
+  // Transfer directions and currencies ("To EUR …", "From …") name no brand.
+  "to", "from", "payment", "transfer", "von", "an", "eur", "usd", "gbp", "chf",
 ]);
 const PAYMENT_WORDS = /^(?:paypal|klarna|sumup|stripe|adyen|mollie|curve|revolut|wise|google|apple)$/;
 const PROVIDER_PREFIX = /^(?:paypal|sumup|sq|zettle|klarna)\s*\*\s*/i;
@@ -109,13 +111,62 @@ export function refundOrigin(state: AppState, draft: BrandSource & Pick<Transact
   return exact ?? partial;
 }
 
+type KeywordRow = { id: string; amount: number; category: Category; keywords: string[] };
+const keywordRows = new WeakMap<readonly Transaction[], KeywordRow[]>();
+
+function confirmedKeywordRows(state: AppState): KeywordRow[] {
+  const cached = keywordRows.get(state.transactions);
+  if (cached) return cached;
+  const rows = state.transactions.flatMap((row): KeywordRow[] => {
+    // The user's own choice, or their learned rule: an override the automatic evidence did not produce.
+    const learned = row.categoryOverride && row.automaticCategoryEvidence?.category !== row.category;
+    if (row.aiAssigned || !(hasCategoryChoice(row) || learned)) return [];
+    const category = canonicalCategory(row.category);
+    if (category === "Prüfen") return [];
+    const keywords = merchantKeywords([row.merchantAlias, row.rawDescription ?? row.description].filter(Boolean).join(" "));
+    return keywords.length ? [{ id: row.id, amount: row.amount, category, keywords }] : [];
+  });
+  keywordRows.set(state.transactions, rows);
+  return rows;
+}
+
+export type KeywordHabit = {
+  /** Choices at a similar amount: a 4 € snack and a 70 € tank at a station differ. */
+  similar: Map<Category, number>;
+  /** Choices at any amount of the same sign, for contradiction checks. */
+  any: Set<Category>;
+};
+
+// How the household itself filed shops that share a keyword-rule word ("Trafik", "OMV").
+// The fixed rule's default (Trafik = Shopping) is a guess; this is the household's habit.
+export function keywordHabit(state: AppState, draft: Pick<Transaction, "id" | "amount">, text: string): KeywordHabit {
+  const habit: KeywordHabit = { similar: new Map(), any: new Set() };
+  const words = new Set(merchantKeywords(text));
+  if (!words.size) return habit;
+  const open = openReviewIds(state);
+  for (const row of confirmedKeywordRows(state)) {
+    if (row.id === draft.id || open.has(row.id) || Math.sign(row.amount) !== Math.sign(draft.amount) ||
+      !row.keywords.some((word) => words.has(word))) continue;
+    habit.any.add(row.category);
+    if (similarAmount(row.amount, draft.amount))
+      habit.similar.set(row.category, (habit.similar.get(row.category) ?? 0) + 1);
+  }
+  return habit;
+}
+
+// One category at a similar amount, chosen at least twice and never contradicted there.
+function habitualCategory(habit: KeywordHabit): Category | undefined {
+  const [entry] = habit.similar;
+  return habit.similar.size === 1 && entry[1] >= 2 ? entry[0] : undefined;
+}
+
 export function categoryFitsSign(category: Category, amount: number) {
   if (category.startsWith("Transfer")) return true;
   return (isIncomeCategory(category) || category === "Rückerstattungen") === amount > 0;
 }
 
 // The fixed bank rule decides on its own when nothing the household confirmed contradicts it.
-function usableRule(input: AiBookingInput, history: BrandHistory): Category | undefined {
+function usableRule(input: AiBookingInput, history: BrandHistory, habit: KeywordHabit): Category | undefined {
   const known = knownMerchantCategory(input.text, input.amount);
   if (!known || known === "Prüfen") return undefined;
   const rule = canonicalCategory(known);
@@ -123,8 +174,11 @@ function usableRule(input: AiBookingInput, history: BrandHistory): Category | un
   // Small station receipts are snacks or car wash, not fuel.
   if ((rule === "Mobilität" || rule === "Tanken") && Math.abs(input.amount) < 15) return undefined;
   const fits = (category: Category) => category === rule || !!RULE_REFINEMENTS[rule]?.includes(category);
-  if ([...history.categories.keys(), ...history.confirmedCategories].some((category) => !fits(category))) return undefined;
-  return rule;
+  if ([...history.categories.keys(), ...history.confirmedCategories, ...habit.any].some((category) => !fits(category)))
+    return undefined;
+  // The household's usual refinement ("Tanken" for a full tank) beats the broad rule ("Mobilität").
+  const [usual] = [...habit.similar].sort((left, right) => right[1] - left[1]);
+  return usual && usual[0] !== rule && fits(usual[0]) ? usual[0] : rule;
 }
 
 export type EvidenceSource = "Historie" | "Regel" | "Erstattung" | "Branche";
@@ -173,7 +227,15 @@ export function decideWithEvidence(
       detail: `${partial ? "Teil-Erstattung zum " : ""}Kauf vom ${origin.date} (${canonicalCategory(classify(origin).category)})`,
       ...(alias ? { merchantAlias: alias } : {}) };
   }
-  const rule = usableRule(input, history);
+  const habit = keywordHabit(state, draft, input.text);
+  const habitual = habitualCategory(habit);
+  if (habitual && categoryFitsSign(habitual, input.amount) && seen.every((item) => item === habitual) &&
+    [...history.confirmedCategories].every((item) => item === habitual)) {
+    const alias = ownAlias() ?? (!draft.merchantAlias ? shopName : undefined);
+    return { accepted: true, category: habitual, source: "Historie", detail: "wie ähnliche Geschäfte im Haushalt",
+      ...(alias ? { merchantAlias: alias } : {}) };
+  }
+  const rule = usableRule(input, history, habit);
   if (rule) {
     const refined = answer?.accepted && answer.category !== rule && RULE_REFINEMENTS[rule]?.includes(canonicalCategory(answer.category))
       ? canonicalCategory(answer.category) : rule;
@@ -181,7 +243,7 @@ export function decideWithEvidence(
     return { accepted: true, category: refined, source: "Regel", ...(alias ? { merchantAlias: alias } : {}) };
   }
   const reject = (reason: string): EvidenceDecision => {
-    const suggestion = suggestCategory(state, draft, history, input, answer, shopName, context);
+    const suggestion = suggestCategory(state, draft, history, habit, input, answer, shopName, context);
     return { accepted: false, reason, ...(suggestion ? { suggestion } : {}) };
   };
   // A shop OpenStreetMap knows by name and place needs no model; the household's own choices still win.
@@ -216,13 +278,15 @@ export function decideWithEvidence(
 // What the review dialog pre-fills: the household's own majority, else the bank rule,
 // else a recurring PayPal amount, else the merchant's industry, else the model.
 function suggestCategory(
-  state: AppState, draft: MatcherDraft, history: BrandHistory, input: AiBookingInput,
-  answer: AiCategorization | undefined, shopName: string | undefined, context: EvidenceContext,
+  state: AppState, draft: MatcherDraft, history: BrandHistory, habit: KeywordHabit,
+  input: AiBookingInput, answer: AiCategorization | undefined, shopName: string | undefined, context: EvidenceContext,
 ): AiSuggestionDraft | undefined {
   const name = answer?.merchant && !isPaymentProviderName(answer.merchant) ? answer.merchant : shopName;
   const withName = (suggestion: AiSuggestionDraft): AiSuggestionDraft => name ? { ...suggestion, merchantAlias: name } : suggestion;
   const majority = [...history.categories].sort((left, right) => right[1] - left[1])[0]?.[0];
   if (majority && categoryFitsSign(majority, input.amount)) return withName({ category: majority, source: "Historie" });
+  const usual = [...habit.similar].sort((left, right) => right[1] - left[1])[0]?.[0];
+  if (usual && categoryFitsSign(usual, input.amount)) return withName({ category: usual, source: "Historie" });
   const known = knownMerchantCategory(input.text, input.amount);
   if (known && known !== "Prüfen" && categoryFitsSign(canonicalCategory(known), input.amount))
     return withName({ category: canonicalCategory(known), source: "Regel" });

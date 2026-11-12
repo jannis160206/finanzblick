@@ -87,6 +87,16 @@ const merchantCategories: [RegExp, Category][] = [
   [/\ba1\b|handy(?:vertrag)?|telekom/i, "Telefon & Internet"],
   [/\bbarber\b/i, "Körperpflege"],
 ];
+// The words a fixed keyword rule matched ("trafik", "omv", "tankstelle"): shops sharing such
+// a word are comparable, so the household's own choices for them can refine the rule.
+export function merchantKeywords(text: string): string[] {
+  const words = new Set<string>();
+  for (const [pattern] of [...merchantCategories, ...suggestions]) {
+    const match = pattern.exec(text)?.[0].normalize("NFKC").toLocaleLowerCase("de-AT").replace(/\s+/g, " ").trim();
+    if (match) words.add(match);
+  }
+  return [...words];
+}
 // Contradictory merchant signals are not a reason to choose the first regex.
 const lodging = /\bhotel\b|\bhostel\b|\bairbnb\b|booking\.com|\bmotel\b/i;
 export function knownMerchantCategory(text: string, amount: number): Category | undefined {

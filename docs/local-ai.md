@@ -71,7 +71,7 @@ Optionale Variablen in `.env.local`:
    - Der genannte Händler kommt im Buchungstext nicht vor, etwa „VILLACH“ als Ort statt H&M.
    - Der Händlername beginnt mit dem Ort am Ende des Kartentexts, etwa „VILLACH“ bei „VILLACH ATRIO SHOPPING VILLACH“.
    - Tanken unter 10 € wird abgelehnt, weil kleine Tankstellenbeträge meist Snacks sind.
-5. Danach folgt das Beleg-Gate in `src/lib/ai/evidence.ts`. Es prüft in dieser Reihenfolge, und die ersten drei Stufen brauchen kein Modell:
+5. Danach folgt das Beleg-Gate in `src/lib/ai/evidence.ts`. Es prüft in dieser Reihenfolge, und die Stufen bis einschließlich fester Händlerregel brauchen kein Modell:
    - **Historie:** Alle bisherigen Buchungen des Händlers mit demselben Vorzeichen liegen in einer Kategorie, und mindestens eine davon ist bestätigt. Dann gilt diese Kategorie.
    - **Erstattung:** Eine Gutschrift derselben Marke (höchstens 180 Tage nach dem Kauf) übernimmt die Kategorie des Kaufs. Exakte Beträge haben Vorrang. Kleinere Beträge zählen als Teil-Erstattung, etwa „OBI SAGT DANKE +19,51 €“. Der Kauf muss schon entschieden sein; ist er selbst noch offen, folgt die Gutschrift, sobald er bestätigt ist.
    - **Feste Bank-Paare** (`src/lib/ai/booking-matchers.ts`):
@@ -80,7 +80,9 @@ Optionale Variablen in `.env.local`:
      - Amex „SONSTIGE GUTSCHRIFT“ / „UMBUCHUNG DER BELASTUNG“ → Rückerstattungen, wenn genau eine Amex-Abbuchung desselben Betrags in den 30 Tagen davor liegt.
      - Anonyme PayPal-Gutschrift („YYW…/PAYPAL“) → Rückerstattungen, wenn eine PayPal-Abbuchung desselben Betrags am selben Konto höchstens 60 Tage davor liegt.
      - Überweisung von Raphael mit Notiz → Kostenbeteiligung in der passenden Kategorie (Tanken, Cafés & Snacks, Urlaub, Parken & Maut, Geschenke, Restaurants, Lebensmittel, Shopping, Energie). Nur ein Stichwort darf passen. Rückzahlungen geteilter Buchungen bleiben dem Ausgleich zugeordnet.
-   - **Feste Händlerregel:** Die Regel aus `categories.ts` gilt direkt, etwa dm → Drogerie oder G2A → Guthabenkarten. Das Modell darf sie nur verfeinern (Mobilität → Tanken). Die Regel gilt nicht, wenn das Vorzeichen nicht passt, wenn Mobilität oder Tanken unter 15 € liegt oder wenn bestätigte Buchungen des Händlers eine andere Kategorie haben.
+   - **Gewohnheit:** Geschäfte, die ein Stichwort der festen Regeln teilen (etwa „Trafik“, „OMV“, „Tankstelle“), werden über die Entscheidungen des Nutzers und seiner Regeln verglichen (`keywordHabit`). Hat der Haushalt bei ähnlichem Betrag mindestens zweimal dieselbe Kategorie gewählt und nie eine andere, gilt sie, etwa Trafik → Freizeit statt Shopping.
+   - **Feste Händlerregel:** Die Regel aus `categories.ts` gilt direkt, etwa dm → Drogerie oder G2A → Guthabenkarten. Das Modell darf sie nur verfeinern (Mobilität → Tanken); die übliche Verfeinerung des Haushalts bei ähnlichem Betrag hat Vorrang. Die Regel gilt nicht, wenn das Vorzeichen nicht passt, wenn Mobilität oder Tanken unter 15 € liegt oder wenn bestätigte Buchungen des Händlers bzw. Geschäfte mit demselben Stichwort eine andere Kategorie haben.
+   - Richtungswörter und Währungen („To EUR …“, „From …“) gelten nicht als Marke. Revolut-Pocket-Überweisungen („To EUR MB:…“) sind interne Umbuchungen, auch mit einer Notiz wie „Billa“ davor. Eine Transfer-Regel für ein Geschäft mit bekannter Einkaufskategorie wird nie gelernt oder angewandt; vorhandene werden beim nächsten Speichern entfernt und betroffene Einkäufe wiederhergestellt.
    - **Internet (OpenStreetMap):** Für Kartenzahlungen an unbekannten Geschäften liest `src/lib/ai/web-categories.ts` Name, Ort und Postleitzahl aus dem Banktext (etwa „MARTIN AUER ATRIOVIL VILLACH 9500“). `src/lib/ai/industry.ts` fragt dann OpenStreetMap (Nominatim) nach dem Geschäftstyp unter diesem Namen an diesem Ort, etwa `amenity=pharmacy` → Gesundheit. Läuft ohne Modell, siehe [Internet-Kategorisierung](#internet-kategorisierung).
    - **Branche:** Findet OpenStreetMap nichts, sucht `industry.ts` die Branche auf Wikidata (genau ein Eintrag mit exakt gleichem Namen) oder auf der Startseite des Shops (`www.<name>.de/.at/.com`, nur HTTPS, keine fremden oder geparkten Domains). Stimmen Branche und Modell überein, wird zugeordnet; ohne Modell wird sie nur vorgeschlagen. Vorübergehende Fehler wie Drosselung werden nicht zwischengespeichert.
    - Alles andere bleibt zur manuellen Prüfung offen und erhält einen Vorschlag.
@@ -91,10 +93,11 @@ Optionale Variablen in `.env.local`:
    - **Abo-Vorschlag:** Derselbe anonyme PayPal-Betrag (ab 1,50 €) in mindestens drei Monaten wird als „Abonnements“ vorgeschlagen, aber nicht automatisch übernommen.
 7. **Vorschläge im Prüfdialog:** Für jede offene Prüfung wird ein Vorschlag aus Historie, Regel, Abo-Muster, Branche oder Modell (ab 50 % Sicherheit) in `appState.aiSuggestions` gespeichert. Der Dialog füllt die Kategorie damit vor; ein Klick bestätigt. Bestätigte Buchungen zählen danach als Historie.
 8. **Gruppen:** Offene Prüfungen derselben Marke und Richtung (ab zwei) erscheinen als Gruppe. „Alle N übernehmen“ ordnet die ganze Gruppe mit einer Entscheidung zu, „Einzeln prüfen“ zeigt die Buchungen einzeln.
-9. Übernommene Antworten werden committet, ohne dass eine Händler- oder Namensregel entsteht. Sie werden nie auf gleichnamige andere Buchungen übertragen. Die Buchung erhält `aiAssigned: true`. Eine manuelle Kategorieänderung entfernt die Markierung.
-10. Das Modell antwortet als JSON-Liste. Fehlerhafte Einträge werden einzeln verworfen, und fehlende Antworten werden einzeln nachgefragt.
-11. Für neu erkannte Händler wird das Logo gesucht und privat in `Logo/` abgelegt. Der Live-Logo-Sync übernimmt es.
-12. Ein Hinweis meldet, wie viele Buchungen zugeordnet wurden und wie viele zur manuellen Prüfung bleiben.
+9. Das Modell sieht als Beispiele zuerst die Entscheidungen des Haushalts zu den gefragten Geschäften (gemeinsame Wörter, `aiCategoryExamples`), danach die jüngsten.
+10. Übernommene Antworten werden committet, ohne dass eine Händler- oder Namensregel entsteht. Sie werden nie auf gleichnamige andere Buchungen übertragen. Die Buchung erhält `aiAssigned: true`. Eine manuelle Kategorieänderung entfernt die Markierung.
+11. Das Modell antwortet als JSON-Liste. Fehlerhafte Einträge werden einzeln verworfen, und fehlende Antworten werden einzeln nachgefragt.
+12. Für neu erkannte Händler wird das Logo gesucht und privat in `Logo/` abgelegt. Der Live-Logo-Sync übernimmt es.
+13. Ein Hinweis meldet, wie viele Buchungen zugeordnet wurden und wie viele zur manuellen Prüfung bleiben.
 
 Nie automatisch bearbeitet werden Prüfungen mit Importproblemen, OCR-Hinweisen, fehlendem Betrag oder Datum, Amex-Screenshots und fehlendem POS-Händler. Diese brauchen Daten vom Nutzer.
 
@@ -441,5 +444,7 @@ Buchungstexte, Händlernamen und Web-Inhalte (Wikipedia, Wikidata, OSM) gelten a
 npm run eval:assistant              # goldene Fragen + Injection-Tests gegen das lokale Modell
 npm run eval:assistant -- --min=90  # Mindest-Trefferquote in Prozent
 ```
+
+Die Genauigkeit der Kategorisierung misst `npm run eval:categories` auf den echten Buchungen: Jeder Monat wird wie ein Import nachgespielt, mit `--model` inklusive KI-Prüfung. Details und Ergebnisse stehen in [CATEGORIZATION-EVAL.md](CATEGORIZATION-EVAL.md).
 
 Die Fälle stehen in `src/lib/assistant/eval-cases.ts`, die grenzwertigen Orchestrator-Fälle in `agentCases`. Die Ausgabe nennt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer. `eval-cases.test.ts` prüft in `npm test` zusätzlich, dass die Regeln allein nie ein falsches Werkzeug oder einen falschen Spezialisten wählen.

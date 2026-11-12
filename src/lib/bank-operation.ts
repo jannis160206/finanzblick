@@ -43,6 +43,10 @@ const withdrawalFee =
 const capitalTax = /\b(?:kapitalertragsteuer|kapitalertragssteuer|kest)\b/;
 const creditInterest =
   /\b(?:haben[-\s]*zinsen|zinsertrag|zinsgutschrift|credit\s+interest|interest\s+earned)\b/;
+// Revolut via Enable Banking: "To EUR MB:<uuid>" moves money into an own pocket ("money box"),
+// optionally after the user's note ("Billa To EUR MB:…"), which names no merchant.
+const moneyBox =
+  /\b(?:to|from)\s+[a-z]{3}\s+mb:\s*[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/;
 const walletTopUp =
   /^(?:pay\s*pal\s*\*?|pp\s*[*\/])\s*(?:guthaben(?:s)?[-\s]*(?:aufladung|aufgeladen)|guthaben\s+aufladen|wallet\s+top[-\s]*up|balance\s+top[-\s]*up)\s*(?:[\d.,+\-/\s]+\s*(?:eur|usd|gbp)?)?$/;
 
@@ -116,7 +120,10 @@ export function bankOperation(row: BankBooking): BankOperation | undefined {
   if (refund.test(text)) return;
   if (
     texts.some(
-      (value) => internal.test(value) || walletTopUp.test(value.trim()),
+      (value) =>
+        internal.test(value) ||
+        moneyBox.test(value) ||
+        walletTopUp.test(value.trim()),
     )
   )
     return { kind: "internal-transfer", category: "Transfer intern" };

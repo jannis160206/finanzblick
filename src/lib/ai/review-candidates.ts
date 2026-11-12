@@ -61,18 +61,30 @@ export function aiReviewCandidates(state: AppState, skip: ReadonlySet<string>, l
   return picked;
 }
 
-// Recent personal decisions teach the model this household's conventions.
-export function aiCategoryExamples(state: AppState, limit = MAX_AI_EXAMPLES): AiExample[] {
-  const examples = new Map<string, AiExample>();
+// Words that say how or where a booking was paid, not what for.
+const NOISE_WORDS = new Set([
+  "zahlungsreferenz", "verwendungszweck", "kartenfolge", "zahlungsempfänger", "auftraggeber", "empfänger", "online",
+  "banking", "kartenzahlung", "lastschrift", "gutschrift", "überweisung", "sepa", "pos", "fil", "filiale", "gmbh",
+  "und", "der", "die", "das", "von", "vom", "the", "eur", "bankkategorie", "händler", "paypal", "europe",
+]);
+const exampleWords = (text: string) => new Set(text.normalize("NFKC").toLocaleLowerCase("de-AT")
+  .split(/[^\p{L}]+/u).filter((word) => word.length >= 3 && !NOISE_WORDS.has(word)));
+
+// The household's own decisions teach the model its conventions. Decisions about the shops in the
+// batch come first (shared words: "HOTSPOT 1234" for a Hotspot booking), then the most recent ones.
+export function aiCategoryExamples(
+  state: AppState, limit = MAX_AI_EXAMPLES, bookings: readonly Pick<AiBookingInput, "text">[] = [],
+): AiExample[] {
+  const pool = new Map<string, AiExample>();
   const add = (text: string | undefined, category: Category) => {
     const canonical = canonicalCategory(category);
-    if (!text?.trim() || canonical === "Prüfen" || examples.size >= limit) return;
+    if (!text?.trim() || canonical === "Prüfen") return;
     const parsed = aiExampleSchema.safeParse({ text: clip(text, 120), category: canonical });
     const key = parsed.success ? parsed.data.text.toLocaleLowerCase("de-AT") : "";
-    if (parsed.success && !examples.has(key)) examples.set(key, parsed.data);
+    if (parsed.success && !pool.has(key)) pool.set(key, parsed.data);
   };
   const seen = new Set<string>();
-  for (let i = state.transactions.length - 1; i >= 0 && examples.size < limit; i--) {
+  for (let i = state.transactions.length - 1; i >= 0; i--) {
     const row = state.transactions[i];
     if (!hasCategoryChoice(row) || row.aiAssigned) continue;
     const key = merchantRuleKey(row);
@@ -80,9 +92,19 @@ export function aiCategoryExamples(state: AppState, limit = MAX_AI_EXAMPLES): Ai
     seen.add(key);
     add(row.merchantAlias ? `${row.merchantAlias} (${clip(row.description, 60)})` : row.description, row.category);
   }
-  for (const rule of state.merchantRules ?? []) {
-    if (examples.size >= limit) break;
+  for (const rule of state.merchantRules ?? [])
     if (!rule.identityOnly && rule.merchantAlias) add(rule.merchantAlias, rule.category);
-  }
-  return [...examples.values()];
+  const examples = [...pool.values()];
+  const wanted = bookings.map((booking) => exampleWords(booking.text)).filter((words) => words.size);
+  if (!wanted.length) return examples.slice(0, limit);
+  const overlap = (example: AiExample) => {
+    const words = exampleWords(example.text);
+    return Math.max(...wanted.map((set) => [...words].filter((word) => set.has(word)).length));
+  };
+  const relevant = examples.map((example, order) => ({ example, order, score: overlap(example) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.order - right.order)
+    .slice(0, Math.ceil(limit / 2))
+    .map((item) => item.example);
+  return [...new Set([...relevant, ...examples])].slice(0, limit);
 }
