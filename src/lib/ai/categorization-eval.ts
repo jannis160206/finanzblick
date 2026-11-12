@@ -10,6 +10,7 @@ import {
   misfiledShopTransfer,
   storedMerchantKey,
 } from "@/lib/import/merchant-rules";
+import { statementFingerprint } from "@/lib/import/identity";
 import { commitStatementImport, prepareStatementImport, queueLedgerReview } from "@/lib/import/review";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { refreshPlanning } from "@/lib/planning";
@@ -69,8 +70,20 @@ export interface EvalRecord extends EvalOutcome {
   transfer: boolean;
   /** Inside a holiday range the user entered: the app shows unknown spending there as Urlaub. */
   holiday: boolean;
+  /**
+   * Whether the replay could know the truth: the user decided this booking itself, or the rule behind
+   * the label came from a decision in an earlier month. A rule learned later and spread back is not.
+   */
+  knownAtImport: boolean;
+  /** The user's first decision about this merchant: nothing in the ledger said so before. */
+  firstDecision: boolean;
   correct: boolean;
 }
+
+/** Why a sure label was missed, for the report. */
+export type ErrorCause = "later-rule" | "first-decision" | "other";
+export const errorCause = (record: Pick<EvalRecord, "knownAtImport" | "firstDecision">): ErrorCause =>
+  !record.knownAtImport ? "later-rule" : record.firstDecision ? "first-decision" : "other";
 
 export interface Tally {
   total: number;
@@ -92,6 +105,10 @@ export interface CategorizationSummary {
   records: number;
   /** Scored separately: whether a shop counts as "home" there depends on later visits. */
   holiday: Tally;
+  /** Sure labels the replay could know: the user's own choices and rules learned in an earlier month. */
+  strongKnown: Tally;
+  /** Sure labels decided wrongly, by cause. */
+  causes: Record<ErrorCause, number>;
   strong: Tally;
   strongWithoutTransfers: Tally;
   all: Tally;
@@ -215,8 +232,10 @@ export function applyLabelOverrides(labels: ReadonlyMap<string, EvalLabel>, over
  * A merchant rule only exists once the user chose a category or name for a booking with its key,
  * so a rule learned later and spread back to older bookings does not leak into the past.
  */
-export function trainingState(state: AppState, before: string): AppState {
-  const transactions = state.transactions.filter((row) => row.date < before);
+export function trainingState(state: AppState, before: string, { currentRules = false } = {}): AppState {
+  // Today's preferences also know the user's own decisions from this month and the later ones.
+  const decidedSince = (row: Transaction) => currentRules && !row.aiAssigned && hasCategoryChoice(row);
+  const transactions = state.transactions.filter((row) => row.date < before || decidedSince(row));
   const fixedReceipts = state.fixedReceipts?.filter(
     (item) => item.date < before && (!item.booking || item.booking.date < before),
   );
@@ -227,7 +246,7 @@ export function trainingState(state: AppState, before: string): AppState {
     ...state,
     transactions,
     ...(fixedReceipts ? { fixedReceipts } : {}),
-    ...(state.merchantRules
+    ...(state.merchantRules && !currentRules
       ? { merchantRules: state.merchantRules.filter((rule) => keys.has(storedMerchantKey(rule.key))) }
       : {}),
     reviewQueue: [],
@@ -263,6 +282,12 @@ export interface MonthSimulation {
 
 export interface SimulationOptions {
   enrich?: typeof enrichTransaction;
+  /**
+   * Replay with today's merchant rules and the user's own decisions from other months instead of only
+   * what was known before the month: checks that the household's current preference wins where it
+   * changed after these bookings arrived.
+   */
+  currentRules?: boolean;
 }
 
 /** Replays one month exactly like the statement worker: enrich, import, review queue, rule-based AI review. */
@@ -274,7 +299,7 @@ export function simulateMonth(
 ): MonthSimulation {
   const start = `${month}-01`;
   const end = nextMonth(month);
-  const known = trainingState(state, start);
+  const known = trainingState(state, start, { currentRules: options.currentRules });
   const sources = evaluationBookings(state)
     .filter((row) => row.date >= start && row.date < end)
     .map(importSource);
@@ -306,14 +331,19 @@ export function simulateMonth(
         open.set(row.id, { suggestion: classify(row).category, reason: "Fixkosten bestätigen" });
   }
   const ledger = displayedBookings(next);
-  const outcomes = sources.map(({ id }): EvalOutcome => {
-    const pending = open.get(id);
+  // The same bank booking stored twice (ledger row and fixed-cost receipt) is merged on import;
+  // the surviving copy's result counts for both.
+  const survivors = new Map(evaluationBookings(next).map((row) => [statementFingerprint(row), row.id]));
+  const outcomes = sources.map((source): EvalOutcome => {
+    const pendingId = open.has(source.id) ? source.id : survivors.get(statementFingerprint(source));
+    const id = source.id;
+    const pending = pendingId ? open.get(pendingId) : undefined;
     if (pending)
       return {
         id, month, status: "open", reason: pending.reason,
         ...(pending.suggestion !== "Prüfen" ? { predicted: pending.suggestion } : {}),
       };
-    const row = ledger.get(id);
+    const row = ledger.get(id) ?? ledger.get(survivors.get(statementFingerprint(source)) ?? "");
     if (!row) return { id, month, status: "missing" };
     const result = classify(row);
     if (result.category === "Prüfen") return { id, month, status: "open", reason: "Kategorie offen" };
@@ -329,6 +359,16 @@ export function joinOutcomes(
 ): EvalRecord[] {
   const rows = new Map(evaluationBookings(state).map((row) => [row.id, row]));
   const ranges = state.holidayRanges ?? [];
+  const decided = new Map<string, string>();
+  for (const row of rows.values()) {
+    if (row.aiAssigned || !(hasCategoryChoice(row) || row.merchantNameConfirmed === true)) continue;
+    for (const key of sourceKeys(row)) {
+      const month = decided.get(key);
+      if (!month || row.date.slice(0, 7) < month) decided.set(key, row.date.slice(0, 7));
+    }
+  }
+  const decidedBefore = (row: Transaction, month: string) =>
+    sourceKeys(row).some((key) => (decided.get(key) ?? month) < month);
   return outcomes.flatMap((outcome): EvalRecord[] => {
     const label = labels.get(outcome.id);
     const row = rows.get(outcome.id);
@@ -341,6 +381,8 @@ export function joinOutcomes(
       sign: row.amount < 0 ? "out" : "in",
       transfer: TRANSFER_CATEGORIES.has(label.category),
       holiday: ranges.some((range) => row.date >= range.from && row.date <= range.to),
+      knownAtImport: label.strength !== "rule" || decidedBefore(row, outcome.month),
+      firstDecision: label.strength === "confirmed" && !decidedBefore(row, outcome.month),
       correct: outcome.status === "decided" && outcome.predicted === label.category,
     }];
   });
@@ -400,6 +442,11 @@ export function summarizeCategorization(all: readonly EvalRecord[]): Categorizat
     version: CATEGORIZATION_EVAL_VERSION,
     records: records.length,
     holiday: tally(all.filter((record) => record.holiday)),
+    strongKnown: tally(strong.filter((record) => record.knownAtImport)),
+    causes: strong.reduce<Record<ErrorCause, number>>((causes, record) => {
+      if (record.status === "decided" && !record.correct) causes[errorCause(record)]++;
+      return causes;
+    }, { "later-rule": 0, "first-decision": 0, other: 0 }),
     strong: tally(strong),
     strongWithoutTransfers: tally(strong.filter((record) => !record.transfer)),
     all: tally(records),

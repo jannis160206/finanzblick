@@ -10,16 +10,19 @@ import {
   bookingDescriptor,
   CATEGORIZATION_EVAL_VERSION,
   compareCategorization,
+  errorCause,
   evaluationBookings,
   evaluationLabels,
   evaluationMonths,
   joinOutcomes,
   reviewWithModel,
+  tally,
   simulateMonth,
   STRONG_LABELS,
   summarizeCategorization,
   type CategorizationComparison,
   type CategorizationSummary,
+  type ErrorCause,
   type EvalLabel,
   type EvalOutcome,
   type EvalRecord,
@@ -165,7 +168,14 @@ interface ErrorDetail {
   predicted?: Category;
   method?: EvalRecord["method"];
   reason?: string;
+  cause?: ErrorCause;
 }
+
+const causeLabel: Record<ErrorCause, string> = {
+  "later-rule": "Regel erst später gelernt (geänderte Präferenz oder rückwirkend verteilt)",
+  "first-decision": "Erstentscheidung (zu diesem Händler gab es vorher keine eigene Wahl)",
+  other: "möglicher Codefehler – prüfen",
+};
 
 function details(rows: Map<string, Transaction>, records: EvalRecord[]): ErrorDetail[] {
   return records.flatMap((record) => {
@@ -185,6 +195,8 @@ function details(rows: Map<string, Transaction>, records: EvalRecord[]): ErrorDe
       ...(record.predicted ? { predicted: record.predicted } : {}),
       ...(record.method ? { method: record.method } : {}),
       ...(record.reason ? { reason: record.reason } : {}),
+      ...(record.status === "decided" && !record.correct && !record.holiday && STRONG_LABELS.has(record.strength)
+        ? { cause: errorCause(record) } : {}),
     }];
   });
 }
@@ -202,7 +214,7 @@ function descriptorGroups(items: ErrorDetail[]) {
 }
 
 function markdown(name: string, summary: CategorizationSummary, wrong: ErrorDetail[], open: ErrorDetail[],
-  comparison: CategorizationComparison | undefined, seconds: number) {
+  comparison: CategorizationComparison | undefined, seconds: number, current: Tally, today: Tally) {
   const lines = [
     `# Kategorisierungs-Testlauf: ${name}`,
     "",
@@ -217,6 +229,7 @@ function markdown(name: string, summary: CategorizationSummary, wrong: ErrorDeta
     tallyHeader,
     tallyRow("Sichere Labels (Hand + Regel)", summary.strong),
     tallyRow("Sichere Labels ohne Transfers", summary.strongWithoutTransfers),
+    tallyRow("Sichere Labels, beim Import bekannt", summary.strongKnown),
     tallyRow("Alle Labels", summary.all),
     "",
     `Nicht enthalten: ${summary.holiday.total} Buchungen in eingetragenen Urlaubszeiträumen (eigene Zeile unten).`,
@@ -252,6 +265,24 @@ function markdown(name: string, summary: CategorizationSummary, wrong: ErrorDeta
     "## Nach richtiger Kategorie",
     "",
     tallyTable(summary.byLabel),
+    "",
+    "## Fehler bei sicheren Labels nach Ursache",
+    "",
+    "| Ursache | Anzahl |",
+    "|---|---:|",
+    ...(Object.keys(causeLabel) as ErrorCause[]).map((cause) => `| ${causeLabel[cause]} | ${summary.causes[cause]} |`),
+    "",
+    "Gegencheck der geänderten Präferenzen: Buchungen, deren Regel erst später gelernt wurde, noch einmal mit den",
+    "heutigen Regeln nachgespielt.",
+    "",
+    tallyHeader,
+    tallyRow("Mit heutigen Regeln", current),
+    tallyRow("Alle sicheren Labels nach heutiger Präferenz", today),
+    "",
+    "| Datum | Händlertext | Betrag | richtig | vergeben | Ursache |",
+    "|---|---|---:|---|---|---|",
+    ...wrong.filter((item) => item.cause).sort((left, right) => (left.cause ?? "").localeCompare(right.cause ?? "") || left.date.localeCompare(right.date))
+      .map((item) => `| ${item.date} | ${item.descriptor.replace(/\|/g, "/")} | ${item.amount.toFixed(2)} | ${item.label} | ${item.predicted ?? "–"} | ${causeLabel[item.cause!]} |`),
     "",
     "## Häufigste Verwechslungen (richtig → vergeben)",
     "",
@@ -391,6 +422,24 @@ async function run() {
     }
     records.push(...joinOutcomes(state, labels, outcomes));
   }
+  // Bookings whose label comes from a rule learned after them: replayed again with today's rules.
+  const changed = records.filter((record) => !record.knownAtImport && !record.holiday);
+  const current: EvalRecord[] = [];
+  for (const { state } of states) {
+    const ids = new Set(changed.map((record) => record.id));
+    const labels = new Map(changed.map((record) => [record.id, { category: record.label, strength: record.strength }]));
+    for (const month of [...new Set(changed.map((record) => record.month))].sort()) {
+      const { outcomes } = simulateMonth(state, month, index, { currentRules: true });
+      current.push(...joinOutcomes(state, labels, outcomes.filter((outcome) => ids.has(outcome.id))));
+    }
+  }
+  const currentTally = tally(current);
+  // Sure labels as the app files them today: changed preferences judged by the replay with today's rules.
+  const replaced = new Set(current.map((record) => record.id));
+  const todayTally = tally([
+    ...records.filter((record) => STRONG_LABELS.has(record.strength) && !record.holiday && !replaced.has(record.id)),
+    ...current,
+  ]);
   const seconds = (performance.now() - started) / 1000;
   const summary = summarizeCategorization(records);
   const wrong = details(rows, records.filter((record) => record.status === "decided" && !record.correct));
@@ -407,6 +456,8 @@ async function run() {
     generatedAt: new Date().toISOString(),
     seconds,
     summary,
+    currentPreferences: currentTally,
+    strongToday: todayTally,
     ...(comparison && compareTo ? {
       comparedWith: compareTo,
       comparison: {
@@ -423,7 +474,7 @@ async function run() {
   };
   const reportPath = join(outDir, `report-${stamp}.json`);
   writeFileSync(reportPath, `${JSON.stringify(report, null, 1)}\n`);
-  writeFileSync(join(outDir, `report-${stamp}.md`), markdown(name, summary, wrong, open, comparison, seconds));
+  writeFileSync(join(outDir, `report-${stamp}.md`), markdown(name, summary, wrong, open, comparison, seconds, currentTally, todayTally));
   if (values["save-baseline"]) writeFileSync(baselinePath, `${JSON.stringify({ name, records }, null, 1)}\n`);
   if (values.model)
     console.log(`KI-Prüfung: ${summary.model.asked} gefragt, ${summary.model.answered} beantwortet, ` +
@@ -432,10 +483,15 @@ async function run() {
     `${title.padEnd(32)} ${String(item.total).padStart(5)}  Präzision ${percent(item.precision).padStart(7)}  Abdeckung ${percent(item.coverage).padStart(7)}  Genauigkeit ${percent(item.accuracy).padStart(7)}  falsch ${item.wrong}  offen ${item.open}`;
   console.log(line("Sichere Labels", summary.strong));
   console.log(line("Sichere Labels ohne Transfers", summary.strongWithoutTransfers));
+  console.log(line("Sichere Labels, beim Import bekannt", summary.strongKnown));
   console.log(line("Alle Labels", summary.all));
   console.log(line("In Urlaubszeiträumen (separat)", summary.holiday));
   for (const strength of ["confirmed", "rule", "ai", "accepted"] as const)
     console.log(line(`  ${strength}${STRONG_LABELS.has(strength) ? " (sicher)" : ""}`, summary.byStrength[strength]));
+  console.log(line("Geänderte Präferenz, heutige Regeln", currentTally));
+  console.log(line("Sichere Labels, heutige Präferenz", todayTally));
+  console.log(`Fehler bei sicheren Labels: ${summary.causes["later-rule"]} Regel erst später gelernt, ` +
+    `${summary.causes["first-decision"]} Erstentscheidung, ${summary.causes.other} möglicher Codefehler`);
   if (comparison)
     console.log(`Vergleich: +${comparison.fixes.length} verbessert, -${comparison.regressions.length} verschlechtert, ` +
       `${comparison.lostCoverage.length} jetzt offen, ${comparison.newErrors.length} neu falsch`);

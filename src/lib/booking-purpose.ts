@@ -5,7 +5,8 @@ export const isDutyFreePurchase = (text: string) =>
   /\bduty[\s-]*free\b/i.test(text);
 
 const purposes: readonly [RegExp, Category][] = [
-  [/\bduty[\s-]*free\b|\btabak[\s-]*trafik\b|\btrafik\b/i, "Shopping"],
+  [/\bduty[\s-]*free\b/i, "Shopping"],
+  [/\btabak[\s-]*trafik\b|\btrafik\b/i, "Freizeit"],
   [
     /\bsupermarket\b|\bsupermarkt\b|\bsupermercat[oi]\b|\bsupermercado\b|\blebensmittel(?:markt|handel)?\b/i,
     "Lebensmittel",

@@ -64,7 +64,7 @@ type CategoryInference = {
 // bookings). Broad keywords — a gas station (snack, parking or fuel), a Trafik,
 // dining by time of day — still need a merchant, an MCC or the account history.
 const specificKeywordPurposes: ReadonlySet<Category> = new Set<Category>([
-  "Drogerie", "Guthabenkarten", "Wohnen & Haushalt", "Porto & Versand",
+  "Drogerie", "Guthabenkarten", "Wohnen & Haushalt", "Möbel & Einrichtung", "Porto & Versand",
   "Geschenke & Spenden", "Entertainment", "Gesundheit", "Öffentliche Verkehrsmittel",
   "Parken & Maut", "Abonnements", "Sport & Fitness", "Bildung", "Haustiere",
   "Körperpflege", "Versicherungen", "Lieferdienste", "Leasing",

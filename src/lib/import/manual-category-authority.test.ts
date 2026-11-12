@@ -57,12 +57,12 @@ describe("authoritative per-booking category selections", () => {
       expect(classify(booking({ description, date: "2026-09-14", category: "Gesundheit", categoryOverride: true, manualCategory })).category).toBe(expected);
   });
 
-  it("keeps a learned Trafik rule instead of the Shopping default", () => {
-    expect(classify(booking({ description: "TRAFIK NORD", category: "Freizeit", categoryOverride: true })).category).toBe("Freizeit");
+  it("keeps a learned Trafik rule instead of the Freizeit default", () => {
+    expect(classify(booking({ description: "TRAFIK NORD", category: "Shopping", categoryOverride: true })).category).toBe("Shopping");
     expect(classify(booking({
-      description: "TRAFIK NORD", category: "Freizeit", categoryOverride: true,
-      automaticCategoryEvidence: { method: "merchant", category: "Freizeit" },
-    })).category).toBe("Shopping");
+      description: "TRAFIK NORD", category: "Shopping", categoryOverride: true,
+      automaticCategoryEvidence: { method: "merchant", category: "Shopping" },
+    })).category).toBe("Freizeit");
   });
 
   it("derives fixed, transfer and planning flags from the selected purpose, not bank wording", () => {
@@ -229,5 +229,24 @@ describe("transfer notes that name a shop", () => {
     expect(repaired.merchantRules).toEqual([]);
     expect(classify(repaired.transactions[0]).category).toBe("Lebensmittel");
     expect(isShopTransferRule({ key: "trade republic|trade republic", category: "Transfer" })).toBe(false);
+  });
+});
+
+describe("automatic purposes at import", () => {
+  it("do not settle open twins of the same merchant", () => {
+    const atm = (id: string, amount: number, patch: Partial<Transaction> = {}): Transaction => ({
+      id, date: "2026-02-03", time: "17:44:00", bank: "Raiffeisen", pocket: "Raiffeisen Giro", description: "BANKOMAT 00012345",
+      amount, category: "Prüfen", includeInPlan: true, ...patch,
+    });
+    const rows = [
+      atm("twenty", -20, { category: "Körperpflege", categoryOverride: true, requires_manual_review: false,
+        automaticCategoryEvidence: { method: "purpose", category: "Körperpflege" } }),
+      atm("thirty", -30, { date: "2026-02-10", requires_manual_review: true }),
+    ];
+    const state = fixture([]);
+    const prepared = prepareStatementImport([{ source: null, file: "auszug.csv", rows, skipped: 0, issues: [] }], state);
+    const saved = commitStatementImport(state, prepared.automatic, [], prepared.metadata).state;
+    expect(saved.reviewQueue).toContainEqual(expect.objectContaining({ draft: expect.objectContaining({ id: "thirty" }) }));
+    expect(saved.transactions.find((row) => row.id === "thirty")).toBeUndefined();
   });
 });

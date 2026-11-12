@@ -4,7 +4,7 @@ import { purchasePurpose } from "./booking-purpose";
 it.each([
   ["Airport Duty-Free", "Shopping"],
   ["Duty Free Shop", "Shopping"],
-  ["Tabak Trafik", "Shopping"],
+  ["Tabak Trafik", "Freizeit"],
   ["Unbekannter Supermarket", "Lebensmittel"],
   ["Sinos Fusion Cuisine", "Restaurants"],
   ["Nova Pharmacy", "Gesundheit"],

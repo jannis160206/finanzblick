@@ -1,7 +1,10 @@
+import { createAccountMerchantResolver } from "@/lib/automation/aliases";
+import { merchantAliasSourceKey, merchantRuleKey } from "@/lib/import/merchant-rules";
 import { classify } from "@/lib/calc";
 import { allCategories, canonicalCategory, knownMerchantCategory, merchantKeywords, type Category } from "@/lib/categories";
 import { hasCategoryChoice } from "@/lib/manual-category";
 import { isIncomeCategory } from "@/lib/fixed";
+import { recurringLunchCategory } from "@/lib/recurring-purpose";
 import type { AppState, Transaction } from "@/lib/types";
 import { isRaphaelPayment } from "@/lib/shared-holiday";
 import {
@@ -138,7 +141,7 @@ export type KeywordHabit = {
 };
 
 // How the household itself filed shops that share a keyword-rule word ("Trafik", "OMV").
-// The fixed rule's default (Trafik = Shopping) is a guess; this is the household's habit.
+// A fixed keyword default is a guess for every household; this is the household's habit.
 export function keywordHabit(state: AppState, draft: Pick<Transaction, "id" | "amount">, text: string): KeywordHabit {
   const habit: KeywordHabit = { similar: new Map(), any: new Set() };
   const words = new Set(merchantKeywords(text));
@@ -165,12 +168,33 @@ export function categoryFitsSign(category: Category, amount: number) {
   return (isIncomeCategory(category) || category === "Rückerstattungen") === amount > 0;
 }
 
-// The fixed bank rule decides on its own when nothing the household confirmed contradicts it.
-function usableRule(input: AiBookingInput, history: BrandHistory, habit: KeywordHabit): Category | undefined {
+const FUEL_STATION = /\bshell\b|\bomv\b|\beni\b|tankstelle|\btanken\b/i;
+const PAYMENT_APP = /\bpace\s*pay\b/i;
+const HOTSPOT = /\bhotspot\b/i;
+
+// The fixed bank rule, where its keyword plausibly means what the rule says.
+function plausibleRule(input: AiBookingInput, draft: Pick<MatcherDraft, "description" | "date">): Category | undefined {
   const known = knownMerchantCategory(input.text, input.amount);
   if (!known || known === "Prüfen") return undefined;
-  const rule = canonicalCategory(known);
+  let rule = canonicalCategory(known);
+  // "Hotspot" is the household's lunch place only under its exact name; "HOTSPOT 1234" is a kiosk of that chain.
+  if (rule === "Mittagessen" && HOTSPOT.test(input.text)) {
+    const lunch = draft.date ? recurringLunchCategory(draft.description, draft.date, input.amount) : undefined;
+    if (!lunch) return undefined;
+    rule = lunch;
+  }
   if (!categoryFitsSign(rule, input.amount)) return undefined;
+  // A meal does not cost less than a coffee; such a receipt is a tip, a deposit or a toilet.
+  if (rule === "Restaurants" && Math.abs(input.amount) < 1.5) return undefined;
+  return rule;
+}
+
+// The fixed bank rule decides on its own when nothing the household confirmed contradicts it.
+function usableRule(
+  input: AiBookingInput, draft: Pick<MatcherDraft, "description" | "date">, history: BrandHistory, habit: KeywordHabit,
+): Category | undefined {
+  const rule = plausibleRule(input, draft);
+  if (!rule) return undefined;
   // Small station receipts are snacks or car wash, not fuel.
   if ((rule === "Mobilität" || rule === "Tanken") && Math.abs(input.amount) < 15) return undefined;
   const fits = (category: Category) => category === rule || !!RULE_REFINEMENTS[rule]?.includes(category);
@@ -178,7 +202,44 @@ function usableRule(input: AiBookingInput, history: BrandHistory, habit: Keyword
     return undefined;
   // The household's usual refinement ("Tanken" for a full tank) beats the broad rule ("Mobilität").
   const [usual] = [...habit.similar].sort((left, right) => right[1] - left[1]);
-  return usual && usual[0] !== rule && fits(usual[0]) ? usual[0] : rule;
+  if (usual && usual[0] !== rule && fits(usual[0])) return usual[0];
+  // "Mobilität" is the rule's broad name for a station; at a fuel-sized amount the station sold fuel.
+  return rule === "Mobilität" && FUEL_STATION.test(input.text) && !PAYMENT_APP.test(input.text) ? "Tanken" : rule;
+}
+
+type OwnRules = { resolve: ReturnType<typeof createAccountMerchantResolver>; chosen: Map<string, Set<Category>> };
+const ownRules = new WeakMap<AppState, OwnRules>();
+const ruleSourceKey = (row: Pick<Transaction, "bank" | "description" | "rawDescription">) => {
+  const source = { ...row, merchantAlias: undefined };
+  return merchantAliasSourceKey(source) ?? merchantRuleKey(source);
+};
+
+// The household's own merchant rule for exactly this booking text. The import leaves a rule without a
+// shop name (an ATM, a terminal) for review although the user decided it; the decision is still theirs –
+// unless their own choices for that text disagree with it (groceries and lunch at the same supermarket).
+function ownRule(state: AppState, draft: MatcherDraft): { category: Category; merchantAlias?: string } | undefined {
+  if (!draft.bank || !state.merchantRules?.length) return undefined;
+  let rules = ownRules.get(state);
+  if (!rules) {
+    const chosen = new Map<string, Set<Category>>();
+    for (const row of state.transactions) {
+      if (row.aiAssigned || !hasCategoryChoice(row)) continue;
+      const key = ruleSourceKey(row);
+      chosen.set(key, (chosen.get(key) ?? new Set()).add(canonicalCategory(row.category)));
+    }
+    rules = { resolve: createAccountMerchantResolver(state), chosen };
+    ownRules.set(state, rules);
+  }
+  const booking = {
+    id: draft.id, date: draft.date ?? "", bank: draft.bank, pocket: draft.pocket ?? null, description: draft.description,
+    rawDescription: draft.rawDescription, rawDetails: draft.rawDetails, amount: draft.amount, category: "Prüfen" as const, includeInPlan: true,
+  };
+  const match = rules.resolve(booking);
+  if (match.kind !== "matched" || match.normalized || match.choice.identityOnly) return undefined;
+  const category = canonicalCategory(match.choice.category);
+  if (category === "Prüfen" || !categoryFitsSign(category, draft.amount)) return undefined;
+  if ([...(rules.chosen.get(ruleSourceKey(booking)) ?? [])].some((choice) => choice !== category)) return undefined;
+  return { category, ...(match.choice.merchantAlias ? { merchantAlias: match.choice.merchantAlias } : {}) };
 }
 
 export type EvidenceSource = "Historie" | "Regel" | "Erstattung" | "Branche";
@@ -210,6 +271,10 @@ export function decideWithEvidence(
 ): EvidenceDecision {
   const special = specialCase(state, draft);
   if (special) return special;
+  const rule = ownRule(state, draft);
+  if (rule)
+    return { accepted: true, category: rule.category, source: "Regel", detail: "eigene Händlerregel",
+      ...(rule.merchantAlias && !draft.merchantAlias ? { merchantAlias: rule.merchantAlias } : {}) };
   const history = brandHistory(state, draft);
   const seen = [...history.categories.keys()];
   const shopName = providerMerchant(input.text);
@@ -235,10 +300,10 @@ export function decideWithEvidence(
     return { accepted: true, category: habitual, source: "Historie", detail: "wie ähnliche Geschäfte im Haushalt",
       ...(alias ? { merchantAlias: alias } : {}) };
   }
-  const rule = usableRule(input, history, habit);
-  if (rule) {
-    const refined = answer?.accepted && answer.category !== rule && RULE_REFINEMENTS[rule]?.includes(canonicalCategory(answer.category))
-      ? canonicalCategory(answer.category) : rule;
+  const fixed = usableRule(input, draft, history, habit);
+  if (fixed) {
+    const refined = answer?.accepted && answer.category !== fixed && RULE_REFINEMENTS[fixed]?.includes(canonicalCategory(answer.category))
+      ? canonicalCategory(answer.category) : fixed;
     const alias = draft.merchantAlias ? undefined : (answer?.accepted ? answer.merchant : undefined) ?? shopName;
     return { accepted: true, category: refined, source: "Regel", ...(alias ? { merchantAlias: alias } : {}) };
   }
@@ -269,8 +334,9 @@ export function decideWithEvidence(
     return { accepted: true, category, source: "Branche", detail: context.industry!.label.slice(0, 80),
       ...(alias ? { merchantAlias: alias } : {}) };
   }
-  const known = knownMerchantCategory(input.text, input.amount);
-  if (!known || known === "Prüfen" || (known !== category && !RULE_REFINEMENTS[known]?.includes(category)))
+  // The model echoing a keyword is no evidence where the keyword does not apply (a kiosk, a tip).
+  const known = plausibleRule(input, draft);
+  if (!known || (known !== category && !RULE_REFINEMENTS[known]?.includes(category)))
     return reject("keine Bestätigung durch Regel oder eigene Historie");
   return { accepted: true, category, source: "Regel", ...(answer.merchant ? { merchantAlias: answer.merchant } : {}) };
 }

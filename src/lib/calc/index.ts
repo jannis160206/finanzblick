@@ -263,7 +263,7 @@ function classifyCounted(transaction: Parameters<typeof classifyUncached>[0]) {
     category = lunchPurpose ?? (groceryMerchant.test(description) ? "Lebensmittel" : "Prüfen");
   // A learned rule (override without automatic evidence) outranks the Trafik default.
   if (/\btrafik\b/i.test(description) && !(transaction.categoryOverride && !transaction.automaticCategoryEvidence))
-    category = "Shopping";
+    category = "Freizeit";
   if (!operation && (isAmazon || recurringAmazonCategory(description))) category = recurringAmazonCategory(description) ?? "Shopping";
   if (!operation && unnamedFuelPurpose(description, amount) && hasRecurringFuelEvidence(transaction)) category = "Tanken";
   if (isRoundUp) category = "Transfer intern";

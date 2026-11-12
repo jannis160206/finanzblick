@@ -76,7 +76,7 @@ describe("structured categories", () => {
     ["Cineplexx", "Entertainment"], ["Steam Games", "Entertainment"], ["Nintendo", "Entertainment"],
     ["Fitinn", "Sport & Fitness"], ["Decathlon", "Sport & Fitness"], ["Udemy", "Bildung"],
     ["Fressnapf", "Haustiere"], ["Caritas Spende", "Geschenke & Spenden"], ["Apotheke", "Gesundheit"],
-    ["dm Drogerie", "Drogerie"], ["IKEA", "Wohnen & Haushalt"], ["OEBB Ticket", "Öffentliche Verkehrsmittel"],
+    ["dm Drogerie", "Drogerie"], ["IKEA", "Möbel & Einrichtung"], ["OEBB Ticket", "Öffentliche Verkehrsmittel"],
     ["WWW.OEBB.AT TICKET FOR WIEN", "Öffentliche Verkehrsmittel"], ["Wiener Linien", "Öffentliche Verkehrsmittel"],
     ["City Parkhaus", "Parken & Maut"], ["APCOA Parking", "Parken & Maut"], ["ASFINAG Vignette", "Parken & Maut"],
     ["Friseur", "Körperpflege"], ["Allianz Haftpflicht", "Versicherungen"], ["A1 Telekom", "Telefon & Internet"],

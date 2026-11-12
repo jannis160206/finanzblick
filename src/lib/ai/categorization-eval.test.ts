@@ -54,6 +54,11 @@ describe("categorization replay", () => {
 
   it("knows a rule only once the user chose a category for its merchant", () => {
     expect(trainingState(ledger, "2026-01-01").merchantRules).toEqual([]);
+    // Today's preferences: every rule and the user's own decisions, also from this and later months.
+    expect(trainingState(ledger, "2026-01-01", { currentRules: true })).toMatchObject({
+      merchantRules: [expect.objectContaining({ key: ruleKey })],
+      transactions: [expect.objectContaining({ id: "jan" }), expect.objectContaining({ id: "feb-new" })],
+    });
     expect(trainingState(ledger, "2026-02-01")).toMatchObject({
       transactions: [expect.objectContaining({ id: "jan" })], merchantRules: [expect.objectContaining({ key: ruleKey })],
     });
@@ -62,8 +67,12 @@ describe("categorization replay", () => {
   it("replays a month like an import and scores it against the labels", () => {
     const simulation = simulateMonth(ledger, "2026-02", index);
     const records = joinOutcomes(ledger, evaluationLabels(ledger), simulation.outcomes);
-    expect(records.find((record) => record.id === "feb-rule")).toMatchObject({ status: "decided", correct: true });
-    expect(records.find((record) => record.id === "feb-new")).toMatchObject({ status: "open", correct: false });
+    expect(records.find((record) => record.id === "feb-rule")).toMatchObject({
+      status: "decided", correct: true, knownAtImport: true, firstDecision: false,
+    });
+    expect(records.find((record) => record.id === "feb-new")).toMatchObject({
+      status: "open", correct: false, knownAtImport: true, firstDecision: true,
+    });
     const summary = summarizeCategorization(records);
     expect(summary.all).toMatchObject({ total: 3, correct: 1, open: 2, wrong: 0, precision: 1 });
   });
@@ -80,7 +89,7 @@ describe("categorization replay", () => {
   it("keeps holiday bookings out of the headline and reports regressions per booking", () => {
     const record = (id: string, patch: Partial<EvalRecord>): EvalRecord => ({
       id, month: "2026-02", status: "decided", predicted: "Lebensmittel", label: "Lebensmittel", strength: "confirmed",
-      bank: "Raiffeisen", sign: "out", transfer: false, holiday: false, correct: true, ...patch,
+      bank: "Raiffeisen", sign: "out", transfer: false, holiday: false, knownAtImport: true, firstDecision: false, correct: true, ...patch,
     });
     const before = [record("a", {}), record("b", { status: "open", predicted: undefined, correct: false }), record("c", {})];
     const after = [
@@ -92,5 +101,9 @@ describe("categorization replay", () => {
     const summary = summarizeCategorization(after);
     expect(summary.holiday.total).toBe(1);
     expect(summary.all).toMatchObject({ total: 2, wrong: 1, correct: 1 });
+    expect(summary.causes).toEqual({ "later-rule": 0, "first-decision": 0, other: 1 });
+    const later = summarizeCategorization([...after, record("d", { strength: "rule", knownAtImport: false, predicted: "Shopping", correct: false })]);
+    expect(later.causes["later-rule"]).toBe(1);
+    expect(later.strongKnown).toMatchObject({ total: 2, wrong: 1 });
   });
 });

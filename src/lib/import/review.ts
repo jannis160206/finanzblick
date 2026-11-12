@@ -916,10 +916,14 @@ export function commitStatementImport(
         return booking === item.booking ? item : { ...item, booking, merchantKey: merchantRuleKey(booking) };
       }) } : {}) };
   }
+  // Only decisions spread to a merchant's twins. An automatic purpose ("20 € at the ATM", "lunch on a weekday")
+  // describes its own booking, not every other one of that merchant.
+  const automaticCategory = (row: Transaction) =>
+    !hasCategoryChoice(row) && row.automaticCategoryEvidence?.category === row.category;
   const choices = new Map(
     rows
       .filter((row) => (row.categoryOverride || hasManualCategory(row)) && row.category !== "Prüfen" && !row.aiAssigned &&
-        isSpecificMerchantKey(merchantRuleKey(row)))
+        !automaticCategory(row) && isSpecificMerchantKey(merchantRuleKey(row)))
       .map((row) => [merchantRuleKey(row), row.category]),
   );
   const directChoices = new Map(rows.filter((row) => row.categoryOverride || hasManualCategory(row) || row.fixedCost !== undefined).map((row) => [row.id, row]));

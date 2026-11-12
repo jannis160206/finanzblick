@@ -50,7 +50,7 @@ describe("merchant classification", () => {
       expect(classify(transaction(name, -10.01)).category).toBe("Lebensmittel");
     },
   );
-  it.each([["dm", "Drogerie"], ["Burger", "Restaurants"], ["Foodora", "Lieferdienste"], ["Pizzeria", "Restaurants"], ["Sakura", "Restaurants"], ["Gams", "Restaurants"]])(
+  it.each([["dm", "Drogerie"], ["Burger", "Restaurants"], ["Foodora", "Lieferdienste"], ["Pizzeria", "Restaurants"], ["Sakura", "Restaurants"], ["Gams", "Cafés & Snacks"]])(
     "classifies %s by spending purpose",
     (name, category) => expect(classify(transaction(name)).category).toBe(category),
   );

@@ -7,6 +7,7 @@ import {
   cleanMerchantName, extractJsonArray, interpretCategorization, merchantMatchesText, plausibilityIssue, providerMerchant, resolveCategoryName,
   type AiCategorization,
 } from "./categorize";
+import { merchantRuleKey } from "@/lib/import/merchant-rules";
 import { brandKey, decideReviewWithEvidence, similarAmount } from "./evidence";
 import { isLoopbackUrl } from "./config";
 import { logoFileName } from "./logo-finder";
@@ -163,15 +164,15 @@ describe("evidence gate", () => {
 
   it("follows the household's habit for shops that share a keyword", () => {
     const trafik = (id: string, name: string, amount: number) => booking(id, {
-      description: `TRAFIK ${name} 1234`, amount, category: "Freizeit", categoryOverride: true, manualCategory: true, reviewed: true,
+      description: `TRAFIK ${name} 1234`, amount, category: "Shopping", categoryOverride: true, manualCategory: true, reviewed: true,
     });
     const state = withOpen([trafik("t1", "NORD", -12), trafik("t2", "SÜD", -13)], [
       booking("usual", { description: "TRAFIK WEST 1234", amount: -14 }),
       booking("tiny", { description: "TRAFIK OST 1234", amount: -2 }),
     ]);
     expect(decideReviewWithEvidence(state, "usual", input("TRAFIK WEST 1234", -14), undefined))
-      .toMatchObject({ accepted: true, category: "Freizeit", source: "Historie" });
-    // Too few comparable choices to decide, but enough to keep the fixed "Trafik = Shopping" guess away.
+      .toMatchObject({ accepted: true, category: "Shopping", source: "Historie" });
+    // Too few comparable choices to decide, but enough to keep the fixed "Trafik = Freizeit" guess away.
     expect(decideReviewWithEvidence(state, "tiny", input("TRAFIK OST 1234", -2), undefined)).toMatchObject({ accepted: false });
   });
 
@@ -181,6 +182,40 @@ describe("evidence gate", () => {
     })], [booking("open", { description: "TANKSTELLE 1234", amount: -55 })]);
     expect(decideReviewWithEvidence(state, "open", input("TANKSTELLE 1234", -55), undefined))
       .toMatchObject({ accepted: true, category: "Tanken", source: "Regel" });
+  });
+
+  it("applies the household's own rule for an unnamed merchant unless its own choices disagree", () => {
+    const merchantRules = [{ key: merchantRuleKey({ bank: "Raiffeisen", description: "BANKOMAT" }), category: "Sonstiges" as const }];
+    const chosen = booking("chosen", {
+      description: "BANKOMAT 00012345", amount: -10, category: "Sonstiges", categoryOverride: true, manualCategory: true, reviewed: true,
+    });
+    const open = booking("open", { description: "BANKOMAT 00012345", amount: -50 });
+    expect(decideReviewWithEvidence({ ...withOpen([chosen], [open]), merchantRules }, "open", input("BANKOMAT 00012345", -50), undefined))
+      .toMatchObject({ accepted: true, category: "Sonstiges", source: "Regel" });
+    const mixed = withOpen([chosen, { ...chosen, id: "trip", amount: -400, category: "Urlaub" }], [open]);
+    expect(decideReviewWithEvidence({ ...mixed, merchantRules }, "open", input("BANKOMAT 00012345", -50), undefined))
+      .toMatchObject({ accepted: false });
+  });
+
+  it("uses fixed keyword rules only where they are plausible", () => {
+    const state = withOpen([], [
+      booking("kiosk", { description: "HOTSPOT 1234", date: "2026-10-01", amount: -6.2 }),
+      booking("lunch", { description: "Hotspot", date: "2026-10-01", amount: -6.2, bank: "Revolut" }),
+      booking("station", { description: "TANKSTELLE 1234", amount: -45 }),
+      booking("app", { description: "PACE PAY KARLSRUHE", amount: -40 }),
+      booking("tip", { description: "LANDGASTHAUS RESTAURANT", amount: -0.7 }),
+    ]);
+    const decide = (id: string, text: string, amount: number) => decideReviewWithEvidence(state, id, input(text, amount), undefined);
+    expect(decide("kiosk", "HOTSPOT 1234", -6.2)).toMatchObject({ accepted: false });
+    expect(decide("lunch", "Hotspot", -6.2)).toMatchObject({ accepted: true, category: "Mittagessen" });
+    expect(decide("station", "TANKSTELLE 1234", -45)).toMatchObject({ accepted: true, category: "Tanken" });
+    expect(decide("app", "PACE PAY KARLSRUHE", -40)).toMatchObject({ accepted: true, category: "Mobilität" });
+    expect(decide("tip", "LANDGASTHAUS RESTAURANT", -0.7)).toMatchObject({ accepted: false });
+    const echo = (id: string, text: string, amount: number, category: string) =>
+      decideReviewWithEvidence(state, id, input(text, amount), answer(category));
+    expect(echo("kiosk", "HOTSPOT 1234", -6.2, "Mittagessen")).toMatchObject({ accepted: false });
+    expect(echo("tip", "LANDGASTHAUS RESTAURANT", -0.7, "Restaurants")).toMatchObject({ accepted: false });
+    expect(echo("lunch", "Hotspot", -6.2, "Mittagessen")).toMatchObject({ accepted: true, category: "Mittagessen" });
   });
 
   it("reads the shop behind PayPal and Klarna", () => {

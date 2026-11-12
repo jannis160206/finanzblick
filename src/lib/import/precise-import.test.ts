@@ -32,7 +32,7 @@ describe("precise statement facts", () => {
     // 13.09.2026 is a Sunday: the personal lunch rule for BIPA applies on working days only.
     expect(parsed.rows[2]).toMatchObject({ category: "Drogerie", date: "2026-09-13" });
     expect(parsed.rows[3]).toMatchObject({ category: "Lebensmittel", amount: -10.38, time: "16:29:00" });
-    expect(parsed.rows[4].category).toBe("Shopping");
+    expect(parsed.rows[4].category).toBe("Freizeit");
     expect(parsed.rows[5]).toMatchObject({ amount: -700, category: "Transfer intern", time: "10:03:12" });
     expect(parsed.rows[7]).toMatchObject({ amount: -1529.58, category: "Leasing" });
     expect(parsed.rows[8]).toMatchObject({ amount: 2576.43, category: "Gehalt" });
@@ -106,8 +106,8 @@ describe("precise statement facts", () => {
 describe("high-confidence merchant policy", () => {
   it.each([
     ["BIPA", "Drogerie"], ["Hotspot", "Restaurants"], ["Mensa", "Restaurants"],
-    ["Trafik Haas", "Shopping"], ["SHELL FURNITZ", "Mobilität"], ["OMV", "Mobilität"], ["ENI", "Mobilität"],
-    ["McD", "Restaurants"], ["Burger King", "Restaurants"], ["Pizzeria", "Restaurants"], ["Bauernhof Gams", "Restaurants"],
+    ["Trafik Haas", "Freizeit"], ["SHELL FURNITZ", "Mobilität"], ["OMV", "Mobilität"], ["ENI", "Mobilität"],
+    ["McD", "Restaurants"], ["Burger King", "Restaurants"], ["Pizzeria", "Restaurants"], ["Bauernhof Gams", "Cafés & Snacks"],
     ["Sakura", "Restaurants"], ["Wolt", "Lieferdienste"], ["MARTIN AUER", "Cafés & Snacks"], ["DM-FIL", "Drogerie"],
     ["Porsche Bank", "Leasing"], ["Allianz", "Versicherungen"], ["Vollkasko", "Versicherungen"], ["A1", "Telefon & Internet"],
   ])("silently files %s as %s even on Sunday", (description, category) => {

@@ -221,7 +221,7 @@ describe("Amex", () => {
 describe("classification uses the existing engine", () => {
   it.each([
     ["BIPA", -25, "Mittagessen"],
-    ["Trafik", -8, "Shopping"],
+    ["Trafik", -8, "Freizeit"],
     ["INTERSPAR", -10, "Mittagessen"],
     ["SPAR", -10.01, "Mittagessen"],
     ["dm drogerie", -4, "Drogerie"],

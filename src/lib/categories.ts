@@ -59,7 +59,8 @@ const suggestions: [RegExp, Category][] = [
   [/\bbarber\b|fris[eö]ur|friseur|frisör|kosmetikstudio/i, "Körperpflege"],
   [/\bg2a\b|\bkinguin(?:\s+digital)?\b|\beneba\b|\bmmoga\b|instant[\s-]*gaming|eldorado[\s.]*gg\b|\bguthabenkarten?\b|\b(?:apple|itunes)[\s-]*guthaben\b|\bpaysafecard\b/i, "Guthabenkarten"],
   [/\b(?:dhl|dpd|gls|ups|fedex)\b|general\s*logistics\s*systems|(?:^|\W)(?:österreichische|oesterreichische|deutsche|schweizer(?:ische)?)\s+post\b|\bpost\s*(?:ag|filiale)\b|\bpost\.(?:at|de|ch)\b|\bhermes\s*(?:paket|versand|germany)|\b(?:briefmarken?|paketmarken?|portogeb[uü]hr|paketversand)\b|^\s*post(?=\s|$)/i, "Porto & Versand"],
-  [/\bikea\b|\bmömax\b|\bmoemax\b|\bxxxlutz\b|\bhornbach\b|\bobi\b|\bbauhaus\b|\bmiete\b|stromrechnung|heizkosten/i, "Wohnen & Haushalt"],
+  [/\bikea\b|\bmömax\b|\bmoemax\b|\bxxxlutz\b/i, "Möbel & Einrichtung"],
+  [/\bhornbach\b|\bobi\b|\bbauhaus\b|\bmiete\b|stromrechnung|heizkosten/i, "Wohnen & Haushalt"],
   [/\boebb\b|\böbb\b|\bwestbahn\b|\bflixbus\b|\bpostbus\b|wiener\s*linien|graz\s*linien|\bdeutsche\s*bahn\b|\btrenitalia\b|\bregiojet\b|\bsbb\s*(?:cff|ticket|app)\b/i, "Öffentliche Verkehrsmittel"],
   [/\bpark(?:haus|garage|platz|deck|automat|ticket|geb[uü]hr|sheriff)\w*|(?:park|tief|theater|stadt|city)garage|\bparken\b|\bapcoa\b|\bcontipark\b|\beasypark\b|handy\s*parken|\bparkster\b|\basfinag\b|\bvignette\b|\bmaut(?:stelle)?\b/i, "Parken & Maut"],
   [/\buber\b(?!\s*eats\b)|\btaxi\b/i, "Mobilität"],
@@ -73,12 +74,13 @@ export const groceryMerchant = /\bbilla\b|\b(?:inter|euro)?spar\b|\bpenny\b/i;
 export const amazonMerchant = /\bamazon\b|\bamzn?\b|\bamz-shop\b|\bprime\b/i;
 const merchantCategories: [RegExp, Category][] = [
   [/\bbipa\b|\bhotspot\b|\bmensa\b|\bmensen\b/i, "Mittagessen"],
-  [/\btrafik\b/i, "Shopping"],
+  // Tobacco, lottery and magazines: this household files a Trafik as leisure.
+  [/\btrafik\b/i, "Freizeit"],
   [groceryMerchant, "Lebensmittel"],
   [/\bshell\b|\bomv\b|\beni\b|\bpace\s*pay\b|tankstelle|tanken/i, "Mobilität"],
-  [/\bmc\s*donald'?s?\b|\bmcd\b|burger|pizzeria|\bgams\b|sakura|burgschenke|\brestaurants?\b|\bgasthaus\b/i, "Restaurants"],
+  [/\bmc\s*donald'?s?\b|\bmcd\b|burger|pizzeria|sakura|burgschenke|\brestaurants?\b|\bgasthaus\b/i, "Restaurants"],
   [/\bwolt\b|\bfoodora\b|\blieferando\b|\blieferdienst\b|\buber\s*eats\b/i, "Lieferdienste"],
-  [/\bmartin\s+auer\b|\bstarbucks\b|\bcaf[eé]s?(?=\W|$)|\bsnacks?\b/i, "Cafés & Snacks"],
+  [/\bmartin\s+auer\b|\bgams\b|\bstarbucks\b|\bcaf[eé]s?(?=\W|$)|\bsnacks?\b/i, "Cafés & Snacks"],
   [/\bdm\b|dm-fil|dm-drogerie/i, "Drogerie"],
   [amazonMerchant, "Shopping"],
   [/(?:^|\|)\s*h\s*&?\s*m\s+(?!\d)|\bh&m\b|\bzara\b|\bprimark\b|\bc&a\b|\bdeichmann\b|\bzalando\b|about\s*you\b|\bnew\s*yorker\b|\bmedia\s*markt\b|\bmediamarkt\b|\bsaturn\b|\betsy\b|\batrio\b/i, "Shopping"],
