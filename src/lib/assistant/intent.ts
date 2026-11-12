@@ -333,8 +333,17 @@ const definedEntries = <T extends object>(value: T) =>
 // Follow-up answers ("Sparkonto", "Juli 2027", "400") fill the open question of the pending draft.
 export function mergeDraft(pending: AssistantDraft | undefined, parsed: ParsedMessage, model: Partial<ParsedMessage>, text: string, asOf: string): AssistantDraft | undefined {
   const values: Partial<ParsedMessage> = { ...definedEntries(parsed), ...definedEntries(model) };
+  // "-500 €" is no amount for a goal or a purchase: asked again instead of turning it into 500.
+  if (/(?:^|[\s(])(?:-|−|minus\s*)\s*\d/i.test(text)) { delete values.amount; delete values.monthly; }
+  // The name as the user wrote it ("E-Bike", not "E-bike").
+  if (values.name) {
+    const at = text.toLowerCase().indexOf(values.name.toLowerCase());
+    if (at >= 0) values.name = text.charAt(at).toUpperCase() + text.slice(at + 1, at + values.name.length);
+  }
   const action = values.action;
-  const startOver = !pending || (!!action && action !== pending.action);
+  // "Sparziel Urlaub 2000 € bis Juni" while another goal is still open starts that new goal instead of renaming the open one.
+  const another = !!pending?.name && !!values.name && values.name.toLowerCase() !== pending.name.toLowerCase() && /\bsparziel\b|\bneue[snr]?\b/i.test(text);
+  const startOver = !pending || (!!action && action !== pending.action) || another;
   const resolvedAction = startOver ? action : pending.action;
   if (!resolvedAction) return undefined;
   const draft: Partial<AssistantDraft> = startOver ? { action: resolvedAction } : { ...pending };

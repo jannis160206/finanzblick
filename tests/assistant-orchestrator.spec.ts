@@ -61,4 +61,34 @@ test.describe("assistant orchestrator", () => {
       await page.screenshot({ path: testInfo.outputPath(`assistant-${width}-${theme}.png`) });
     });
   }
+
+  test("takes a new command after a name question as its own and saves a contract after a plain No", async ({ page }) => {
+    await prepare(page, 1440, "light");
+    await page.goto("/");
+    await page.getByRole("button", { name: /^Finanz-Assistent öffnen/ }).click();
+    const chat = page.getByRole("region", { name: "Chat mit dem Finanz-Assistenten" });
+
+    // "Motorrad ist erreicht" after "Welches meinst du?" completes the goal; it does not pick a name for the earlier delete.
+    await ask(page, "lösch mein sparziel Gibtsnicht");
+    await expect(chat.getByText(/„Gibtsnicht“ finde ich nicht/)).toBeVisible();
+    await ask(page, "Motorrad ist erreicht");
+    await expect(chat.getByText(/„Motorrad“ als erreicht markieren/).first()).toBeVisible();
+    await expect(chat.getByText(/Sparziel „Motorrad“ löschen/)).toHaveCount(0);
+
+    // A plain "Nein" under the contract preview asks what to change; the following "Ja" still saves it.
+    await ask(page, "Abbrechen");
+    await ask(page, "neuer vertrag fitness park 39 € monatlich");
+    await expect(chat.getByText(/^In welche Kategorie gehört „Fitness Park“/)).toBeVisible();
+    // A full sentence that answers the open step stays in the wizard.
+    for (const [answer, next] of [["Sport & Fitness", /^Gibt es eine Kündigungsfrist/], ["Die Kündigungsfrist ist 1 Monat", /^Gibt es eine Mindestlaufzeit/],
+      ["Keine Mindestlaufzeit", /^Wann ist die nächste Abbuchung/], ["Am 1.11.", /^So würde ich „Fitness Park“ anlegen/]] as const) {
+      await ask(page, answer);
+      await expect(chat.getByText(next)).toBeVisible();
+    }
+    await ask(page, "Nein");
+    await expect(chat.getByText(/^Was soll ich ändern\?/)).toBeVisible();
+    await ask(page, "Ja");
+    await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").contracts?.some((item: { name?: string }) => item.name === "Fitness Park"), storageKey))
+      .toBe(true);
+  });
 });

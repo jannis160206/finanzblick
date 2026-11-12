@@ -45,6 +45,23 @@ function candidates(text: string): string[] | undefined {
   return undefined;
 }
 
+/**
+ * "Leg einen Vertrag für Netflix an und lösch die Position Geschenke": two changes of different kinds that cannot be one
+ * preview. The first is done now; the second is offered as a suggestion instead of being dropped silently.
+ */
+export function secondChange(input: string, names: string[] = []): { first: string; rest: string } | undefined {
+  const text = stripAck(normalizeMessage(input).trim());
+  if (text.length < 15 || splitCommands(text, names)) return undefined;
+  for (const match of text.matchAll(/,?\s+(?:und|sowie)\s+(?:dann\s+|danach\s+|außerdem\s+|ausserdem\s+|zusätzlich\s+|zusaetzlich\s+|bitte\s+)?(?=\p{L})/gu)) {
+    const first = text.slice(0, match.index).trim();
+    const rest = text.slice((match.index ?? 0) + match[0].length).trim().replace(/[.!]+$/, "");
+    if (first.length < 6 || rest.length < 6) continue;
+    const before = detectTool(first, names), after = detectTool(rest, names);
+    if (before && after && after !== "batch" && changingTools.includes(before) && changingTools.includes(after)) return { first, rest };
+  }
+  return undefined;
+}
+
 export function splitQuestion(input: string, names: string[] = []): QuestionPart[] | undefined {
   // "Danke! Und was ist ein ETF?" is one question after the thanks.
   const text = stripAck(normalizeMessage(input).trim());

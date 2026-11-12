@@ -34,9 +34,25 @@ import { assignTransactions } from "@/lib/transaction-tools";
 import {
   appStateSchema,
   transactionSchema,
+  type AppState,
   type Category,
   type Transaction,
 } from "@/lib/types";
+
+/** Sets or removes the user's note on one booking. */
+export function setBookingNote(state: AppState, id: string, note: string): AppState {
+  const text = note.trim().slice(0, 300);
+  return {
+    ...state,
+    transactions: state.transactions.map((row) => {
+      if (row.id !== id || (row.note ?? "") === text) return row;
+      const next = { ...row };
+      if (text) next.note = text;
+      else delete next.note;
+      return next;
+    }),
+  };
+}
 import type { AccountedTransaction } from "@/lib/shared-holiday";
 
 function bookingSnapshot(booking: Transaction | undefined) {
@@ -68,6 +84,7 @@ export function TransactionForm({
     !currentBooking ||
     bookingSnapshot(currentBooking) !== bookingSnapshot(transaction);
   const [editingName, setEditingName] = useState(false);
+  const [note, setNote] = useState(transaction.note ?? "");
   const form = useForm<Transaction>({
     resolver: zodResolver(transactionSchema),
     defaultValues: transaction,
@@ -123,7 +140,11 @@ export function TransactionForm({
       return;
     }
     update((current) =>
-      assignTransactions(current, [transaction.id], assignment),
+      setBookingNote(
+        assignTransactions(current, [transaction.id], assignment),
+        transaction.id,
+        note,
+      ),
     );
     toast.success(
       value.category !== "Prüfen"
@@ -154,8 +175,8 @@ export function TransactionForm({
         <DialogHeader>
           <DialogTitle>Zuordnung ändern</DialogTitle>
           <DialogDescription>
-            Name, Kategorie und Fixkosten ändern. Namensänderungen gelten für
-            alle passenden bisherigen und künftigen Buchungen.
+            Name, Kategorie, Fixkosten und Notiz ändern. Namensänderungen
+            gelten für alle passenden bisherigen und künftigen Buchungen.
           </DialogDescription>
         </DialogHeader>
         <DialogForm onSubmit={form.handleSubmit(save)}>
@@ -270,6 +291,16 @@ export function TransactionForm({
             <p className="text-xs leading-relaxed text-muted-foreground">
               „Prüfen“ lässt die Zuordnung offen.
             </p>
+            <div className="space-y-2">
+              <Label htmlFor="tx-note">Notiz</Label>
+              <Input
+                id="tx-note"
+                maxLength={300}
+                value={note}
+                placeholder="z. B. Fernseher fürs Wohnzimmer"
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </div>
             {stale && (
               <p role="alert" className="text-sm text-destructive">
                 Die Buchung wurde inzwischen geändert oder gelöscht. Bitte

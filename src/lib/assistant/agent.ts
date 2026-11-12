@@ -1,7 +1,7 @@
 import { classify, type Dashboard } from "@/lib/calc";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { currency, dateLabel } from "@/lib/format";
-import { savingsGoals } from "@/lib/goals";
+import { corePocket, pocketKey, savingsGoals } from "@/lib/goals";
 import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, ContractDraft, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { financialCheck } from "./check";
 import { answerQuestion, depotProjection, findCategories, goalProgressQuestion, goalsStatus, namedGoal, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
@@ -14,8 +14,8 @@ import { knowledgeAnswer, knowledgeList, knowledgeListQuestion } from "./knowled
 import { marketAnswer, realValue, type MarketSnapshot } from "./market";
 import { normalizeMessage } from "./normalize";
 import { applyOperations, OperationError } from "./operations";
-import { detectTool, matchName, splitCommands, type AssistantTool } from "./tools";
-import { bookingEdit } from "./bookings";
+import { detectTool, matchName, rowWord, splitCommands, type AssistantTool } from "./tools";
+import { bookingEdit, renameRequest } from "./bookings";
 import { cancelAnswer } from "./cancel";
 import { whyAnswer } from "./why";
 import { forecastAnswer } from "./forecast";
@@ -23,13 +23,18 @@ import { budgetLineAnswer, pulseAnswer } from "./pulse";
 import { payrollAnswer } from "./payroll";
 import { ordersAnswer } from "./orders";
 import { fundsAnswer, giroTopUp, parseAccountRules, rulesResult, topUpText } from "./funds";
-import { bookingAction, bookingActionRequest } from "./booking-actions";
-import { contractEdit } from "./contract-actions";
+import { bookingAction, bookingActionRequest, selectBookings } from "./booking-actions";
+import { contractEdit, type ContractPlan } from "./contract-actions";
+import { secondChange } from "./combined";
+import { changingTools } from "./conversation";
+import { contractFromBookingRequest } from "./contract-requests";
 import { detectContracts } from "@/lib/contracts";
-import { contractDraftOperation, contractStepReply, startContractDraft } from "./contract-draft";
+import { contractDraftOperation, contractStepReply, startContractDraft, startContractFromBookings } from "./contract-draft";
 import { planRowAction } from "./plan-rows";
+import { payrollActionRequest, payrollCheck, payrollPlan } from "./payroll-actions";
+import { settingsPlan } from "./settings-actions";
 import { whatIfAnswer } from "./whatif-answer";
-import { parseBudgetPlan } from "./budget-plan";
+import { budgetLinesIn, parseBudgetPlan } from "./budget-plan";
 import { bookingFilter, cleanupPlan, filterLabel, hasFilter, matchesFilter, merchantRows, resolveMerchants } from "./cleanup";
 import { monthReview, netWorthAnswer, refundAnswer, securityCheck, sharedAnswer } from "./essentials";
 import { contextAnswer, contractsAnswer, insightsAnswer, trendAnswer, trendQuestion } from "./copilot";
@@ -94,18 +99,47 @@ function editAmount(text: string, current: number): number | undefined {
   return values.length === 1 ? values[0] : undefined;
 }
 
+// "Benenne Japan in Asien um": the new name without the closing "um".
+const renameTo = /(?:umbenennen|benenn\w*|nenn\w*)\b.*?\b(?:in|zu)\s+[„"']?([^"“”'.,!?]{2,60}?)[“"']?\s*(?:um|umbenennen)?\s*[.!]?$/i;
+
 const settingKeys = [
   [/notgroschen|notfall/, "emergencyTarget", "Notgroschen-Ziel"],
   [/urlaubs?(?:ziel|topf|konto|budget|geld)|\burlaub\b/, "vacationTarget", "Urlaubs-Ziel"],
   [/sparkonto/, "savingsTarget", "Sparkonto-Ziel"],
 ] as const;
 
+const pocketPatterns = [
+  /\b(?:auf|am|im)\s+(?:dem\s+|das\s+|meinem\s+)?([\p{L}][\p{L}\d-]{1,40})\s+(?:liegen|parken|landen|sparen|gespart werden|gesammelt werden)\b/iu,
+  /\b(?:aufs|auf das|auf dem|auf mein|aufm)\s+([\p{L}][\p{L}\d-]{1,40})\s+(?:leg\w*|park\w*|leg\w*|verschieb\w*|überweis\w*|ueberweis\w*)?\s*[.!]?$/iu,
+  /\bkonto\b.{0,40}?\b(?:ist|auf|soll|zu|=)\s+(?:das\s+|dem\s+|mein\s+)?([\p{L}][\p{L}\d-]{1,40})(?:\s+(?:ändern|aendern|wechseln|setzen|sein))?\s*[.!]?$/iu,
+];
+// "vom Urlaubskonto", "aus dem Sparkonto": a pocket money is taken from for a goal.
+function extraSourceIn(lower: string): Extract<AssistantOperation, { op: "goal_extras" }>["from"] {
+  const named = /\b(?:vom|aus dem|von meinem|von dem)\s+([\p{L}-]{3,30})/u.exec(lower)?.[1];
+  if (!named) return undefined;
+  return /sparkonto/.test(named) ? "Sparkonto" : /notgroschen|tagesgeld/.test(named) ? "Notgroschen" : /urlaub/.test(named) ? "Urlaub"
+    : /motorrad/.test(named) ? "Motorrad" : /^giro|girokonto|hauptkonto/.test(named) ? "Giro" : undefined;
+}
+
+// The pocket named in the message: one of the core pockets ("Urlaubskonto" → Urlaub) or the name as written.
+function goalPocketIn(text: string, goal: SavingsGoal): string | undefined {
+  if (!/\b(?:liegen|parken|landen|konto|aufs|auf (?:das|dem|mein))\b/i.test(text)) return undefined;
+  for (const pattern of pocketPatterns) {
+    const raw = pattern.exec(text)?.[1];
+    if (!raw || pocketKey(raw) === pocketKey(goal.name) && pocketKey(raw) === pocketKey(goal.pocket)) continue;
+    if (/^(?:giro|girokonto|konto|ziel|sparziel|geld)$/i.test(raw)) continue;
+    const core = corePocket(raw) ?? corePocket(raw.replace(/-?konto$/i, ""));
+    return core ?? raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+  return undefined;
+}
+
 function editGoal(goal: SavingsGoal, text: string, asOf: string): { operations: AssistantOperation[]; title: string } | string {
   const lower = text.toLowerCase();
   const parsed = parseAssistantMessage(text, asOf);
   if (/lösch|loesch|entfern|streich|brauch\w* (?:ich )?(?:nicht|kein)/.test(lower)) return { operations: [{ op: "goal_delete", goalId: goal.id }], title: `Sparziel „${goal.name}“ löschen` };
   if (/erreicht|geschafft|abgeschlossen|abschließ|erledigt|fertig gespart/.test(lower)) return { operations: [{ op: "goal_complete", goalId: goal.id }], title: `„${goal.name}“ als erreicht markieren` };
-  if (/aussetz|pausier|überspring|ueberspring|ausfallen|fortsetz|wieder aufnehm|wieder zahl|doch zahl/.test(lower)) {
+  if (/aussetz|pausier|überspring|ueberspring|ausfallen|fortsetz|wieder aufnehm|wieder zahl|doch zahl|\bsetz\w*\b.{0,40}\baus\s*[.!]?$/.test(lower)) {
     const resume = /fortsetz|wieder aufnehm|wieder zahl|doch zahl/.test(lower);
     const months = parsed.date ? [parsed.date.month] : [asOf.slice(0, 7)];
     const span = /(\d{1,2})\s+monate?/.exec(lower);
@@ -119,13 +153,30 @@ function editGoal(goal: SavingsGoal, text: string, asOf: string): { operations: 
     const span = (Number(extrasNow.at(-1)!.slice(0, 4)) - Number(extrasNow[0].slice(0, 4))) * 12 + Number(extrasNow.at(-1)!.slice(5)) - Number(extrasNow[0].slice(5)) + 1;
     return { operations: [{ op: "goal_extras", goalId: goal.id, start: extrasNow[0], months: Math.min(24, span), amount: 0 }], title: `Extra-Beträge für „${goal.name}“ entfernen` };
   }
+  const source = extraSourceIn(lower);
+  // "Im Jänner 200 € extra fürs Motorrad": one month, optionally taken from a pocket.
+  const single = !parsed.extra ? /(?<![\d.,])(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s*(?:€|euro)?\s+(?:extra|zusätzlich|zusaetzlich|mehr als sonderzahlung|als sonderzahlung)\b/.exec(lower) ??
+    /\b(?:extra|zusätzlich|zusaetzlich|sonderzahlung(?:\s+von)?)\s+(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s*(?:€|euro)?/.exec(lower) : null;
+  if (single) {
+    const amount = parseAmount(`${single[1]}${single[2] ? `,${single[2]}` : ""}`);
+    if (!amount || amount <= 0) return "Der Extra-Betrag muss größer als null sein.";
+    const start = parsed.date?.month ?? addMonth(asOf.slice(0, 7), 1);
+    return { operations: [{ op: "goal_extras", goalId: goal.id, start, months: 1, amount, ...(source ? { from: source } : {}) }], title: `Extra-Betrag für „${goal.name}“` };
+  }
+  if (source && !parsed.extra && !/\d/.test(lower))
+    return `Wie viel soll ich ${source === "Giro" ? "vom Girokonto" : `vom ${source}`} für „${goal.name}“ nehmen – einmalig oder für mehrere Monate? Zum Beispiel „Im Jänner 200 € extra vom ${source} für ${goal.name}“ oder „Die ersten 3 Monate je 100 € vom ${source} für ${goal.name}“.`;
   if (parsed.extra) {
     const start = parsed.date && /\bab\b/.test(lower) ? parsed.date.month : addMonth(asOf.slice(0, 7), 1);
     return { operations: [{ op: "goal_extras", goalId: goal.id, start, months: parsed.extra.months, amount: parsed.extra.amount,
       ...(parsed.extra.from ? { from: parsed.extra.from } : {}) }], title: `Extra-Beträge für „${goal.name}“` };
   }
-  const rename = /(?:umbenennen|benenn\w*|nenn\w*)\b.*?\b(?:in|zu)\s+[„"']?([^"“”'.,!?]{2,60})/i.exec(text);
+  const rename = renameTo.exec(text);
   if (rename) return { operations: [{ op: "goal_update", goalId: goal.id, name: rename[1].trim() }], title: `„${goal.name}“ umbenennen` };
+  // "Das Motorrad-Geld soll auf dem Sparkonto liegen", "Konto vom Motorrad auf Urlaub ändern": the account the goal's money is kept on.
+  const pocket = goalPocketIn(text, goal);
+  if (pocket) return pocketKey(pocket) === pocketKey(goal.pocket) ? `„${goal.name}“ liegt schon auf ${goal.pocket}.`
+    : { operations: [{ op: "goal_update", goalId: goal.id, pocket }], title: `Konto von „${goal.name}“ ändern` };
+  if (/(?:\bauf|\bum|=)\s*(?:-|−|minus\s*)\s*\d/.test(lower)) return "Der neue Betrag muss größer als null sein.";
   const update: Extract<AssistantOperation, { op: "goal_update" }> = { op: "goal_update", goalId: goal.id };
   if (parsed.date && /schieb|verleg|bis|datum|termin|später|früher|auf\s+(?:jänner|januar|feber|februar|märz|april|mai|juni|juli|august|september|oktober|november|dezember|\d{1,2}[./])/.test(lower))
     update.date = resolveDate(parsed.date, "savings_goal", asOf);
@@ -146,7 +197,7 @@ function editPlanned(item: PlannedOneOff, text: string, asOf: string): { operati
   const parsed = parseAssistantMessage(text, asOf);
   if (/lösch|loesch|entfern|streich|fällt weg|faellt weg|brauch\w* (?:ich )?(?:nicht|kein)|erledigt|aus (?:dem plan|der planung)/.test(lower))
     return { operations: [{ op: "planned_delete", plannedId: item.id }], title: `„${item.name}“ aus der Planung nehmen` };
-  const rename = /(?:umbenennen|benenn\w*|nenn\w*)\b.*?\b(?:in|zu)\s+[„"']?([^"“”'.,!?]{2,60})/i.exec(text);
+  const rename = renameTo.exec(text);
   if (rename) return { operations: [{ op: "planned_update", plannedId: item.id, name: rename[1].trim() }], title: `„${item.name}“ umbenennen` };
   const update: Extract<AssistantOperation, { op: "planned_update" }> = { op: "planned_update", plannedId: item.id };
   if (/(?:vom|übers|ueber|über das|aus dem|mit dem|von meinem)\s+sparkonto/.test(lower)) update.pocket = "Sparkonto";
@@ -172,15 +223,17 @@ export function contractDraftResult(state: AppState, draft: ContractDraft, asOf:
   return preview.change ? { ...preview, text: reply.text, contractDraft: draft } : { ...preview, contractDraft: { ...draft, step: "name" } };
 }
 
-function planRows(state: AppState, text: string, asOf: string): AgentResult | undefined {
+function planRows(state: AppState, text: string, asOf: string): (AgentResult & { sure?: boolean }) | undefined {
   const plan = planRowAction(state, text, asOf);
   if (!plan) return undefined;
-  return "operations" in plan ? previewChange(state, plan.operations, plan.title, asOf) : plan;
+  if (!("operations" in plan)) return plan;
+  const preview = previewChange(state, plan.operations, plan.title, asOf);
+  return { ...preview, ...(plan.note && preview.change ? { text: `${plan.note} ${preview.text}` } : {}), sure: true };
 }
 
 function edit({ state, asOf, hints }: Context, text: string): AgentResult {
   // "Füg eine Position Fitnessstudio hinzu", "Lösch die Position Strom": the month plan.
-  if (/\b(?:plan)?position\b/i.test(text)) {
+  if (rowWord.test(text)) {
     const positions = planRows(state, text, asOf);
     if (positions) return positions;
   }
@@ -191,14 +244,23 @@ function edit({ state, asOf, hints }: Context, text: string): AgentResult {
   const item = matchName(text, planned, (entry) => entry.name) ?? (hints?.planned ? matchName(hinted, planned, (entry) => entry.name) : undefined);
   const lower = text.toLowerCase();
   // "Erhöhe das Sparziel Urlaub in Japan auf 3500 €": a named goal that does not exist is not the vacation setting.
-  const namedGoal = /\b[Ss]parziel\s+[„"]?(\p{Lu}[\p{L}\d-]*(?:\s+(?:in|für|nach|\p{Lu}[\p{L}\d-]*))+)/u.exec(text)?.[1];
-  if (!goal && !item && namedGoal) {
+  const namedGoal = /\b[Ss]parziel\s+[„"]?(\p{Lu}[\p{L}\d-]*(?:\s+(?:in|für|nach|\p{Lu}[\p{L}\d-]*))*)/u.exec(text)?.[1];
+  // A single word like "Sparziel Urlaub" may still mean the vacation or emergency setting.
+  const settingWord = !!namedGoal && !/\s/.test(namedGoal) && settingKeys.some(([pattern]) => pattern.test(namedGoal.toLowerCase()));
+  if (!goal && !item && namedGoal && !settingWord && !/\b(?:anleg|erstell|neue)/.test(lower)) {
     const names = goals.map((entry) => entry.name);
     return names.length ? { text: `Ein Sparziel „${namedGoal}“ finde ich nicht. Welches meinst du? Zur Auswahl: ${names.join(", ")}.`, choices: names }
       : { text: `Ein Sparziel „${namedGoal}“ gibt es noch nicht. Soll ich es anlegen? Sag zum Beispiel „Ich möchte ein Sparziel ${namedGoal} anlegen“.`,
         suggestions: [`Ich möchte ein Sparziel ${namedGoal} anlegen`] };
   }
   if (!goal && !item) {
+    // "Setz Urlaub im Dezember auf 300 €", "Verschieb 20 € von Strom zu Urlaub im Dezember": a named position of the month plan
+    // comes before the vacation or emergency setting.
+    const monthNamed = /\b(?:im|ab|von|bis|für|fuer)\s+(?:jänner|jaenner|januar|feber|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/.test(lower);
+    if ((monthNamed || /verschieb|umschicht|übertrag|uebertrag/.test(lower)) && matchName(text, state.financeRows.filter((row) => row.kind !== "variable"), (row) => row.label)) {
+      const positions = planRows(state, text, asOf);
+      if (positions) return positions;
+    }
     const setting = settingKeys.find(([pattern]) => pattern.test(lower));
     if (setting) {
       const value = editAmount(text, state.settings[setting[1]]);
@@ -212,10 +274,7 @@ function edit({ state, asOf, hints }: Context, text: string): AgentResult {
     const positions = planRows(state, text, asOf);
     if (positions) return positions;
     // "Ändere den Netflix Betrag auf 15,99 €": a contract, named without the word "Vertrag".
-    if (matchName(text, detectContracts(state, asOf), (contract) => contract.name)) {
-      const change = contractEdit(state, text, asOf);
-      return "operations" in change ? previewChange(state, change.operations, change.title, asOf) : change;
-    }
+    if (matchName(text, detectContracts(state, asOf), (contract) => contract.name)) return contractPlan(state, contractEdit(state, text, asOf), asOf);
     const names = [...goals.map((entry) => entry.name), ...planned.slice(0, 8).map((entry) => entry.name)];
     const rows = state.financeRows.slice(0, 6).map((row) => `„${row.label}“`);
     const known = rows.length ? ` Im Monatsplan gibt es die Positionen ${rows.join(", ")}.` : "";
@@ -230,7 +289,39 @@ function run(state: AppState, plan: { operations: AssistantOperation[]; title: s
   return typeof plan === "string" ? { text: plan } : previewChange(state, plan.operations, plan.title, asOf);
 }
 
-function booking({ state, asOf, hints }: Context, text: string): AgentResult {
+// A planned change with an optional sentence before the preview ("löschen geht nicht, ausblenden schon").
+function contractPlan(state: AppState, plan: ContractPlan | { operations: AssistantOperation[]; title: string; note?: string }, asOf: string): AgentResult {
+  if (!("operations" in plan)) return plan;
+  const preview = previewChange(state, plan.operations, plan.title, asOf);
+  return plan.note && preview.change ? { ...preview, text: `${plan.note} ${preview.text}` } : preview;
+}
+
+// "Markiere die Disney Plus Buchung als Vertrag": the contract wizard, prefilled from the picked bookings.
+function contractFromBookings({ state, asOf, hints }: Context, text: string): AgentResult {
+  const scope = text.replace(/\b(?:als|zu einem|einen|ein)\s+(?:neue[nmrs]?\s+)?(?:vertrag|abo|abonnement)\b|\bist\s+(?:eigentlich\s+|auch\s+)?(?:ein(?:e)?\s+)?(?:vertrag|abo)\b/gi, " ");
+  const { rows, what, specific, merchant } = selectBookings(state, scope, asOf, hints?.merchant);
+  const debits = rows.filter((row) => row.amount < 0 && !row.ignored);
+  if (!specific) return { text: "Aus welcher Buchung soll ich einen Vertrag machen? Nenne Händler und Datum, zum Beispiel „Markiere die Disney Plus Buchung vom 2.10. als Vertrag“." };
+  if (!debits.length) return { text: `Ich finde keine Abbuchung ${what}.` };
+  const known = detectContracts(state, asOf).find((contract) => contract.charges.some((charge) => debits.some((row) => row.id === charge.id)));
+  if (known) return { text: `${debits.length === 1 ? "Diese Buchung gehört" : "Diese Buchungen gehören"} schon zum Vertrag „${known.name}“.`,
+    suggestions: [`Was kostet mich ${known.name} im Jahr?`, `${known.name} ist gekündigt`] };
+  const picked = merchant ? debits.slice(0, 24) : debits.slice(0, 1);
+  return contractDraftResult(state, startContractFromBookings(picked, state, asOf, `manual:${crypto.randomUUID()}`, merchant), asOf);
+}
+
+function booking(context: Context, text: string): AgentResult {
+  const { state, asOf, hints } = context;
+  // "Benenne FITINN in Fitnessstudio um" for a contract without own bookings (or said with "Vertrag") renames the contract.
+  const rename = renameRequest(text);
+  if (rename && !bookingActionRequest(text)) {
+    const contract = matchName(rename.target, detectContracts(state, asOf), (item) => item.name);
+    const target = rename.target.replace(/[\s-]*(?:buchung|buchungen|umsatz|umsätze|umsaetze)\b/gi, " ").trim().toLowerCase();
+    const booked = /\bbuchung|\bumsatz|\bumsätze/i.test(text) ||
+      state.transactions.some((row) => row.description.toLowerCase().includes(target) || (row.merchantAlias ?? "").toLowerCase().includes(target));
+    if (contract && (!booked || /\b(?:vertrag|abo)\b/i.test(text))) return contractPlan(state, { operations: [{ op: "contract_update", contractId: contract.id, name: rename.alias.slice(0, 100) }],
+      title: `Vertrag „${contract.name}“ umbenennen` }, asOf);
+  }
   if (bookingActionRequest(text)) {
     const action = bookingAction(state, text, asOf, hints?.merchant);
     if (!("operations" in action)) return action;
@@ -289,12 +380,20 @@ function batch(context: Context, text: string): AgentResult {
   if (!parts) return edit(context, text);
   const operations: AssistantOperation[] = [];
   const titles: string[] = [];
+  const settled: string[] = [];
   for (const part of parts) {
     const tool = detectTool(part, names);
     const result = tool && tool !== "batch" ? executeTool(tool, part, { ...context, hints: undefined }) : { text: "Das verstehe ich nicht." } as AgentResult;
+    // A part that is already so ("… ist schon Shopping") is said, not treated as an error.
+    if (!result.change && !result.choices && /\bschon\b/.test(result.text)) { settled.push(result.text); continue; }
     if (!result.change) return { text: `Bei „${part}“ hänge ich: ${result.text}`.slice(0, 2000), ...(result.choices ? { choices: result.choices } : {}) };
     operations.push(...result.change.operations);
     titles.push(result.change.title);
+  }
+  if (!operations.length) return { text: settled.join(" ").slice(0, 2000) };
+  if (titles.length === 1) {
+    const single = previewChange(state, operations, titles[0], asOf);
+    return single.change ? { ...single, text: `${settled.join(" ")} ${single.text}`.trim().slice(0, 2000) } : single;
   }
   if (operations.length > 20) return { text: "Das sind zu viele Änderungen auf einmal. Bitte teil sie auf zwei Nachrichten auf." };
   const preview = previewChange(state, operations, `${titles.length} Änderungen: ${[...new Set(titles)].join(" · ")}`.slice(0, 200), asOf);
@@ -303,10 +402,14 @@ function batch(context: Context, text: string): AgentResult {
 
 // "Lieferando ist immer Essen", "Ordne Spar Lebensmittel zu", "Kategorisiere Amazon als Shopping".
 export function parseRule(text: string): { merchant?: string; category?: string } {
-  const clean = (value: string) => value.replace(/^(?:alle|die|der|das|den|buchungen|umsätze|zahlungen|von|bei|vom)\s+/gi, "")
-    .replace(/^(?:alle|die|der|das|den|buchungen|umsätze|zahlungen|von|bei|vom)\s+/gi, "").replace(/[„“"'.,!?]+/g, "").trim();
+  const clean = (value: string) => value.replace(/^(?:alle|die|der|das|den|buchungen|buchung|umsätze|zahlungen|von|bei|vom)\s+/gi, "")
+    .replace(/^(?:alle|die|der|das|den|buchungen|buchung|umsätze|zahlungen|von|bei|vom)\s+/gi, "").replace(/^(?:von|bei|vom)\s+/i, "")
+    .replace(/\s+(?:am|vom|von|im)\s+\d.*$/i, "")
+    .replace(/[\s-]+(?:buchung|buchungen|umsatz|umsätze|umsaetze|zahlung|zahlungen|abbuchung|sache|kauf|einkauf)\b.*$/i, "").replace(/[„“"'.,!?]+/g, "").trim();
   const patterns = [
-    /^(?:und\s+)?(.+?)\s+(?:ist|sind|gehört|gehören|zählt|zählen)\s+(?:ab jetzt\s+|künftig\s+|immer\s+|auch\s+)*(?:als\s+|zu\s+|in\s+)?(.+)$/i,
+    /^(?:bitte\s+)?(?:änder|aender|setz|stell|wechsel)\w*\s+(?:die\s+)?kategorie\s+(?:der|des|von|vom|bei|für|fuer)\s+(.+?)\s+(?:auf|zu|in|nach|als)\s+(.+?)\s*(?:ändern|aendern|setzen|stellen|um)?\s*[.!]?$/i,
+    /^(?:bitte\s+)?(?:die\s+)?kategorie\s+(?:der|des|von|vom|bei|für|fuer)\s+(.+?)\s+(?:auf|zu|in|nach|als)\s+(.+?)\s*(?:ändern|aendern|setzen|stellen|um)?\s*[.!]?$/i,
+    /^(?:und\s+)?(.+?)\s+(?:ist|is|sind|gehört|gehören|zählt|zählen)\s+(?:ab jetzt\s+|künftig\s+|immer\s+|auch\s+|eigentlich\s+|doch\s+)*(?:als\s+|zu\s+|in\s+|ein\s+|eine\s+)?(.+)$/i,
     /^(?:bitte\s+)?(?:ordne|buche|verbuche|stell)\s+(.+?)\s+(?:immer\s+|künftig\s+|ab jetzt\s+)*(?:als\s+|der kategorie\s+|in die kategorie\s+|zu\s+|unter\s+)?(.+?)\s+(?:zu|ein|um)\s*[.!]?$/i,
     /^(?:bitte\s+)?kategorisier\w*\s+(.+?)\s+(?:immer\s+)?(?:als|zu|in)\s+(.+)$/i,
     /^(.+?)\s+(?:immer\s+)?(?:als|unter)\s+(.+?)\s+(?:verbuchen|buchen|einordnen|zuordnen|kategorisieren)/i,
@@ -322,8 +425,8 @@ export function parseRule(text: string): { merchant?: string; category?: string 
 
 function rule({ state, asOf, hints }: Context, text: string): AgentResult {
   const parsed = parseRule(text);
-  const categoryText = [parsed.category, hints?.category].filter(Boolean).join(" ");
-  const found = findCategories(categoryText || text);
+  // The category the user wrote wins over the model's hint; the hint only helps when the words name none.
+  const found = (parsed.category ? findCategories(parsed.category) : undefined) ?? (hints?.category ? findCategories(hints.category) : undefined) ?? findCategories(text);
   const filter = bookingFilter(text, asOf);
   const specific = hasFilter(filter);
   const names = (parsed.merchant ? resolveMerchants(state, parsed.merchant) : undefined) ??
@@ -342,7 +445,10 @@ function rule({ state, asOf, hints }: Context, text: string): AgentResult {
   if (!rows.length) return { text: `Ich finde keine Buchung ${[names && `von ${merchant}`, filterLabel(filter)].filter(Boolean).join(" ")}.` };
   // A group like "Essen" becomes the category these bookings mostly have already, otherwise its first entry.
   let category: Category = found.categories[0];
-  if (found.categories.length > 1) {
+  // "auf Restaurants" names exactly one category of the group; only a group word like "Essen" follows the bookings.
+  const exact = found.categories.find((item) => [parsed.category, hints?.category].some((word) => word && word.trim().toLowerCase() === item.toLowerCase()));
+  if (exact) category = exact;
+  else if (found.categories.length > 1) {
     const counts = new Map<Category, number>();
     for (const row of rows) {
       const current = canonicalCategory(classify(row).category);
@@ -359,7 +465,12 @@ function rule({ state, asOf, hints }: Context, text: string): AgentResult {
       detail: `${canonicalCategory(classify(row).category)}${canonicalCategory(classify(row).category) === category ? "" : ` → ${category}`}`, transactionIds: [row.id] })),
     transactionIds: changing.slice(0, 50).map((row) => row.id),
     note: learn ? "Künftige Buchungen dieses Händlers werden automatisch so zugeordnet." : "Gilt nur für diese Buchungen, keine Regel für später." };
-  if (!changing.length) return { text: `${rows.length === 1 ? "Die Buchung" : `Alle ${rows.length} Buchungen`} ${[names && `von ${merchant}`, filterLabel(filter)].filter(Boolean).join(" ")} ${rows.length === 1 ? "ist" : "sind"} schon ${category}.`, card };
+  if (!changing.length) {
+    const said = parsed.category?.trim();
+    const alias = said && !category.toLowerCase().includes(said.toLowerCase()) && !said.toLowerCase().includes(category.toLowerCase())
+      ? `„${said.charAt(0).toUpperCase() + said.slice(1)}“ gehört in Finanzblick zur Kategorie ${category} – ` : "";
+    return { text: `${alias}${rows.length === 1 ? alias ? "die Buchung" : "Die Buchung" : `${alias ? "alle" : "Alle"} ${rows.length} Buchungen`} ${[names && `von ${merchant}`, filterLabel(filter)].filter(Boolean).join(" ")} ${rows.length === 1 ? "ist" : "sind"} schon ${category}.`, card };
+  }
   const preview = previewChange(state, [{ op: "categorize", ids: changing.map((row) => row.id).slice(0, 2000), category, learn }],
     `${merchant} als ${category} zuordnen`, asOf);
   return { ...preview, card, text: preview.change ? `${plural(changing.length, "Buchung", "Buchungen")} ${[names && `von ${merchant}`, names && specific ? filterLabel(filter) : !names && filterLabel(filter)].filter(Boolean).join(" ")} ${changing.length === 1 ? "würde" : "würden"} zu ${category}${learn ? " – und ich merke mir das für künftige Buchungen" : ""}. Bitte bestätigen:` : preview.text };
@@ -484,6 +595,18 @@ function help(): AgentResult {
 
 // Executes a non-draft tool deterministically on the local data. Draft tools (goal, expense, affordability) use the draft flow.
 export function executeTool(tool: AssistantTool, input: string, context: Context): AgentResult {
+  // A second change of another kind in the same message is offered next instead of being dropped.
+  const second = changingTools.includes(tool) && tool !== "batch" && tool !== "undo" ? secondChange(input, nameList(context.state, context.asOf)) : undefined;
+  if (second) {
+    const result = executeTool(tool, second.first, context);
+    const rest = second.rest.charAt(0).toUpperCase() + second.rest.slice(1);
+    return { ...result, text: `${result.text} Den zweiten Teil („${rest.slice(0, 80)}“) erledige ich danach – tipp unten darauf, wenn das hier passt.`.slice(0, 2000),
+      suggestions: [rest.slice(0, 120), ...(result.suggestions ?? [])].slice(0, 4) };
+  }
+  return runTool(tool, input, context);
+}
+
+function runTool(tool: AssistantTool, input: string, context: Context): AgentResult {
   const { state, dashboard, asOf } = context;
   const text = normalizeMessage(input);
   switch (tool) {
@@ -562,21 +685,41 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     case "context": return contextAnswer(state, text, context.page);
     case "insights": return insightsAnswer(state, dashboard, asOf, context.insights);
     case "payroll": {
+      if (payrollActionRequest(text.toLowerCase()) === "check") return payrollCheck(state);
       const bonus = bonusRequest(text);
       return bonus === undefined ? payrollAnswer(state, text, asOf)
         : previewChange(state, [{ op: "bonus_percent", value: bonus }], bonus === 0 ? "Successbonus ausschalten" : `Successbonus auf ${bonus.toLocaleString("de-DE")} % setzen`, asOf);
     }
-    case "contract_new": return contractDraftResult(state, startContractDraft(text, state, asOf, `manual:${crypto.randomUUID()}`), asOf);
-    case "contract_edit": {
-      const plan = contractEdit(state, text, asOf, context.page);
+    case "payroll_action": {
+      const action = payrollActionRequest(text.toLowerCase());
+      if (!action || action === "check") return payrollCheck(state);
+      const plan = payrollPlan(state, text, asOf, action);
+      return "operations" in plan ? contractPlan(state, plan, asOf) : plan;
+    }
+    case "settings": {
+      const plan = settingsPlan(text);
       return "operations" in plan ? previewChange(state, plan.operations, plan.title, asOf) : plan;
+    }
+    case "contract_new": return contractFromBookingRequest(text.toLowerCase()) ? contractFromBookings(context, text)
+      : contractDraftResult(state, startContractDraft(text, state, asOf, `manual:${crypto.randomUUID()}`), asOf);
+    case "contract_edit": {
+      // "Nenn SHELL 1234 ab jetzt Shell": no contract by that name, so it is the bookings' display name.
+      const rename = renameRequest(text);
+      const contracts = detectContracts(state, asOf);
+      if (rename && !/\b(?:vertrag|abo|versicherung)\b/i.test(text) && !matchName(rename.target, contracts, (item) => item.name)) return booking(context, text);
+      return contractPlan(state, contractEdit(state, text, asOf, context.page), asOf);
     }
     case "budget_plan": {
       // "Setz Tanken im Dezember auf 150 €", "Tanken ab Jänner auf 120 €": single months of the month plan, like editing those cells.
       if (/\b(?:im|für|fuer|ab|von|bis)\s+(?:jänner|jaenner|januar|feber|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/i.test(text)
         && !/\bum\s+\d/.test(text)) {
         const months = planRows(state, text, asOf);
-        if (months?.change) return months;
+        if (months?.change || months?.sure) return months;
+      }
+      // No budget line named: maybe a position of the month plan ("Budget für Geschenke").
+      if (!budgetLinesIn(text.toLowerCase()).length) {
+        const row = planRows(state, text, asOf);
+        if (row?.change || row?.sure) return row;
       }
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;

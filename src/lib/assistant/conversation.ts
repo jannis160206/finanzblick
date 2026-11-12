@@ -5,7 +5,7 @@ import type { AgentResult } from "./agent";
 
 // Tools that change data or start a form; never run as a side effect of a question like "Sollte ich …?".
 export const changingTools: readonly AssistantTool[] = [...draftTools, "edit", "booking", "batch", "rule", "remember", "forget", "undo", "reminder", "account_rule", "budget_plan",
-  "contract_new", "contract_edit"];
+  "contract_new", "contract_edit", "payroll_action", "settings"];
 
 // Opinions, advice and worries want a written answer, not just a number card.
 const ADVICE = new RegExp([

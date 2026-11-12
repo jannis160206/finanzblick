@@ -27,14 +27,14 @@ it("shows the tree, the agents with their models, the runs and the tools read-on
   expect(await tree.findByText("KI bereit · Qwen3-8B-int4-cw-ov")).toBeTruthy();
   expect(within(tree.getByRole("list", { name: "Entscheidungsschritte" })).getAllByRole("listitem")).toHaveLength(3);
   expect(within(tree.getByRole("list", { name: "Agenten" })).getAllByRole("listitem").map((item) => item.textContent))
-    .toEqual(["Umsätze12 Werkzeuge", "Verträge4 Werkzeuge", "Budget & Prognose21 Werkzeuge", "Gehalt & Steuern3 Werkzeuge", "Allgemeiner ChatRückfall11 Werkzeuge"]);
+    .toEqual(["Umsätze12 Werkzeuge", "Verträge4 Werkzeuge", "Budget & Prognose21 Werkzeuge", "Gehalt & Steuern4 Werkzeuge", "Allgemeiner ChatRückfall12 Werkzeuge"]);
 
   const agents = within(screen.getByRole("region", { name: "Agenten" }));
   expect(agents.getByRole("heading", { name: /Gehalt & Steuern/ })).toBeTruthy();
   const models = (text: string) => agents.getAllByText((_, element) => element?.tagName === "P" && element.textContent === text);
   expect(models("Werkzeugwahl: Qwen3-8B-int4-cw-ov · Antwort: Qwen3-8B-int4-cw-ov")).toHaveLength(4);
   expect(models("Antwort: Qwen3-8B-int4-cw-ov · Smalltalk ohne Modell")).toHaveLength(1);
-  expect(agents.getByText("3 Werkzeuge · 1 Lauf")).toBeTruthy();
+  expect(agents.getByText("4 Werkzeuge · 1 Lauf")).toBeTruthy();
 
   const runs = within(screen.getByRole("list", { name: "Letzte Läufe" }));
   const [run] = runs.getAllByRole("listitem");
@@ -46,7 +46,7 @@ it("shows the tree, the agents with their models, the runs and the tools read-on
   const tools = within(screen.getByRole("table", { name: "Werkzeuge je Agent" }));
   expect(tools.getAllByRole("rowheader").map((cell) => cell.textContent)).toEqual(["Umsätze", "Verträge", "Budget & Prognose", "Gehalt & Steuern", "Allgemeiner Chat"]);
   expect(within(tools.getByRole("list", { name: "Werkzeuge Gehalt & Steuern" })).getAllByRole("listitem").map((item) => item.textContent))
-    .toEqual(["Arbeitnehmerveranlagung", "Home-Office-Rechner", "Gehaltsübersicht"]);
+    .toEqual(["Arbeitnehmerveranlagung", "Home-Office-Rechner", "Gehaltsübersicht", "Abrechnungen bearbeiten(ändert Daten)"]);
   // Read-only: nothing to edit, only a refresh.
   expect(screen.queryAllByRole("textbox")).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" }));

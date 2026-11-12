@@ -23,7 +23,7 @@ import { draftSuggestions, lastDay, mergeDraft, missingField, missingQuestion, p
 import { extractMemories } from "@/lib/assistant/memory";
 import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
-import { cancelDraft, confirmDraft, continueContractDraft, contractStepReply, leavesDraft } from "@/lib/assistant/contract-draft";
+import { cancelDraft, confirmDraft, continueContractDraft, contractStepReply, leavesDraft, refusesDraft } from "@/lib/assistant/contract-draft";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
@@ -49,7 +49,10 @@ import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPh
 import { resolveFollowUp, resolvePronoun } from "@/lib/assistant/followup";
 import { splitQuestion } from "@/lib/assistant/combined";
 import { clarifyChoices } from "@/lib/assistant/intents";
-import { explainAgain, fixedReply, topicClarify } from "@/lib/assistant/fixed-replies";
+import { explainAgain, fixedReply, topicClarify, type DeviceSetting, type FixedReply } from "@/lib/assistant/fixed-replies";
+import { useInteractionSoundsControl } from "@/components/interaction-sounds";
+import { setNotificationsEnabled } from "@/components/pwa-notifications";
+import { getSecuritySnapshot, setSecurityMode } from "@/lib/security-mode";
 import { detectContracts } from "@/lib/contracts";
 import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
 import { addMonths, type Dashboard } from "@/lib/calc";
@@ -182,6 +185,26 @@ const monthEnd = (month: string) => `${month}-${String(lastDay(month)).padStart(
 export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number; send?: boolean } } = {}) {
   const { state: stored, dashboard, update, storageError, ready } = useFinance();
   const { setTheme, resolvedTheme } = useTheme();
+  const sounds = useInteractionSoundsControl();
+  // Settings of this device (notifications, sounds, privacy screen) are switched right away; a missing permission is said honestly.
+  const deviceReply = (reply: FixedReply, device: DeviceSetting): AgentResult => {
+    const settings: AgentResult["card"] = { kind: "answer", title: "Einstellungen", lines: [], page: { label: "Einstellungen öffnen", href: "/einstellungen" } };
+    if (device.notifications !== undefined) {
+      const result = setNotificationsEnabled(device.notifications);
+      if (result === "permission") return { text: "Dafür muss dein Browser Benachrichtigungen erst erlauben – das geht nur mit einem Klick in den Einstellungen unter Benachrichtigungen.", card: settings };
+      if (result === "unsupported") return { text: "Dieser Browser unterstützt keine Benachrichtigungen.", card: settings };
+    }
+    if (device.sounds !== undefined) {
+      if (!sounds) return { text: "Die Interaktionsklänge stellst du unter Einstellungen → Darstellung ein.", card: settings };
+      sounds.setEnabled(device.sounds, new Event("assistant"));
+    }
+    if (device.privacy !== undefined) {
+      if (getSecuritySnapshot().preference === "off")
+        return { text: "Der Sichtschutz ist in den Einstellungen ausgeschaltet. Schalte ihn unter Einstellungen → Sicherheit ein, dann kann ich ihn hier an- und ausmachen.", card: settings };
+      setSecurityMode(device.privacy);
+    }
+    return { text: reply.text, card: settings };
+  };
   const extras = useDashboardExtras();
   // New messages and what a run learned (phrasings, aliases, memories) collect here while the chat is in use; the app's state
   // takes them in one step once the chat is idle, so the pages behind it do not re-render and save for every single message.
@@ -662,6 +685,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       knowledgeId: entry?.id };
   }
 
+  // "Töne an" or "Lösch die Buchung vom 3.10." while a form asks for an amount: a command of its own, not the answer.
+  function deviceCommand(value: string) {
+    const fixed = fixedReply(value);
+    return !!(fixed?.device || fixed?.theme);
+  }
+  // Only tools whose commands never read like an answer to a form ("Ich zahle monatlich 250 €" stays with the form).
+  function otherCommand(value: string) {
+    if (deviceCommand(value)) return true;
+    const tool = detectTool(value, knownNames());
+    return !!tool && value.trim().split(/\s+/).length >= 3 && ["booking", "rule", "settings", "payroll_action", "account_rule", "undo", "reminder", "remember", "forget"].includes(tool);
+  }
+
   // A contract created step by step: the answer fills the open step; "Ja" on the preview saves it, "Abbrechen" drops it.
   async function continueContract(message: AssistantMessage, text: string): Promise<boolean> {
     const draft = message.contractDraft!;
@@ -678,16 +713,20 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       return true;
     }
     // A new question, a greeting or another topic in between is answered normally; the contract stays where it was.
-    if (/\?\s*$/.test(text) || leavesDraft(text, draft.step === "name")) return false;
+    if (/\?\s*$/.test(text) || leavesDraft(text, draft.step === "name") || deviceCommand(text)) return false;
     const next = continueContractDraft(draft, text, state, asOf);
     if (!next.understood && (detectTool(text, knownNames()) || text.split(/\s+/).length > 5)) return false;
     setBusy(true);
     save((items) => [...items.map((item) => item.id !== message.id ? item : item.status === "preview" ? { ...item, status: "dismissed" as const }
       : { ...item, status: undefined }), userMessage]);
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, 450 - (Date.now() - startedAt))));
-    const result = next.understood ? contractDraftResult(state, next.draft, asOf)
+    // At the preview the change stays confirmable; a plain "Nein" asks what to change instead of failing.
+    const refused = draft.step === "preview" && refusesDraft(text);
+    const result = next.understood || draft.step === "preview" ? contractDraftResult(state, next.understood ? next.draft : draft, asOf)
       : { ...contractStepReply(draft, state, asOf), contractDraft: draft };
-    addResult(next.understood ? result : { ...result, text: `Das habe ich nicht ganz verstanden. ${result.text}` }, "Regel",
+    const unclear = refused ? "Was soll ich ändern? Sag es einfach, zum Beispiel „Betrag 12 €“ oder „Kündigungsfrist 1 Monat“ – oder „Abbrechen“."
+      : `Das habe ich nicht ganz verstanden. ${result.text}`;
+    addResult(next.understood ? result : { ...result, text: unclear }, "Regel",
       { tool: "contract_new", agent: "contracts", via: "rule", ms: Date.now() - startedAt });
     setBusy(false);
     return true;
@@ -753,7 +792,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       return;
     }
     const pending = latest?.draft && (latest.status === "question" || latest.status === "preview")
-      && !leavesDraft(text, missingField(latest.draft) === "name") ? latest.draft : undefined;
+      && !leavesDraft(text, missingField(latest.draft) === "name") && !otherCommand(text) ? latest.draft : undefined;
     setStatus(workStatus.read);
     const asOf = state.settings.asOf;
     const startedAt = Date.now();
@@ -833,7 +872,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const forceWeb = searchAgain || asksForWebSearch(text);
     // Answer to "Welches meinst du?": run the earlier command with that name and remember the word that was meant.
     let alias: { from: string; to: string } | undefined;
-    const chosen = !pending && lastAnswer?.clarify ? pickName(text, names) : undefined;
+    // "Vespa ist erreicht" right after that question is a new command of its own, not the pick for the earlier one.
+    const pickedName = !pending && lastAnswer?.clarify ? pickName(text, names) : undefined;
+    const chosen = pickedName && (text.trim().split(/\s+/).length <= 2 || !detectTool(text, names)) ? pickedName : undefined;
     if (chosen && lastAnswer?.clarify) {
       const target = unknownTarget(lastAnswer.clarify, names);
       if (target) alias = { from: target, to: chosen };
@@ -855,10 +896,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       (topic && "reply" in topic ? topic.reply : undefined) : undefined;
     if (chat) {
       if (fixed?.theme && chat === fixed) setTheme(fixed.theme);
+      const switched = fixed?.device && chat === fixed ? deviceReply(fixed, fixed.device) : chat;
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
       await settle();
-      addResult(chat, "Regel", { agent: "general", via: "rule", ms: elapsed() });
+      addResult(switched, "Regel", { agent: "general", via: "rule", ms: elapsed() });
       setBusy(false);
       return;
     }

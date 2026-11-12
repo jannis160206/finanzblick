@@ -29,6 +29,9 @@ export function InteractionSoundsProvider({
   );
 }
 
+/** The sound controls, or null outside the provider (e.g. in tests). */
+export const useInteractionSoundsControl = () => useContext(SoundContext);
+
 export function InteractionSoundsSetting() {
   const sounds = useContext(SoundContext);
   if (!sounds)

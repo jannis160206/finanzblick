@@ -106,8 +106,10 @@ describe("plan, account and payroll actions from the chat", () => {
       { op: "plan_value", rowId: "row-1", months: ["2026-10"], value: 39.9 }]);
     expect(created.applied.state.financeRows).toEqual([expect.objectContaining({ id: "row-1", label: "Fitnessstudio", kind: "fixed", planCategory: "Sport & Fitness", values: { "2026-10": 39.9 } })]);
     expect(created.undone.financeRows).toEqual([]);
-    const renamed = applyOperations(created.applied.state, [{ op: "plan_row_save", rowId: "row-1", label: "Fitness Park", kind: "variable" }], { asOf });
-    expect(renamed.diffs.map((diff) => diff.after)).toEqual(["Fitness Park", "variabel"]);
+    const renamed = applyOperations(created.applied.state, [{ op: "plan_row_save", rowId: "row-1", label: "Fitness Park", kind: "income" }], { asOf });
+    expect(renamed.diffs.map((diff) => diff.after)).toEqual(["Fitness Park", "Einnahme"]);
+    // Like the position dialog: income or fixed costs; the variable budgets are the app's own lines.
+    expect(() => applyOperations(created.applied.state, [{ op: "plan_row_save", rowId: "row-1", kind: "variable" }], { asOf })).toThrow(/Einnahme oder Fixkosten/);
     const removed = roundTrip(renamed.state, [{ op: "plan_row_delete", rowId: "row-1" }]);
     expect(removed.applied.state.financeRows).toEqual([]);
     expect(removed.undone.financeRows).toEqual(renamed.state.financeRows);

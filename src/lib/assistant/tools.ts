@@ -1,8 +1,10 @@
 import { amexQuestion, balanceQuestion, budgetQuestion, goalsQuestion } from "./accounts";
-import { comparePattern, trendPattern } from "./answers";
+import { comparePattern, findCategories, trendPattern } from "./answers";
 import { bookingRequest } from "./bookings";
 import { bookingActionRequest } from "./booking-actions";
-import { contractEditRequest, contractNewRequest } from "./contract-requests";
+import { payrollActionRequest } from "./payroll-actions";
+import { settingsRequest } from "./settings-actions";
+import { contractBookingsRequest, contractEditRequest, contractFromBookingRequest, contractNewRequest } from "./contract-requests";
 import { budgetPlanRequest } from "./budget-plan";
 import { cancelQuestion } from "./cancel";
 import { checkQuestion } from "./check";
@@ -31,6 +33,7 @@ export const assistantTools = [
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
   "security", "month_review", "shared", "networth", "refunds", "cleanup", "contracts", "context", "insights", "payroll", "contract_new", "contract_edit",
+  "payroll_action", "settings",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -89,6 +92,8 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   insights: "proaktive Hinweise: knappes Monatsende, Budgetüberschreitungen, Kündigungsfristen, Preiserhöhungen, Sparziele in Gefahr, Doppelbuchungen, ungewöhnliche Ausgaben, unklare Kategorien (z. B. „Was fällt dir auf?“, „Gibt es Auffälligkeiten?“)",
   payroll: "Gehalt und Lohnabrechnung: Netto, Brutto, Lohnsteuer und SV der letzten Abrechnung, nächste Sonderzahlung mit Anteil zu 6 % und voll versteuert, Jahressechstel (z. B. „Wie viel netto bekomme ich?“, „Was bleibt vom Weihnachtsgeld?“); " +
     "auch den Successbonus in Prozent des Grundgehalts einstellen („Setz den Successbonus auf 120 %“)",
+  payroll_action: "Lohnabrechnungen bearbeiten: eine zurückgehaltene Abrechnung ins Budget übernehmen, eine Abrechnung entfernen, das Budget an die Abrechnungen anpassen, Budgetwerte zur Prüfung übernehmen oder behalten (z. B. „Übernimm die Abrechnung Oktober ins Budget“, „Lösch die Abrechnung September“, „Aktualisier das Budget mit meinem Gehalt“)",
+  settings: "Einstellungen ändern, die in den App-Daten liegen: saisonales Erscheinungsbild (Standard, Halloween, Weihnachten, automatisch) und die Begriffserklärung auf dem Gehaltszettel (z. B. „Stell das Design auf Weihnachten“, „Begriffserklärung aus“)",
   contract_new: "neuen Vertrag oder neues Abo Schritt für Schritt anlegen (z. B. „Leg einen neuen Vertrag an“, „Neues Abo: Disney+ 9,99 € im Monat“)",
   contract_edit: "bestehenden Vertrag ändern: bestätigen, ausblenden („ist kein Vertrag“), als gekündigt markieren, wieder aktivieren, Betrag, Rhythmus, nächste Abbuchung, Kündigungsfrist, Mindestlaufzeit, Kategorie, Notiz ändern, eigene Angaben verwerfen, selbst angelegten Vertrag löschen (z. B. „Netflix ist gekündigt zum 31.12.“, „Kündigungsfrist von Magenta ist 3 Monate“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
@@ -152,7 +157,15 @@ const categoryNames = [...new Set(allCategories.map((name) => name.toLowerCase()
   .map((name) => name.replace(/[.*+?^${}()|[\]\\&]/g, "\\$&")).join("|");
 const categoryAssignment = new RegExp(`\\b(?:ist|sind|als|zu|in|nach)\\s+(?:immer\\s+|jetzt\\s+|eigentlich\\s+|die\\s+|der\\s+|kategorie\\s+)*(?:${categoryNames})\\s*(?:(?:kategorisieren|zuordnen|verbuchen|buchen|einordnen|umbuchen|machen|setzen)\\s*)?[.!]?$`);
 const bookingAssignment = (lower: string) => categoryAssignment.test(lower) &&
-  /\bbuchung|\bzahlung|überweisung|ueberweisung|abbuchung|\d+(?:[.,]\d+)?\s*(?:€|euro)|\b\d{1,2}\.\s?\d{1,2}\./.test(lower) && !/\bwie ?viel\b|^(?:was|wie|wo|warum|wieso)\b|\?$/.test(lower);
+  /\bbuchung|\bzahlung|überweisung|ueberweisung|abbuchung|\d+(?:[.,]\d+)?\s*(?:€|euro)|\b\d{1,2}\.\s?\d{1,2}\./.test(lower) && !/\bwie ?viel\b|^(?:was|wie|wo|warum|wieso)\b|\?$/.test(lower) ||
+  bookingCategoryChange(lower);
+// "Ändere die Kategorie der Pizzeria-Buchung auf Restaurants", "Die Amazon Buchung vom 14.10. ist Haushalt": category words and aliases.
+function bookingCategoryChange(lower: string): boolean {
+  if (!/\bbuchung|\bumsatz|\bzahlung|abbuchung|\bsache\b|\beinkauf\b/.test(lower) || /\?\s*$|^(?:was|wie|wo|warum|wieso|welche\w*)\b/.test(lower) || /fix ?kosten|\bvertrag\b|\babo\b|ignorier|geprüft/.test(lower)) return false;
+  const target = /\bkategorie\b/.test(lower) ? /\b(?:auf|zu|in|nach|als)\s+([\p{L}&][\p{L}& -]{2,40})\s*(?:ändern|aendern|setzen|stellen|um)?\s*[.!]?$/u.exec(lower)?.[1]
+    : /\b(?:ist|is|sind|war|gehört|gehoert|gehören)\s+(?:eigentlich\s+|doch\s+)?(?:zu\s+|in\s+|ein\s+|eine\s+)?([\p{L}&][\p{L}& -]{2,40})\s*[.!]?$/u.exec(lower)?.[1];
+  return !!target && !!findCategories(target);
+}
 
 // Rule-based tool detection; used when the model is unavailable and to keep clear commands deterministic.
 export function detectTool(input: string, names: string[] = []): AssistantTool | undefined {
@@ -162,6 +175,9 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   if (splitCommands(text, names)) return "batch";
   return reconcileIntent(detectSingle(text, names), text);
 }
+
+// "Position", "Planposition", "Budgetzeile", "Budgetposten": a row of the month plan.
+export const rowWord = /\b(?:(?:plan|monatsplan)-?)?position\b|\b(?:plan|budget|monatsplan)-?(?:zeile|posten)\b/i;
 
 const batchTools: readonly AssistantTool[] = ["edit", "booking", "rule", "remember", "forget", "reminder", "budget_plan"];
 // "Erhöhe Japan auf 4.000 € und schieb es auf Juli": every part must be a change on its own;
@@ -200,13 +216,26 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:\S+ ){0,2}(?:geändert|gemacht|umgestellt)|protokoll/.test(lower)) return "changes";
   if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
+  // "Kannst du Verträge löschen?", "Was kann ich alles über dich ändern?": what the assistant can do, not a change.
+  if (/^(?:kannst|kann) du\s+(?:auch\s+)?(?:verträge|vertraege|buchungen|sparziele|budgets?|positionen|abos|abrechnungen|einstellungen)\s+\S+\s*\?$|was kann (?:ich|man) (?:alles )?(?:über dich|mit dir|bei dir)\b/.test(lower)) return "help";
   // Contracts: a new one step by step, or a change to an existing one ("Netflix ist gekündigt", "Kündigungsfrist von Magenta ist 3 Monate").
+  // "Markiere die Disney Plus Buchung als Vertrag" starts a contract from bookings; "Ordne die Buchung … dem Vertrag … zu" changes one.
+  if (contractFromBookingRequest(lower)) return "contract_new";
+  if (contractBookingsRequest(lower)) return "contract_edit";
   if (contractNewRequest(lower)) return "contract_new";
   if (contractEditRequest(lower, known)) return "contract_edit";
-  // Bookings: delete one or set and remove tags.
+  // Payroll page and app settings: "Übernimm die Abrechnung Oktober ins Budget", "Stell das Design auf Weihnachten".
+  const payroll = payrollActionRequest(lower);
+  if (payroll) return payroll === "check" ? "payroll" : "payroll_action";
+  if (settingsRequest(lower)) return "settings";
+  // Bookings: delete one, notes and tags.
   if (bookingActionRequest(text)) return "booking";
   // Month-plan positions: "Füg eine Position Fitnessstudio hinzu", "Lösch die Position Strom".
-  if (/\b(?:plan)?position\b/.test(lower) && /\b(?:füg|fueg|leg|trag|nimm|erstell|neue|hinzu|anleg|lösch|loesch|entfern|benenn|umbenenn|änder|aender|setz|mach)\w*/.test(lower) && !/\?\s*$/.test(lower)) return "edit";
+  if (rowWord.test(lower) && (/\b(?:füg|fueg|leg|trag|nimm|erstell|neue|hinzu|anleg|lösch|loesch|entfern|benenn|umbenenn|änder|aender|setz|mach|stell|verschieb|schieb)\w*/.test(lower) ||
+    /\bkategorie\b/.test(lower)) && !/\?\s*$/.test(lower)) return "edit";
+  // "Miete im Dezember 700", "Strom ab Jänner 95 €": a cell of the month plan.
+  if (/^(?:die\s+|den\s+|das\s+)?[\p{L}][\p{L}&-]{2,30}(?:\s+[\p{L}&-]{2,30})?\s+(?:im|ab)\s+(?:jänner|jaenner|januar|feber|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\s+(?:auf\s+)?\d[\d.,]*\s*(?:€|euro)?\s*[.!]?$/u.test(lower) &&
+    !known) return "edit";
   if (monthReviewQuestion(lower)) return "month_review";
   if (reviewQuestion(lower)) return "review";
   if (accountRuleRequest(lower) || /\b(?:lösch|loesch|entfern|vergiss|streich)\w*\b.{0,30}\bkontoregel/.test(lower)) return "account_rule";
@@ -220,6 +249,8 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (cleanupQuestion(lower)) return "cleanup";
   if (/raphael|rafael/.test(lower) && /\b(?:buchung\w*|umsatz|umsätze)\b/.test(lower) && /\bteil\w*|\bgeteilt\b/.test(lower) && !/\?\s*$/.test(lower)) return "booking";
   if (sharedQuestion(lower) && !known) return "shared";
+  // "Ignoriere die Amazon Gutschrift": a command on bookings, not a question about refunds.
+  if (/^(?:bitte\s+)?(?:ignorier\w*|markier\w*|nimm|teil\w*|benenn\w*)\b/.test(lower) && bookingRequest(text, known)) return "booking";
   if (refundQuestion(lower)) return "refunds";
   if (netWorthQuestion(lower)) return "networth";
   if (insightsQuestion(lower)) return "insights";
@@ -249,6 +280,10 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
     !/\bbis\b.*\b(?:sparen|zurücklegen)\b|leisten|leistbar|reicht|geht sich/.test(lower)) return "remember";
   if (bookingAssignment(lower)) return "rule";
   if (bookingRequest(text, known)) return "booking";
+  // A goal's monthly rate or account: "Spar monatlich 300 fürs Motorrad", "Das Motorrad-Geld soll auf dem Sparkonto liegen".
+  if (known && !/\?\s*$/.test(lower) && (hasAmount && /\b(?:spar\w*|zurücklegen|zuruecklegen|leg\w*\b.{0,20}\bzurück|zahl\w*\s+ein)\b/.test(lower) &&
+    /\b(?:monatlich|pro monat|im monat|jeden monat|rate|sparrate)\b/.test(lower) && !/\bbis\b|\bneue[snr]?\b|anlegen|erstell/.test(lower) ||
+    /\b(?:soll|sollen)\b.{0,40}\b(?:liegen|parken|landen)\b|\bkonto\b.{0,30}\b(?:ändern|aendern|wechseln)\b/.test(lower))) return "edit";
   if (/home.?office|telearbeit|arbeitsmittel|büroausstattung|bueroausstattung|arbeitsplatz (?:zu ?hause|daheim)|bürostuhl|buerostuhl|schreibtisch/.test(lower) &&
     /steuer|absetz|zurück|zurueck|erstatt|veranlagung|werbungskosten|finanzamt|bekomm|rechne|abzieh|selbstbehalt|pauschale/.test(lower)) return "homeoffice";
   if (loanQuestion(lower)) return "loan";
@@ -297,7 +332,11 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/\b\d+\/\d+(?:\/\d+)?-?regel\b|\bfaustregel\b/.test(lower)) return "knowledge";
   if (explainPattern.test(lower)) return "explain";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
-  if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
+  if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower) ||
+    hasAmount && /\b(?:extra|zusätzlich|zusaetzlich|sonderzahlung)\b/.test(lower) && !/leisten|leistbar|\?\s*$/.test(lower))) return "edit";
+  // "Spar fürs Motorrad vom Urlaubskonto": where the goal's money comes from, asked step by step instead of a new goal.
+  if (known && !newGoal && /\b(?:vom|aus dem|von meinem|von dem)\s+[\p{L}-]*(?:konto|sparkonto|urlaub|notgroschen|pocket)\b/u.test(lower) && /\bspar\w*|zurücklegen|zuruecklegen|nehm\w*|nimm|zahl\w*/.test(lower) &&
+    !/leisten|leistbar|\?\s*$/.test(lower)) return "edit";
   // "Zahl das Pickerl vom Sparkonto", "Teil den Urlaub mit Raphael", "Nimm das Pickerl aus dem Plan".
   if (known && !newGoal && !/leisten|leistbar|reicht|geht sich/.test(lower) &&
     (/(?:vom|übers|über das|aus dem|mit dem|von meinem)\s+(?:sparkonto|giro)|raphael/.test(lower) && /zahl|buch|teil|übernimm|uebernimm|hälfte|haelfte|halb/.test(lower) ||

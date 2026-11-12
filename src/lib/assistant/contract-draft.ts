@@ -1,9 +1,10 @@
 import { currency, dateLabel } from "@/lib/format";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { contractNotice, contractTypeOf } from "@/lib/contract-types";
-import { addMonthsToDate, contractCandidates, intervalLabel, noticeLabel } from "@/lib/contracts";
+import { addMonthsToDate, contractCandidates, inferInterval, intervalLabel, noticeLabel, stepDate } from "@/lib/contracts";
+import { classify } from "@/lib/calc";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
-import type { AppState, AssistantOperation, ContractDraft, ContractInterval } from "@/lib/types";
+import type { AppState, AssistantOperation, ContractDraft, ContractInterval, Transaction } from "@/lib/types";
 import { findCategories } from "./answers";
 import { amountIn, dayIn, intervalIn, noticeIn } from "./contract-actions";
 import { normalizeMessage } from "./normalize";
@@ -22,6 +23,8 @@ const yes = /^(?:ja|jo|jep|gerne?|ok|okay|passt|genau|richtig|stimmt|klar|sicher
 const no = /^(?:nein|ne|nö|noe|nope|keine?n?|ohne|nicht|gar keine?)\b/;
 const skip = /^(?:weiter|überspring\w*|ueberspring\w*|weiß (?:ich )?nicht|weiss (?:ich )?nicht|keine ahnung|egal|später|spaeter|egal)\b/;
 export const cancelDraft = (text: string) => /^(?:abbrechen|abbruch|stopp?|doch nicht|vergiss es|lass es|lass gut sein|cancel|nein,? doch nicht)\b/i.test(normalizeMessage(text).trim());
+/** A plain "Nein" under the preview: not saved yet, but not dropped either. */
+export const refusesDraft = (text: string) => /^(?:nein|ne|nö|noe|nope|passt nicht|stimmt nicht|nicht ganz|so nicht)[.!]*$/i.test(normalizeMessage(text).trim());
 // Only a short "Ja"/"Passt" confirms; "Ja, aber nimm lieber Versicherungen" is a correction.
 export const confirmDraft = (text: string) => yes.test(normalizeMessage(text).toLowerCase().trim()) && !/\d/.test(text) &&
   normalizeMessage(text).trim().split(/\s+/).length <= 4 && !/\b(?:aber|doch|lieber|statt|sondern)\b/i.test(text);
@@ -45,17 +48,29 @@ const categoryFor = (name: string): Category => {
   return type === "insurance" ? "Versicherungen" : type === "mobile" || type === "internet" ? "Telefon & Internet" : type === "gym" ? "Sport & Fitness"
     : type === "energy" ? "Energie & Nebenkosten" : "Abonnements";
 };
-const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
+// "disney plus" → "Disney Plus"; names the user typed with capitals stay as they are.
+const capitalize = (value: string) => value === value.toLowerCase() ? value.replace(/(^|[\s-])(\p{L})/gu, (_, gap: string, letter: string) => gap + letter.toUpperCase())
+  : value.charAt(0).toUpperCase() + value.slice(1);
+const nameEnd = String.raw`(?=\s*(?:,|\d|$|\ban\b|\bein\b|\bhinzu\b|\bum\b|\bmit\b|\bab\b|\bim\b|\bpro\b|\bfür\b|\bfuer\b|\bkostet|\banlegen|\beintragen|\berstellen|\bhinzufügen|\bhinzufuegen|\bmonatlich|\bjährlich|\bjaehrlich|\bvierteljährlich|\bhalbjährlich|\bwöchentlich|\bquartalsweise))`;
+// "9,99 monatlich", "12 € pro Monat", "19,90": an amount without "kostet" or "€".
+const rateAmount = /(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?\s*(?:€|euro|eur\b)?\s*(?:\/\s*monat|monatlich|jährlich|jaehrlich|vierteljährlich|vierteljaehrlich|halbjährlich|halbjaehrlich|wöchentlich|woechentlich|quartalsweise|pro (?:monat|jahr|quartal|woche)|im (?:monat|jahr|quartal)|mtl\b|jeden monat|jedes jahr)/i;
+const centAmount = /(?<![\d.])(\d{1,5}),(\d{2})(?![\d.])/;
 
 /** The name in "Leg einen Vertrag für mein Fitnessstudio an" or "Neues Abo: Disney+ 9,99 € im Monat". */
 function nameIn(text: string): string | undefined {
   const patterns = [
     /:\s*([^,\d:][^,:]{1,60}?)(?=\s*(?:,|\d|$|\bfür\b|\bum\b|\bmit\b|\bzu\b|\bab\b|\bim\b|\bpro\b))/i,
     /\b(?:namens|name|heißt|heisst)\s+[„"]?([^,„"“\d]{2,60}?)[“"]?(?=\s*(?:,|\d|$|\bfür\b|\bum\b|\bmit\b|\bab\b))/i,
+    // "Mach mir einen Vertrag für Netflix", "Neuer Vertrag für Spotify, 10,99 im Monat".
+    new RegExp(String.raw`\b(?:vertrag|abo|abonnement|versicherung|mitgliedschaft)\s+(?:für|fuer)\s+(?:mein(?:en|e)?\s+|das\s+|die\s+|den\s+)?([^,\d.!?]{2,50}?)${nameEnd}`, "i"),
     /\b(?:für|fuer)\s+(?:mein(?:en|e)?\s+|das\s+|die\s+|den\s+|ein(?:en|e)?\s+)?([^,\d.!?]{2,50}?)\s+(?:an|ein|hinzu)\b/i,
     // "Handyvertrag bei Magenta" → "Handyvertrag Magenta", "Vertrag bei A1" → "A1".
-    /\b((?:\p{L}+)?(?:vertrag|abo|abonnement|versicherung|mitgliedschaft)\s+(?:bei|von|mit)\s+[\p{Lu}0-9][^,\d.!?]{1,40}?)(?=\s*(?:,|\d|$|\ban\b|\bein\b|\bhinzu\b|\bfür\b|\bum\b))/iu,
+    /\b((?:\p{L}+)?(?:vertrag|abo|abonnement|versicherung|mitgliedschaft)\s+(?:bei|von|mit)\s+[\p{Lu}0-9][^,.!?]{0,40}?)(?=\s*(?:,|\s\d|$|\ban\b|\bein\b|\bhinzu\b|\bfür\b|\bum\b))/iu,
     /\b(?:mein(?:en|e)?|neue[nrs]?|eine[nrs]?)\s+(\p{L}+(?:vertrag|abo|versicherung|mitgliedschaft))\b/iu,
+    // "neuer vertrag disney plus 9,99 monatlich", "Neues Abo Netflix".
+    new RegExp(String.raw`^(?:bitte\s+)?(?:neue[rns]?|eigene[rns]?)\s+(?:vertrag|abo|abonnement|versicherung|mitgliedschaft)\s*:?\s+(?!(?:für|fuer|bei|von|mit|an|anlegen|eintragen|hinzufügen|erstellen)\b)([^,\d.!?]{2,50}?)${nameEnd}`, "i"),
+    // "Leg einen Vertrag Netflix an".
+    /\b(?:vertrag|abo)\s+(?!für\b|fuer\b|bei\b|von\b|mit\b|an\b|ein\b|anlegen\b|eintragen\b)(\p{Lu}[^,\d.!?]{1,40}?)\s+(?:an|ein|hinzu|anlegen|eintragen)\b/u,
   ];
   for (const pattern of patterns) {
     const match = pattern.exec(text);
@@ -81,8 +96,10 @@ function fill(draft: ContractDraft, text: string, asOf: string, step: Step): { d
   let understood = false;
   const name = step === "name" ? nameIn(text) ?? bareName(text) : nameIn(text);
   if (name && (step === "name" || !draft.name)) { next.name = name; understood = true; }
-  const amount = amountIn(text) ?? (step === "amount" ? parseAmount((/(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?/.exec(text)?.[0]) ?? "") : undefined);
-  if (amount !== undefined && amount > 0 && amount <= 1_000_000 && (step === "amount" || /€|euro|eur\b|kostet|betrag/i.test(text))) { next.amount = amount; understood = true; }
+  const loose = rateAmount.exec(text) ?? centAmount.exec(text);
+  const amount = amountIn(text) ?? (loose ? parseAmount(`${loose[1]}${loose[2] ? `,${loose[2]}` : ""}`) : undefined) ??
+    (step === "amount" ? parseAmount((/(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?/.exec(text)?.[0]) ?? "") : undefined);
+  if (amount !== undefined && amount > 0 && amount <= 1_000_000 && (step === "amount" || loose || /€|euro|eur\b|kostet|betrag/i.test(text))) { next.amount = amount; understood = true; }
   const interval = intervalIn(lower) ?? (step === "interval" ? ([[/\bmonat/, "monthly"], [/\bjahr/, "yearly"], [/\bquartal/, "quarterly"], [/\bhalbjahr/, "halfyearly"], [/\bwoche/, "weekly"]] as [RegExp, ContractInterval][])
     .find(([pattern]) => pattern.test(lower))?.[1] : undefined);
   if (interval) { next.interval = interval; understood = true; }
@@ -130,12 +147,37 @@ function fill(draft: ContractDraft, text: string, asOf: string, step: Step): { d
 const matching = (state: AppState, asOf: string, name: string) =>
   name.length >= 3 ? contractCandidates(state, asOf).filter((row) => matchesTransactionSearch(row, name)) : [];
 
-function nextStep(draft: ContractDraft, state: AppState, asOf: string): ContractDraft {
+// The next debit after the newest picked booking, never in the past.
+function nextDebit(draft: ContractDraft, state: AppState, asOf: string): string | undefined {
+  if (!draft.bookingIds?.length || !draft.interval) return undefined;
+  const ids = new Set(draft.bookingIds);
+  const last = state.transactions.filter((row) => ids.has(row.id)).map((row) => row.date).sort().at(-1);
+  if (!last) return undefined;
+  let next = stepDate(last, draft.interval, 1);
+  for (let guard = 0; next < asOf && guard < 120; guard++) next = stepDate(next, draft.interval, 1);
+  return next;
+}
+
+function nextStep(input: ContractDraft, state: AppState, asOf: string): ContractDraft {
+  const computed = !input.nextDate ? nextDebit(input, state, asOf) : undefined;
+  const draft = computed ? { ...input, nextDate: computed } : input;
   // Same order as the wizard: basics, rhythm, automatic assignment, preview.
   const step: Step = !draft.name ? "name" : draft.amount === undefined ? "amount" : !draft.category ? "category" : draft.notice === undefined ? "notice"
     : draft.termEnd === undefined ? "term" : !draft.interval ? "interval" : !draft.nextDate ? "nextDate"
     : draft.match === undefined && matching(state, asOf, draft.name).length ? "match" : "preview";
   return { ...draft, step, ...(step === "preview" && draft.match === undefined ? { match: null } : {}) };
+}
+
+/** "Markiere die Disney Plus Buchung als Vertrag": the wizard prefilled from the picked bookings, which belong to the contract. */
+export function startContractFromBookings(rows: Transaction[], state: AppState, asOf: string, id: string, merchant?: string): ContractDraft {
+  const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id));
+  const latest = sorted.at(-1)!;
+  const raw = merchant ?? (latest.merchantAlias?.trim() || latest.description.trim().split(/\s+/).slice(0, 3).join(" "));
+  const name = capitalize(raw.slice(0, 100));
+  const category = canonicalCategory(classify(latest).category);
+  const interval = sorted.length >= 2 ? inferInterval(sorted.map((row) => row.date)) : undefined;
+  return nextStep({ id, step: "preview", name, amount: Math.round(Math.abs(latest.amount) * 100) / 100,
+    category: category === "Sonstiges" ? categoryFor(name) : category, bookingIds: sorted.slice(-50).map((row) => row.id), ...(interval ? { interval } : {}) }, state, asOf);
 }
 
 export function startContractDraft(input: string, state: AppState, asOf: string, id: string): ContractDraft {
@@ -157,7 +199,7 @@ export function contractDraftOperation(draft: ContractDraft): Extract<AssistantO
     ...(draft.notice ? { notice: draft.notice } : {}), ...(draft.termEnd ? { termEnd: draft.termEnd } : {}),
     ...(draft.termEnd && draft.autoRenew !== undefined ? { autoRenew: draft.autoRenew } : {}),
     ...(draft.termEnd && draft.renewalMonths ? { renewalMonths: draft.renewalMonths } : {}),
-    ...(draft.match ? { match: draft.match } : {}) };
+    ...(draft.match ? { match: draft.match } : {}), ...(draft.bookingIds?.length ? { bookingIds: draft.bookingIds } : {}) };
 }
 
 /** The question for the open step, with quick replies like the choices in the wizard. */
@@ -189,7 +231,7 @@ export function contractStepReply(draft: ContractDraft, state: AppState, asOf: s
         "Soll ich solche Buchungen automatisch diesem Vertrag zuordnen?", suggestions: ["Ja", "Nein"] };
     }
     case "preview": return { text: `So würde ich „${name}“ anlegen: ${currency(draft.amount ?? 0)} ${draft.interval ? intervalLabel[draft.interval] : ""}, nächste Abbuchung ${draft.nextDate ? dateLabel(draft.nextDate) : "–"}` +
-      `${draft.notice ? `, Kündigungsfrist ${noticeLabel(draft.notice)}` : ""}. Passt das? Mit „Ja“ oder „Bestätigen“ speichere ich ihn – oder sag mir, was ich ändern soll.` };
+      `${draft.notice ? `, Kündigungsfrist ${noticeLabel(draft.notice)}` : ""}${draft.bookingIds?.length ? `, ${draft.bookingIds.length === 1 ? "1 Buchung" : `${draft.bookingIds.length} Buchungen`} zugeordnet` : ""}. Passt das? Mit „Ja“ oder „Bestätigen“ speichere ich ihn – oder sag mir, was ich ändern soll.` };
   }
 }
 

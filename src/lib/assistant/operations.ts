@@ -9,6 +9,10 @@ import { contractPatch, detectContracts, intervalLabel, noticeLabel, upsertContr
 import { removeFixedPlanRow } from "@/lib/fixed-plan";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
 import { successBonusPercent } from "@/lib/payroll-analysis";
+import { autoBudgetCorrections, confirmPayslip, heldPayslips, reviewPayrollBudget, syncPayrollBudget } from "@/lib/payroll-budget";
+import { payrollEmployerKey, payslipKey } from "@/lib/payslip-schema";
+import { chooseSeasonalTheme, resetSeasonalTheme, seasonalLabels } from "@/lib/seasonal-theme";
+import type { BudgetCorrection } from "@/lib/budget-corrections";
 import { setTag } from "@/lib/tags";
 import { addMonth } from "./intent";
 import { defaultBudgetAmount, variableBudgetLines } from "@/lib/variable-budgets";
@@ -68,8 +72,12 @@ function snapshotContract(undo: AssistantUndo, state: AppState, id: string) {
 }
 function snapshotRow(undo: AssistantUndo, state: AppState, id: string) {
   undo.financeRows ??= [];
-  if (!undo.financeRows.some((entry) => entry.id === id)) undo.financeRows.push({ id, before: state.financeRows.find((row) => row.id === id) ?? null });
+  const index = state.financeRows.findIndex((row) => row.id === id);
+  if (!undo.financeRows.some((entry) => entry.id === id)) undo.financeRows.push({ id, before: state.financeRows[index] ?? null, ...(index >= 0 ? { index } : {}) });
 }
+// Puts a restored entry back where it stood, or at the end.
+const restoreAt = <T>(items: T[], item: T, index: number | undefined) =>
+  index === undefined || index > items.length ? [...items, item] : [...items.slice(0, index), item, ...items.slice(index)];
 // Side effects of shared helpers (fixed-cost marks, learned merchants, receipts) are remembered too, so undo restores them.
 function snapshotSideEffects(undo: AssistantUndo, before: AppState, after: AppState) {
   const rows = new Map(before.transactions.map((row) => [row.id, row]));
@@ -99,9 +107,13 @@ function saveContract(state: AppState, id: string, patch: Partial<Omit<ContractO
   if (!contractOverrideSchema.safeParse(contracts.find((entry) => entry.id === id)).success) throw new OperationError("Die Angaben für den Vertrag sind ungültig.");
   return { ...state, contracts };
 }
-function snapshotTransactions(undo: AssistantUndo, rows: Transaction[], withTags = false) {
+function snapshotTransactions(undo: AssistantUndo, rows: Transaction[], withTags = false, withNote = false) {
   undo.transactions ??= [];
-  const known = new Set(undo.transactions.map((entry) => entry.id));
+  const known = new Map(undo.transactions.map((entry) => [entry.id, entry]));
+  for (const row of rows) {
+    const earlier = known.get(row.id);
+    if (earlier && withNote && earlier.note === undefined) earlier.note = row.note ?? "";
+  }
   for (const row of rows) if (!known.has(row.id)) undo.transactions.push({
     id: row.id, category: row.category, includeInPlan: row.includeInPlan, merchantAlias: row.merchantAlias ?? "",
     ...(row.categoryOverride !== undefined ? { categoryOverride: row.categoryOverride } : {}),
@@ -112,9 +124,30 @@ function snapshotTransactions(undo: AssistantUndo, rows: Transaction[], withTags
     ...(row.merchantNameConfirmed !== undefined ? { merchantNameConfirmed: row.merchantNameConfirmed } : {}),
     ...(row.ignored !== undefined ? { ignored: row.ignored } : {}),
     ...(withTags ? { tags: row.tags ?? [] } : {}),
+    ...(withNote ? { note: row.note ?? "" } : {}),
     sharedWithRaphael: row.sharedWithRaphael === true,
   });
 }
+// Rows the payroll helpers rewrote (income values, new income rows) are remembered one by one.
+function snapshotChangedRows(undo: AssistantUndo, before: AppState, after: AppState) {
+  const rows = new Map(before.financeRows.map((row) => [row.id, row]));
+  for (const row of after.financeRows) if (rows.get(row.id) !== row) snapshotRow(undo, before, row.id);
+}
+function snapshotPayroll(undo: AssistantUndo, state: AppState) {
+  if (undo.payrollBudget === undefined) undo.payrollBudget = state.payrollBudget ?? null;
+}
+const payslipMonth = (entry: { year: number; month: number }) => `${entry.year}-${String(entry.month).padStart(2, "0")}`;
+function findPayslip(state: AppState, operation: { year: number; month: number; employer: string }) {
+  const employer = payrollEmployerKey(operation.employer);
+  const entry = (state.payslips ?? []).find((item) => item.year === operation.year && item.month === operation.month && payrollEmployerKey(item.employer) === employer);
+  if (!entry) throw new OperationError(`Die Lohnabrechnung ${monthLabel(payslipMonth(operation))} gibt es nicht (mehr).`);
+  return entry;
+}
+const correctionDiffs = (items: readonly BudgetCorrection[], after: (item: BudgetCorrection) => number) => {
+  const shown = items.slice(0, 12).map((item) => ({ label: `${item.label} · ${monthLabel(item.month)}`.slice(0, 200), before: currency(item.from), after: currency(after(item)) }));
+  if (items.length > 12) shown.push({ label: `${items.length - 12} weitere Budgetwerte`, before: "…", after: "…" });
+  return shown;
+};
 const yesNo = (value: boolean | undefined) => value ? "ja" : "nein";
 
 function findGoal(state: AppState, id: string) {
@@ -163,6 +196,15 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       if (operation.monthly !== undefined && operation.monthly !== goal.funding?.monthly) {
         diffs.push({ label: `${goal.name}: Rate`, before: rate(goal), after: `${currency(operation.monthly)} / Monat` });
         next.funding = { ...(goal.funding ?? { extras: {} }), monthly: operation.monthly };
+      }
+      if (operation.pocket !== undefined && pocketKey(operation.pocket) !== pocketKey(goal.pocket)) {
+        const key = pocketKey(operation.pocket);
+        if (key === "giro" || savingsGoals(state).some((item) => item.id !== goal.id && (pocketKey(item.pocket) === key || pocketKey(item.name) === key)))
+          throw new OperationError(`Das Konto „${operation.pocket}“ gehört schon zu einem anderen Ziel oder ist dein Girokonto.`);
+        diffs.push({ label: `${goal.name}: Konto`, before: goal.pocket, after: operation.pocket });
+        // A goal on the motorcycle pocket also sets the motorcycle target and date (replaceGoal); undo restores them.
+        if (key === "motorrad") { snapshotSetting(undo, state, "bikeTarget"); snapshotSetting(undo, state, "bikePurchaseDate"); }
+        next.pocket = operation.pocket;
       }
       const parsed = savingsGoalSchema.safeParse(next);
       if (!parsed.success) throw new OperationError("Die neuen Werte für das Sparziel sind ungültig.");
@@ -322,13 +364,18 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         diffs.push({ label: `${label}: geprüft`, before: tally((row) => yesNo(row.reviewed)), after: yesNo(operation.reviewed) });
       if (operation.ignored !== undefined && changed((row) => Boolean(row.ignored), operation.ignored))
         diffs.push({ label: `${label}: ignoriert`, before: tally((row) => yesNo(row.ignored)), after: yesNo(operation.ignored) });
+      const note = operation.note === undefined ? undefined : operation.note?.trim() || null;
+      if (note !== undefined && changed((row) => row.note ?? null, note))
+        diffs.push({ label: `${label}: Notiz`, before: tally((row) => row.note ? `„${row.note}“` : none), after: note ? `„${note}“`.slice(0, 200) : "entfernt" });
       if (operation.sharedWithRaphael) {
         if (!rows.some((row) => row.amount < 0)) throw new OperationError("Teilen geht nur bei Ausgaben.");
         if (changed((row) => row.amount < 0 ? row.sharedWithRaphael === true : true, true))
           diffs.push({ label: `${label}: mit Raphael geteilt`, before: tally((row) => yesNo(row.sharedWithRaphael)), after: "ja, du zahlst die Hälfte" });
       }
-      if (diffs.length === start) throw new OperationError(`An ${rows.length === 1 ? "dieser Buchung" : "diesen Buchungen"} würde sich nichts ändern.`);
-      snapshotTransactions(undo, rows);
+      if (diffs.length === start) throw new OperationError(note === null && !rows.some((row) => row.note)
+        ? `${rows.length === 1 ? "Diese Buchung hat" : "Diese Buchungen haben"} keine Notiz.`
+        : `An ${rows.length === 1 ? "dieser Buchung" : "diesen Buchungen"} würde sich nichts ändern.`);
+      snapshotTransactions(undo, rows, false, note !== undefined);
       return { ...state, transactions: state.transactions.map((row) => {
         if (!ids.has(row.id)) return row;
         const next: Transaction = { ...row };
@@ -339,6 +386,8 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         if (operation.ignored === true) next.ignored = true;
         else if (operation.ignored === false) delete next.ignored;
         if (operation.sharedWithRaphael && row.amount < 0) next.sharedWithRaphael = true;
+        if (note) next.note = note;
+        else if (note === null) delete next.note;
         return next;
       }) };
     }
@@ -429,6 +478,13 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         after: `${dateLabel(fields.termEnd)}${patch.autoRenew ? `, verlängert sich um ${patch.renewalMonths} Monate` : ", endet dann"}` });
       if (fields.match) diffs.push({ label: `${fields.name}: Buchungen automatisch zuordnen`, before: none, after: matchText(fields.match).slice(0, 200) });
       if (fields.note) diffs.push({ label: `${fields.name}: Notiz`, before: none, after: fields.note.slice(0, 200) });
+      if (fields.bookingIds?.length) {
+        const known = new Set(state.transactions.map((row) => row.id));
+        const picked = fields.bookingIds.filter((id) => known.has(id));
+        if (!picked.length) throw new OperationError("Die Buchungen für diesen Vertrag gibt es nicht mehr.");
+        patch.bookingIds = picked;
+        diffs.push({ label: `${fields.name}: zugeordnete Buchungen`, before: none, after: `${picked.length} ${picked.length === 1 ? "Buchung" : "Buchungen"}` });
+      }
       return saveContract(state, contractId, patch, undo, context.now);
     }
     case "contract_update": {
@@ -462,6 +518,92 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         diffs.push({ label: label("Status"), before: statusLabels.review, after: "bestätigt" });
       }
       return saveContract(state, contract.id, contractPatch(contract, patch), undo, context.now);
+    }
+    case "contract_bookings": {
+      const contract = findContract(state, operation.contractId, context.asOf);
+      const stored = (state.contracts ?? []).find((entry) => entry.id === contract.id);
+      const rows = new Map(state.transactions.map((row) => [row.id, row]));
+      const charged = new Set(contract.charges.map((charge) => charge.id));
+      const add = [...new Set(operation.add ?? [])].filter((id) => rows.has(id) && !charged.has(id));
+      const remove = [...new Set(operation.remove ?? [])].filter((id) => charged.has(id) || stored?.bookingIds?.includes(id));
+      if (!add.length && !remove.length) throw new OperationError((operation.add?.length ? `Diese Buchung gehört schon zu „${contract.name}“.` : `Diese Buchung gehört nicht zu „${contract.name}“.`));
+      const describe = (id: string) => { const row = rows.get(id); return row ? `${dateLabel(row.date)} · ${currency(row.amount)}` : id; };
+      for (const id of add) diffs.push({ label: `${contract.name}: Buchung ${describe(id)}`.slice(0, 200), before: "nicht zugeordnet", after: "zugeordnet" });
+      for (const id of remove) diffs.push({ label: `${contract.name}: Buchung ${describe(id)}`.slice(0, 200), before: "zugeordnet", after: "nicht mehr zugeordnet" });
+      const removed = new Set(remove);
+      const picked = [...new Set([...(stored?.bookingIds ?? []).filter((id) => !removed.has(id)), ...add])].slice(-500);
+      const added = new Set(add);
+      const excluded = [...new Set([...(stored?.excludedBookingIds ?? []).filter((id) => !added.has(id)), ...remove])].slice(-500);
+      const patch: Partial<Omit<ContractOverride, "id" | "updatedAt">> = { bookingIds: picked.length ? picked : undefined, excludedBookingIds: excluded.length ? excluded : undefined };
+      if (contract.status === "review") patch.status = "confirmed";
+      return saveContract(state, contract.id, patch, undo, context.now);
+    }
+    case "payslip_confirm": {
+      const entry = findPayslip(state, operation);
+      if (!heldPayslips(state).some((item) => payslipKey(item.entry) === payslipKey(entry)))
+        throw new OperationError(`Die Lohnabrechnung ${monthLabel(payslipMonth(entry))} ist schon im Budget.`);
+      snapshotPayroll(undo, state);
+      const { state: next } = confirmPayslip(state, entry);
+      snapshotChangedRows(undo, state, next);
+      diffs.push({ label: `Lohnabrechnung ${monthLabel(payslipMonth(entry))}`, before: "zurückgehalten", after: "ins Budget übernommen" });
+      for (const row of next.financeRows) {
+        const previous = state.financeRows.find((item) => item.id === row.id);
+        const month = payslipMonth(entry);
+        if ((previous?.values[month] ?? null) !== (row.values[month] ?? null))
+          diffs.push({ label: `${row.label} · ${monthLabel(month)}`, before: previous?.values[month] === undefined || previous.values[month] === null ? none : currency(previous.values[month]!),
+            after: row.values[month] === undefined || row.values[month] === null ? none : currency(row.values[month]!) });
+      }
+      return next;
+    }
+    case "payslip_remove": {
+      const entry = findPayslip(state, operation);
+      const key = payslipKey(entry);
+      undo.payslips ??= [];
+      if (!undo.payslips.some((item) => item.key === key)) undo.payslips.push({ key, before: entry, index: (state.payslips ?? []).findIndex((item) => payslipKey(item) === key) });
+      if (undo.payrollForecasts === undefined) undo.payrollForecasts = state.payrollForecasts ?? null;
+      const payslips = (state.payslips ?? []).filter((item) => payslipKey(item) !== key);
+      const matches = (item: { year: number; employer: string }) => item.year === entry.year && payrollEmployerKey(item.employer) === payrollEmployerKey(entry.employer);
+      diffs.push({ label: `Lohnabrechnung ${monthLabel(payslipMonth(entry))} · ${entry.employer}`.slice(0, 200), before: "gespeichert", after: "entfernt (PDF und Kontoumsätze bleiben)" });
+      return { ...state, payslips,
+        payrollForecasts: state.payrollForecasts?.filter((forecast) => !matches(forecast) || payslips.some(matches))
+          .map((forecast) => matches(forecast) ? { ...forecast, standardPayrollConfirmed: false } : forecast) };
+    }
+    case "payroll_sync": {
+      snapshotPayroll(undo, state);
+      let next = state;
+      if (operation.review) {
+        const { review } = autoBudgetCorrections(state);
+        if (!review.length) throw new OperationError("Es warten keine Budgetwerte auf deine Prüfung.");
+        next = operation.review === "apply" ? reviewPayrollBudget(state, review, []) : reviewPayrollBudget(state, [], review);
+        diffs.push(...(operation.review === "apply" ? correctionDiffs(review, (item) => item.to)
+          : [{ label: `${review.length === 1 ? "1 Budgetwert" : `${review.length} Budgetwerte`} zur Prüfung`, before: "offen", after: "bleiben wie sie sind" }]));
+      } else {
+        const synced = syncPayrollBudget(state, context.now);
+        if (!synced.applied.length) throw new OperationError(synced.review.length
+          ? `Das Budget ist auf dem Stand deiner Abrechnungen. ${synced.review.length === 1 ? "1 Wert wartet" : `${synced.review.length} Werte warten`} noch auf deine Prüfung.`
+          : "Das Budget ist schon auf dem Stand deiner Abrechnungen.");
+        next = synced.state;
+        diffs.push(...correctionDiffs(synced.applied, (item) => item.to));
+      }
+      snapshotChangedRows(undo, state, next);
+      return next;
+    }
+    case "setting_flag": {
+      const before = state.settings.payslipTermLookup !== false;
+      if (before === operation.value) throw new OperationError(`Die Begriffserklärung ist schon ${operation.value ? "an" : "aus"}.`);
+      snapshotSetting(undo, state, "payslipTermLookup");
+      diffs.push({ label: "Gehaltszettel: Begriffe erklären", before: before ? "an" : "aus", after: operation.value ? "an" : "aus" });
+      return { ...state, settings: { ...state.settings, payslipTermLookup: operation.value } };
+    }
+    case "seasonal_theme": {
+      const current = state.seasonalTheme;
+      const label = (preference: typeof current) => preference?.mode === "fixed" && preference.theme ? seasonalLabels[preference.theme]
+        : preference?.mode === "default" ? seasonalLabels.default : "Automatisch (Saison)";
+      const next = operation.theme === "auto" ? resetSeasonalTheme(current) : chooseSeasonalTheme(current, operation.theme);
+      if (label(current) === label(next)) throw new OperationError(`Das Erscheinungsbild ist schon „${label(next)}“.`);
+      if (undo.seasonalTheme === undefined) undo.seasonalTheme = current ?? null;
+      diffs.push({ label: "Erscheinungsbild", before: label(current), after: label(next) });
+      return { ...state, seasonalTheme: next };
     }
     case "contract_action": {
       const contract = findContract(state, operation.contractId, context.asOf);
@@ -534,6 +676,7 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       if (operation.create) {
         if (existing) throw new OperationError("Diese Position gibt es schon.");
         if (state.financeRows.length >= 200) throw new OperationError("Es sind höchstens 200 Positionen möglich. Entferne zuerst eine nicht mehr benötigte Position.");
+        if (operation.kind === "variable") throw new OperationError("Eine neue Position ist Einnahme oder Fixkosten; variable Budgets sind fest vorgegeben.");
         const parsed = financeRowSchema.safeParse({ id: operation.rowId, label: operation.label, kind: operation.kind ?? "fixed",
           ...(operation.planCategory ? { planCategory: operation.planCategory } : {}), values: {} });
         if (!parsed.success) throw new OperationError("Für eine neue Position brauche ich eine Bezeichnung.");
@@ -542,6 +685,7 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         return { ...state, financeRows: [...state.financeRows, parsed.data] };
       }
       if (!existing) throw new OperationError("Diese Position gibt es nicht mehr.");
+      if (operation.kind === "variable" && existing.kind !== "variable") throw new OperationError("Eine Position ist Einnahme oder Fixkosten; variable Budgets sind fest vorgegeben.");
       const revised: FinanceRow = { ...existing, label: operation.label ?? existing.label, kind: operation.kind ?? existing.kind,
         planCategory: operation.planCategory === undefined ? existing.planCategory : operation.planCategory ?? undefined };
       if (revised.planCategory === undefined) delete revised.planCategory;
@@ -571,6 +715,9 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       const existing = state.financeRows.find((row) => row.id === operation.rowId);
       if (!existing) throw new OperationError("Diese Position gibt es nicht mehr.");
       const shown = (value: number | null | undefined) => value === undefined || value === null ? (existing.kind === "variable" ? "automatisch" : currency(0)) : currency(value);
+      // Budget lines are recomputed from their monthly amount for the current and later months (applyVariableBudgets).
+      if (existing.kind === "variable" && operation.months.some((month) => month >= context.asOf.slice(0, 7)))
+        throw new OperationError(`„${existing.label}“ ist ein Budget und gilt für jeden Monat gleich – einzelne Monate lassen sich dort nicht setzen.`);
       const months = [...new Set(operation.months)].sort().filter((month) => (existing.values[month] ?? null) !== operation.value);
       if (!months.length) throw new OperationError(`${existing.label} ist dort schon ${operation.value === null ? "automatisch" : currency(operation.value)}.`);
       snapshotRow(undo, state, existing.id);
@@ -707,6 +854,7 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
       if (result.merchantAlias === "") delete result.merchantAlias;
       if (before.tags && !before.tags.length) delete result.tags;
       if (before.sharedWithRaphael === false) delete result.sharedWithRaphael;
+      if (before.note === "") delete result.note;
       return result;
     });
   }
@@ -754,9 +902,9 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
   }
   if (undo.financeRows?.length) {
     let rows = [...next.financeRows];
-    for (const { id, before } of [...undo.financeRows].reverse()) {
+    for (const { id, before, index } of [...undo.financeRows].reverse()) {
       const exists = rows.some((row) => row.id === id);
-      rows = before === null ? rows.filter((row) => row.id !== id) : exists ? rows.map((row) => row.id === id ? before : row) : [...rows, before];
+      rows = before === null ? rows.filter((row) => row.id !== id) : exists ? rows.map((row) => row.id === id ? before : row) : restoreAt(rows, before, index);
     }
     next.financeRows = rows;
   }
@@ -767,6 +915,23 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
       if (before) rules.push(before);
     }
     next.accountRules = rules.sort((a, b) => a.at - b.at);
+  }
+  if (undo.payslips?.length) {
+    let payslips = [...(next.payslips ?? [])];
+    for (const { key, before, index } of [...undo.payslips].reverse()) {
+      payslips = payslips.filter((entry) => payslipKey(entry) !== key);
+      if (before) payslips = restoreAt(payslips, before, index);
+    }
+    next.payslips = payslips;
+  }
+  if (undo.payrollForecasts !== undefined) {
+    if (undo.payrollForecasts === null) delete next.payrollForecasts; else next.payrollForecasts = undo.payrollForecasts;
+  }
+  if (undo.payrollBudget !== undefined) {
+    if (undo.payrollBudget === null) delete next.payrollBudget; else next.payrollBudget = undo.payrollBudget;
+  }
+  if (undo.seasonalTheme !== undefined) {
+    if (undo.seasonalTheme === null) delete next.seasonalTheme; else next.seasonalTheme = undo.seasonalTheme;
   }
   next = { ...next, assistantChanges: (next.assistantChanges ?? []).map((entry) => entry.id === logId ? { ...entry, undoneAt: now } : entry) };
   return next;

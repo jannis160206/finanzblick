@@ -34,9 +34,9 @@ export const toolOwner: Record<AssistantTool, AgentId> = {
   affordability: "budget", savings_goal: "budget", expense: "budget", edit: "budget", batch: "budget", whatif: "budget",
   coach: "budget", check: "budget", briefing: "budget", insights: "budget", accounts: "budget", amex: "budget",
   networth: "budget", depot: "budget", loan: "budget",
-  payroll: "payroll", tax: "payroll", homeoffice: "payroll",
+  payroll: "payroll", tax: "payroll", homeoffice: "payroll", payroll_action: "payroll",
   help: "general", explain: "general", knowledge: "general", market: "general", memory: "general", remember: "general",
-  forget: "general", changes: "general", undo: "general", reminder: "general", ask: "general",
+  forget: "general", changes: "general", undo: "general", reminder: "general", ask: "general", settings: "general",
 };
 export const agentTools = (agent: AgentId): AssistantTool[] => assistantTools.filter((tool) => toolOwner[tool] === agent);
 

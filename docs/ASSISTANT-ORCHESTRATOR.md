@@ -244,13 +244,22 @@ Was die App von Hand kann, geht auch im Chat, mit denselben Prüfungen (`applyOp
 
 | Bereich | Beispiele | Operation |
 |---|---|---|
-| Verträge anlegen (Schritt für Schritt wie im Vertragsdialog) | „Leg einen neuen Vertrag an“ → Name, Betrag, Kategorie, Kündigungsfrist, Mindestlaufzeit („12 Monate“, „bis 31.12.2027“), Rhythmus, nächste Abbuchung, automatische Zuordnung → Vorschau | `contract_create` |
-| Verträge ändern | „Netflix kostet jetzt 15,99 €“, „Kündigungsfrist von Magenta ist 3 Monate“, „Netflix wird ab Jänner jährlich abgerechnet“, „Bestätige alle Verträge“, „Blende FITINN aus“, „Netflix ist gekündigt zum 31.12.“, „Lösch den Vertrag …“ (nur selbst angelegte) | `contract_update`, `contract_action` |
-| Buchungen | „Lösch die Buchung vom 24.10.“ (eine benannte, höchstens 10), „Tagge die Pizzeria-Buchungen mit Essen gehen“, „Teil die Buchung vom 11.10. mit Raphael“, umbenennen, kategorisieren, ignorieren, aus dem Plan nehmen, als geprüft markieren | `transaction_delete`, `transaction_tag`, `transaction_update`, `categorize` |
-| Sparziele (Schritt für Schritt wie im Zieldialog) | „Ich möchte ein Sparziel anlegen“ → Name, Betrag, Datum oder Monatsrate, Startkapital, Konto → Vorschau mit „Anlegen“; ändern, aussetzen, löschen | wie bisher |
-| Monatsplan und Budgets | „Füg eine Position Strom mit 60 € pro Monat hinzu“, „Setze Tanken im Dezember auf 150 €“, „Tanken ab Jänner auf 120 €“, „… wieder auf automatisch“, „Setze das Lebensmittel-Budget auf 400 €“ | `plan_row_save`, `plan_row_delete`, `plan_value`, Budget |
-| Konten und Gehalt | „Das Girokonto ist für alle Ausgaben“ (bisher ohne Vorschau gespeichert), „Lösch die Kontoregel für Girokonto“, „Setze den Successbonus auf 15 %“ | `account_rule`, `account_rule_delete`, `bonus_percent` |
-| Nur als Link | Bank- und Google-Anmeldung, Datei-Uploads, Benachrichtigungen, Backups | – |
+| Verträge anlegen (Schritt für Schritt wie im Vertragsdialog) | „Leg einen neuen Vertrag an“, „erstelle vertrag“, „mach mir einen Vertrag für Netflix“, „neuer vertrag disney plus 9,99 monatlich“ → was im Satz steht, wird übernommen; danach Name, Betrag, Kategorie, Kündigungsfrist, Mindestlaufzeit, Rhythmus, nächste Abbuchung, automatische Zuordnung → Vorschau | `contract_create` |
+| Vertrag aus Buchungen | „Markiere die Disney Plus Buchung als Vertrag“, „Mach aus der Amazon Buchung einen Vertrag“, „die MediaMarkt Buchung ist ein Vertrag“ → Name, Betrag, Kategorie und nächste Abbuchung aus den Buchungen, die gewählten Buchungen gehören zum Vertrag (wie das Ankreuzen im Assistenten) | `contract_create` mit `bookingIds` |
+| Verträge ändern | „Netflix kostet jetzt 15,99 €“, „stell das Intervall von Netflix auf jährlich“, „Hausratversicherung ist vierteljährlich“, „Kündigungsfrist von Magenta ist 3 Monate“, „Vertrag Netflix Kategorie Unterhaltung“, „ändere den Namen von FITINN auf Fitnessstudio“, „Notiz zum Netflix Vertrag: …“, „Bestätige alle Verträge“, „Netflix ist gekündigt zum 31.12.“, „Spotify läuft wieder“, „Verwirf meine Änderungen an Netflix“ | `contract_update`, `contract_action` |
+| Verträge löschen | „Lösch den Vertrag Hausratversicherung“ entfernt selbst angelegte Verträge. Erkannte Verträge lassen sich wie im Vertragsordner nicht löschen: „Lösch den Netflix-Vertrag“ blendet ihn mit Erklärung als „kein Vertrag“ aus | `contract_action` (`remove`, `ignore`) |
+| Buchungen einem Vertrag zuordnen | „Ordne die Buchung vom 2.10. dem Vertrag Disney Plus zu“, „Verknüpfe die MediaMarkt Buchung mit dem Hausrat Vertrag“, „Nimm die Buchung vom 5.10. aus dem Netflix-Vertrag“; gibt es den Vertrag nicht, bietet er „Als Vertrag markieren“ an | `contract_bookings` |
+| Buchungen | „Lösch die Buchung vom 24.10.“ (eine benannte, höchstens 10), „Notiz zur MediaMarkt Buchung: Fernseher fürs Wohnzimmer“, „Lösch die Notiz bei der MediaMarkt Buchung“ (löscht nie die Buchung), „Tagge die Pizzeria-Buchungen mit Essen gehen“, „Teil die Buchung vom 11.10. mit Raphael“, „ändere die Kategorie der Pizzeria Buchung auf Lieferdienste“, „Die Amazon Buchung vom 14.10. ist Haushalt“, „nenn SHELL 1234 WIEN ab jetzt Shell“, ignorieren, aus dem Plan nehmen, als geprüft markieren | `transaction_delete`, `transaction_tag`, `transaction_update` (auch `note`), `categorize` |
+| Sparziele (Schritt für Schritt wie im Zieldialog) | „Ich möchte ein Sparziel anlegen“ → Name, Betrag, Datum oder Monatsrate, Startkapital, Konto → Vorschau mit „Anlegen“; „spar monatlich 300 für das Motorrad“, „Das Sparziel Motorrad soll auf dem Sparkonto liegen“, „Im Jänner 200 € extra vom Sparkonto fürs Motorrad“, umbenennen, aussetzen, erreicht, löschen | `goal_update` (auch `pocket`), `goal_extras`, `goal_pause`, `goal_complete`, `goal_delete` |
+| Budgets | „Ändere das Lebensmittelbudget auf 400 €“, „lebensmittel budget 450“, „erhöh das Tankbudget um 40“, „schichte 30 € von Tanken zu Restaurants um“, „verschiebe 10 € von Freizeit nach Essen“, „setz das Tankbudget zurück“; negative Beträge, zu große Umschichtungen und unbekannte Budgets („Budget für Einhörner“) lehnt er mit Begründung ab | `budget_plan` |
+| Monatsplan-Positionen | „neue Budgetzeile Haustier 40 € monatlich“, „Benenne die Position Geschenke in Weihnachten um“, „Die Position Geschenke gehört zur Kategorie Geschenke & Spenden“, „Mach die Position Geschenke zu Fixkosten“, „Setze Geschenke im Dezember auf 300 €“, „verschiebe 100 € von Geschenke zu Urlaub im Dezember“, „Lösche die Position Geschenke“; „Miete im Dezember 700“ ohne solche Position bietet das Anlegen an | `plan_row_save`, `plan_row_delete`, `plan_value` |
+| Gehalt & Steuern | „Prüf meine Lohnabrechnungen“ (zurückgehaltene Abrechnungen mit Grund, offene Budgetwerte), „Übernimm die Abrechnung September ins Budget“, „Lösch die Abrechnung März 2026“ (PDF und Kontoumsätze bleiben), „Aktualisiere das Budget mit den Lohnzetteln“, „Übernimm/Behalte die Budgetwerte zur Prüfung“, „Setz den Successbonus auf 15 %“ | `payslip_confirm`, `payslip_remove`, `payroll_sync`, `bonus_percent` |
+| Einstellungen (App-Daten, mit Vorschau) | „Stell das Design auf Weihnachten“, „Design wieder automatisch nach Jahreszeit“, „Schalte das Nachschlagen unbekannter Abrechnungsbegriffe aus“, „Setz den Notgroschen auf 6000 €“ | `seasonal_theme`, `setting_flag`, `setting` |
+| Einstellungen dieses Geräts (sofort) | „Dunkelmodus an“, „mach es hell“, „Benachrichtigungen an/aus“ (ohne Browser-Erlaubnis: Link zu den Einstellungen), „Mach die Töne aus“, „Sichtschutz an“, „Beträge wieder anzeigen“ | – |
+| Konten | „Das Girokonto ist für alle Ausgaben“, „Lösch die Kontoregel für Girokonto“ | `account_rule`, `account_rule_delete` |
+| Nur als Link oder Erklärung | Bank- und Google-Anmeldung, Datei-Uploads, Backups; der Stichtag läuft automatisch mit | – |
+
+Mehrere Änderungen gleicher Art in einer Nachricht („Erhöhe Tanken um 20 und senke Freizeit um 10“) kommen in eine Vorschau. Ein Teil, der schon so ist („… ist schon Shopping“), wird gesagt statt als Fehler gemeldet. Eine zweite Änderung anderer Art („Leg einen Vertrag für Netflix an und lösch die Position Geschenke“) geht nicht mehr verloren: Der Assistent erledigt den ersten Teil und bietet den zweiten als Knopf an (`secondChange`).
 
 Ein offener Entwurf nimmt nur Antworten auf seine Frage an. Begrüßungen, fachfremde Themen und neue Fragen beantwortet der Assistent normal, und der Entwurf wartet (`leavesDraft`). Kurze Antworten auf die Fragen des Sparziel-Dialogs füllt der Server ohne Modell aus. Ein Schritt dauert damit ~1,6 s statt 10–30 s.
 
@@ -286,6 +295,42 @@ Ein offener Entwurf nimmt nur Antworten auf seine Frage an. Begrüßungen, fachf
 - `npm run eval:assistant`: 107/108 goldene Fragen (davon 10 neue App-Aktionen), 22/22 grenzwertige, alle Prompt-Injection-Tests bestanden.
 
 Weiter holprig: Unbekannte fachfremde Fragen, die die Wortlisten nicht kennen, beantwortet das kleine Modell mal mit einer Ablehnung, mal knapp inhaltlich. „Was kostet ein Kinobesuch?“ bekommt ohne belegbare Zahl keine Betragsantwort. Einmal blieb eine Antwort beim Modellserver hängen; das war nicht wiederholbar.
+
+## Chat-Test 4: alle Aktionen (12.11.2026)
+
+Zuerst wurden alle Aktionen der Seiten (Übersicht, Umsätze, Verträge, Budget, Sparen, Gehalt & Steuern, Einstellungen) mit den Operationen des Assistenten verglichen. Was fehlte, kam dazu: Buchungsnotizen, Buchungen einem Vertrag zuordnen, Vertrag aus einer Buchung, Konto eines Sparziels, Umschichten zwischen Positionen, Lohnabrechnungen übernehmen, entfernen und Budget nachziehen, Design und Begriffserklärung, Geräte-Einstellungen.
+
+Getestet wurde zweistufig:
+
+- **Matrix-Test** (`all-actions.test.ts`, 197 Fälle): jede Formulierung wird geroutet, als Vorschau gebaut, wie mit „Bestätigen“ angewendet, durch dieselbe Plan-Synchronisierung wie im Provider geschickt und wieder rückgängig gemacht. Geprüft werden Daten, Gültigkeit und dass Rückgängig den alten Stand herstellt. Dazu kommen Grenzfälle: ungültige und negative Beträge, fehlende Angaben, doppelte Namen, nicht vorhandene Verträge, Ziele, Positionen und Buchungen.
+- **Live im Browser** mit lokalem Qwen3-8B und synthetischen Daten: 247 Nachrichten (168 verschiedene) in vier Läufen, dazu 99 Klicks auf „Bestätigen“, Antwort-Knöpfe oder „Rückgängig machen“ und 73 Prüfungen des gespeicherten Stands (App-Daten und Geräte-Einstellungen). Nur eine Antwort brauchte das Modell; der Median bis zur fertigen Antwort lag bei 1,5 s. Seiten- oder Konsolenfehler traten in den Läufen mit Fehlerprotokoll nicht auf.
+
+| Problem | Ursache | Korrektur |
+|---|---|---|
+| „Lösch die Notiz bei der MediaMarkt Buchung“ hätte die **Buchung gelöscht** | Lösch-Erkennung kannte keine Notizen | Notizen als eigene Aktion; „Lösch … Notiz/Tag/Kategorie“ löscht nie die Buchung |
+| „verschiebe 50 € von Freizeit nach Essen“ setzte Freizeit auf 50 € | „Essen“ war kein Budget, ein einzelnes Budget fiel auf „auf 50“ zurück | „Essen“ meint Lebensmittel; Umschichten nur zwischen zwei Budgets, sonst ehrliche Antwort |
+| „lebensmittelbudget auf -50 setzen“ setzte 50 €, „Sparziel … -500 €“ nahm 500 € | Minuszeichen ging verloren | Negative Beträge werden abgelehnt bzw. neu erfragt |
+| Nach „Welches meinst du? … Vespa“ wurde „Vespa ist erreicht“ zum **Löschen** von Vespa und als Alias gelernt | Jede Nachricht mit dem Namen galt als Auswahl | Ein eigener Befehl ist keine Auswahl; nur der bloße Name zählt |
+| „Nein“ und dann „Ja“ unter der Vertragsvorschau: „nicht verstanden“, nichts gespeichert | Nach einer unklaren Antwort fehlte die Vorschau | Vorschau bleibt bestätigbar; „Nein“ fragt, was geändert werden soll |
+| „Setz Tanken im Dezember auf 150 €“ und „neue Budgetzeile Haustier“ schienen gespeichert, verschwanden aber | Budgets gelten für jeden Monat gleich; die App berechnet variable Zeilen nach jeder Änderung neu (`applyVariableBudgets`) | Ehrliche Antwort mit Knopf „Budget ab sofort setzen“; neue Positionen sind wie im Dialog Einnahme oder Fixkosten; die Operation lehnt solche Werte ab |
+| „Setz Urlaub im Dezember auf 300 €“ änderte das Urlaubs-Ziel | Einstellungswort vor Monatsplan | Eine genannte Position mit Monat geht vor |
+| „Sparziel Urlaub …“ während eines offenen Ziels benannte das offene Ziel um | Gleiche Aktion galt als Fortsetzung | Ein anderer Zielname startet ein neues Ziel |
+| „Sichtschutz an“ meldete „Erledigt“, obwohl der Sichtschutz in den Einstellungen aus ist | Umschalten ohne Rückmeldung | Ehrlicher Hinweis auf die Einstellung |
+| „Benachrichtigungen bitte ausschalten“, „Töne an“ wurden als Name einer geplanten Ausgabe gelesen | Offener Entwurf nahm jede Nachricht | Befehle und Geräte-Einstellungen verlassen den Entwurf |
+| „Lösch den Netflix-Vertrag“ endete mit einer Fehlermeldung | Erkannte Verträge sind nicht löschbar | Vorschau „ausblenden (kein Vertrag)“ mit Erklärung |
+| Intervall, Name, Kategorie eines Vertrags; „Hausratversicherung ist vierteljährlich“; „spotify läuft doch wieder“; „netflix is gekündigt“; „mach den … Vertrag weg“ | Fehlende Formulierungen, Komposita | Vertragsänderungen erkannt |
+| „Ordne die Buchung … dem Vertrag … zu“, „Markiere die Disney Plus Buchung als Vertrag“ | Nicht vorhanden | `contract_bookings`, Vertrag aus Buchungen |
+| „Kategorie der Lieferando-Buchungen auf Restaurants“ blieb Lieferdienste | Kategoriegruppe und Hinweis des Modells gingen vor | Das Wort des Nutzers gewinnt |
+| „schreib zur billa grosseinkauf buchung dazu …“ fand alle Billa-Buchungen | Hinweis des Modells („Billa“) vor dem genaueren Text | Der genauere Händlername aus dem Text gewinnt |
+| „Ignoriere die Amazon Gutschrift“ → Rückerstattungen | Wort „Gutschrift“ | Befehle an Buchungen gehen vor |
+| Lohnabrechnungen prüfen, übernehmen, entfernen, Budget aktualisieren → nur Übersicht | Nicht vorhanden | `payslip_confirm`, `payslip_remove`, `payroll_sync`, Prüfbericht |
+| Design, Begriffserklärung, Benachrichtigungen, Töne, Sichtschutz, Stichtag → keine Aktion | Nicht vorhanden | Siehe Tabelle „Aktionen im Chat“ |
+| „Leg einen Vertrag … an und lösch die Position …“ verlor den zweiten Teil | Zwei Änderungen verschiedener Art | Zweiter Teil kommt als Knopf |
+| Aus dem Code-Review: „Lösch die Buchung Nebenkostenabrechnung“ → Lohnabrechnung löschen, „Thema ETF“ → Design, „Ich bekomme keine Benachrichtigungen“ schaltete sie aus, „Halloween-Design ausschalten“ schaltete es ein, „Das monatliche Netflix-Abo ist gekündigt“ → Intervall, „Nimm die Buchung in den Vertrag auf“ → entfernen, „Tankbudget minus 30 €“ abgelehnt, „Nenn mir einfach …“ → Umbenennen; ganze Sätze im Vertragsdialog verließen ihn | Zu weite Wortmuster | Engere Muster, Statusänderung vor Intervall, Umschalten nur mit klarem Befehl, Antworten im Entwurf bleiben im Entwurf; Rückgängig stellt bei Konto „Motorrad“ auch Ziel und Datum des Motorrads wieder her |
+
+Weiter offen: Tippfehler in Namen („spotfy“) beantwortet der Assistent mit einer Rückfrage samt Auswahl statt zu raten. Neue Fixkosten-Buchungen stehen bis zur Prüfung in der Prüfliste und sind bis dahin kein Vertrag (bestehendes Verhalten). Antworten, die den Server nach Hinweisen fragen, brauchen weiter bis zu ~12 s (90. Perzentil 11 s). Eine Antwort blieb im ersten Lauf während eines Code-Neuladens leer; sie war nicht wiederholbar.
+
+`npm run eval:assistant` blieb unverändert: 107/108 goldene, 22/22 grenzwertige Fragen, alle Prompt-Injection-Tests bestanden.
 
 ## Live-Status und Chat-Oberfläche
 
@@ -458,6 +503,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
   - `web-learning.test.ts`: wann gesucht wird, 👍/👎, Korrektur als Hinweis, gleiche Frage in anderen Worten;
   - `src/lib/web/search.test.ts`: Suchwörter ohne persönliche Daten, Bing-Ergebnisse, Passagen und Tabellen, DNS-Schutz, Vergleich und Abschaltung;
   - `search.test.ts`: bestätigte Antworten in der Hybrid-Suche.
+- Alle Aktionen im Chat (Chat-Test 4): `all-actions.test.ts` (197 Fälle: Routing, Vorschau, Anwenden mit Plan-Synchronisierung, Rückgängig, Grenzfälle, Sparziel-Entwurf, Hinweis des Modells), `app-actions.test.ts` (Positionen nur Einnahme oder Fixkosten), `transactions-why.test.tsx` (Notiz im Buchungsdialog und in der Liste), `tests/assistant-orchestrator.spec.ts` (neuer Befehl nach „Welches meinst du?“, „Nein“ und „Ja“ unter der Vertragsvorschau).
 - `npm run eval:assistant`: zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer.
 
 ## Grenzen
@@ -469,4 +515,6 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Die Websuche liest öffentliche HTML-Seiten und kann sich irren oder veraltete Seiten finden. Deshalb zeigt sie immer die Quellen, bevorzugt amtliche Seiten und merkt sich Antworten erst nach deinem 👍. Bing kann das Format seiner Ergebnisseite ändern; ein eigenes SearXNG oder die Brave-API sind die stabileren Wege.
 - Das lokale Wissen ist bewusst klein (51 Abschnitte) und allgemein; es ersetzt keine Steuer- oder Anlageberatung.
 - Die Themen-Prüfung arbeitet mit Wortlisten. Seltene fachfremde Fragen ohne bekanntes Wort gehen an den allgemeinen Chat, dessen Prompt ebenfalls nur Finanzen erlaubt.
-- Nicht im Chat: Buchungen von Hand anlegen (gibt es in der App nicht), Bank- und Google-Anmeldung, Datei-Uploads, Benachrichtigungen, Erscheinungsbild und Backups (nur Link zur Seite), „Alle Buchungen löschen“ und eine geteilte Buchung wieder ungeteilt stellen (beides geht auch in der App nicht). Beim Sparziel gibt es statt „So schnell wie möglich“ die Wahl zwischen Datum und Monatsrate.
+- Nicht im Chat: Buchungen von Hand anlegen (gibt es in der App nicht), Bank- und Google-Anmeldung, Datei-Uploads und Backups (nur Link zur Seite), „Alle Buchungen löschen“ und eine geteilte Buchung wieder ungeteilt stellen (beides geht auch in der App nicht), Akzentfarbe und Bewegung (Link), Kassenbon aufteilen (Datei). Beim Sparziel gibt es statt „So schnell wie möglich“ die Wahl zwischen Datum und Monatsrate; die Verteilung über mehrere Konten bleibt im Zieldialog, im Chat gibt es Rate, Konto und Extra-Beträge aus einem Pocket.
+- Budgets gelten für jeden Monat gleich, wie in der App; einzelne Monate oder eigene variable Budgets setzt auch der Chat nicht.
+- Benachrichtigungen einschalten geht im Chat nur, wenn der Browser sie schon erlaubt hat; die Erlaubnis selbst fragt nur die Einstellungsseite an.

@@ -9,7 +9,7 @@ import { parseAmount } from "./intent";
 // Edits on existing bookings by chat: "Benenne BILLA DANKT in Billa um", "Nimm die Buchung vom 3.11. aus dem Plan",
 // "Netflix ist Fixkosten", "Markier alle Billa-Buchungen als geprüft".
 const planOut = /aus dem (?:monats)?plan\b|nicht (?:mehr )?(?:im|in den|zum) (?:monats)?plan\b|im (?:monats)?plan ignorier|nicht (?:mehr )?mit(?:zählen|zaehlen|rechnen)/;
-const planIn = /(?:zurück|zurueck|wieder) in den (?:monats)?plan|in den (?:monats)?plan (?:auf)?nehmen|wieder mit(?:zählen|zaehlen|rechnen)/;
+const planIn = /(?:zurück|zurueck|wieder) in den (?:monats)?plan|wieder im (?:monats)?plan|in den (?:monats)?plan (?:auf)?nehmen|wieder mit(?:zählen|zaehlen|rechnen)/;
 const fixedWord = /fix ?kosten|fixe kosten|fixkost/;
 const fixedVerb = /\b(?:ist|sind|als|markier\w*|zähl\w*|zaehl\w*|kein\w*|nicht|mach\w*|setz\w*|gehör\w*|gehoer\w*)\b/;
 const fixedOff = /\bkeine?\b|\bnicht\b|variabel/;
@@ -28,6 +28,8 @@ const renamePatterns = [
   /^(?:bitte\s+)?(.+?)\s+in\s+[„"']?(.+?)[“"']?\s+umbenennen\s*[.!]?$/i,
   /^(.+?)\s+soll\s+(?:ab jetzt\s+|künftig\s+|in zukunft\s+)?(?:als\s+)?[„"']?(.+?)[“"']?\s+(?:heißen|heissen|angezeigt werden)\s*[.!]?$/i,
   /^(?:bitte\s+)?zeig\w*\s+(.+?)\s+(?:ab jetzt\s+|künftig\s+)?als\s+[„"']?(.+?)[“"']?\s+an\s*[.!]?$/i,
+  /^(?:bitte\s+)?(?:änder|aender|setz|stell)\w*\s+(?:den\s+|die\s+)?(?:anzeige)?(?:namen?|bezeichnung)\s+(?:von|bei|für|fuer|der|des)\s+(?:den\s+|der\s+|dem\s+|die\s+)?(.+?)\s+(?:auf|in|zu)\s+[„"']?(.+?)[“"']?\s*(?:ändern|aendern|um)?\s*[.!]?$/i,
+  /^(?:bitte\s+)?nenn\w*\s+(?!mir\b|uns\b)(.+?)\s+(?:ab jetzt|ab sofort|künftig|kuenftig|in zukunft|nur noch|einfach)\s+[„"']?(.+?)[“"']?\s*[.!]?$/i,
 ];
 const fillers = new Set(["alle", "die", "der", "das", "den", "dem", "des", "buchung", "buchungen", "umsatz", "umsätze", "umsaetze", "zahlung", "zahlungen",
   "von", "vom", "bei", "am", "im", "in", "aus", "zum", "zur", "als", "ist", "sind", "nimm", "nehm", "bitte", "markier", "markiere", "markieren", "plan",
@@ -37,7 +39,7 @@ const fillers = new Set(["alle", "die", "der", "das", "den", "dem", "des", "buch
   "ignorieren", "ignorier", "euro", "€", "januar", "jänner", "februar", "feber", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober",
   "november", "dezember", "monat", "diesen", "letzten", "heuer", "seit", "es", "sie", "er", "dieser", "diese", "dieses", "ignoriere", "ignoriert",
   "statistik", "statistiken", "auswertung", "auswertungen", "berücksichtigen", "beruecksichtigen", "keiner", "allen",
-  "mit", "raphael", "rafael", "teil", "teile", "teilen", "geteilt", "hälfte"]);
+  "mit", "raphael", "rafael", "teil", "teile", "teilen", "geteilt", "hälfte", "zur", "dazu", "dass", "notiz", "schreib", "schreibe"]);
 
 export function renameRequest(text: string): { target: string; alias: string } | undefined {
   for (const pattern of renamePatterns) {
@@ -109,8 +111,9 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
   const scope = rename ? rename.target : text;
   const date = dateIn(scope, asOf);
   const amount = amountIn(scope);
-  const merchant = (hint && state.transactions.some((row) => matchesTransactionSearch(row, hint)) ? hint : undefined) ??
-    findTarget(state.transactions, rename ? rename.target : text.replace(/\b(?:vom|am|den)\s+\d{1,2}\.\s?\d{1,2}\.?(?:\s?\d{2,4})?/g, " "));
+  const named = findTarget(state.transactions, rename ? rename.target : text.replace(/\b(?:vom|am|den)\s+\d{1,2}\.\s?\d{1,2}\.?(?:\s?\d{2,4})?/g, " "));
+  const hinted = hint && state.transactions.some((row) => matchesTransactionSearch(row, hint)) ? hint : undefined;
+  const merchant = named && (!hinted || named.toLowerCase().includes(hinted.toLowerCase())) ? named : hinted ?? named;
   const period = !date && /\b(?:im|in|seit|letzten|diesen|heuer|20\d\d)\b/.test(lower) ? findPeriod(scope, asOf) : undefined;
   // "Hak alle Buchungen ab": every booking that is still unchecked, optionally limited to a period.
   const everything = !merchant && !date && amount === undefined && update.reviewed !== undefined && /\balle\b|\balles\b/.test(lower);

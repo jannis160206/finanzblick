@@ -161,6 +161,9 @@ export function TransactionDescriptionCell({
         {!!booking.tags?.length && <span className="mt-1 flex flex-wrap gap-1">
           {booking.tags.map((tag) => <span key={tag} className="rounded-full bg-primary/10 px-2 py-0.5 text-2xs text-primary">#{tag}</span>)}
         </span>}
+        {booking.note && <span className="mt-0.5 block min-w-0 text-xs text-muted-foreground break-words md:max-w-[300px] md:truncate" title={booking.note}>
+          <span className="sr-only">Notiz: </span>{booking.note}
+        </span>}
       </span>
     </div>
   );

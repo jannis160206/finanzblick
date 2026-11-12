@@ -38,9 +38,13 @@ Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufruf
 
 **Aktionen im Chat:** Was du in der App von Hand machst, geht auch per Chat, mit denselben Prüfungen:
 
-- Verträge Schritt für Schritt wie im Vertragsdialog anlegen („Leg einen neuen Vertrag an“), ändern, bestätigen, ausblenden und als gekündigt markieren;
-- Buchungen kategorisieren, umbenennen, löschen, taggen und mit Raphael teilen;
-- Sparziele Schritt für Schritt anlegen und ändern, geplante Ausgaben, Budgets, Monatsplan-Positionen und Monatswerte, Kontoregeln und den Successbonus.
+- Verträge Schritt für Schritt wie im Vertragsdialog anlegen („Leg einen neuen Vertrag an“, „Markiere die Disney Plus Buchung als Vertrag“), ändern (Betrag, Intervall, Name, Kategorie, Frist), bestätigen, ausblenden, als gekündigt markieren, löschen und Buchungen zuordnen;
+- Buchungen kategorisieren, umbenennen, mit einer Notiz versehen, löschen, taggen und mit Raphael teilen;
+- Sparziele Schritt für Schritt anlegen und ändern (Betrag, Datum, Rate, Konto, Extras), geplante Ausgaben, Budgets samt Umschichten, Monatsplan-Positionen (auch Kategorie und Verschieben zwischen Positionen), Kontoregeln;
+- Lohnabrechnungen prüfen, ins Budget übernehmen oder entfernen und das Budget an die Abrechnungen anpassen, den Successbonus setzen;
+- Design, Begriffserklärung, Dunkelmodus, Benachrichtigungen, Töne und Sichtschutz umschalten.
+
+Jede Änderung an deinen Daten kommt zuerst als Vorschau und lässt sich rückgängig machen. Zu jeder Buchung kannst du im Bearbeiten-Dialog auch selbst eine **Notiz** hinterlegen; sie steht in der Umsatzliste unter dem Händler.
 
 **Chat:** Während einer Antwort zeigen ein Denk-Orb und eine Statuszeile, was gerade passiert („Analysiere deine Buchungen…“, „Suche passendes Wissen…“, „Formuliere die Antwort…“); ein Lichtstreifen umrahmt die laufende Antwort. Ist sie fertig, übernimmt der animierte Bot des Spezialisten (Stern für den Orchestrator, Droide für Umsätze, Blume für Verträge, Kleeblatt für Budget, Mech für Gehalt); ein atmender Rand markiert die Änderung, die auf Bestätigung wartet. Eingabe, Vorschläge und Stopp bleiben auch mit großen Haushaltsbüchern flüssig. Antworten streamen Wort für Wort, lassen sich kopieren, neu generieren und mit **Stopp** abbrechen. Das Eingabefeld wächst mit dem Text; der leere Chat bietet drei Startfragen an. Allgemeine Finanzfragen („Wie viel sollte man als Notgroschen haben?“) beantwortet er mit einem kleinen **lokalen Finanzwissen** (51 Abschnitte, `sqlite-vec` plus Stichwortsuche, höchstens drei Treffer, ohne Cloud).
 

@@ -8,7 +8,8 @@ import { offTopicReply } from "./scope";
  * Requests that need a fixed, honest reply instead of a tool or the model: navigation, the colour scheme, deleting
  * everything at once and questions about the assistant's own instructions. Deterministic, so they never reach the model.
  */
-export type FixedReply = AgentResult & { theme?: "dark" | "light" };
+export type DeviceSetting = { notifications?: boolean; sounds?: boolean; privacy?: boolean };
+export type FixedReply = AgentResult & { theme?: "dark" | "light"; device?: DeviceSetting };
 
 /** "Kannst du das nochmal erklären?", "Was heißt das?": refers to the last answer, so it needs the history, not a tool. */
 export const explainAgain = (input: string) => /\b(?:das|es)\b.{0,20}\b(?:nochmal|noch mal|genauer|einfacher|anders)\b.{0,15}\berklär|\berklär\w* (?:mir )?(?:das|es) (?:nochmal|noch mal|genauer|einfacher|anders)\b|^(?:das )?versteh(?:e)? ich nicht\b|^was (?:heißt|heisst|bedeutet) das(?: genau| für mich)?\s*\??$/
@@ -23,8 +24,8 @@ const pages: [RegExp, string, string, string][] = [
 const pageWords = "dashboard|übersicht|startseite|home|umsätze|buchungen|transaktionen|budget|monatsplan|sparen|sparziele|pockets|konten|verträge|vertragsordner|abos|gehalt|steuern|lohnzettel|abrechnungen|einstellungen|settings";
 // "Öffne die Verträge", "Geh zum Budget", "Zeig mir das Dashboard"; "Zeig mir meine Abos" stays a question for the chat.
 const navigate = new RegExp(String.raw`^(?:bitte\s+)?(?:(?:öffne|oeffne|geh(?:e)? (?:zu|zur|zum|in die|in den|auf die)|wechsel\w* (?:zu|zur|zum|in die|auf die)|bring mich (?:zu|zur|zum|in die)|navigier\w* (?:zu|zur|zum))\s*(?:der |die |das |den |meine[nr]? )?(${pageWords})|zeig\w* (?:mir )?(?:das |die |den )?(dashboard|übersicht|startseite|einstellungen))(?:-?seite)?(?:\s+bitte)?\s*[.!?]*$`);
-const theme = /\b(?:dark|light|night)\s*-?\s*mode\b|dunkel\s*-?\s*modus|hell\s*-?\s*modus|nachtmodus|dunkles (?:design|farbschema|thema)|helles (?:design|farbschema|thema)/;
-const deleteAll = /\b(?:lösch|loesch|entfern|vernicht)\w*\b.{0,30}\b(?:alle|sämtliche|saemtliche|ganze[nn]?)\b.{0,20}\b(?:buchungen|umsätze|transaktionen|daten)\b|\balle (?:meine )?(?:daten|buchungen) (?:lösch|loesch|weg)|\blösch\w* alles\b/;
+const theme = /\b(?:dark|light|night)\s*-?\s*mode\b|dunkel\s*-?\s*modus|hell\s*-?\s*modus|nachtmodus|dunkles (?:design|farbschema|thema)|helles (?:design|farbschema|thema)|^(?:bitte\s+)?(?:mach|stell|schalt)\w*\s+(?:es|alles|die app|das design|die ansicht|den bildschirm)\s+(?:auf\s+)?(?:hell|dunkel)(?:er)?\s*(?:bitte)?\s*[.!]?$/;
+const deleteAll = /\b(?:lösch|loesch|entfern|vernicht)\w*\b.{0,30}\b(?:alle|sämtliche|saemtliche|ganze[nn]?)\s+(?:meine\s+|deine\s+|die\s+|unsere\s+)?(?:buchungen|umsätze|transaktionen|daten)\b|\balle (?:meine )?(?:daten|buchungen) (?:lösch|loesch|weg)|\blösch\w* alles\b/;
 const instructions = /system-?prompt|(?:deine|die) (?:internen? )?(?:anweisungen|instruktionen|vorgaben|regeln)\b.{0,30}\b(?:zeig|gib|nenn|verrat|ausgeb|schreib)|ignorier\w* (?:alle |deine |die )?(?:vorherigen |bisherigen |obigen )?(?:anweisungen|regeln|instruktionen|vorgaben)/;
 const distress = /^(?:(?:oh|ach|mist|puh|na toll)[,!]?\s+)?(?:mein (?:giro)?konto ist (?:schon )?(?:leer|im minus|überzogen|ueberzogen|blank)|ich bin (?:total |komplett |völlig |voellig |voll |schon wieder |wieder )?(?:pleite|blank|abgebrannt|bankrott)|ich hab(?:e)? (?:kein (?:geld|cent|euro)|nichts) mehr)[.!]*$/;
 // Actions that need a bank or Google login, a file or a browser permission happen on their page, never in the chat.
@@ -33,8 +34,6 @@ const appOnly: [RegExp, string, string, string][] = [
     "Bankverbindungen richtest du unter Einstellungen → Bankverbindungen ein. Dafür brauchst du die Anmeldung bei deiner Bank – das geht aus Sicherheitsgründen nicht im Chat.", "Einstellungen", "/einstellungen"],
   [/\b(?:google drive|gmail|google-konto|google konto)\b.{0,40}\b(?:verbind|verknüpf|verknuepf|trenn|anmeld|einricht)\w*|\b(?:verbind|verknüpf|verknuepf|trenn)\w*\b.{0,40}\b(?:google drive|gmail)\b/,
     "Google Drive und Gmail verbindest oder trennst du unter Einstellungen; die Anmeldung bei Google geht nur dort.", "Einstellungen", "/einstellungen"],
-  [/\bbenachrichtigung\w*\b.{0,30}\b(?:aktivier|einschalt|ausschalt|deaktivier|erlaub|abstell)\w*|\b(?:aktivier|schalt)\w*\b.{0,20}\bbenachrichtigung/,
-    "Benachrichtigungen schaltest du unter Einstellungen → Benachrichtigungen ein oder aus; dein Browser fragt dafür um Erlaubnis.", "Einstellungen", "/einstellungen"],
   [/\b(?:backup|sicherung|export)\w*\b.{0,30}\b(?:mach|erstell|herunterlad|lad|einspiel|wiederherstell)\w*|\b(?:exportier|sicher)\w*\b.{0,30}\b(?:daten|buchungen|umsätze|umsaetze|alles)\b|^(?:bitte\s+)?(?:mach|erstell|leg|lad|spiel)\w*\b.{0,20}\b(?:backup|sicherung|export)\w*/,
     "Backups und Exporte erstellst oder spielst du unter Einstellungen → Sicherung ein; die Datei lädt bzw. wählt dein Browser.", "Einstellungen", "/einstellungen"],
   [/\b(?:lad|importier|hochlad|scann)\w*\b.{0,40}\b(?:abrechnung|lohnzettel|lohnabrechnung|kontoauszug|auszug|csv|pdf|screenshot|kassenbon|beleg|rechnung)\w*|\bkassenbon\w*\b.{0,20}\baufteil/,
@@ -42,6 +41,29 @@ const appOnly: [RegExp, string, string, string][] = [
   [/\b(?:akzentfarbe|app-?farbe|farbe der app|animationen|bewegungen)\b.{0,30}\b(?:änder|aender|setz|stell|aus|reduzier|wechsel)\w*/,
     "Akzentfarbe und Bewegung stellst du unter Einstellungen → Darstellung ein; dort siehst du die Vorschau sofort.", "Einstellungen", "/einstellungen"],
 ];
+// Settings of this device, switched right away: notifications, interaction sounds and the privacy screen.
+const offWords = /\b(?:ausschalt\w*|deaktivier\w*|abschalt\w*|abstell\w*|ausmach\w*|stumm\w*|aus|ab)\b/;
+// An explicit switch: a verb, or a short "Benachrichtigungen an/aus"; never a complaint or a reminder.
+const switchVerb = /\b(?:aktivier\w*|deaktivier\w*|einschalt\w*|anschalt\w*|ausschalt\w*|abschalt\w*|abstell\w*|ausmach\w*|anmach\w*|schalt\w*|mach\w*|stell\w*|stumm\w*)\b/;
+const switched = (lower: string) => !/\berinner\w*|\bbekomm\w*|\bkrieg\w*|\bwarum\b|\bwieso\b/.test(lower) &&
+  (switchVerb.test(lower) || lower.split(/\s+/).length <= 5 && /\b(?:an|aus|ein|ab)\s*(?:bitte)?\s*[.!]?$/.test(lower));
+function deviceSetting(lower: string): { device: DeviceSetting; text: string } | undefined {
+  if (/\?\s*$/.test(lower) && !/^(?:kannst|könntest|koenntest|würdest|wuerdest) du\b/.test(lower)) return undefined;
+  if (/\b(?:benachrichtigung\w*|push-?nachricht\w*|push-?mitteilung\w*)\b/.test(lower) && switched(lower)) {
+    const on = !offWords.test(lower.replace(/\bausgaben\b/g, " "));
+    return { device: { notifications: on }, text: on ? "Erledigt – Benachrichtigungen sind auf diesem Gerät an." : "Erledigt – Benachrichtigungen sind auf diesem Gerät aus." };
+  }
+  if (/\b(?:töne|toene|klänge|klaenge|klang|sounds?|interaktionsklänge|interaktionsklaenge|geräusche|geraeusche|klicktöne|klicktoene)\b/.test(lower) && switched(lower)) {
+    const on = !offWords.test(lower);
+    return { device: { sounds: on }, text: on ? "Erledigt – die Interaktionsklänge sind an." : "Erledigt – die Interaktionsklänge sind aus." };
+  }
+  const privacyOn = /^(?:bitte\s+)?(?:sichtschutz|privatsphäre-?modus|privatsphaere-?modus|privatmodus)\s+(?:an|ein|aktivieren|einschalten)\b|\b(?:aktivier|schalt)\w*\b.{0,20}\b(?:sichtschutz|privatsphäre-?modus|privatmodus)\b(?!.{0,10}\baus\b)|\b(?:versteck|verberg|verbirg)\w*\s+(?:meine\s+|die\s+|alle\s+)?(?:beträge|betraege|zahlen|summen|kontostände)\b|^(?:bitte\s+)?(?:beträge|betraege|zahlen)\s+(?:verstecken|verbergen|ausblenden|unkenntlich machen)\b/;
+  const privacyOff = /^(?:bitte\s+)?(?:sichtschutz|privatsphäre-?modus|privatsphaere-?modus|privatmodus)\s+(?:aus|deaktivieren|ausschalten|weg)\b|\b(?:deaktivier|schalt)\w*\b.{0,20}\b(?:sichtschutz|privatsphäre-?modus|privatmodus)\b.{0,10}\baus\b|\b(?:deaktivier)\w*\b.{0,20}\b(?:sichtschutz|privatmodus)\b|^(?:bitte\s+)?(?:beträge|betraege|zahlen)\s+(?:wieder\s+)?(?:anzeigen|einblenden|zeigen)\s*[.!]?$|^(?:bitte\s+)?zeig\w*\s+(?:mir\s+)?(?:die\s+|meine\s+)?(?:beträge|betraege|zahlen)\s+wieder\b/;
+  if (privacyOff.test(lower)) return { device: { privacy: false }, text: "Erledigt – der Sichtschutz ist aus, Beträge sind wieder sichtbar." };
+  if (privacyOn.test(lower)) return { device: { privacy: true }, text: "Erledigt – der Sichtschutz ist an, Beträge sind verdeckt." };
+  return undefined;
+}
+
 const invent = /^(?:bitte\s+)?(?:erfind\w*|denk dir)\b.{0,40}\b(?:kontostand|zahl\w*|betrag|beträge|buchung\w*|gehalt|daten)\b/;
 
 // "Was ist 15 % von 2400?", "Rechne 1200 / 12": plain arithmetic is computed, never guessed by the model.
@@ -110,6 +132,12 @@ export function fixedReply(input: string): FixedReply | undefined {
     return { text: dark ? "Erledigt – jetzt im dunklen Farbschema. Zurück geht's oben rechts mit dem Sonnen-Symbol." : "Erledigt – jetzt im hellen Farbschema. Zurück geht's oben rechts mit dem Mond-Symbol.",
       theme: dark ? "dark" : "light" };
   }
+  if (/\bstichtag\w*\b/.test(lower) && /\b(?:stell|setz|änder|aender|verschieb|mach)\w*/.test(lower))
+    return { text: "Der Stichtag läuft automatisch mit dem heutigen Datum mit – ändern musst du ihn nie. Für einen anderen Monat frag einfach direkt, z. B. „Wie war mein Oktober?“.",
+      suggestions: ["Wie war mein Oktober?", "Was bleibt mir diesen Monat?"] };
+  const device = deviceSetting(lower);
+  if (device) return { text: device.text, device: device.device,
+    card: { kind: "answer", title: "Einstellungen", lines: [], page: { label: "Einstellungen öffnen", href: "/einstellungen" } } };
   const match = navigate.exec(lower);
   const page = match?.[1] ?? match?.[2];
   const target = page ? pages.find(([pattern]) => pattern.test(page)) : undefined;

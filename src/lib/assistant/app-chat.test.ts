@@ -95,7 +95,10 @@ describe("contracts by chat", () => {
     expect(run(state, "Kündigungsfrist von Magenta ist 3 Monate").change?.diffs.map((diff) => diff.after)).toEqual(["3 Monate", "bestätigt"]);
     expect(run(state, "Bestätige alle Vertragsvorschläge").change?.operations).toHaveLength(2);
     expect(run(state, "Ist kein Vertrag", "contract_edit")).toMatchObject({ choices: expect.arrayContaining(["Streamflix Abo ist kein Vertrag"]) });
-    expect(run(state, "Lösch den Vertrag Streamflix").text).toMatch(/Entfernen geht nur bei selbst angelegten Verträgen/);
+    // A detected contract cannot be deleted; the chat offers to hide it instead, with the reason.
+    const removed = run(state, "Lösch den Vertrag Streamflix");
+    expect(removed.text).toMatch(/löschen geht da nicht/);
+    expect(removed.change?.operations).toEqual([{ op: "contract_action", contractId: expect.any(String), action: "ignore" }]);
     // The cancellation letter offers to mark the contract as cancelled, with the date that was asked for.
     expect(run(state, "Kündige Streamflix zum 31.12.").suggestions?.[0]).toBe("Streamflix Abo ist gekündigt zum 31.12.");
     // Named without the word "Vertrag": the general edit finds the contract.

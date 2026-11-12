@@ -40,6 +40,15 @@ function writePreferences(next: NotificationPreferences) {
   try { localStorage.setItem(NOTIFICATION_SETTINGS_KEY, JSON.stringify(next)); } catch { /* Speicher nicht verfügbar */ }
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
+/** Switches notifications without asking: turning them on needs a permission the browser already granted. */
+export function setNotificationsEnabled(enabled: boolean): "done" | "permission" | "unsupported" {
+  const current = parsePreferences(readRaw());
+  if (!enabled) { writePreferences({ ...current, enabled: false }); return "done"; }
+  if (!supported()) return "unsupported";
+  if (Notification.permission !== "granted") return "permission";
+  writePreferences({ ...current, enabled: true, since: current.since ?? today() });
+  return "done";
+}
 function subscribe(callback: () => void) {
   const onStorage = (event: StorageEvent) => { if (event.key === NOTIFICATION_SETTINGS_KEY) callback(); };
   window.addEventListener(CHANGE_EVENT, callback);

@@ -11,9 +11,9 @@ export const agentInfo: Record<AgentId, { summary: string; scope: string }> = {
   budget: { summary: "Monatsplan, Konten und Ziele",
     scope: "Was übrig bleibt, Kontostände, Prognose, Sparziele und geplante Ausgaben, ob sich ein Kauf ausgeht, Spartipps, Anlegen und Kredite; Budgets, Monatsplan-Positionen und Kontoregeln ändern" },
   payroll: { summary: "Gehalt und Steuern",
-    scope: "Lohnabrechnung, netto und brutto, Sonderzahlungen mit Anteil zu 6 % und voll versteuert, Jahressechstel, Arbeitnehmerveranlagung" },
+    scope: "Lohnabrechnung, netto und brutto, Sonderzahlungen mit Anteil zu 6 % und voll versteuert, Jahressechstel, Arbeitnehmerveranlagung; Abrechnungen prüfen, ins Budget übernehmen oder entfernen" },
   general: { summary: "Allgemeiner Chat, Rückfall bei Unklarheit",
-    scope: "Begrüßung, allgemeine Geldfragen, Finanzbegriffe, Bedienung der App, Marktdaten und Gedächtnis; fachfremde Themen lehnt er höflich ab" },
+    scope: "Begrüßung, allgemeine Geldfragen, Finanzbegriffe, Bedienung der App, Marktdaten und Gedächtnis, Einstellungen wie Design, Töne und Benachrichtigungen; fachfremde Themen lehnt er höflich ab" },
 };
 
 /** Short names for the tool list. */
@@ -27,9 +27,9 @@ export const toolLabel: Record<AssistantTool, string> = {
   edit: "Ziel, Ausgabe oder Planposition ändern", batch: "Mehrere Änderungen", whatif: "Was wäre wenn", coach: "Spar-Coach", check: "Finanz-Check",
   briefing: "Wochenüberblick", insights: "Hinweise", accounts: "Kontostände", amex: "Amex-Abrechnung", networth: "Vermögen",
   depot: "Depot-Rechner", loan: "Kreditrechner",
-  payroll: "Gehaltsübersicht", tax: "Arbeitnehmerveranlagung", homeoffice: "Home-Office-Rechner",
+  payroll: "Gehaltsübersicht", tax: "Arbeitnehmerveranlagung", homeoffice: "Home-Office-Rechner", payroll_action: "Abrechnungen bearbeiten",
   help: "Hilfe", explain: "App erklären", knowledge: "Begriffe nachschlagen", market: "Marktdaten", memory: "Gedächtnis",
-  remember: "Merken", forget: "Vergessen", changes: "Änderungsprotokoll", undo: "Rückgängig", reminder: "Erinnerungen", ask: "Freie Antwort",
+  remember: "Merken", forget: "Vergessen", changes: "Änderungsprotokoll", undo: "Rückgängig", reminder: "Erinnerungen", ask: "Freie Antwort", settings: "Einstellungen ändern",
 };
 
 /** Tools that change data; they only run after the user confirms. */

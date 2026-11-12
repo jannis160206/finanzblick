@@ -146,6 +146,8 @@ const transactionFieldsSchema = z.object({
   // Free labels across categories, e.g. a trip ("Malaga 2026").
   tags: z.array(z.string().trim().min(1).max(40)).max(10)
     .transform((tags) => [...new Set(tags)]).optional(),
+  // The user's own note on this booking ("Fernseher fürs Wohnzimmer"), from the booking dialog or the assistant.
+  note: z.string().trim().min(1).max(300).optional(),
   // Receipt split (Kassenbon): category parts that must sum to `amount`; see lib/splits.ts.
   splits: z.array(z.object({
     category: categorySchema,
@@ -508,6 +510,8 @@ export const contractDraftSchema = z.object({
   autoRenew: z.boolean().optional(),
   renewalMonths: z.number().int().min(1).max(60).optional(),
   match: contractMatchSchema.nullable().optional(),
+  // A contract made from bookings ("Markiere die Disney Plus Buchung als Vertrag"): those bookings belong to it.
+  bookingIds: z.array(z.string().min(1).max(500)).min(1).max(50).optional(),
 }).strict();
 export type ContractDraft = z.infer<typeof contractDraftSchema>;
 const monthKeySchema = z.string().regex(/^20\d\d-(0[1-9]|1[0-2])$/);
@@ -522,6 +526,8 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     target: moneySchema.positive().max(10_000_000).optional(),
     date: dateSchema.optional(),
     monthly: moneySchema.nonnegative().max(1_000_000).optional(),
+    // The account the goal's money is kept on, like the "Konto" field in the goal dialog.
+    pocket: z.string().trim().min(1).max(100).optional(),
   }).strict(),
   z.object({ op: z.literal("goal_pause"), goalId: agentIdSchema, month: monthKeySchema, resume: z.boolean().optional() }).strict(),
   // Extra payments for N months; a pocket source is booked as withdrawal from that pocket. Amount 0 removes them.
@@ -552,6 +558,8 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     ignored: z.boolean().optional(),
     // Like the button on the bookings page: an expense can only be marked as shared, not unshared.
     sharedWithRaphael: z.literal(true).optional(),
+    // A note on the booking; null or "" removes it.
+    note: z.string().trim().max(300).nullable().optional(),
   }).strict(),
   z.object({
     op: z.literal("categorize"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
@@ -581,6 +589,8 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     interval: contractIntervalSchema, nextDate: dateSchema, notice: contractNoticeSchema.optional(), termEnd: dateSchema.optional(),
     autoRenew: z.boolean().optional(), renewalMonths: z.number().int().min(1).max(60).optional(), note: z.string().trim().max(500).optional(),
     match: contractMatchSchema.optional(),
+    // Bookings picked by hand, like ticking them in the wizard ("Markiere die Disney Plus Buchung als Vertrag").
+    bookingIds: z.array(z.string().min(1).max(500)).min(1).max(50).optional(),
   }).strict(),
   // null clears an optional field, like emptying it in the wizard.
   z.object({
@@ -590,6 +600,20 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     termEnd: dateSchema.nullable().optional(), autoRenew: z.boolean().optional(), renewalMonths: z.number().int().min(1).max(60).optional(),
     note: z.string().trim().max(500).nullable().optional(), match: contractMatchSchema.nullable().optional(),
   }).strict(),
+  // Bookings ticked or unticked for a contract, like the booking list in the contract wizard.
+  z.object({
+    op: z.literal("contract_bookings"), contractId: z.string().trim().min(1).max(300),
+    add: z.array(z.string().min(1).max(500)).max(50).optional(),
+    remove: z.array(z.string().min(1).max(500)).max(50).optional(),
+  }).strict(),
+  // Payroll page: take a held payslip into the budget, remove a stored payslip, or bring the budget up to date.
+  z.object({ op: z.literal("payslip_confirm"), year: z.number().int().min(2000).max(2100), month: z.number().int().min(1).max(12), employer: z.string().trim().min(1).max(200) }).strict(),
+  z.object({ op: z.literal("payslip_remove"), year: z.number().int().min(2000).max(2100), month: z.number().int().min(1).max(12), employer: z.string().trim().min(1).max(200) }).strict(),
+  // review: also decide the values the automatic budget leaves for review ("apply" takes them, "keep" keeps the budget as it is).
+  z.object({ op: z.literal("payroll_sync"), review: z.enum(["apply", "keep"]).optional() }).strict(),
+  // Settings: the term lookup switch and the seasonal design ("auto" follows the calendar).
+  z.object({ op: z.literal("setting_flag"), key: z.enum(["payslipTermLookup"]), value: z.boolean() }).strict(),
+  z.object({ op: z.literal("seasonal_theme"), theme: z.enum(["auto", "default", "halloween", "christmas"]) }).strict(),
   z.object({
     op: z.literal("contract_action"), contractId: z.string().trim().min(1).max(300),
     action: z.enum(["confirm", "ignore", "restore", "cancel", "reactivate", "reset", "remove"]),
@@ -811,6 +835,19 @@ export const assistantGapSchema = z.object({
 }).strict();
 export type AssistantGap = z.infer<typeof assistantGapSchema>;
 export const MAX_ASSISTANT_GAPS = 50;
+const payrollBudgetMonthSchema = z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/);
+/**
+ * Automatic budget from payslips: when it last ran, the target values it set per income row and month (a different
+ * value later means the user changed it by hand), corrections the user chose to keep as they are, and payslips the
+ * user confirmed despite a contradiction (key + fingerprint of exactly those values).
+ */
+export const payrollBudgetSchema = z.object({
+  at: z.number().int().nonnegative().optional(),
+  targets: z.record(z.string().min(1).max(200), z.record(payrollBudgetMonthSchema, z.number().finite())).optional(),
+  kept: z.array(z.string().min(1).max(220)).max(500).optional(),
+  confirmed: z.array(z.string().min(1).max(300)).max(240).optional(),
+}).strict();
+export type PayrollBudgetState = z.infer<typeof payrollBudgetSchema>;
 const undoTransactionSchema = z.object({
   id: z.string().min(1).max(500),
   category: categorySchema,
@@ -826,6 +863,8 @@ const undoTransactionSchema = z.object({
   ignored: z.boolean().optional(),
   // Tags before the change; an empty list means the booking had none.
   tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+  // "" means the booking had no note; undefined (older entries) leaves the note untouched.
+  note: z.string().max(300).optional(),
   sharedWithRaphael: z.boolean().optional(),
 }).strict();
 // Snapshot of exactly the entities an agent change touched, so it can be reverted.
@@ -834,10 +873,10 @@ export const assistantUndoSchema = z.object({
   goals: z.array(z.object({ id: agentIdSchema, before: savingsGoalSchema.nullable() }).strict()).max(50).optional(),
   planned: z.array(z.object({ id: agentIdSchema, before: plannedOneOffSchema.nullable() }).strict()).max(500).optional(),
   settings: z.array(z.object({
-    key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget", "bikeTarget", "bikePurchaseDate", "successBonusPercent"]),
+    key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget", "bikeTarget", "bikePurchaseDate", "successBonusPercent", "payslipTermLookup"]),
     // null: the setting was not set before.
-    before: z.union([moneySchema, dateSchema]).nullable(),
-  }).strict()).max(6).optional(),
+    before: z.union([moneySchema, dateSchema, z.boolean()]).nullable(),
+  }).strict()).max(7).optional(),
   memory: z.array(z.object({ id: agentIdSchema, before: assistantMemorySchema.nullable() }).strict()).max(50).optional(),
   months: z.array(z.object({ month: z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/), before: monthInputSchema.nullable() }).strict()).max(24).optional(),
   transactions: z.array(undoTransactionSchema).max(2000).optional(),
@@ -849,8 +888,15 @@ export const assistantUndoSchema = z.object({
   contracts: z.array(z.object({ id: z.string().trim().min(1).max(300), before: contractOverrideSchema.nullable() }).strict()).max(50).optional(),
   // Deleted bookings with the fixed-cost receipts that pointed at them.
   removedTransactions: z.array(z.object({ transaction: transactionSchema, receipts: z.array(fixedReceiptSchema).max(20) }).strict()).max(50).optional(),
-  financeRows: z.array(z.object({ id: z.string().min(1).max(200), before: financeRowSchema.nullable() }).strict()).max(20).optional(),
+  // index: where a removed row stood, so undo puts it back in place.
+  financeRows: z.array(z.object({ id: z.string().min(1).max(200), before: financeRowSchema.nullable(), index: z.number().int().nonnegative().optional() }).strict()).max(60).optional(),
   accountRules: z.array(z.object({ id: agentIdSchema, before: accountRuleSchema.nullable() }).strict()).max(40).optional(),
+  // Payroll: a removed payslip, the forecasts and the automatic-budget state before the change (null: none before).
+  payslips: z.array(z.object({ key: z.string().min(1).max(300), before: payslipSchema.nullable(), index: z.number().int().nonnegative().optional() }).strict()).max(12).optional(),
+  payrollForecasts: z.array(payrollForecastSchema).max(20).nullable().optional(),
+  payrollBudget: payrollBudgetSchema.nullable().optional(),
+  // The seasonal design choice before the change (null: never chosen).
+  seasonalTheme: seasonalPreferenceSchema.nullable().optional(),
 }).strict();
 export type AssistantUndo = z.infer<typeof assistantUndoSchema>;
 export const assistantChangeLogSchema = z.object({
@@ -870,19 +916,6 @@ export const dismissedInsightSchema = z.object({
 }).strict();
 export type DismissedInsight = z.infer<typeof dismissedInsightSchema>;
 export const MAX_DISMISSED_INSIGHTS = 300;
-const payrollBudgetMonthSchema = z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/);
-/**
- * Automatic budget from payslips: when it last ran, the target values it set per income row and month (a different
- * value later means the user changed it by hand), corrections the user chose to keep as they are, and payslips the
- * user confirmed despite a contradiction (key + fingerprint of exactly those values).
- */
-export const payrollBudgetSchema = z.object({
-  at: z.number().int().nonnegative().optional(),
-  targets: z.record(z.string().min(1).max(200), z.record(payrollBudgetMonthSchema, z.number().finite())).optional(),
-  kept: z.array(z.string().min(1).max(220)).max(500).optional(),
-  confirmed: z.array(z.string().min(1).max(300)).max(240).optional(),
-}).strict();
-export type PayrollBudgetState = z.infer<typeof payrollBudgetSchema>;
 
 export const appStateSchema = z.object({
   version: z.literal(1),

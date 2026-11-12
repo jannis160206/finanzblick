@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { useFinance } from "@/components/finance-provider";
 import { Transactions } from "@/components/transactions";
@@ -29,4 +29,30 @@ it("explains a booking's category and opens the category editor", () => {
   expect(within(why).getByText("Manuell gesetzt")).toBeTruthy();
   fireEvent.click(within(why).getByRole("button", { name: "Falsch? Kategorie ändern" }));
   expect(screen.getByRole("dialog")).toBeTruthy();
+});
+
+it("saves a note on a booking and shows it in the list", async () => {
+  const seed = createSeed();
+  const booking: Transaction = { id: "tv", date: "2026-10-02", bank: "Raiffeisen", pocket: "Raiffeisen Giro",
+    description: "MEDIAMARKT WIEN", amount: -249, category: "Shopping", includeInPlan: true, manualCategory: true };
+  const state: AppState = { ...seed, settings: { ...seed.settings, asOf: "2026-10-08" }, transactions: [booking],
+    fixedReceipts: [], merchantRules: [], reviewQueue: [] };
+  const update = vi.fn();
+  const finance = (current: AppState) => ({
+    state: current, dashboard: calculateDashboard(current), update, replace: vi.fn(),
+    openReviewCount: openReviewCount([]), ready: true, saved: true,
+    storageError: null, retrySave: vi.fn(), appendStatements: vi.fn(), statementImport: undefined,
+  });
+  vi.mocked(useFinance).mockReturnValue(finance(state));
+  const view = render(<Transactions />);
+  fireEvent.click(screen.getAllByRole("button", { name: "Zuordnung ändern: MEDIAMARKT WIEN" })[0]);
+  fireEvent.change(screen.getByLabelText("Notiz"), { target: { value: "  Fernseher fürs Wohnzimmer " } });
+  fireEvent.click(screen.getByRole("button", { name: "Zuordnung übernehmen" }));
+  await waitFor(() => expect(update).toHaveBeenCalled());
+  const next = (update.mock.calls[0][0] as (current: AppState) => AppState)(state);
+  expect(next.transactions[0].note).toBe("Fernseher fürs Wohnzimmer");
+
+  vi.mocked(useFinance).mockReturnValue(finance(next));
+  view.rerender(<Transactions />);
+  expect(screen.getAllByText("Fernseher fürs Wohnzimmer").length).toBeGreaterThan(0);
 });
