@@ -272,8 +272,10 @@ export function MemoryPanel({ memory, knowledge = [], phrases = 0, aliases = [],
       : <ul className="mt-3 divide-y divide-border/50 text-sm">
         {[...knowledge].sort((a, b) => b.at - a.at).map((entry) => <li key={entry.id} className="flex items-center justify-between gap-3 py-2">
           <span className="min-w-0"><a href={entry.url} target="_blank" rel="noreferrer noopener" className="underline-offset-2 hover:underline">{entry.title}</a>
-            <span className="block text-xs text-muted-foreground">gefragt als „{entry.topic}“ · {new Date(entry.at).toLocaleDateString("de-AT")}
-              {entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""} · {entry.source}</span></span>
+            <span className="block text-xs text-muted-foreground">{entry.kind === "web"
+              ? entry.rejected ? `abgelehnt · wird nicht mehr vorgeschlagen${entry.note ? ` · dein Hinweis: „${entry.note}“` : ""}`
+                : `bestätigte Websuche · ${new Date(entry.at).toLocaleDateString("de-AT")} · ${entry.votes ?? 1}× 👍${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`
+              : `gefragt als „${entry.topic}“ · ${new Date(entry.at).toLocaleDateString("de-AT")}${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`} · {entry.source}</span></span>
           {onForgetKnowledge && <Button type="button" size="sm" variant="ghost" className="min-h-9 shrink-0" disabled={disabled} onClick={() => onForgetKnowledge(entry.id)}
             aria-label={`Wissen „${entry.title}“ vergessen`}><X aria-hidden="true" className="size-4" />Vergessen</Button>}
         </li>)}

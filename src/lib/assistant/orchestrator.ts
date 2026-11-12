@@ -1,4 +1,5 @@
 import { normalizeMessage } from "./normalize";
+import { changingFacts, explicitWeb, foldText, ownData, publicTerms, statedYear } from "./public-facts";
 import { detectSmallTalk } from "./smalltalk";
 import { fixedReply } from "./fixed-replies";
 import { assistantTools, detectTool, mentionsName, type AssistantTool } from "./tools";
@@ -80,6 +81,33 @@ export function wantsKnowledge(input: string, decision: { tool?: AssistantTool; 
   if (lower.split(/\s+/).length < 2) return false;
   return aboutMoney(lower) || adviceWords.test(lower) || generalQuestion(lower);
 }
+
+
+/** An explicit request to look something up on the internet ("Such im Internet nach …", "google mal …"). */
+export const asksForWebSearch = (input: string) => explicitWeb.test(foldText(input));
+
+/**
+ * The orchestrator's decision whether a question goes to the web search: never for app actions or the user's own figures,
+ * always when the user asks for it, and otherwise only for general finance questions the local knowledge cannot answer
+ * reliably, such as yearly amounts and legal rules ("Wie hoch ist die Pendlerpauschale 2026?").
+ */
+export function wantsWebSearch(input: string, context: { tool?: AssistantTool; hits?: number; confident?: boolean } = {}): boolean {
+  const text = foldText(input);
+  if (text.split(" ").length < 3 || CHAT_REQUEST.test(text)) return false;
+  const changing = changingFacts.test(text);
+  const finance = changing || aboutMoney(input);
+  if (!finance) return false;
+  if (context.tool && context.tool !== "knowledge") return false;
+  if (explicitWeb.test(text)) return true;
+  // "Warum sind meine Ausgaben heuer so hoch?" is about the user's own money; only a public rule or benefit goes out.
+  if (ownData.test(text) && !publicTerms.test(text)) return false;
+  if (changing) return !context.confident || statedYear.test(text);
+  return !context.hits;
+}
+
+/** A free answer that admits it does not know; the question then goes to the web search once. */
+export const unsureAnswer = (text: string | undefined) => !text?.trim() ||
+  /\b(?:weiß ich (?:leider )?nicht|weiss ich (?:leider )?nicht|kann ich (?:dir )?(?:leider )?nicht (?:sicher |genau )?sagen|bin (?:mir )?(?:da )?nicht (?:ganz )?sicher|keine (?:aktuellen |genauen |verlässlichen )?(?:informationen|infos|daten|angaben|zahlen)|nicht in meinen (?:daten|unterlagen)|habe ich (?:leider )?keine (?:aktuellen )?(?:infos|informationen|daten|zahlen))\b/i.test(text);
 
 export const routeVias = ["rule", "signal", "model", "fallback"] as const;
 export type RouteVia = typeof routeVias[number];

@@ -48,6 +48,37 @@ describe("hybrid knowledge search", () => {
   });
 });
 
+describe("confirmed answers in the knowledge search", () => {
+  const offline = async () => { throw new Error("offline"); };
+
+  it("finds a confirmed answer by its words when the model is offline and answers with it directly", async () => {
+    const learned = [{ id: "w1", question: "Wie hoch ist die Geringfügigkeitsgrenze 2026?", text: "Sie liegt 2026 bei 551,10 € im Monat.", votes: 2, uses: 1 }];
+    const result = await searchKnowledge("Geringfügigkeitsgrenze 2026 wie hoch", { embed: offline, learned });
+    expect(result.mode).toBe("keyword");
+    expect(result.hits[0]).toMatchObject({ id: "learned:w1", keyword: 1, learned: { entryId: "w1", votes: 2 } });
+    expect(confidentHit(result.hits, result.mode)?.learned?.entryId).toBe("w1");
+    expect((await searchKnowledge("Was ist ein ETF?", { embed: offline, learned })).hits.some((hit) => hit.learned)).toBe(false);
+  });
+
+  it("compares confirmed answers by vector in sqlite-vec, embeds each one only once and keeps three hits at most", async () => {
+    const vector = [...vectorFromBase64(vectors.entries.notgroschen.vector)];
+    let embedded = 0;
+    const learned = [{ id: "w2", question: "Wie viel Notgroschen brauche ich?", text: "Drei bis sechs Monatsausgaben.", votes: 3, uses: 0 },
+      { id: "w3", question: "Lohnt sich Gold?", text: "Gold bringt keine Zinsen.", votes: 1, uses: 0 }];
+    const options = { embed: like("notgroschen"), learned, embedDocuments: async (texts: string[]) => {
+      embedded += texts.length;
+      return texts.map((text) => text.startsWith("Wie viel Notgroschen") ? vector : vector.map((value) => -value));
+    } };
+    const result = await searchKnowledge("Wie groß sollte meine Reserve für Notfälle sein?", options);
+    expect(result.mode).toBe("hybrid");
+    expect(result.hits.find((hit) => hit.learned)).toMatchObject({ id: "learned:w2", distance: 0 });
+    expect(result.hits.some((hit) => hit.id === "learned:w3")).toBe(false);
+    expect(result.hits.length).toBeLessThanOrEqual(MAX_KNOWLEDGE_HITS);
+    await searchKnowledge("Wie groß sollte meine Reserve für Notfälle sein?", options);
+    expect(embedded).toBe(2);
+  });
+});
+
 describe("knowledge helpers", () => {
   it("extracts search words without filler words and with light stemming", () => {
     expect(keywordTerms("Was ist eigentlich ein ETF?")).toEqual(["etf"]);

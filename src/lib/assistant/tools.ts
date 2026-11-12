@@ -23,6 +23,7 @@ import { contextQuestion, contractsQuestion, insightsQuestion } from "./copilot-
 import { monthReviewQuestion, netWorthQuestion, refundQuestion, securityQuestion, sharedQuestion } from "./essentials";
 import { explainAgain, fixedReply } from "./fixed-replies";
 import { payrollQuestion, payrollTermQuestion } from "./payroll";
+import { reconcileIntent } from "./intents";
 
 // Everything the assistant can do. The model may only pick one of these names.
 export const assistantTools = [
@@ -159,7 +160,7 @@ export function detectTool(input: string, names: string[] = []): AssistantTool |
   const text = stripAck(normalizeMessage(input));
   if (fixedReply(text)) return undefined;
   if (splitCommands(text, names)) return "batch";
-  return detectSingle(text, names);
+  return reconcileIntent(detectSingle(text, names), text);
 }
 
 const batchTools: readonly AssistantTool[] = ["edit", "booking", "rule", "remember", "forget", "reminder", "budget_plan"];

@@ -323,6 +323,65 @@ Ein kleiner, lokaler Wissensspeicher für allgemeine Finanzfragen („Wie viel s
 
 **Dateien:** `src/lib/knowledge-base/` (`corpus.ts`, `query.ts`, `search.ts`, `vectors.ts`, `vectors.json`), `src/lib/ai/embeddings.ts`, `src/app/api/ai/knowledge/route.ts`, `scripts/knowledge-index.ts`, `wantsKnowledge` in `src/lib/assistant/orchestrator.ts`.
 
+## Freie Formulierungen, Websuche und Selbstlernen
+
+Fragen und Aufträge funktionieren unabhängig von der genauen Formulierung. Bei Unsicherheit oder aktuellen Finanzfragen sucht der Assistent selbst im Internet, vergleicht die Quellen und lernt aus deinem Feedback.
+
+**Freie Formulierungen** (`src/lib/assistant/intents.ts`):
+
+- Eine Aktion und ein Thema, in beliebiger Reihenfolge und Form, ergeben ein Werkzeug. „erstelle vertrag“, „mach mir einen Vertrag“, „ich brauche einen neuen Vertrag“ und „Netflix als Abo speichern“ starten alle den Vertragsdialog.
+- Gleiches gilt für Sparziele („neues Ziel: Notgroschen 3000“), Budget („budget status“, „hab ich mein budget überzogen“), Umsätze („nur ausgaben im oktober“, „alle zahlungen an spotify“) und Gehalt („was bekomm ich raus“, „meine letzte abrechnung“).
+- Kleine Tippfehler im Thema werden toleriert („erstelle vertarg“, „zeig mir mein gehlat“).
+- Die bestehenden Regeln entscheiden weiter, wenn sie die Anfrage kennen. Die Rahmen füllen nur Lücken und korrigieren bekannte Fehlgriffe:
+  - eine Lohnabrechnung wird nicht als geplante Ausgabe gelesen;
+  - „Budget-Status“ ist nicht der Wochenüberblick;
+  - ein öffentlicher Grenzwert („Geringfügigkeitsgrenze 2026 – wie viel ist das?“) ist keine Umsatzfrage.
+- Definitions-, Rat- und Wie-Fragen („Was ist ein Budget?“, „Wie lege ich einen Vertrag an?“) und allgemeine „man“-Fragen bleiben bei ihren eigenen Wegen.
+- Was Regeln und Rahmen nicht erkennen, entscheidet wie bisher das Modell: ein Ein-Wort-Aufruf für den Agenten, dann die Werkzeugwahl des Spezialisten.
+- Ergebnis ohne Modell: 59/59 Varianten statt vorher 37/59. Mit Modell: 107/108 goldene und 22/22 grenzwertige Fragen, wie vorher; nur Regeln jetzt 103/108.
+
+**Natürliches Gespräch:**
+
+- Versteht der Assistent eine Nachricht nicht, fragt er mit den naheliegenden Optionen nach („Geht es dir um dein Gehalt oder dein Budget?“ mit Antippen-Vorschlägen), statt abzulehnen. Die neue Formulierung lernt er wie bisher.
+- Mehrere Absichten in einer Nachricht: „Zeig mir mein Budget und leg einen Vertrag für Netflix an“ oder „Neuer Vertrag für Spotify, außerdem: was verdiene ich?“ Er beantwortet zuerst die Fragen und startet danach den Vertrags- oder Sparziel-Dialog. Zwei Dialoge auf einmal oder eine direkte Änderung in einer kombinierten Nachricht teilt er nicht.
+
+**Automatische Websuche** (`src/lib/web/search.ts`, `POST /api/ai/web-search`):
+
+- **Wann:** Der Orchestrator entscheidet (`wantsWebSearch`):
+  - immer bei „Such im Internet nach …“ oder „google mal …“;
+  - bei öffentlichen Beträgen und Regeln, die sich jährlich ändern (Grenzen, Pauschalen, Absetzbeträge, Beihilfen, Förderungen, Boni, Mindestlohn, Pension …), wenn das lokale Wissen sie nicht sicher kennt oder ein Jahr genannt ist;
+  - bei allgemeinen Finanzfragen ohne Treffer im lokalen Wissen;
+  - einmal nachträglich, wenn die freie Antwort zugibt, es nicht zu wissen.
+- **Wann nicht:** App-Aktionen, Werkzeuge mit eigenen Daten, Fragen zu den eigenen Zahlen, kreative und fachfremde Anfragen. Normale Aktionen warten nie auf das Internet.
+- **Datenschutz:** Ins Internet gehen nur Suchwörter. Beträge, lange Zahlen, E-Mail-Adressen, IBANs und Links werden vorher entfernt; ohne Landesangabe wird „Österreich“ angehängt.
+- **Quellen:**
+  - Standard ist Bing (HTML-Ergebnisse); optional ein eigenes SearXNG (`FINANZBLICK_SEARXNG_URL`) oder die Brave-Search-API (`BRAVE_SEARCH_API_KEY`);
+  - Wikipedia ergänzt, wenn weniger als drei Seiten brauchbar sind;
+  - amtliche Seiten (`.gv.at`, Arbeiterkammer, WKO, Sozialversicherung, AMS …) zuerst; soziale Netzwerke, Shops und PDFs nie.
+- **Seiten lesen:**
+  - nur https;
+  - Hosts, die auf private oder lokale Adressen zeigen, werden per DNS-Prüfung abgewiesen;
+  - Weiterleitungen werden einzeln geprüft;
+  - höchstens 256 KB je Seite, 4,5 s je Seite.
+- **Passagen:** Aus jeder Seite kommen die zwei passendsten Absätze, Sätze mit Beträgen zuerst; bei Betragsfragen auch eine Betragstabelle. Absätze zum gefragten Jahr gehen vor, ältere Jahre zählen weniger. Menüs, Fußzeilen und Cookie-Texte fallen weg, versteckte Anweisungen werden entfernt.
+- **Vergleich:** Höchstens drei nummerierte Quellen mit je etwa 460 Zeichen. Beträge, die mindestens zwei Quellen nennen, stehen als „übereinstimmend“ in der Evidenz. Das Modell soll Übereinstimmungen direkt sagen, Widersprüche mit beiden Angaben nennen, amtliche Quellen vorziehen und mit [1], [2] verweisen. Jede Zahl der Antwort muss in den Quellen stehen (bestehende Belegprüfung).
+- **Ohne Modell:** Es antwortet die amtlichste Quelle in eigenen Worten, mit Quellennummer und Hinweis.
+- **Anzeige:**
+  - Orb im Zustand `searching` mit „Suche aktuelle Informationen…“, danach „Vergleiche Quellen…“;
+  - unter der Antwort „Quellen: [1] oesterreich.gv.at [2] …“ als Links (neuer Tab, nur https).
+- **Geschwindigkeit:** Suche 0,3–1,3 s, Seiten parallel; Ergebnisse 6 Stunden im Speicher. `FINANZBLICK_WEB_SEARCH=off` schaltet die Websuche ab.
+
+**Selbstlernen** (`src/lib/assistant/web-learning.ts`):
+
+- **👍 oder „Das hat geholfen“** unter einer Web-Antwort speichert Frage, Antwort und Quellen im Gedächtnis (`assistantKnowledge`, Art `web`). Ab dann:
+  - Dieselbe Frage in anderen Worten beantwortet er sofort aus dem Gedächtnis, ohne Routing, Suche oder Modell („Von dir bestätigt“).
+  - Ähnliche Fragen durchsuchen bestätigte Antworten zusammen mit dem lokalen Finanzwissen. Die Antworten werden einmal eingebettet, per Inhalts-Hash in `sqlite-vec` gehalten und nur mit den Einträgen der jeweiligen Anfrage verglichen; ohne Einbettungsmodell zählt die Wortüberschneidung.
+  - Jede Bestätigung und jede Wiederverwendung rückt eine Antwort ein wenig nach vorne, höchstens um 0,06. Beim Aufräumen des Gedächtnisses bleiben bestätigte und oft genutzte Antworten am längsten.
+- **👎** markiert die Antwort als abgelehnt: Sie wird nie wieder vorgeschlagen, und ihre Quellen lässt die nächste Suche zu dieser Frage weg. Der Assistent fragt, was nicht stimmt. Die Korrektur speichert er als Hinweis und gibt sie künftigen Antworten zu dieser Frage mit.
+- Alles liegt im bestehenden JSON-Finanzstand mit optionalen Feldern; die Datenbankstruktur bleibt unverändert. Unter „Gedächtnis“ ist jeder Eintrag sichtbar und löschbar.
+
+**Dateien:** `src/lib/assistant/intents.ts`, `src/lib/assistant/public-facts.ts`, `src/lib/assistant/web-learning.ts`, `src/lib/assistant/combined.ts`, `src/lib/web/search.ts`, `src/lib/web/web-answer.ts`, `src/app/api/ai/web-search/route.ts`, `src/lib/knowledge-base/` (gelernte Treffer), `src/components/finance-assistant.tsx`.
+
 ## Messung (Qwen3-8B, NPU, lokale Daten)
 
 | | vorher | nachher |
@@ -357,6 +416,11 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Korrekturen aus Chat-Test 2: `fixed-replies.test.ts` (feste Antworten, Rechnen, Rückfragen), `combined.test.ts` (kombinierte Fragen), `knowledge.test.ts` (Faktenfragen, allgemeine Artikel), `conversation.test.ts` (kopierte Sätze), `check.test.ts`, `everyday.test.ts`, `market.test.ts`, `insights.test.ts`, `orchestrator.test.ts`, `speed.test.ts` (Themenhinweise, knappe Faktenantwort).
 - Finanz-Fokus und App-Aktionen: `scope.test.ts` (fachfremde Themen, Geldbezug geht vor), `app-actions.test.ts` (jede neue Operation samt Rückgängig), `app-chat.test.ts` (Routing, Vertragsdialog Schritt für Schritt, Ja/Abbrechen, Buchungen, Monatsplan, Kontoregeln, Successbonus, Links).
 - Chat-Oberfläche und Wissen: `assistant-chat-parts.test.tsx` (ein Knopf für Senden und Stopp, Kopieren mit Rückmeldung, Team-Bots mit Namen, Vorschläge, während der Arbeit nur der Orb, Wörter höchstens einmal pro Bild), `assistant-state.test.ts` (Assistenten-Änderungen erkennen, zusammenführen, prüfen), `knowledge-routing.test.ts` (wann Wissen gesucht wird, Text, Orb und Agent je Werkzeug), `search.test.ts` (hybride Suche, Schwellen, Stichwort-Rückfall, aktuelle Vektoren).
+- Freie Formulierungen, Websuche und Selbstlernen:
+  - `intents.test.ts`: 35 Varianten für Vertrag, Sparziel, Budget, Umsätze und Gehalt samt Tippfehlern, ausgeschlossene Fragen, Rückfrage mit Optionen und kombinierte Nachrichten;
+  - `web-learning.test.ts`: wann gesucht wird, 👍/👎, Korrektur als Hinweis, gleiche Frage in anderen Worten;
+  - `src/lib/web/search.test.ts`: Suchwörter ohne persönliche Daten, Bing-Ergebnisse, Passagen und Tabellen, DNS-Schutz, Vergleich und Abschaltung;
+  - `search.test.ts`: bestätigte Antworten in der Hybrid-Suche.
 - `npm run eval:assistant`: zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer.
 
 ## Grenzen
@@ -364,7 +428,8 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Die Signalwörter sind bewusst knapp gehalten. Was sie nicht eindeutig zuordnen, entscheidet das Modell oder, im Zweifel, der Chat.
 - Bestehende Regelfehler einzelner Werkzeuge bleiben, wo sie keine falsche Zuständigkeit verursachen.
 - Kombinierte Fragen werden nur geteilt, wenn jeder Teil für sich steht. Verweist ein Teil zurück („… und was kosten sie im Jahr?“), antwortet ein Agent auf beides.
-- Finanzbegriffe beantwortet er zuerst aus dem lokalen Wissen; was dort fehlt, schlägt er online nach. Offline und ohne lokalen Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.
+- Finanzbegriffe beantwortet er zuerst aus dem lokalen Wissen; was dort fehlt, schlägt er in der Wikipedia nach und danach per Websuche. Offline und ohne lokalen Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.
+- Die Websuche liest öffentliche HTML-Seiten und kann sich irren oder veraltete Seiten finden. Deshalb zeigt sie immer die Quellen, bevorzugt amtliche Seiten und merkt sich Antworten erst nach deinem 👍. Bing kann das Format seiner Ergebnisseite ändern; ein eigenes SearXNG oder die Brave-API sind die stabileren Wege.
 - Das lokale Wissen ist bewusst klein (51 Abschnitte) und allgemein; es ersetzt keine Steuer- oder Anlageberatung.
 - Die Themen-Prüfung arbeitet mit Wortlisten. Seltene fachfremde Fragen ohne bekanntes Wort gehen an den allgemeinen Chat, dessen Prompt ebenfalls nur Finanzen erlaubt.
 - Nicht im Chat: Buchungen von Hand anlegen (gibt es in der App nicht), Bank- und Google-Anmeldung, Datei-Uploads, Benachrichtigungen, Erscheinungsbild und Backups (nur Link zur Seite), „Alle Buchungen löschen“ und eine geteilte Buchung wieder ungeteilt stellen (beides geht auch in der App nicht). Beim Sparziel gibt es statt „So schnell wie möglich“ die Wahl zwischen Datum und Monatsrate.

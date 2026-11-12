@@ -26,6 +26,7 @@ describe("finance-only scope", () => {
     "Ich bin gestresst wegen Geld", "Wann war ich zuletzt bei Billa?", "Kündige Netflix", "Hallo", "Wer bist du?", "Was kannst du?",
     "Kann man mit 3000 netto in Wien gut leben?", "Wie viel hab ich für Bücher ausgegeben?", "Öffne die Verträge", "Netflix",
     "Wie viel gebe ich für Musik-Streaming aus?", "Ich will ins Kino, geht sich das diesen Monat noch aus?",
+    "Wie hoch ist die Geringfügigkeitsgrenze 2026?", "Wie hoch ist die Pendlerpauschale?", "Wie hoch ist der Familienbonus Plus?",
 ])("keeps %s", (text) => expect(offTopic(text)).toBeUndefined());
 
   it("points back to the finances with suggestions", () => {

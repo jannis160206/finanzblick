@@ -18,6 +18,11 @@ const finance = word([
   "sonderzahlung\\p{L}*", "pension", "rente", "kaufkraft", "wechselkurs\\p{L}*", "dollar", "franken", "yen", "pfund", "klarna", "paypal", "amex", "revolut",
   "raiffeisen", "einkauf\\p{L}*", "gekauft", "kauf\\p{L}*", "bestell\\p{L}*", "fixkosten", "sparziel\\p{L}*", "bitcoin", "krypto\\p{L}*",
   "app", "finanzblick", "dashboard", "einstellung\\p{L}*", "export\\p{L}*", "import\\p{L}*", "backup\\p{L}*", "dunkelmodus", "dark mode",
+  // Public money rules and benefits ("Wie hoch ist die Geringfügigkeitsgrenze 2026?"): answered with the web search.
+  "geringfügig\\p{L}*", "\\p{L}*pauschale", "\\p{L}*beihilfe", "förder\\p{L}*", "\\p{L}*freibetrag", "\\p{L}*absetzbetrag", "\\p{L}*bonus", "kilometergeld",
+  "pendler\\p{L}*", "mindestlohn", "mindestsicherung", "arbeitslosengeld", "notstandshilfe", "karenz\\p{L}*", "kinderbetreuungsgeld", "abfertigung",
+  "sozialversicherung\\p{L}*", "gebühr\\p{L}*", "abgabe\\p{L}*", "zuschuss", "zuschüsse", "sachbezug\\p{L}*", "zuverdienst\\p{L}*", "freigrenze",
+  "höchstbeitrag\\p{L}*", "beitragsgrundlage", "einkommensgrenze",
 ].join("|"));
 // Compounds such as "Leitzins", "Handyvertrag" or "Lebensmittelbudget".
 const financeCompound = word("\\p{L}*(?:zins|zinsen|vertrag|verträge|budget|konto|konten|versicherung|steuer|kosten|gehalt|abo|abos|preis|preise|geld|sparen)\\p{L}*");

@@ -63,9 +63,11 @@ export const knowledgeListQuestion = (lower: string) =>
   /was hast du (?:alles |schon |bisher |dazu ?)*gelernt|was hast du dir angeeignet|dein (?:wissen|gelerntes)|was weißt du (?:schon )?alles(?! über mich)|was weisst du (?:schon )?alles(?! ueber mich)|gelerntes wissen|was (?:kannst|verstehst) du (?:noch )?nicht|was hast du (?:noch )?nicht verstanden|wie (?:hast du dich|bist du) (?:weiter ?entwickelt|besser geworden)|was hast du (?:von mir )?gelernt/.test(lower);
 
 // Stored entries match by the asked term or the article title, so "ETF" and "Börsengehandelter Fonds" find the same entry.
-export function findKnowledge(entries: AssistantKnowledge[] = [], topic: string): AssistantKnowledge | undefined {
+// Confirmed web answers are found by the knowledge search instead, never as an encyclopedia article.
+export function findKnowledge(all: AssistantKnowledge[] = [], topic: string): AssistantKnowledge | undefined {
   const wanted = fold(topic);
   if (!wanted) return undefined;
+  const entries = all.filter((entry) => entry.kind !== "web");
   return entries.find((entry) => fold(entry.topic) === wanted || fold(entry.title) === wanted)
     ?? entries.find((entry) => wanted.length >= 4 && (fold(entry.title).split(" ").includes(wanted) || fold(entry.topic).includes(wanted)));
 }
@@ -80,7 +82,8 @@ export function storeKnowledge(entries: AssistantKnowledge[] = [], learned: Assi
     next.push(entry);
   }
   if (next.length <= MAX_ASSISTANT_KNOWLEDGE) return next;
-  const keep = new Set([...next].sort((a, b) => (b.uses ?? 0) - (a.uses ?? 0) || b.at - a.at).slice(0, MAX_ASSISTANT_KNOWLEDGE).map((entry) => entry.id));
+  const weight = (entry: AssistantKnowledge) => (entry.rejected ? -5 : 0) + (entry.votes ?? 0) * 3 + (entry.uses ?? 0);
+  const keep = new Set([...next].sort((a, b) => weight(b) - weight(a) || b.at - a.at).slice(0, MAX_ASSISTANT_KNOWLEDGE).map((entry) => entry.id));
   return next.filter((entry) => keep.has(entry.id));
 }
 
@@ -157,8 +160,8 @@ export function knowledgeList(state: AppState): Result {
       "Formulierungen, die nur die KI verstanden hat, lerne ich auch nebenbei.",
     suggestions: ["Was ist ein ETF?", "Was bedeutet KESt?"],
   };
-  const lines: Line[] = entries.slice(0, 30).map((entry) => ({ label: entry.title.slice(0, 200), tone: "info" as const,
-    detail: `gefragt als „${entry.topic}“ · ${learnedDate(entry.at)}${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`.slice(0, 300) }));
+  const lines: Line[] = entries.slice(0, 30).map((entry) => ({ label: entry.title.slice(0, 200), tone: entry.rejected ? "warn" as const : "info" as const,
+    detail: (entry.kind === "web" ? webDetail(entry) : `gefragt als „${entry.topic}“ · ${learnedDate(entry.at)}${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`).slice(0, 300) }));
   if (phrases.length) lines.push({ label: `${phrases.length} gelernte Formulierung${phrases.length === 1 ? "" : "en"}`, tone: "good",
     detail: "verstehe ich jetzt sofort, ohne die KI zu fragen" });
   for (const alias of aliases.slice(-8)) lines.push({ label: `„${alias.from}“ = „${alias.to}“`.slice(0, 200), tone: "good",
@@ -166,19 +169,27 @@ export function knowledgeList(state: AppState): Result {
   if (solved) lines.push({ label: `${solved} anfangs unklare Frage${solved === 1 ? "" : "n"} gelöst`, tone: "good", detail: "durch deine Korrektur oder später nachgelernt" });
   for (const gap of gaps.slice(0, 5)) lines.push({ label: `Noch offen: „${gap.text}“`.slice(0, 200), tone: "warn",
     detail: `${gap.count}× gefragt · schreib „Nein, ich meinte …“, dann lerne ich es` });
+  const confirmed = entries.filter((entry) => entry.kind === "web" && !entry.rejected).length;
+  const terms = entries.filter((entry) => entry.kind !== "web").length;
   return {
-    text: `Ich habe mir ${entries.length} Begriff${entries.length === 1 ? "" : "e"} aus dem Internet gemerkt` +
+    text: `Ich habe mir ${terms} Begriff${terms === 1 ? "" : "e"} aus dem Internet gemerkt` +
+      (confirmed ? ` und ${confirmed} von dir bestätigte Antwort${confirmed === 1 ? "" : "en"} aus der Websuche` : "") +
       (phrases.length ? `, ${phrases.length} deiner Formulierungen gelernt` : "") + (aliases.length ? `, ${aliases.length} deiner eigenen Bezeichnungen übernommen` : "") +
       "." + (gaps.length ? ` ${gaps.length} Frage${gaps.length === 1 ? " verstehe" : "n verstehe"} ich noch nicht; mit deiner Korrektur lerne ich sie.` : "") + " Alles liegt nur in deiner Datenbank; unter „Gedächtnis“ kannst du es einsehen und löschen.",
     card: { kind: "memory", title: "Was ich dazugelernt habe", lines: lines.slice(0, 40),
-      note: "Wissen kommt aus der deutschsprachigen Wikipedia (CC BY-SA 4.0) und wird nach 90 Tagen beim nächsten Fragen aufgefrischt." },
+      note: "Begriffe kommen aus der deutschsprachigen Wikipedia (CC BY-SA 4.0) und werden nach 90 Tagen aufgefrischt; Antworten aus der Websuche merke ich mir erst nach deinem 👍." },
     suggestions: ["Was ist ein ETF?", "Was bedeutet KESt?"],
   };
 }
 
-// Stored knowledge relevant to a free question, so grounded answers can use it everywhere.
-export function relevantKnowledge(entries: AssistantKnowledge[] = [], input: string, limit = 2): AssistantKnowledge[] {
+const webDetail = (entry: AssistantKnowledge) => entry.rejected
+  ? `abgelehnt · wird nicht mehr vorgeschlagen${entry.note ? ` · dein Hinweis: „${entry.note.slice(0, 120)}“` : ""}`
+  : `bestätigte Websuche · ${learnedDate(entry.at)} · ${entry.votes ?? 1}× 👍${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`;
+
+// Stored knowledge relevant to a free question, so grounded answers can use it everywhere; rejected answers never.
+export function relevantKnowledge(all: AssistantKnowledge[] = [], input: string, limit = 2): AssistantKnowledge[] {
   const words = new Set(fold(input).split(" ").filter((word) => word.length >= 3));
+  const entries = all.filter((entry) => !entry.rejected);
   return entries.map((entry) => ({ entry, score: fold(`${entry.topic} ${entry.title}`).split(" ").filter((word) => words.has(word)).length }))
     .filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, limit).map((item) => item.entry);
 }

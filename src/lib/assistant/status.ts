@@ -15,6 +15,9 @@ export const workStatus = {
   route: step("Verstehe deine Frage…", "connecting"),
   knowledge: step("Suche passendes Wissen…", "searching"),
   market: step("Hole aktuelle Marktdaten…", "searching"),
+  web: step("Suche aktuelle Informationen…", "searching"),
+  compare: step("Vergleiche Quellen…", "weaving"),
+  recall: step("Prüfe mein gelerntes Wissen…", "searching"),
   answer: step("Formuliere die Antwort…", "composing"),
 } satisfies Record<string, WorkStatus>;
 

@@ -7,7 +7,8 @@ Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledi
 | Teil | Aufgabe |
 | --- | --- |
 | OpenVINO Model Server (OVMS) | Stellt `Qwen3-8B-int4-cw-ov` auf der NPU als OpenAI-kompatible API unter `http://127.0.0.1:8000/v3` bereit, dazu `Qwen3-Embedding-0.6B-int8-ov` (CPU) unter `/v3/embeddings` |
-| `/api/ai/knowledge` | Durchsucht das lokale Finanzwissen hybrid (Vektor und Stichwort, höchstens drei Treffer); siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#lokales-finanzwissen-rag) |
+| `/api/ai/knowledge` | Durchsucht das lokale Finanzwissen und die vom Nutzer bestätigten Antworten hybrid (Vektor und Stichwort, höchstens drei Treffer); siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#lokales-finanzwissen-rag) |
+| `/api/ai/web-search` | Websuche des Finanz-Assistenten: nur Suchwörter, bis zu drei öffentliche Quellen zum Vergleichen; siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#freie-formulierungen-websuche-und-selbstlernen) |
 | `AiReviewAssistant` (Browser) | Schickt offene Prüfungen in Achterpaketen an `/api/ai/categorize` und übernimmt nur sichere Antworten |
 | `/api/ai/logo` | Sucht ein Händlerlogo (Wikidata/Commons, offizielle Webseite, Marken-Domain) und legt es in den privaten `Logo/`-Ordner |
 | `/api/ai/logos` | Sucht der Reihe nach Logos für alle Zahlungsempfänger, die noch keines haben (siehe „Händler-Logos“) |
@@ -45,6 +46,9 @@ Optionale Variablen in `.env.local`:
 | `MCP_PSEUDONYMIZE` | `1` | `0` schaltet die Pseudonymisierung im MCP-Server ab |
 | `MCP_PRIVATE_NAMES` | – | Zusätzliche Personennamen zum Maskieren, getrennt durch Komma oder Strichpunkt |
 | `FINANZBLICK_WATCH_STATE` | `%LOCALAPPDATA%\FinanzblickAI\watch-state.json` | Merkliste des Hintergrund-Agenten |
+| `FINANZBLICK_WEB_SEARCH` | an | `off` schaltet die automatische Websuche des Finanz-Assistenten ab |
+| `FINANZBLICK_SEARXNG_URL` | – | eigene SearXNG-Instanz (JSON-Format aktiviert) statt Bing, z. B. `http://127.0.0.1:8888` |
+| `BRAVE_SEARCH_API_KEY` | – | Brave-Search-API statt Bing, wenn kein SearXNG gesetzt ist |
 
 ## Was automatisch passiert
 

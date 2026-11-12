@@ -681,6 +681,12 @@ export const assistantChangeSchema = z.object({
   logId: agentIdSchema.optional(),
 }).strict();
 export type AssistantChange = z.infer<typeof assistantChangeSchema>;
+// A public source link of a web search answer; only https links are stored and shown.
+export const webLinkSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  url: z.string().max(500).regex(/^https:\/\/[^\s"<>]+$/),
+}).strict();
+export type WebLinkEntry = z.infer<typeof webLinkSchema>;
 export const assistantMessageSchema = z.object({
   id: z.string().min(1).max(100),
   role: z.enum(["user", "assistant"]),
@@ -704,6 +710,10 @@ export const assistantMessageSchema = z.object({
   ms: z.number().int().nonnegative().max(3_600_000).optional(),
   // Titles of the general finance knowledge an answer drew on; shown under it.
   sources: z.array(z.string().max(80)).max(5).optional(),
+  // The public pages a web search answer compared, numbered like the [1], [2] in its text.
+  links: z.array(webLinkSchema).max(4).optional(),
+  // The learned knowledge entry an answer came from, or the one a correction belongs to.
+  knowledgeId: agentIdSchema.optional(),
   // Self-learning: which tool answered which question, the user's 👍/👎, and open questions waiting for a correction or a name.
   tool: z.string().max(40).optional(),
   asked: z.string().max(1000).optional(),
@@ -743,6 +753,14 @@ export const assistantKnowledgeSchema = z.object({
   source: z.string().trim().min(1).max(100),
   at: z.number().nonnegative(),
   uses: z.number().int().nonnegative().optional(),
+  // Answers from the web search the user rated: 👍 keeps them for the local knowledge search, 👎 marks them rejected
+  // (their sources are skipped next time) and the user's correction becomes a note for later answers.
+  kind: z.literal("web").optional(),
+  question: z.string().trim().min(1).max(500).optional(),
+  links: z.array(webLinkSchema).max(4).optional(),
+  votes: z.number().int().min(-50).max(1000).optional(),
+  rejected: z.boolean().optional(),
+  note: z.string().trim().min(1).max(500).optional(),
 }).strict();
 export type AssistantKnowledge = z.infer<typeof assistantKnowledgeSchema>;
 export const MAX_ASSISTANT_KNOWLEDGE = 100;

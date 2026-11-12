@@ -4,8 +4,9 @@ import { detectTool, splitCommands, type AssistantTool } from "./tools";
 
 /**
  * Two questions in one message ("Wie viel hab ich im Oktober fürs Essen ausgegeben und was bleibt mir diesen Monat?")
- * are answered one after the other, each by its own agent. No part may change data, and a part that only refers back
- * ("… und wie wirkt sich das aufs Motorrad aus?") keeps the message whole, because one answer covers both.
+ * are answered one after the other, each by its own agent. No part may change data directly, and a part that only refers
+ * back ("… und wie wirkt sich das aufs Motorrad aus?") keeps the message whole, because one answer covers both.
+ * One part may start something that asks step by step (a new contract or savings goal); it comes last, after the answers.
  */
 export type QuestionPart = { text: string; tool?: AssistantTool };
 
@@ -18,6 +19,10 @@ const refersBack = (part: string) => {
   return words.some((word, index) => pointers.has(word.toLowerCase().replace(/[^\p{L}]/gu, "")) && !/^\p{Lu}/u.test(words[index + 1] ?? ""));
 };
 
+const starters: readonly AssistantTool[] = ["contract_new", "savings_goal", "expense"];
+// Only an explicit "außerdem" after a comma separates two requests; "danach" or "und dann" belong to one question.
+const alsoWords = /\s*[,;]\s*(?:und\s+)?(?:außerdem|ausserdem|zusätzlich|zusaetzlich)[:,]?\s+/i;
+
 const clean = (part: string) => part.trim().replace(/^[,;–—-]+\s*/, "").replace(/\s*[,;–—-]+$/, "").trim();
 
 function candidates(text: string): string[] | undefined {
@@ -26,6 +31,9 @@ function candidates(text: string): string[] | undefined {
   // "Mein Bonus und meine Abos – was bleibt übrig?"
   const shared = /^(.{2,60}?)\s+und\s+(.{2,60}?)\s*[–—:-]\s*(.{4,80}\?)$/.exec(text);
   if (shared && !/\?/.test(shared[1] + shared[2])) return [`${shared[1]} – ${shared[3]}`, `${shared[2]} – ${shared[3]}`];
+  // "Neuer Vertrag für Spotify, außerdem: was verdiene ich?"
+  const also = alsoWords.exec(text);
+  if (also && also.index >= 4) return [text.slice(0, also.index), text.slice(also.index + also[0].length)].map(clean);
   const split = andQuestion.exec(text);
   if (split) return [text.slice(0, split.index), text.slice(split.index + split[0].length)].map(clean);
   // "Zeig mir meine Kontostände und meine Sparziele"
@@ -50,10 +58,12 @@ export function splitQuestion(input: string, names: string[] = []): QuestionPart
   if (parts.slice(1).some(refersBack)) return undefined;
   // Advice ("… und soll ich in einen investieren?") is answered in words, never by a calculator asking for amounts.
   const resolved = parts.map((part) => ({ text: part, tool: adviceQuestion(part) ? undefined : detectTool(part, names) }));
-  if (resolved.some((part) => part.tool && changingTools.includes(part.tool))) return undefined;
+  if (resolved.some((part) => part.tool && changingTools.includes(part.tool) && !starters.includes(part.tool))) return undefined;
+  const starting = resolved.filter((part) => part.tool && starters.includes(part.tool));
+  if (starting.length > 1) return undefined;
   // At least one part needs a tool, and at most one may be left to a written answer.
   if (resolved.filter((part) => part.tool).length < Math.max(1, resolved.length - 1)) return undefined;
   // The same tool twice only makes sense when the parts differ ("bei Billa" / "bei Spar").
   if (new Set(resolved.map((part) => part.tool ?? part.text)).size < resolved.length && new Set(parts).size < parts.length) return undefined;
-  return resolved;
+  return [...resolved.filter((part) => !starting.includes(part)), ...starting];
 }

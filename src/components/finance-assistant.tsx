@@ -27,11 +27,18 @@ import { cancelDraft, confirmDraft, continueContractDraft, contractStepReply, le
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
-import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, wantsKnowledge, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
+import {
+  agentLabel, asksForWebSearch, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, unsureAnswer, wantsKnowledge, wantsWebSearch, type AgentId, type RouteVia,
+} from "@/lib/assistant/orchestrator";
+import {
+  avoidedSources, correctionNotes, correctsAnswer, helpedReply, isWebAnswer, LEARNED_TOOL, learnedCandidates, learnWebAnswer, noteWebAnswer, recallConfirmed,
+  rejectWebAnswer, searchesAgain, WEB_FIX_TOOL, WEB_TOOL, webEntryId,
+} from "@/lib/assistant/web-learning";
+import { webEvidence, webFallbackAnswer, webLinks, type WebSearchResult } from "@/lib/web/web-answer";
 import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
 import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
-import type { LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
+import type { LocalKnowledgeHit, LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
 import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
 import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
 import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
@@ -40,6 +47,7 @@ import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
 import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
 import { resolveFollowUp, resolvePronoun } from "@/lib/assistant/followup";
 import { splitQuestion } from "@/lib/assistant/combined";
+import { clarifyChoices } from "@/lib/assistant/intents";
 import { explainAgain, fixedReply, topicClarify } from "@/lib/assistant/fixed-replies";
 import { detectContracts } from "@/lib/contracts";
 import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
@@ -49,7 +57,7 @@ import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import {
   appStateSchema, assistantDraftSchema, assistantMessageSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
-  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantOperation,
+  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantOperation, type WebLinkEntry,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -313,7 +321,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         ...(suggestions ? { suggestions } : {}), ...run }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
-    meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources"> = {}) => {
+    meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources" | "links" | "knowledgeId"> = {}) => {
     const suggestions = result.choices?.length ? result.choices : result.suggestions;
     const message = {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
@@ -324,6 +332,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}), ...(meta.agent ? { agent: meta.agent } : {}),
       ...(meta.via ? { via: meta.via } : {}), ...(meta.ms !== undefined ? { ms: Math.max(0, Math.round(meta.ms)) } : {}),
       ...(meta.sources?.length ? { sources: meta.sources.map((item) => item.slice(0, 80)).slice(0, 5) } : {}),
+      ...(meta.links?.length ? { links: meta.links.slice(0, 4) } : {}), ...(meta.knowledgeId ? { knowledgeId: meta.knowledgeId } : {}),
       ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
     };
@@ -338,6 +347,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   function giveFeedback(message: AssistantMessage, value: "up" | "down") {
     const asked = message.asked;
     if (!asked) return;
+    // A web search answer: 👍 stores it as local knowledge, 👎 rejects it and asks for the correction.
+    if (isWebAnswer(message)) {
+      const answer = { id: newId(), question: asked, text: message.text, links: message.links, target: message.knowledgeId };
+      writeGlobal((current) => {
+        const chat = (current.assistantChat ?? []).map((item) => item.id === message.id ? { ...item, feedback: value } : item);
+        if (value === "up") return { ...current, assistantChat: chat, assistantKnowledge: learnWebAnswer(current.assistantKnowledge, answer) };
+        // The question back remembers which entry it belongs to, so the correction reaches exactly that one.
+        const ask: AssistantMessage = { id: newId(), role: "assistant", at: Date.now(), source: "Regel", agent: "general", tool: WEB_FIX_TOOL, correcting: asked.slice(0, 1000),
+          knowledgeId: webEntryId(current.assistantKnowledge, answer),
+          text: "Danke für die Rückmeldung – diese Antwort schlage ich nicht mehr vor. Was stimmt daran nicht? Schreib mir kurz die Korrektur, dann berücksichtige ich sie künftig.",
+          suggestions: ["Die Angabe ist veraltet", "Das gilt so nicht in Österreich", "Such im Internet nochmal danach"] };
+        return { ...current, assistantChat: [...chat, ask].slice(-MAX_ASSISTANT_MESSAGES), assistantKnowledge: rejectWebAnswer(current.assistantKnowledge, answer) };
+      });
+      if (value === "up") toast.success("Danke, gemerkt – nächstes Mal antworte ich ohne neue Suche");
+      return;
+    }
     const tool = message.tool && isAssistantTool(message.tool) ? message.tool : undefined;
     const learnable = !!tool && learnableTools.includes(tool) && detectTool(asked, knownNames()) !== tool;
     writeGlobal((current) => {
@@ -464,9 +489,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }, [ready, storageError]);
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
-  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal) {
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal,
+    step = workStatus.answer) {
     try {
-      setStatus({ ...workStatus.answer, agent });
+      setStatus({ ...step, agent });
       const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
@@ -546,15 +572,48 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }
 
   // The local finance knowledge (hybrid search on the server, no internet); nothing found or no answer means no extra context.
+  // Answers the user confirmed earlier are searched together with the curated knowledge.
   async function searchLocalKnowledge(question: string, signal?: AbortSignal): Promise<LocalKnowledgeSearch | undefined> {
-    setStatus((current) => ({ ...workStatus.knowledge, agent: current?.agent }));
+    const learned = learnedCandidates(state.assistantKnowledge);
+    setStatus((current) => ({ ...(learned.length ? workStatus.recall : workStatus.knowledge), agent: current?.agent }));
     try {
       const response = await fetch("/api/ai/knowledge", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ question: question.slice(0, 500) }), signal: withTimeout(4000, signal) });
+        body: JSON.stringify({ question: question.slice(0, 500), ...(learned.length ? { learned } : {}) }), signal: withTimeout(5000, signal) });
       return response.ok ? await response.json() as LocalKnowledgeSearch : undefined;
     } catch {
       return undefined;
     }
+  }
+
+  // The automatic web search: only search words leave the device; sources the user rejected for this question are skipped.
+  async function searchTheWeb(question: string, signal?: AbortSignal): Promise<WebSearchResult | undefined> {
+    setStatus((current) => ({ ...workStatus.web, agent: current?.agent }));
+    try {
+      const avoid = avoidedSources(state.assistantKnowledge, question);
+      const response = await fetch("/api/ai/web-search", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify({ question: question.slice(0, 500), ...(avoid.length ? { avoid } : {}) }), signal: withTimeout(15000, signal) });
+      const result = response.ok ? await response.json() as WebSearchResult : undefined;
+      return result?.sources?.length ? result : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // The model compares the sources; without it the most official source speaks for itself.
+  async function answerFromWeb(question: string, history: { role: "user" | "assistant"; text: string }[], result: WebSearchResult, signal?: AbortSignal) {
+    const notes = correctionNotes(state.assistantKnowledge, question);
+    const hint = notes.length ? `Hinweis des Nutzers zu früheren Antworten auf diese Frage: ${notes.join(" ")}` : "";
+    const evidence = [webEvidence(result, hint ? 1450 - hint.length - 2 : 1450), hint].filter(Boolean).join("\n\n").slice(0, 1500);
+    const said = await freeAnswer(question, history, "general", evidence, signal, workStatus.compare);
+    return { text: said ?? webFallbackAnswer(result) ?? "", byModel: !!said, links: webLinks(result) };
+  }
+
+  // A confirmed answer from earlier: shown right away and counted as used, so often asked questions stay at the top.
+  function learnedAnswer(hit: LocalKnowledgeHit): { result: AgentResult; links?: WebLinkEntry[]; knowledgeId?: string } {
+    const entry = state.assistantKnowledge?.find((item) => item.id === hit.learned?.entryId);
+    if (entry) learn((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, [], [entry.id]) }));
+    return { result: { text: entry?.text ?? hit.text, suggestions: ["Such im Internet nach Neuem dazu", ...agentSuggestions.general.slice(0, 2)] }, links: entry?.links,
+      knowledgeId: entry?.id };
   }
 
   // A contract created step by step: the answer fills the open step; "Ja" on the preview saves it, "Abbrechen" drops it.
@@ -673,6 +732,33 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
+    // After a web answer "Das hat geholfen" confirms it; after its 👎 the next message is the correction, unless it searches again.
+    const webQuestion = pending ? undefined : lastAnswer?.tool === WEB_FIX_TOOL ? lastAnswer.correcting : lastAnswer && isWebAnswer(lastAnswer) ? lastAnswer.asked : undefined;
+    const searchAgain = !!webQuestion && searchesAgain(text);
+    if (webQuestion && lastAnswer && isWebAnswer(lastAnswer) && helpedReply(text)) {
+      const confirmed = lastAnswer;
+      setBusy(true);
+      save((items) => [...items.map((item) => item.id === confirmed.id ? { ...item, feedback: "up" as const } : item), { id: newId(), role: "user", text, at: Date.now() }]);
+      if (confirmed.feedback !== "up") learn((current) => ({ ...current, assistantKnowledge: learnWebAnswer(current.assistantKnowledge,
+        { id: newId(), question: webQuestion, text: confirmed.text, links: confirmed.links, target: confirmed.knowledgeId }) }));
+      await settle();
+      addResult({ text: "Freut mich! Ich habe mir die Antwort gemerkt – fragst du wieder danach, weiß ich es sofort, ohne neue Suche.",
+        suggestions: ["Was hast du gelernt?", ...starterSuggestions.slice(0, 2)] }, "Regel", { agent: "general", via: "rule", ms: elapsed() });
+      setBusy(false);
+      return;
+    }
+    // Only a statement that corrects the answer becomes a note; a new question, thanks or a command is answered normally.
+    if (webQuestion && lastAnswer?.tool === WEB_FIX_TOOL && !searchAgain && correctsAnswer(text, webQuestion) && !detectTool(text, names) && !cancelDraft(text)) {
+      const target = lastAnswer.knowledgeId;
+      setBusy(true);
+      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
+      learn((current) => ({ ...current, assistantKnowledge: noteWebAnswer(current.assistantKnowledge, { question: webQuestion, target }, text) }));
+      await settle();
+      addResult({ text: `Danke, notiert. Fragst du wieder nach „${webQuestion.slice(0, 80)}“, berücksichtige ich deinen Hinweis und lasse die abgelehnten Quellen weg.`,
+        suggestions: [`Such im Internet: ${webQuestion.slice(0, 90)}`, "Was hast du gelernt?"] }, "Regel", { agent: "general", via: "rule", ms: elapsed() });
+      setBusy(false);
+      return;
+    }
     // Corrections teach the earlier phrasing: "Nein, ich meinte …", or the answer to "Was hast du gemeint?".
     const fix = !pending && lastAnswer?.asked ? correction(text) : undefined;
     if (fix && !fix.text && lastAnswer) {
@@ -680,8 +766,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       giveFeedback(lastAnswer, "down");
       return;
     }
-    const original = pending ? undefined : fix ? lastAnswer?.asked : lastAnswer?.correcting;
-    let work = fix?.text ?? text;
+    const original = pending || lastAnswer?.tool === WEB_FIX_TOOL ? undefined : fix ? lastAnswer?.asked : lastAnswer?.correcting;
+    let work = searchAgain && webQuestion ? webQuestion : fix?.text ?? text;
+    // "Such im Internet nach …" always searches, also for a question the local knowledge could answer.
+    const forceWeb = searchAgain || asksForWebSearch(text);
     // Answer to "Welches meinst du?": run the earlier command with that name and remember the word that was meant.
     let alias: { from: string; to: string } | undefined;
     const chosen = !pending && lastAnswer?.clarify ? pickName(text, names) : undefined;
@@ -713,6 +801,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
+    // The same question as a confirmed answer from earlier: answered right away, without routing, search or model.
+    // A command or a question for one of the tools ("Zeig mir meinen ETF-Sparplan") always goes to its tool.
+    const remembered = open && !forceWeb && !detectTool(work, names) ? recallConfirmed(state.assistantKnowledge, work) : undefined;
+    if (remembered) {
+      setBusy(true);
+      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
+      setStatus(workStatus.recall);
+      learn((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, [], [remembered.id]) }));
+      await settle();
+      addResult({ text: remembered.text, suggestions: ["Such im Internet nach Neuem dazu", ...agentSuggestions.general.slice(0, 2)] }, "Regel",
+        { tool: LEARNED_TOOL, asked: work, agent: "general", via: "rule", ms: elapsed(), sources: ["Von dir bestätigt"], knowledgeId: remembered.id,
+          ...(remembered.links?.length ? { links: remembered.links } : {}) });
+      setStatus(undefined);
+      setBusy(false);
+      return;
+    }
     const history = thread.slice(-6).map((item) => ({ role: item.role, text: item.text.slice(0, 500) }));
     const goals = savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50);
     const planned = [...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth)
@@ -740,6 +844,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       for (const part of parts) {
         const partAgent: AgentId = part.tool ? toolOwner[part.tool] : routeBySignals(part.text, [...goals, ...planned])?.agent ?? "general";
         let result: AgentResult;
+        // A new goal or planned expense in a combined message opens its form after the other answers.
+        if (part.tool && isDraftTool(part.tool)) {
+          setStatus(statusFor(part.tool, partAgent));
+          const draft = mergeDraft(undefined, parseAssistantMessage(part.text, asOf), {}, part.text, asOf);
+          const checked = draft ? assistantDraftSchema.safeParse(draft) : undefined;
+          await settle();
+          if (halted(partAgent)) return;
+          if (checked?.success) addDraftMessage(checked.data, "Regel", { via: "rule", ms: elapsed() });
+          else addResult({ text: "Für das Sparziel brauche ich noch Name, Betrag und Datum – zum Beispiel „Sparziel Urlaub 2.000 € bis Juli“." },
+            "Regel", { tool: part.tool, asked: part.text, agent: partAgent, via: "rule", ms: elapsed() });
+          continue;
+        }
         if (part.tool) {
           setStatus(statusFor(part.tool, partAgent));
           const market = part.tool === "market" || part.tool === "depot" ? await loadMarket(part.text, signal) : undefined;
@@ -794,7 +910,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const ruleTool = reply.source === "Regel" ? picked : detectTool(work, [...goals, ...planned]);
     const route = conversationRoute({ text: work, tool: picked, ruleTool,
       draftAction: reply.draft?.action, numbers: work.match(/\d+(?:[.,]\d+)?/g)?.map(Number) ?? [], pending: !!pending });
-    const tool = route.tool;
+    // "Such im Internet nach dem Familienbonus" searches even when a reading tool would answer; changes and forms never go to the web.
+    const tool = forceWeb && route.tool && !changingTools.includes(route.tool) ? undefined : route.tool;
     // A tool's owner answers; without a tool the orchestrator's choice, and the general chat whenever it is unsure.
     // A question that dropped an edit ("Sollte ich das Lebensmittelbudget erhöhen?") stays with that edit's owner;
     // one that dropped a misread form ("Was ist mit meiner Versicherung los?") is routed again by its signal words.
@@ -823,12 +940,31 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
-    // The orchestrator decides whether general finance knowledge helps; its few short hits go in as extra evidence.
-    const wisdom = !tool && !parsed?.success && wantsKnowledge(work, { agent }) ? await searchLocalKnowledge(work, signal) : undefined;
+    const writes = !tool && !parsed?.success;
+    // The orchestrator decides whether general finance knowledge helps (curated chunks and the user's confirmed answers)
+    // and whether the web is asked; app actions and the user's own figures never wait for either.
+    const webWanted = writes && (forceWeb || wantsWebSearch(work));
+    const wisdom = writes && (wantsKnowledge(work, { agent }) || webWanted) ? await searchLocalKnowledge(work, signal) : undefined;
+    if (halted(agent)) return;
+    const recalled = wisdom ? confidentHit(wisdom.hits, wisdom.mode) : undefined;
+    const confirmed = recalled?.learned && !forceWeb ? learnedAnswer(recalled) : undefined;
+    let web = writes && !confirmed && (forceWeb || webWanted && wantsWebSearch(work, { hits: wisdom?.hits.length ?? 0, confident: !!recalled }))
+      ? await searchTheWeb(work, signal) : undefined;
     if (halted(agent)) return;
     // The agent's evidence scans the ledger; it is only built when a written answer needs it.
-    const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent,
+    let free = writes && !confirmed && !web ? await freeAnswer(work, history, agent,
       [knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work)].filter(Boolean).join("\n\n") || undefined, signal) : undefined;
+    if (halted(agent)) return;
+    // An answer that admits not knowing (or none at all) gets one web search, for finance questions only.
+    if (writes && !confirmed && !web && unsureAnswer(free) && wantsWebSearch(work, { hits: 0 })) {
+      web = await searchTheWeb(work, signal);
+      if (web) {
+        setStreaming(undefined);
+        free = undefined;
+      }
+      if (halted(agent)) return;
+    }
+    const fromWeb = web ? await answerFromWeb(work, history, web, signal) : undefined;
     await settle();
     if (halted(agent)) return;
     if (tool === "remember") {
@@ -845,6 +981,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const known = local ? confidentHit(local.hits, local.mode) : undefined;
       const knowledge = term && !known ? await loadKnowledge(work, [...goals, ...planned], signal) : undefined;
       if (halted(agent)) return;
+      // A confirmed answer from earlier comes first; what neither the local knowledge nor the encyclopedia covers goes to the web search.
+      const recalledTerm = known?.learned ? learnedAnswer(known) : undefined;
+      const termWeb = term && !known && knowledge && !knowledge.found.length && !knowledge.offline ? await searchTheWeb(work, signal) : undefined;
+      const fromTerm = termWeb ? await answerFromWeb(work, history, termWeb, signal) : undefined;
+      if (halted(agent)) return;
+      if (recalledTerm || fromTerm?.text) {
+        await settle();
+        if (halted(agent)) return;
+        if (recalledTerm) addResult(withNotes(recalledTerm.result), "Regel", { tool: LEARNED_TOOL, asked: work, agent: "general", via, ms: elapsed(),
+          sources: ["Von dir bestätigt"], knowledgeId: recalledTerm.knowledgeId, ...(recalledTerm.links?.length ? { links: recalledTerm.links } : {}) });
+        else if (fromTerm) addResult(withNotes({ text: fromTerm.text, suggestions: ["Das hat geholfen", ...agentSuggestions.general.slice(0, 2)] }), fromTerm.byModel ? "KI" : "Regel",
+          { tool: WEB_TOOL, asked: work, agent: "general", via, ms: elapsed(), links: fromTerm.links });
+        setStreaming(undefined);
+        setStatus(undefined);
+        return;
+      }
       setStatus(statusFor(tool, agent));
       await afterPaint();
       try {
@@ -866,13 +1018,20 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       // Affordability never opens a plan form: it checks the accounts that may be used and says OK or not OK.
       addResult(withNotes(executeTool("funds", work, { state, dashboard, asOf })), reply.source, { tool: "funds", asked: work, clarify: work, agent: "budget", via, ms: elapsed() });
     else if (parsed?.success) addDraftMessage(parsed.data, reply.source, { via, ms: elapsed() });
+    else if (confirmed) addResult(withNotes(confirmed.result), "Regel", { tool: LEARNED_TOOL, asked: work, agent: "general", via, ms: elapsed(),
+      sources: ["Von dir bestätigt"], knowledgeId: confirmed.knowledgeId, ...(confirmed.links?.length ? { links: confirmed.links } : {}) });
+    else if (fromWeb?.text) addResult(withNotes({ text: fromWeb.text, suggestions: ["Das hat geholfen", ...agentSuggestions.general.slice(0, 2)] }), fromWeb.byModel ? "KI" : "Regel",
+      { tool: WEB_TOOL, asked: work, agent: "general", via, ms: elapsed(), links: fromWeb.links });
     else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, ...run, ms: elapsed(),
       ...(wisdom?.hits.length ? { sources: wisdom.hits.map((hit) => hit.title) } : {}) });
     else {
       learn((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
-      addResult({ text: "Hm, da komme ich gerade nicht mit. Magst du es mir anders sagen? Die neue Formulierung merke ich mir für das nächste Mal. " +
-        "Frag mich zum Beispiel nach deinen Ausgaben, einem Sparziel oder ob sich ein Kauf ausgeht.",
-      suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work, ...run, ms: elapsed() });
+      // A question back with the closest options instead of a refusal; the rephrasing is learned for next time.
+      const options = clarifyChoices(work);
+      addResult(options ? { text: options.text, suggestions: options.options }
+        : { text: "Das habe ich noch nicht ganz verstanden. Worum geht es dir – um deine Ausgaben, ein Sparziel, deine Verträge oder ob sich ein Kauf ausgeht? " +
+          "Sag es mir gern mit anderen Worten, die neue Formulierung merke ich mir.",
+        suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work, ...run, ms: elapsed() });
     }
     // Lasting facts in any message ("Mein Gehalt kommt am 25.", "Ich wohne in Wien") are remembered automatically.
     if (tool !== "remember") {
@@ -1049,7 +1208,7 @@ const MessageRow = memo(function MessageRow({ message, state, dashboard, last, l
   return <MessageEnter animate={enter} mine={message.role === "user"}
     className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
     data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
-    <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} faded={message.status === "dismissed"}
+    <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} links={message.links} faded={message.status === "dismissed"}
       live={live} handoff={handoff}>
       {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
         onResult={locked ? undefined : (result) => act()?.addResult(result, "Regel")} />}
@@ -1111,8 +1270,8 @@ function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: 
   </div>;
 }
 
-function Bubble({ role, text, source, agent, sources, faded, live, handoff, children }: {
-  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; faded?: boolean; live?: boolean;
+function Bubble({ role, text, source, agent, sources, links, faded, live, handoff, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; links?: WebLinkEntry[]; faded?: boolean; live?: boolean;
   handoff?: { activity: WorkActivity }; children?: React.ReactNode;
 }) {
   if (role === "user") return <div className={cn("flex justify-end", faded && "opacity-60")}>
@@ -1127,14 +1286,27 @@ function Bubble({ role, text, source, agent, sources, faded, live, handoff, chil
       : <AgentAvatar agent={agent ?? "general"} still={!live} className="mt-0.5" />}
     <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
       <span className="sr-only">Assistent: </span><span className="whitespace-pre-line">{text}</span>
-      {(label || sources?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+      {(label || sources?.length || links?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
         {label && <span>{label}</span>}
-        {sources?.length ? <span>Wissen: {sources.join(" · ")}</span> : null}
+        {sources?.length ? <span>{links?.length ? sources.join(" · ") : `Wissen: ${sources.join(" · ")}`}</span> : null}
+        {links?.length ? <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1"><span>Quellen:</span>
+          {links.map((link, index) => <a key={link.url} href={link.url} target="_blank" rel="noreferrer noopener" title={link.title}
+            className="rounded-sm underline decoration-border underline-offset-2 transition-colors hover:text-foreground hover:decoration-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+            [{index + 1}] {linkSite(link.url)}<span className="sr-only"> (öffnet in neuem Tab)</span></a>)}
+        </span> : null}
       </span>}
       {children}
     </div>
   </div>;
 }
+
+const linkSite = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url.slice(0, 40);
+  }
+};
 
 function Row({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   return <div className="flex justify-between gap-4 text-sm"><dt className="text-muted-foreground">{label}</dt><dd className={cn("tabular-nums", strong && "font-semibold text-primary")}>{value}</dd></div>;
