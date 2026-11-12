@@ -32,9 +32,17 @@ Sechs Seiten plus Einstellungen:
 **Orchestrator:** Ein leichter Orchestrator schickt jede Nachricht an genau einen Agenten:
 
 - an einen von vier Spezialisten: Umsätze, Verträge, Budget & Prognose sowie Gehalt & Steuern, z. B. „Wie viel netto bekomme ich?“ mit dem Anteil zu 6 % und dem voll versteuerten Anteil der nächsten Sonderzahlung;
-- im Zweifel an den allgemeinen Chat, der locker und ohne Fachjargon antwortet.
+- im Zweifel an den allgemeinen Chat, der locker antwortet, aber nur bei Geld und der App hilft.
 
-Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufrufe. Zwei Fragen in einer Nachricht beantwortet er nacheinander, Faktenfragen („Wie hoch ist der Großglockner?“) schlägt er nach, statt zu raten. Eine versteckte, rein lesende Ansicht unter **Einstellungen → „Assistent-Orchestrator“** zeigt Aufbau, Agenten, die letzten Läufe und die Werkzeuge. Details: [docs/ASSISTANT-ORCHESTRATOR.md](docs/ASSISTANT-ORCHESTRATOR.md).
+Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufrufe. Zwei Fragen in einer Nachricht beantwortet er nacheinander. Fachfremde Themen (Filme, Bücher, Wetter, Rezepte, Allgemeinwissen, Witze) lehnt er freundlich ab und schlägt eine Finanzfrage vor.
+
+**Aktionen im Chat:** Was du in der App von Hand machst, geht auch per Chat, mit denselben Prüfungen:
+
+- Verträge Schritt für Schritt wie im Vertragsdialog anlegen („Leg einen neuen Vertrag an“), ändern, bestätigen, ausblenden und als gekündigt markieren;
+- Buchungen kategorisieren, umbenennen, löschen, taggen und mit Raphael teilen;
+- Sparziele Schritt für Schritt anlegen und ändern, geplante Ausgaben, Budgets, Monatsplan-Positionen und Monatswerte, Kontoregeln und den Successbonus.
+
+Jede Änderung erscheint zuerst als Vorschau und wird erst mit „Bestätigen“ oder einem kurzen „Ja“ gespeichert; „Abbrechen“ oder „Nein“ verwirft sie. Anmeldungen, Datei-Uploads, Benachrichtigungen und Backups öffnet er nur als Link zur passenden Seite. Eine versteckte, rein lesende Ansicht unter **Einstellungen → „Assistent-Orchestrator“** zeigt Aufbau, Agenten, die letzten Läufe und die Werkzeuge. Details: [docs/ASSISTANT-ORCHESTRATOR.md](docs/ASSISTANT-ORCHESTRATOR.md).
 
 ## Speicherung
 

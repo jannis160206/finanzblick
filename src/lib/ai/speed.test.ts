@@ -118,6 +118,9 @@ describe("streaming", () => {
     const evidence = await answerFreeQuestion({ question: "Fixkosten?", facts, evidence: "Noch fällig: 514,95 € in 14 Posten." },
       { config, fetcher: stub(() => completion("Es kommen noch 514,95 € an Fixkosten.")).fetcher });
     expect(evidence.text).toBe("Es kommen noch 514,95 € an Fixkosten.");
+    const echo = await answerFreeQuestion({ question: "Lohnt sich ein Familienabo?", facts, agent: "contracts" },
+      { config, fetcher: stub(() => completion("Lohnt sich ein Familienabo? Wenn mindestens zwei es nutzen, meist schon.")).fetcher });
+    expect(echo.text).toBe("Wenn mindestens zwei es nutzen, meist schon.");
   });
 });
 
@@ -129,26 +132,6 @@ describe("agent answers", () => {
     const reply = await answerFreeQuestion({ question: "Wie hoch ist der Mount Everest?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
     expect(reply.text).toBe("Der Mount Everest ist 8.849 Meter hoch.");
     expect(system(calls)).toContain("lockeren Chat");
-  });
-
-  it("keeps plain facts to one sober sentence", async () => {
-    const { calls, fetcher } = stub(() => completion("Canberra."));
-    expect((await answerFreeQuestion({ question: "Was ist die Hauptstadt von Australien?", facts: { today: "2026-11-11" }, agent: "general", brief: true }, { config, fetcher })).text).toBe("Canberra.");
-    const body = calls[0] as unknown as { messages: { content: string }[]; temperature: number };
-    expect(body.messages[1].content).toContain("in einem kurzen Satz");
-    expect(body.temperature).toBeLessThanOrEqual(0.1);
-  });
-
-  it("adds film or recipe hints only when the question asks for them", async () => {
-    const { calls, fetcher } = stub(() => completion("Schau dir „Forrest Gump“ an."));
-    await answerFreeQuestion({ question: "Kannst du mir einen Film empfehlen?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
-    await answerFreeQuestion({ question: "Was soll ich tun?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
-    await answerFreeQuestion({ question: "Gib mir einen Buchtipp", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
-    await answerFreeQuestion({ question: "Welche Buchung war die teuerste?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
-    const [film, vague, book, booking] = (calls as unknown as { messages: { content: string }[] }[]).map((call) => call.messages[1].content);
-    expect(film).toContain("„Forrest Gump“");
-    expect(book).toContain("„Momo“");
-    for (const text of [vague, booking]) expect(text).not.toMatch(/Titel|Liste|Rezept|Zutaten/);
   });
 
   it("never lets an invented small euro amount through", async () => {

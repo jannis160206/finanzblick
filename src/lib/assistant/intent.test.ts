@@ -49,7 +49,14 @@ describe("assistant intent parser", () => {
     expect(second).toEqual({ action: "savings_goal", name: "Auto", amount: 8000 });
     const third = draftFor("300", second);
     expect(third).toEqual({ action: "savings_goal", name: "Auto", amount: 8000, monthly: 300 });
-    expect(missingQuestion(third!)).toBeUndefined();
+    // Like the wizard, the start capital is asked before the preview.
+    expect(missingQuestion(third!)).toMatch(/^Hast du für „Auto“ schon etwas angespart\?/);
+    expect(draftFor("nein", third)).toEqual({ action: "savings_goal", name: "Auto", amount: 8000, monthly: 300, startAsked: true });
+    expect(missingQuestion(draftFor("nein", third)!)).toBeUndefined();
+    const started = draftFor("500 € vom Sparkonto", third);
+    expect(started).toMatchObject({ amount: 8000, monthly: 300, startCapital: 500, fromAccount: "Sparkonto", startAsked: true });
+    expect(missingQuestion(started!)).toBeUndefined();
+    expect(missingQuestion(draftFor("1000", third)!)).toMatch(/^Von welchem Konto kommt das Startkapital/);
   });
 
   it("flags what-if questions and shared costs", () => {
@@ -62,5 +69,13 @@ describe("assistant intent parser", () => {
     const parsed = parseAssistantMessage(text, asOf);
     expect(groundModelExtraction({ action: "savings_goal", name: "Japanreise Tokio", amount: 3500, startCapital: 500, monthly: 278, shared: true }, parsed, text))
       .toEqual({ action: "savings_goal", startCapital: 500 });
+    const answer = mergeDraft({ action: "savings_goal", name: "Auto", amount: 5000, date: "2027-12-31", startCapital: 200, startAsked: true }, parseAssistantMessage("Nein", asOf), {}, "Nein", asOf);
+    expect(answer).toMatchObject({ name: "Auto", startAsked: true });
+    expect(answer?.startCapital).toBeUndefined();
+    // The answer to the name question is the whole name; a sentence around it is not.
+    expect(mergeDraft({ action: "savings_goal" }, parseAssistantMessage("Urlaub in Japan", asOf), {}, "Urlaub in Japan", asOf)?.name).toBe("Urlaub in Japan");
+    expect(mergeDraft({ action: "savings_goal" }, parseAssistantMessage("Ich will für ein Auto sparen", asOf), {}, "Ich will für ein Auto sparen", asOf)?.name).toBe("Auto");
+    const start = "Ich möchte ein Sparziel anlegen";
+    expect(groundModelExtraction({ action: "savings_goal", name: "Sparziel" }, parseAssistantMessage(start, asOf), start)).toEqual({ action: "savings_goal" });
   });
 });

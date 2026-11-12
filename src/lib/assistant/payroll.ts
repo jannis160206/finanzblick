@@ -142,14 +142,16 @@ const raiseOf = (lower: string) => {
   return value > 0 ? value : undefined;
 };
 const monthNames = ["jänner", "februar", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober", "november", "dezember"];
-// The next month of that name, as the budget month the salary arrives in.
-const askedMonth = (lower: string, today: string) => {
+// The next month of that name, as the budget month the salary arrives in; asked in the past tense, the last one.
+const askedMonth = (lower: string, today: string, past = false) => {
   const index = monthNames.findIndex((name) => new RegExp(`\\b(?:${name}${name === "jänner" ? "|januar" : ""})\\b`).test(lower));
   if (index < 0) return /nächste[nm]? monat/.test(lower) ? (Number(today.slice(5, 7)) === 12 ? `${Number(today.slice(0, 4)) + 1}-01` : period(Number(today.slice(0, 4)), Number(today.slice(5, 7)) + 1)) : undefined;
   const year = Number(today.slice(0, 4));
   const key = period(year, index + 1);
+  if (past) return key <= today.slice(0, 7) ? key : period(year - 1, index + 1);
   return key < today.slice(0, 7) ? period(year + 1, index + 1) : key;
 };
+const pastTense = /\b(?:war|waren|hatte|hattest|bekam|kam|gab|verdient|bekommen hab\w*|ausgezahlt wurde|überwiesen wurde|eingegangen)\b/;
 function forecastMonth(state: AppState, today: string, month: string) {
   try {
     return salaryForecast(state, { today }).months.find((entry) => entry.month === month);
@@ -199,12 +201,21 @@ export function payrollAnswer(state: AppState, text = "", today = state.settings
   const yearTax = round(own.reduce((sum, entry) => sum + (entry.regularTax ?? 0) + (entry.specialTax ?? 0), 0));
   const yearly = taxQuestion && /\b(?:im|pro|aufs|das ganze|ganzen) jahr\b|jährlich|jaehrlich|\bheuer\b|\bbisher\b|insgesamt/.test(lower) && own.some((entry) => entry.regularTax !== undefined);
   const raise = raiseOf(lower);
-  const named = askedMonth(lower, today);
-  const forecast = named && /netto|bekomm|krieg|kommt|überwiesen|aufs konto|auszahl/.test(lower) ? forecastMonth(state, today, named) : undefined;
+  const past = pastTense.test(lower);
+  const named = askedMonth(lower, today, past);
+  const forecast = named && !past && /netto|bekomm|krieg|kommt|überwiesen|aufs konto|auszahl/.test(lower) ? forecastMonth(state, today, named) : undefined;
+  // "Was war mein Netto im Oktober?": the payslip paid out in that month.
+  const paid = past && named && named <= today.slice(0, 7) ? (state.payslips ?? []).filter((entry) => !isReferencePayslip(entry) &&
+    payrollEmployerKey(entry.employer) === payrollEmployerKey(latest.employer) && payout(entry) === named).at(-1) : undefined;
+  const paidNet = paid ? payslipIncome(paid, payrollPattern((state.payslips ?? []).filter((entry) => payrollEmployerKey(entry.employer) === payrollEmployerKey(latest.employer))))?.net
+    ?? payrollBreakdown(paid).net : undefined;
   const farYear = Number(/\b(20[2-9]\d)\b/.exec(lower)?.[1] ?? 0);
   let lead: string;
   if (farYear > Number(today.slice(0, 4)) + 1) lead = `So weit voraus rechne ich nicht – bis ${farYear} ändern sich Gehalt, Tarif und Absetzbeträge. Stand heute: ${latestText}`;
   else if (asked) lead = paymentText(asked);
+  else if (past && named && named <= today.slice(0, 7)) lead = paid && paidNet !== undefined
+    ? `Im ${monthLabel(named)} kamen ${currency(paidNet)} netto aus der ${monthName(paid.month)}-Abrechnung (${currency(payrollBreakdown(paid).gross)} brutto).`
+    : `Für ${monthLabel(named)} habe ich keine Lohnabrechnung. Was tatsächlich eingegangen ist, sagt dir „Wie viel Gehalt ist im ${monthLabel(named)} reingekommen?“. ${latestText}`;
   else if (forecast) lead = `Im ${monthLabel(forecast.month)} kommen voraussichtlich ${currency(forecast.total)} netto aufs Konto` +
     (forecast.special.amount > 0 ? `, davon ${currency(forecast.special.amount)} aus der Sonderzahlung.` : ".") +
     ` Grundlage ist deine letzte Abrechnung (${month}) und das gelernte Gehaltsmuster.`;

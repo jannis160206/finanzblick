@@ -434,6 +434,8 @@ export const assistantDraftSchema = z.object({
   installments: z.number().int().min(1).max(120).optional(),
   shared: z.boolean().optional(),
   whatIf: z.boolean().optional(),
+  // The start-capital step of the goal wizard was answered (also with "nein").
+  startAsked: z.boolean().optional(),
   // "Die ersten 2 Monate je 60 € vom Sparkonto": extra start payments on top of the monthly rate.
   extra: z.object({
     amount: moneySchema.positive().max(1_000_000),
@@ -442,6 +444,72 @@ export const assistantDraftSchema = z.object({
   }).strict().optional(),
 }).strict();
 export type AssistantDraft = z.infer<typeof assistantDraftSchema>;
+export const contractIntervals = ["weekly", "biweekly", "monthly", "quarterly", "halfyearly", "yearly"] as const;
+export const contractIntervalSchema = z.enum(contractIntervals);
+export type ContractInterval = z.infer<typeof contractIntervalSchema>;
+export const contractNoticeSchema = z.object({
+  value: z.number().int().min(1).max(730),
+  unit: z.enum(["days", "weeks", "months"]),
+}).strict();
+export type ContractNotice = z.infer<typeof contractNoticeSchema>;
+// Which bookings belong to a contract: text in the booking, amount range and account; every set criterion must match.
+export const contractMatchSchema = z.object({
+  text: z.string().trim().min(1).max(80).optional(),
+  amountMin: z.number().finite().nonnegative().max(1_000_000).optional(),
+  amountMax: z.number().finite().nonnegative().max(1_000_000).optional(),
+  account: z.string().trim().min(1).max(100).optional(),
+}).strict().refine((match) => match.amountMin === undefined || match.amountMax === undefined || match.amountMin <= match.amountMax,
+  "Der Mindestbetrag darf nicht über dem Höchstbetrag liegen.");
+export type ContractMatch = z.infer<typeof contractMatchSchema>;
+// The user's decisions about a detected or manually added contract; detection itself is recomputed from bookings.
+export const contractOverrideSchema = z.object({
+  id: z.string().trim().min(1).max(300),
+  status: z.enum(["confirmed", "ignored", "cancelled"]).optional(),
+  manual: z.boolean().optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  category: categorySchema.optional(),
+  amount: z.number().finite().positive().max(1_000_000).optional(),
+  interval: contractIntervalSchema.optional(),
+  nextDate: dateSchema.optional(),
+  notice: contractNoticeSchema.optional(),
+  termEnd: dateSchema.optional(),
+  autoRenew: z.boolean().optional(),
+  renewalMonths: z.number().int().min(1).max(60).optional(),
+  cancelledAt: dateSchema.optional(),
+  note: z.string().trim().max(500).optional(),
+  // Bookings picked by hand, bookings taken out, and rules for future bookings.
+  bookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
+  excludedBookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
+  match: contractMatchSchema.optional(),
+  // The detected series at the time of the decision, so the decision still finds it after its id changed.
+  snapshot: z.object({
+    brand: z.string().trim().min(1).max(300),
+    amount: z.number().finite().nonnegative().max(1_000_000_000),
+    interval: contractIntervalSchema,
+  }).strict().optional(),
+  updatedAt: z.number().int().nonnegative(),
+}).strict().refine(
+  (entry) => !entry.manual || (!!entry.name && entry.amount !== undefined && !!entry.interval && !!entry.nextDate),
+  "Ein manueller Vertrag braucht Name, Betrag, Intervall und nächsten Termin.",
+);
+export type ContractOverride = z.infer<typeof contractOverrideSchema>;
+export const MAX_CONTRACTS = 500;
+// A contract the chat is creating step by step, like the contract wizard; null means "none" for an optional field.
+export const contractDraftSchema = z.object({
+  id: z.string().trim().regex(/^manual:[\w-]{8,100}$/),
+  step: z.enum(["name", "amount", "interval", "nextDate", "category", "notice", "term", "match", "preview"]),
+  name: z.string().trim().min(1).max(100).optional(),
+  amount: z.number().finite().positive().max(1_000_000).optional(),
+  interval: contractIntervalSchema.optional(),
+  nextDate: dateSchema.optional(),
+  category: categorySchema.optional(),
+  notice: contractNoticeSchema.nullable().optional(),
+  termEnd: dateSchema.nullable().optional(),
+  autoRenew: z.boolean().optional(),
+  renewalMonths: z.number().int().min(1).max(60).optional(),
+  match: contractMatchSchema.nullable().optional(),
+}).strict();
+export type ContractDraft = z.infer<typeof contractDraftSchema>;
 const monthKeySchema = z.string().regex(/^20\d\d-(0[1-9]|1[0-2])$/);
 const agentIdSchema = z.string().min(1).max(100);
 export const extraSourceSchema = z.enum([...pocketNames, "Giro"]);
@@ -482,6 +550,8 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
     fixedCost: z.boolean().optional(),
     reviewed: z.boolean().optional(),
     ignored: z.boolean().optional(),
+    // Like the button on the bookings page: an expense can only be marked as shared, not unshared.
+    sharedWithRaphael: z.literal(true).optional(),
   }).strict(),
   z.object({
     op: z.literal("categorize"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
@@ -504,6 +574,54 @@ export const assistantOperationSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("memory_delete"), memoryId: agentIdSchema }).strict(),
   // New monthly adjustment of a variable budget line (added to its default, 0 = back to default).
   z.object({ op: z.literal("budget_plan"), line: budgetLineIdSchema, adjustment: z.number().min(-100_000).max(100_000) }).strict(),
+  // Contracts, exactly like the contract wizard and the buttons in the contract details.
+  z.object({
+    op: z.literal("contract_create"), contractId: z.string().trim().regex(/^manual:[\w-]{8,100}$/),
+    name: z.string().trim().min(1).max(100), category: categorySchema, amount: z.number().finite().positive().max(1_000_000),
+    interval: contractIntervalSchema, nextDate: dateSchema, notice: contractNoticeSchema.optional(), termEnd: dateSchema.optional(),
+    autoRenew: z.boolean().optional(), renewalMonths: z.number().int().min(1).max(60).optional(), note: z.string().trim().max(500).optional(),
+    match: contractMatchSchema.optional(),
+  }).strict(),
+  // null clears an optional field, like emptying it in the wizard.
+  z.object({
+    op: z.literal("contract_update"), contractId: z.string().trim().min(1).max(300),
+    name: z.string().trim().min(1).max(100).optional(), category: categorySchema.optional(), amount: z.number().finite().positive().max(1_000_000).optional(),
+    interval: contractIntervalSchema.optional(), nextDate: dateSchema.optional(), notice: contractNoticeSchema.nullable().optional(),
+    termEnd: dateSchema.nullable().optional(), autoRenew: z.boolean().optional(), renewalMonths: z.number().int().min(1).max(60).optional(),
+    note: z.string().trim().max(500).nullable().optional(), match: contractMatchSchema.nullable().optional(),
+  }).strict(),
+  z.object({
+    op: z.literal("contract_action"), contractId: z.string().trim().min(1).max(300),
+    action: z.enum(["confirm", "ignore", "restore", "cancel", "reactivate", "reset", "remove"]),
+    // End date when marking a contract as cancelled.
+    date: dateSchema.optional(),
+  }).strict(),
+  // Deleting bookings like "Umsatz löschen" in the ledger; a few at a time, never everything.
+  z.object({ op: z.literal("transaction_delete"), ids: z.array(z.string().min(1).max(500)).min(1).max(50) }).strict(),
+  z.object({
+    op: z.literal("transaction_tag"), ids: z.array(z.string().min(1).max(500)).min(1).max(2000),
+    tag: z.string().trim().min(1).max(40), remove: z.boolean().optional(),
+  }).strict(),
+  // Positions of the month plan ("Position hinzufügen/bearbeiten/löschen") and single plan values.
+  z.object({
+    op: z.literal("plan_row_save"), rowId: z.string().trim().min(1).max(200), create: z.boolean().optional(),
+    label: z.string().trim().min(1).max(100).optional(), kind: z.enum(["income", "fixed", "variable"]).optional(),
+    planCategory: categorySchema.nullable().optional(),
+  }).strict(),
+  z.object({ op: z.literal("plan_row_delete"), rowId: z.string().trim().min(1).max(200) }).strict(),
+  z.object({
+    op: z.literal("plan_value"), rowId: z.string().trim().min(1).max(200),
+    months: z.array(z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/)).min(1).max(36),
+    value: moneySchema.nonnegative().max(10_000_000).nullable(),
+  }).strict(),
+  // Which account may be used for what ("Sparkonto ist für alle Ausgaben"); a rule for the same account is replaced.
+  z.object({
+    op: z.literal("account_rule"), account: z.string().trim().min(1).max(80), use: z.enum(["any", "only", "never"]),
+    purposes: z.array(z.string().trim().min(1).max(60)).max(20),
+  }).strict(),
+  z.object({ op: z.literal("account_rule_delete"), ruleId: agentIdSchema }).strict(),
+  // Successbonus in percent of the base salary (0 switches it off), like the payroll model settings.
+  z.object({ op: z.literal("bonus_percent"), value: z.number().min(0).max(500) }).strict(),
 ]);
 export type AssistantOperation = z.infer<typeof assistantOperationSchema>;
 const assistantLineSchema = z.object({
@@ -569,6 +687,8 @@ export const assistantMessageSchema = z.object({
   text: z.string().max(2000),
   at: z.number().nonnegative(),
   draft: assistantDraftSchema.optional(),
+  // A contract being created step by step in the chat.
+  contractDraft: contractDraftSchema.optional(),
   card: assistantCardSchema.optional(),
   change: assistantChangeSchema.optional(),
   // "Mach das rückgängig": the change the user still has to confirm.
@@ -679,6 +799,9 @@ const undoTransactionSchema = z.object({
   merchantAlias: z.string().max(200).optional(),
   merchantNameConfirmed: z.boolean().optional(),
   ignored: z.boolean().optional(),
+  // Tags before the change; an empty list means the booking had none.
+  tags: z.array(z.string().trim().min(1).max(40)).max(10).optional(),
+  sharedWithRaphael: z.boolean().optional(),
 }).strict();
 // Snapshot of exactly the entities an agent change touched, so it can be reverted.
 export const assistantUndoSchema = z.object({
@@ -686,9 +809,10 @@ export const assistantUndoSchema = z.object({
   goals: z.array(z.object({ id: agentIdSchema, before: savingsGoalSchema.nullable() }).strict()).max(50).optional(),
   planned: z.array(z.object({ id: agentIdSchema, before: plannedOneOffSchema.nullable() }).strict()).max(500).optional(),
   settings: z.array(z.object({
-    key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget", "bikeTarget", "bikePurchaseDate"]),
-    before: z.union([moneySchema, dateSchema]),
-  }).strict()).max(5).optional(),
+    key: z.enum(["emergencyTarget", "vacationTarget", "savingsTarget", "bikeTarget", "bikePurchaseDate", "successBonusPercent"]),
+    // null: the setting was not set before.
+    before: z.union([moneySchema, dateSchema]).nullable(),
+  }).strict()).max(6).optional(),
   memory: z.array(z.object({ id: agentIdSchema, before: assistantMemorySchema.nullable() }).strict()).max(50).optional(),
   months: z.array(z.object({ month: z.string().regex(/^202[6-8]-(0[1-9]|1[0-2])$/), before: monthInputSchema.nullable() }).strict()).max(24).optional(),
   transactions: z.array(undoTransactionSchema).max(2000).optional(),
@@ -697,6 +821,11 @@ export const assistantUndoSchema = z.object({
   budget: z.array(z.object({ line: budgetLineIdSchema, before: z.number().min(-100_000).max(100_000).nullable() }).strict()).max(20).optional(),
   // Settled review entries: put back into the list, the bookings they became are removed again.
   reviews: z.array(z.object({ item: reviewItemSchema, transactionIds: z.array(z.string().min(1).max(500)).max(20) }).strict()).max(500).optional(),
+  contracts: z.array(z.object({ id: z.string().trim().min(1).max(300), before: contractOverrideSchema.nullable() }).strict()).max(50).optional(),
+  // Deleted bookings with the fixed-cost receipts that pointed at them.
+  removedTransactions: z.array(z.object({ transaction: transactionSchema, receipts: z.array(fixedReceiptSchema).max(20) }).strict()).max(50).optional(),
+  financeRows: z.array(z.object({ id: z.string().min(1).max(200), before: financeRowSchema.nullable() }).strict()).max(20).optional(),
+  accountRules: z.array(z.object({ id: agentIdSchema, before: accountRuleSchema.nullable() }).strict()).max(40).optional(),
 }).strict();
 export type AssistantUndo = z.infer<typeof assistantUndoSchema>;
 export const assistantChangeLogSchema = z.object({
@@ -709,56 +838,6 @@ export const assistantChangeLogSchema = z.object({
 }).strict();
 export type AssistantChangeLog = z.infer<typeof assistantChangeLogSchema>;
 export const MAX_ASSISTANT_CHANGES = 200;
-export const contractIntervals = ["weekly", "biweekly", "monthly", "quarterly", "halfyearly", "yearly"] as const;
-export const contractIntervalSchema = z.enum(contractIntervals);
-export type ContractInterval = z.infer<typeof contractIntervalSchema>;
-export const contractNoticeSchema = z.object({
-  value: z.number().int().min(1).max(730),
-  unit: z.enum(["days", "weeks", "months"]),
-}).strict();
-export type ContractNotice = z.infer<typeof contractNoticeSchema>;
-// Which bookings belong to a contract: text in the booking, amount range and account; every set criterion must match.
-export const contractMatchSchema = z.object({
-  text: z.string().trim().min(1).max(80).optional(),
-  amountMin: z.number().finite().nonnegative().max(1_000_000).optional(),
-  amountMax: z.number().finite().nonnegative().max(1_000_000).optional(),
-  account: z.string().trim().min(1).max(100).optional(),
-}).strict().refine((match) => match.amountMin === undefined || match.amountMax === undefined || match.amountMin <= match.amountMax,
-  "Der Mindestbetrag darf nicht über dem Höchstbetrag liegen.");
-export type ContractMatch = z.infer<typeof contractMatchSchema>;
-// The user's decisions about a detected or manually added contract; detection itself is recomputed from bookings.
-export const contractOverrideSchema = z.object({
-  id: z.string().trim().min(1).max(300),
-  status: z.enum(["confirmed", "ignored", "cancelled"]).optional(),
-  manual: z.boolean().optional(),
-  name: z.string().trim().min(1).max(100).optional(),
-  category: categorySchema.optional(),
-  amount: z.number().finite().positive().max(1_000_000).optional(),
-  interval: contractIntervalSchema.optional(),
-  nextDate: dateSchema.optional(),
-  notice: contractNoticeSchema.optional(),
-  termEnd: dateSchema.optional(),
-  autoRenew: z.boolean().optional(),
-  renewalMonths: z.number().int().min(1).max(60).optional(),
-  cancelledAt: dateSchema.optional(),
-  note: z.string().trim().max(500).optional(),
-  // Bookings picked by hand, bookings taken out, and rules for future bookings.
-  bookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
-  excludedBookingIds: z.array(z.string().min(1).max(500)).max(500).optional(),
-  match: contractMatchSchema.optional(),
-  // The detected series at the time of the decision, so the decision still finds it after its id changed.
-  snapshot: z.object({
-    brand: z.string().trim().min(1).max(300),
-    amount: z.number().finite().nonnegative().max(1_000_000_000),
-    interval: contractIntervalSchema,
-  }).strict().optional(),
-  updatedAt: z.number().int().nonnegative(),
-}).strict().refine(
-  (entry) => !entry.manual || (!!entry.name && entry.amount !== undefined && !!entry.interval && !!entry.nextDate),
-  "Ein manueller Vertrag braucht Name, Betrag, Intervall und nächsten Termin.",
-);
-export type ContractOverride = z.infer<typeof contractOverrideSchema>;
-export const MAX_CONTRACTS = 500;
 // Proactive hints the user dismissed; synced so they stay away on every device.
 export const dismissedInsightSchema = z.object({
   id: z.string().trim().min(1).max(300),

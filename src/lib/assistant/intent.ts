@@ -307,7 +307,9 @@ export function groundModelExtraction(model: ModelExtraction | undefined, parsed
   const result: Partial<ParsedMessage> = {};
   if (model.action === "savings_goal" || model.action === "expense" || model.action === "affordability") result.action = model.action;
   const name = typeof model.name === "string" ? model.name.trim().slice(0, 80) : "";
-  if (name && name.toLowerCase().split(/\s+/).every((word) => lower.includes(word))) result.name = name.charAt(0).toUpperCase() + name.slice(1);
+  // "Ich möchte ein Sparziel anlegen" names no goal yet: generic words like "Sparziel" or "Ausgabe" are no name.
+  const generic = name.toLowerCase().split(/\s+/).every((word) => stopWords.has(word) || /^(?:ziel|spartopf|anlegen|erstellen)$/.test(word));
+  if (name && !generic && name.toLowerCase().split(/\s+/).every((word) => lower.includes(word))) result.name = name.charAt(0).toUpperCase() + name.slice(1);
   const amount = backed(model.amount);
   const monthly = backed(model.monthly);
   const start = backed(model.startCapital);
@@ -341,9 +343,24 @@ export function mergeDraft(pending: AssistantDraft | undefined, parsed: ParsedMe
     values.monthly = values.amount;
     delete values.amount;
   }
+  // The answer to the start-capital question: "nein" settles it, a bare amount is the start capital.
+  if (!startOver && missing === "startCapital") {
+    draft.startAsked = true;
+    if (values.startCapital === undefined && values.amount !== undefined) values.startCapital = values.amount;
+    delete values.amount;
+    delete values.monthly;
+  }
+  // "Nein" to the account question: there is no start capital after all.
+  if (!startOver && missing === "fromAccount" && !values.fromAccount && /^(?:nein|ne|nö|kein\w*|ohne|doch nicht|doch keins?|gar keins?)\b/i.test(text.trim())) {
+    delete draft.startCapital;
+    delete values.startCapital;
+    delete values.amount;
+  }
   if (!startOver && missing === "name") {
     const plain = text.trim().replace(/[.!?]+$/, "");
-    if (!values.name && plain && plain.length <= 60 && !/\d/.test(plain)) values.name = plain.charAt(0).toUpperCase() + plain.slice(1);
+    // The answer to "Wie soll das Sparziel heißen?" is the whole name: "Urlaub in Japan", not just "Urlaub".
+    if (plain && plain.length <= 60 && !/\d/.test(plain) && (!values.name || plain.toLowerCase().startsWith(values.name.toLowerCase())))
+      values.name = plain.charAt(0).toUpperCase() + plain.slice(1);
   } else if (!startOver && pending.name && !action) delete values.name;
   for (const key of ["name", "amount", "monthly", "startCapital", "installments", "fromAccount", "shared", "whatIf", "extra"] as const) {
     if (values[key] !== undefined) Object.assign(draft, { [key]: values[key] });
@@ -355,13 +372,15 @@ export function mergeDraft(pending: AssistantDraft | undefined, parsed: ParsedMe
   return result.success ? result.data : undefined;
 }
 
-export type MissingField = "name" | "amount" | "date" | "monthly_or_date" | "fromAccount";
+export type MissingField = "name" | "amount" | "date" | "monthly_or_date" | "startCapital" | "fromAccount";
 
 export function missingField(draft: AssistantDraft): MissingField | undefined {
   if (draft.action === "savings_goal") {
     if (!draft.name) return "name";
     if (!draft.amount) return "amount";
     if (!draft.date && !draft.monthly) return "monthly_or_date";
+    // Like the wizard's second step: is there money for it already?
+    if (draft.startCapital === undefined && !draft.startAsked) return "startCapital";
     if (draft.startCapital && !draft.fromAccount) return "fromAccount";
     return undefined;
   }
@@ -371,6 +390,17 @@ export function missingField(draft: AssistantDraft): MissingField | undefined {
   return undefined;
 }
 
+/** Quick replies for the open question, like the choices in the goal and expense dialogs. */
+export function draftSuggestions(draft: AssistantDraft, asOf: string): string[] | undefined {
+  const field = missingField(draft);
+  if (!field) return undefined;
+  if (draft.action === "savings_goal" && field === "monthly_or_date") return [`Bis Dezember ${Number(asOf.slice(0, 4)) + 1}`, "In 12 Monaten", "200 € im Monat", "Abbrechen"];
+  if (field === "startCapital") return ["Nein", "500 € vom Sparkonto", "Abbrechen"];
+  if (field === "fromAccount") return ["Vom Sparkonto", "Vom Giro", "Abbrechen"];
+  if (field === "date") return ["Nächsten Monat", `Im Dezember ${asOf.slice(0, 4)}`, "Abbrechen"];
+  return ["Abbrechen"];
+}
+
 export function missingQuestion(draft: AssistantDraft): string | undefined {
   const field = missingField(draft);
   if (!field) return undefined;
@@ -378,6 +408,7 @@ export function missingQuestion(draft: AssistantDraft): string | undefined {
     name: "Wie soll das Sparziel heißen?",
     amount: `Wie viel möchtest du für „${draft.name}“ insgesamt ansparen?`,
     monthly_or_date: "Bis wann möchtest du das Ziel erreichen? Oder sag mir, wie viel du monatlich zurücklegen kannst.",
+    startCapital: `Hast du für „${draft.name}“ schon etwas angespart? Sag mir den Betrag und das Konto, zum Beispiel „500 € vom Sparkonto“ – oder „nein“.`,
     fromAccount: "Von welchem Konto kommt das Startkapital, zum Beispiel Sparkonto oder Giro?",
     date: "Bis wann möchtest du das Ziel erreichen?",
   }[field];
@@ -385,7 +416,7 @@ export function missingQuestion(draft: AssistantDraft): string | undefined {
     name: "Wofür ist die Ausgabe?",
     amount: `Wie viel kostet „${draft.name}“ ungefähr?`,
     date: "Wann ist die Ausgabe fällig? Ein Monat reicht, zum Beispiel „im März“.",
-    monthly_or_date: "", fromAccount: "",
+    monthly_or_date: "", startCapital: "", fromAccount: "",
   }[field];
   return field === "amount" ? "Um welchen Betrag geht es?" : "Für welchen Monat soll ich das prüfen?";
 }

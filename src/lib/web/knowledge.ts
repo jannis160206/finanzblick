@@ -37,13 +37,12 @@ export function shortenText(text: string, limit = 1500) {
   return end > limit / 3 ? cut.slice(0, end + 1) : `${cut.slice(0, limit - 1).replace(/\s+\S*$/, "")}…`;
 }
 
-// `general`: a plain fact question ("Wie hoch ist der Großglockner?") may use any article, also about places and people.
-export function pickPage(topic: string, pages: Page[], general = false): Page | undefined {
+export function pickPage(topic: string, pages: Page[]): Page | undefined {
   const wanted = foldTopic(topic);
   const words = wanted.split(" ").filter((word) => word.length >= 3);
   const scored = pages
     .filter((page) => page.title && page.extract && page.extract.length >= 60 && page.pageprops?.disambiguation === undefined && !page.missing)
-    .filter((page) => general || !person.test(page.extract!) && !offTopic.test(foldTopic(page.title!)) && !placeOrCompany.test(foldTopic(page.extract!.slice(0, 200))))
+    .filter((page) => !person.test(page.extract!) && !offTopic.test(foldTopic(page.title!)) && !placeOrCompany.test(foldTopic(page.extract!.slice(0, 200))))
     .map((page) => {
       const title = foldTopic(page.title!);
       const body = foldTopic(page.extract!.slice(0, 400));
@@ -55,7 +54,7 @@ export function pickPage(topic: string, pages: Page[], general = false): Page | 
       else if (/oesterreich/.test(body)) score += 2;
       if (/\((?:luftverkehr|transport|schifffahrt|eisenbahn|technik|informatik)\)/.test(page.title!.toLowerCase())) score -= 6;
       if (words.some((word) => body.includes(word))) score += 3;
-      const finance = general || financeWords.test(`${title} ${body}`);
+      const finance = financeWords.test(`${title} ${body}`);
       // Every content word of the question has to appear, so "Hauptstadt von Australien" never becomes an article about divestment.
       const content = words.filter((word) => word.length >= 4);
       const covered = content.every((word) => title.includes(word.slice(0, 6)) || body.includes(word.slice(0, 6)));
@@ -68,11 +67,11 @@ export function pickPage(topic: string, pages: Page[], general = false): Page | 
 
 // One request: search with summaries, disambiguation flags and links, then pick the best article.
 // Only when nothing finance-related turns up, a second search adds "Geldanlage" as context.
-export function lookupKnowledge(topic: string, fetcher: typeof fetch = fetch, general = false): Promise<KnowledgeHit | undefined> {
+export function lookupKnowledge(topic: string, fetcher: typeof fetch = fetch): Promise<KnowledgeHit | undefined> {
   const query = topic.replace(/\s+/g, " ").trim().slice(0, 80);
   if (query.length < 2) return Promise.resolve(undefined);
   const alias = aliases[foldTopic(query)];
-  return cached(`knowledge:v2:${general ? "fact:" : ""}${foldTopic(query)}`, async () => {
+  return cached(`knowledge:v2:${foldTopic(query)}`, async () => {
     const search = async (term: string) => {
       const params = new URLSearchParams({
         action: "query", generator: "search", gsrsearch: term, gsrlimit: "6", gsrnamespace: "0", prop: "extracts|info|pageprops",
@@ -83,9 +82,9 @@ export function lookupKnowledge(topic: string, fetcher: typeof fetch = fetch, ge
       });
       if (!response.ok) throw new Error(`Wikipedia antwortet mit ${response.status}`);
       const data = await response.json() as { query?: { pages?: Page[] } };
-      return pickPage(alias ?? query, data.query?.pages ?? [], general);
+      return pickPage(alias ?? query, data.query?.pages ?? []);
     };
-    const page = await search(alias ?? query) ?? (alias || general ? undefined : await search(`${query} Geldanlage`));
+    const page = await search(alias ?? query) ?? (alias ? undefined : await search(`${query} Geldanlage`));
     if (!page?.title || !page.extract) return undefined;
     return { topic: query, title: page.title, text: shortenText(page.extract), url: page.fullurl ?? `https://de.wikipedia.org/wiki/${encodeURIComponent(page.title.replace(/ /g, "_"))}`, source: SOURCE };
   }, WEEK);

@@ -17,11 +17,11 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
 
 | Agent | Zuständig für | Werkzeuge (je genau ein Eigentümer) |
 |---|---|---|
-| **Umsätze** | vergangene Buchungen, Ausgaben und Einnahmen, Händler, Kategorien, Monats- und Jahresrückblick, Doppel- und verdächtige Buchungen, Rückerstattungen, offene Bestellungen, geteilte Kosten | `query`, `booking`, `rule`, `cleanup`, `why`, `security`, `refunds`, `context`, `orders`, `shared`, `month_review`, `review` |
-| **Verträge** | Abos und Verträge, Kosten, Laufzeit, Fristen, Kündigen | `contracts`, `cancel` |
-| **Budget & Prognose** | Monatsplan, Kontostände, Prognose, Sparziele, geplante Ausgaben, „Geht sich das aus?“, Spartipps, Anlegen, Kredite | `budget`, `budget_plan`, `pulse`, `forecast`, `funds`, `account_rule`, Entwürfe (`savings_goal`, `expense`, `affordability`), `edit`, `batch`, `whatif`, `coach`, `check`, `briefing`, `insights`, `accounts`, `amex`, `networth`, `depot`, `loan` |
-| **Gehalt & Steuern** | Lohnabrechnung, netto und brutto, Sonderzahlungen samt Anteil zu 6 % und voll versteuert, Jahressechstel, Arbeitnehmerveranlagung | `payroll` (neu), `tax`, `homeoffice` |
-| **Allgemeiner Chat** (kein Spezialist, Rückfallebene) | Plaudern, allgemeine Fragen, Begriffe, Bedienung, Marktdaten, Gedächtnis; alles Unklare | `help`, `explain`, `knowledge`, `market`, `memory`, `remember`, `forget`, `changes`, `undo`, `reminder`, `ask` |
+| **Umsätze** | vergangene Buchungen, Ausgaben und Einnahmen, Händler, Kategorien, Monats- und Jahresrückblick, Doppel- und verdächtige Buchungen, Rückerstattungen, offene Bestellungen, geteilte Kosten; Buchungen bearbeiten, löschen, taggen und teilen | `query`, `booking`, `rule`, `cleanup`, `why`, `security`, `refunds`, `context`, `orders`, `shared`, `month_review`, `review` |
+| **Verträge** | Abos und Verträge, Kosten, Laufzeit, Fristen, Kündigen; Verträge Schritt für Schritt anlegen, ändern, bestätigen, ausblenden, als gekündigt markieren | `contracts`, `cancel`, `contract_new`, `contract_edit` |
+| **Budget & Prognose** | Monatsplan, Kontostände, Prognose, Sparziele, geplante Ausgaben, „Geht sich das aus?“, Spartipps, Anlegen, Kredite; Budgets, Monatsplan-Positionen, Monatswerte und Kontoregeln ändern | `budget`, `budget_plan`, `pulse`, `forecast`, `funds`, `account_rule`, Entwürfe (`savings_goal`, `expense`, `affordability`), `edit`, `batch`, `whatif`, `coach`, `check`, `briefing`, `insights`, `accounts`, `amex`, `networth`, `depot`, `loan` |
+| **Gehalt & Steuern** | Lohnabrechnung, netto und brutto, Sonderzahlungen samt Anteil zu 6 % und voll versteuert, Jahressechstel, Arbeitnehmerveranlagung | `payroll` (auch Successbonus), `tax`, `homeoffice` |
+| **Allgemeiner Chat** (kein Spezialist, Rückfallebene) | Begrüßung, allgemeine Geldfragen, Finanzbegriffe, Bedienung, Marktdaten, Gedächtnis; alles Unklare. Fachfremde Themen lehnt er ab | `help`, `explain`, `knowledge`, `market`, `memory`, `remember`, `forget`, `changes`, `undo`, `reminder`, `ask` |
 
 **Annahme:** Die Vorgabe „strikt maximal 4 Spezialisten“ nennt fünf Bereiche. Der allgemeine Chat ist deshalb kein Spezialist, sondern die Rückfallebene des Orchestrators. So bleibt es bei vier Spezialisten.
 
@@ -32,16 +32,19 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
 - `src/lib/ai/assistant.ts`: Ablauf auf dem Server.
 - `src/lib/assistant/specialist-context.ts`: Fakten-Ausschnitt und Kontext-Werkzeug je Agent.
 - `src/lib/assistant/payroll.ts`: neues Werkzeug für Gehalt & Steuern.
-- `src/lib/assistant/fixed-replies.ts`: feste Antworten ohne Modell (Navigation, Farbschema, Rechnen, Wetter, „Mein Konto ist leer“) und Rückfragen auf einzelne Wörter.
+- `src/lib/assistant/fixed-replies.ts`: feste Antworten ohne Modell (Navigation, Farbschema, Rechnen, „Mein Konto ist leer“, Links für Aktionen, die nur auf ihrer Seite gehen) und Rückfragen auf einzelne Wörter.
+- `src/lib/assistant/scope.ts`: erkennt fachfremde Themen und antwortet mit einem freundlichen Nein.
+- `src/lib/assistant/contract-draft.ts`, `contract-actions.ts`, `contract-requests.ts`, `booking-actions.ts`, `plan-rows.ts`: App-Aktionen im Chat (siehe unten).
 - `src/lib/assistant/combined.ts`: teilt kombinierte Fragen in Teilfragen mit je eigenem Werkzeug.
 
 ## Ablauf und KI-Aufrufe
 
 1. **Regeln (0 Aufrufe):**
-   - Smalltalk und kreative Bitten („Schreib mir ein Gedicht …“) gehen an den Chat.
-   - Feste Antworten ohne Modell: Datum und Uhrzeit, Rechnen („15 % von 2400“), Witze, Wetter, Navigation („Öffne die Verträge“), Farbschema, „Mein Konto ist leer“, „Lösche alle Buchungen“.
+   - Begrüßung, Dank und „Wer bist du?“ beantwortet der Chat sofort.
+   - Fachfremde Themen bekommen ohne Modell ein freundliches Nein mit drei Finanzfragen als Vorschlag (siehe „Nur Finanzen und die App“).
+   - Feste Antworten ohne Modell: Rechnen („15 % von 2400“), Navigation („Öffne die Verträge“), Farbschema, „Mein Konto ist leer“, „Lösche alle Buchungen“.
    - Kombinierte Fragen („Wie hoch ist mein Gehalt und wann kommt es?“) werden in Teile zerlegt; jeder Teil bekommt sein eigenes Werkzeug, höchstens ein Teil eine freie Antwort.
-   - Faktenfragen („Wie hoch ist der Großglockner?“, „Hauptstadt von Australien“, „Wie mache ich Kaiserschmarrn?“) schlagen den Gegenstand in der Wikipedia nach. Das Modell liest die Antwort in einem Satz aus dem Artikel; findet sich nichts, antwortet es knapp bei Temperatur 0,1.
+   - Finanzbegriffe („Was ist ein ETF?“) schlägt `knowledge` in der Wikipedia nach; allgemeine Artikel sucht er nicht mehr.
    - Klare Befehle bestimmen das Werkzeug und damit den Eigentümer.
    - Folgefragen und gelernte Formulierungen werden wie bisher ohne Modell erkannt.
 2. **Signalwörter (0 Aufrufe):** Trifft die Nachricht die Wörter genau eines Spezialisten (z. B. „Sparkonto“, „Netto“, „Abo“), übernimmt dieser. Ohne jeden Geldbezug antwortet sofort der allgemeine Chat.
@@ -70,9 +73,9 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
   - Lange Karten zeigen nur die ersten sechs Zeilen, der Rest kommt mit „Alle n anzeigen“.
 - **Allgemeiner Chat:**
   - Locker, warm und direkt, ohne Floskeln.
-  - Lenkt Nicht-Geldthemen nicht auf Finanzen um und fragt bei Unklarem nach.
-  - Sieht ohne Geldbezug keine persönlichen Daten. Dann darf er Allgemeinwissen mit Zahlen nennen; Geldbeträge, Links und Kontonummern müssen trotzdem belegt sein.
-  - Smalltalk beantwortet er sofort mit natürlichen Sätzen, ohne Modell.
+  - Hilft nur bei Geld, Finanzen, Verträgen, Steuern und der App; Kosten von Freizeit, Abos und Streaming zählen dazu. Bei Unklarem fragt er nach.
+  - Sieht ohne Geldbezug keine persönlichen Daten. Dann darf er allgemeines Finanzwissen mit Zahlen nennen; Geldbeträge, Links und Kontonummern müssen trotzdem belegt sein.
+  - Begrüßung und Dank beantwortet er sofort mit natürlichen Sätzen, ohne Modell.
 - **Spezialisten:**
   - Strikt an Fakten und Werkzeug-Ergebnis gebunden; jede Zahl muss belegt sein (`numbersBacked`). Zahlen aus der Frage selbst gelten als belegt („Kann man mit 3000 netto …?“).
   - Sie sehen nur den letzten Wortwechsel, der Chat den Verlauf.
@@ -188,6 +191,66 @@ Systematischer Test mit 946 Anfragen (249 verschiedene Fragen) über die echte O
 
 Weiter holprig: Gedichte, Reime und Witze zu einem bestimmten Thema („über Katzen“) schreibt das Modell selbst. Bei unbekannten Gerichten kann die Zubereitung ungenau sein.
 
+Überholt seit dem Finanz-Fokus (unten): Witze, Gedichte, Film- und Buchtipps, Rezepte und allgemeine Faktenfragen beantwortet der Assistent nicht mehr; die Korrekturen dazu sind entfernt.
+
+## Nur Finanzen und die App
+
+Der Assistent hilft nur bei Geld und bei dem, was die App kann. Fachfremdes lehnt er ab, ohne das Modell zu fragen (`scope.ts`): „Film-, Serien-, Buch- und Musiktipps gebe ich nicht – ich bin nur für deine Finanzen und die App da“, dazu drei Finanzfragen als Knöpfe.
+
+- **Abgelehnt:** Filme, Serien, Bücher, Musik, Podcasts, Wetter, Rezepte und Kochen, Allgemeinwissen („Wie hoch ist der Großglockner?“, „Wer hat die Glühbirne erfunden?“), Sport, Politik, Übersetzen, Sprachen, Programmieren, Gesundheit, Lebenslauf und Bewerbung, E-Mails, Witze, Gedichte, Datum und Uhrzeit, Vorlieben des Assistenten.
+- **Geldbezug geht vor:** „Wie viel gebe ich für Musik-Streaming aus?“, „Ich will ins Kino, geht sich das diesen Monat noch aus?“ oder „Lohnt sich ein Spotify Familienabo?“ bleiben Finanzfragen. Kreative Bitten („ein Gedicht über Sparen“) bleiben abgelehnt.
+- **Entfernt:** die allgemeine Wikipedia-Suche für Faktenfragen (`general=1`), Film- und Rezepthinweise, Witze, Datum und Uhrzeit. `knowledge` erklärt nur noch Finanzbegriffe.
+- **Allgemeiner Chat:** beantwortet Geldanlage (auch Bitcoin), Preis- und Kostenfragen und persönlichen Smalltalk mit Überleitung zu den Finanzen. Ganz Fachfremdes, das die Regeln nicht kennen, lehnt er in einem Satz ab.
+
+## Aktionen im Chat
+
+Was die App von Hand kann, geht auch im Chat, mit denselben Prüfungen (`applyOperations` nutzt dieselbe Logik wie die Seiten). Jede Änderung ist zuerst eine Vorschau mit Vorher/Nachher und wird erst mit „Bestätigen“ oder einem kurzen „Ja“ gespeichert. „Nein“ oder „Verwerfen“ verwirft sie, „Ja, aber …“ gilt als Korrektur. Jede Änderung lässt sich einzeln rückgängig machen.
+
+| Bereich | Beispiele | Operation |
+|---|---|---|
+| Verträge anlegen (Schritt für Schritt wie im Vertragsdialog) | „Leg einen neuen Vertrag an“ → Name, Betrag, Kategorie, Kündigungsfrist, Mindestlaufzeit („12 Monate“, „bis 31.12.2027“), Rhythmus, nächste Abbuchung, automatische Zuordnung → Vorschau | `contract_create` |
+| Verträge ändern | „Netflix kostet jetzt 15,99 €“, „Kündigungsfrist von Magenta ist 3 Monate“, „Netflix wird ab Jänner jährlich abgerechnet“, „Bestätige alle Verträge“, „Blende FITINN aus“, „Netflix ist gekündigt zum 31.12.“, „Lösch den Vertrag …“ (nur selbst angelegte) | `contract_update`, `contract_action` |
+| Buchungen | „Lösch die Buchung vom 24.10.“ (eine benannte, höchstens 10), „Tagge die Pizzeria-Buchungen mit Essen gehen“, „Teil die Buchung vom 11.10. mit Raphael“, umbenennen, kategorisieren, ignorieren, aus dem Plan nehmen, als geprüft markieren | `transaction_delete`, `transaction_tag`, `transaction_update`, `categorize` |
+| Sparziele (Schritt für Schritt wie im Zieldialog) | „Ich möchte ein Sparziel anlegen“ → Name, Betrag, Datum oder Monatsrate, Startkapital, Konto → Vorschau mit „Anlegen“; ändern, aussetzen, löschen | wie bisher |
+| Monatsplan und Budgets | „Füg eine Position Strom mit 60 € pro Monat hinzu“, „Setze Tanken im Dezember auf 150 €“, „Tanken ab Jänner auf 120 €“, „… wieder auf automatisch“, „Setze das Lebensmittel-Budget auf 400 €“ | `plan_row_save`, `plan_row_delete`, `plan_value`, Budget |
+| Konten und Gehalt | „Das Girokonto ist für alle Ausgaben“ (bisher ohne Vorschau gespeichert), „Lösch die Kontoregel für Girokonto“, „Setze den Successbonus auf 15 %“ | `account_rule`, `account_rule_delete`, `bonus_percent` |
+| Nur als Link | Bank- und Google-Anmeldung, Datei-Uploads, Benachrichtigungen, Backups | – |
+
+Ein offener Entwurf nimmt nur Antworten auf seine Frage an. Begrüßungen, fachfremde Themen und neue Fragen beantwortet der Assistent normal, und der Entwurf wartet (`leavesDraft`). Kurze Antworten auf die Fragen des Sparziel-Dialogs füllt der Server ohne Modell aus. Ein Schritt dauert damit ~1,6 s statt 10–30 s.
+
+## Chat-Test 3 (12.11.2026)
+
+307 Anfragen in fünf Läufen (155 verschiedene) über die echte Oberfläche mit lokalem Qwen3-8B und synthetischen Daten. Bestätigungen liefen als echter Klick oder als getipptes „Ja“, danach wurde der gespeicherte Stand im Browser geprüft.
+
+| Problem | Ursache | Korrektur |
+|---|---|---|
+| Offener Entwurf schluckte „Wie geht es dir?“ und fachfremde Fragen („Wie viel kostet ‚Politik‘?“) | Jede Nachricht galt als Antwort auf den Entwurf | `leavesDraft`: Begrüßungen, andere Themen und neue Fragen verlassen den Entwurf |
+| „Ja“ unter einer Vorschau: keine Antwort bzw. nur „Passt“, nichts gespeichert | Nur der Knopf speicherte | Kurzes „Ja“ speichert, „Nein“ verwirft, mit kurzer Rückmeldung |
+| „Wie viel gebe ich für Musik-Streaming aus?“, „Kino … geht sich das aus?“ abgelehnt | Themenwort schlug Geldbezug | Ausgaben- und Leistbarkeitsfragen gehen immer vor |
+| „Wie viel gebe ich für Versicherungen aus?“ → Ausgabe-Entwurf und erfundene Antwort | „gebe … aus“ las sich wie eine neue Ausgabe | Ausgabenfrage (`query`); „Streaming“ zählt als Abonnements |
+| Mindestlaufzeit „12 Monate“ nicht verstanden | Nur Datum erlaubt | Dauer in Monaten oder Jahren ab heute |
+| „Ändere den Netflix Betrag …“ → „Welches meinst du? Motorrad“ | Bearbeitung kannte keine Verträge | Rückfall auf den genannten Vertrag |
+| „Netflix wird ab Jänner jährlich abgerechnet“ → Modellantwort | Muster kannte „abgerechnet“ und „ab Jänner“ nicht | Vertragsänderung |
+| „Kündige Spotify“ ließ den Vertrag unverändert | Nur Kündigungsschreiben | Zusätzlich Knopf „… ist gekündigt (zum …)“ |
+| „Setze Tanken im Dezember auf 150 €“ änderte das Budget ab sofort | Budget ohne Monat | Mit Monat oder „ab …“ wird der Monatswert gesetzt |
+| „… war nicht mit Raphael geteilt“ → Übersicht offener Beträge | Kein Teilen per Chat | Teilen wie in den Umsätzen; Rücknahme ehrlich erklärt (geht auch dort nicht) |
+| „Ich möchte ein Sparziel anlegen“ → Ziel „Sparziel“; „Urlaub in Japan“ → „Urlaub“ (gesperrter Name) | Modell bzw. Regel nahmen ein Füllwort | Allgemeine Wörter sind kein Name; die Antwort auf die Namensfrage zählt ganz |
+| „Nein“ auf die Konto-Frage beim Startkapital wiederholte die Frage | Kein Ausweg | „Nein“ heißt kein Startkapital |
+| „Erhöhe das Sparziel Urlaub in Japan …“ (nicht vorhanden) änderte das Urlaubs-Ziel der Einstellungen | Wort „Urlaub“ | Fragt nach dem richtigen Ziel |
+| „Lösch die Kontoregel für Girokonto“ fand „Raiffeisen Giro“ nicht | Kein Alias beim Löschen | Gleiche Konto-Erkennung wie beim Anlegen |
+| „Was war mein Netto im Oktober?“ → Oktober 2027 | Monat immer in der Zukunft | Vergangenheit meint den letzten Oktober, mit der passenden Abrechnung |
+| „Mach ein Backup“ → erfundene Menüpunkte | Link-Antwort kannte die Wortfolge nicht | Link zu Einstellungen → Sicherung |
+| „Erklär mir Zinseszins kurz“ → Begriff „zinseszins kurz“ | Füllwort am Ende | Füllwörter wie „kurz“, „einfach“ entfernt |
+| Modell wiederholte die Frage in der Antwort; Prompt-Beispiel tauchte in Antworten auf; zu strenge Ablehnung bei Bitcoin | Kleines Modell | Wiederholte Frage wird entfernt, Prompts ohne kopierbare Beispiele, Ablehnung nur ganz ohne Geldbezug |
+
+**Ergebnis:**
+
+- Im letzten vollständigen Lauf (156 Schritte, 131 Fragen) kamen 94 Antworten ohne Modell; der Median bis zur fertigen Antwort lag bei 1,7 s.
+- Alle bestätigten Änderungen standen danach im gespeicherten Stand: Verträge, gelöschte und geteilte Buchungen, Tags, Positionen, Kontoregeln, Sparziele.
+- `npm run eval:assistant`: 107/108 goldene Fragen (davon 10 neue App-Aktionen), 22/22 grenzwertige, alle Prompt-Injection-Tests bestanden.
+
+Weiter holprig: Unbekannte fachfremde Fragen, die die Wortlisten nicht kennen, beantwortet das kleine Modell mal mit einer Ablehnung, mal knapp inhaltlich. „Was kostet ein Kinobesuch?“ bekommt ohne belegbare Zahl keine Betragsantwort. Einmal blieb eine Antwort beim Modellserver hängen; das war nicht wiederholbar.
+
 ## Messung (Qwen3-8B, NPU, lokale Daten)
 
 | | vorher | nachher |
@@ -220,6 +283,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `orchestrator-info.test.ts`, `orchestrator-admin.test.tsx`: Läufe aus dem Verlauf, Status, Werkzeugliste und Darstellung.
 - Korrekturen aus dem Chat-Test: `conversation.test.ts` (`converseOn`, Budget-Empfehlung), `payroll.test.ts`, `pulse.test.ts`, `copilot.test.ts`, `cancel.test.ts`, `learning.test.ts`, `smalltalk.test.ts`, `phrasing.test.ts`, `speed.test.ts`.
 - Korrekturen aus Chat-Test 2: `fixed-replies.test.ts` (feste Antworten, Rechnen, Rückfragen), `combined.test.ts` (kombinierte Fragen), `knowledge.test.ts` (Faktenfragen, allgemeine Artikel), `conversation.test.ts` (kopierte Sätze), `check.test.ts`, `everyday.test.ts`, `market.test.ts`, `insights.test.ts`, `orchestrator.test.ts`, `speed.test.ts` (Themenhinweise, knappe Faktenantwort).
+- Finanz-Fokus und App-Aktionen: `scope.test.ts` (fachfremde Themen, Geldbezug geht vor), `app-actions.test.ts` (jede neue Operation samt Rückgängig), `app-chat.test.ts` (Routing, Vertragsdialog Schritt für Schritt, Ja/Abbrechen, Buchungen, Monatsplan, Kontoregeln, Successbonus, Links).
 - `npm run eval:assistant`: zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer.
 
 ## Grenzen
@@ -227,4 +291,6 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Die Signalwörter sind bewusst knapp gehalten. Was sie nicht eindeutig zuordnen, entscheidet das Modell oder, im Zweifel, der Chat.
 - Bestehende Regelfehler einzelner Werkzeuge bleiben, wo sie keine falsche Zuständigkeit verursachen.
 - Kombinierte Fragen werden nur geteilt, wenn jeder Teil für sich steht. Verweist ein Teil zurück („… und was kosten sie im Jahr?“), antwortet ein Agent auf beides.
-- Faktenfragen brauchen das Internet. Offline antwortet das Modell knapp aus eigenem Wissen.
+- Finanzbegriffe schlägt er online nach. Offline oder ohne Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.
+- Die Themen-Prüfung arbeitet mit Wortlisten. Seltene fachfremde Fragen ohne bekanntes Wort gehen an den allgemeinen Chat, dessen Prompt ebenfalls nur Finanzen erlaubt.
+- Nicht im Chat: Buchungen von Hand anlegen (gibt es in der App nicht), Bank- und Google-Anmeldung, Datei-Uploads, Benachrichtigungen, Erscheinungsbild und Backups (nur Link zur Seite), „Alle Buchungen löschen“ und eine geteilte Buchung wieder ungeteilt stellen (beides geht auch in der App nicht). Beim Sparziel gibt es statt „So schnell wie möglich“ die Wahl zwischen Datum und Monatsrate.

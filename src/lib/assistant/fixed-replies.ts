@@ -2,6 +2,7 @@ import type { AppState } from "@/lib/types";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 import type { AgentResult } from "./agent";
 import { normalizeMessage } from "./normalize";
+import { offTopicReply } from "./scope";
 
 /**
  * Requests that need a fixed, honest reply instead of a tool or the model: navigation, the colour scheme, deleting
@@ -26,7 +27,21 @@ const theme = /\b(?:dark|light|night)\s*-?\s*mode\b|dunkel\s*-?\s*modus|hell\s*-
 const deleteAll = /\b(?:lösch|loesch|entfern|vernicht)\w*\b.{0,30}\b(?:alle|sämtliche|saemtliche|ganze[nn]?)\b.{0,20}\b(?:buchungen|umsätze|transaktionen|daten)\b|\balle (?:meine )?(?:daten|buchungen) (?:lösch|loesch|weg)|\blösch\w* alles\b/;
 const instructions = /system-?prompt|(?:deine|die) (?:internen? )?(?:anweisungen|instruktionen|vorgaben|regeln)\b.{0,30}\b(?:zeig|gib|nenn|verrat|ausgeb|schreib)|ignorier\w* (?:alle |deine |die )?(?:vorherigen |bisherigen |obigen )?(?:anweisungen|regeln|instruktionen|vorgaben)/;
 const distress = /^(?:(?:oh|ach|mist|puh|na toll)[,!]?\s+)?(?:mein (?:giro)?konto ist (?:schon )?(?:leer|im minus|überzogen|ueberzogen|blank)|ich bin (?:total |komplett |völlig |voellig |voll |schon wieder |wieder )?(?:pleite|blank|abgebrannt|bankrott)|ich hab(?:e)? (?:kein (?:geld|cent|euro)|nichts) mehr)[.!]*$/;
-const weather = /^(?:und\s+)?(?:wie (?:wird|ist) (?:das|morgen das|heute das) wetter|wie wird das wetter (?:morgen|heute|am wochenende)|(?:wird|regnet) es (?:morgen |heute |am wochenende )?(?:regnen|schneien|warm|kalt|sonnig)?|wie (?:warm|kalt) (?:wird|ist) es|wetter (?:morgen|heute))\b[^?]{0,40}\??$/;
+// Actions that need a bank or Google login, a file or a browser permission happen on their page, never in the chat.
+const appOnly: [RegExp, string, string, string][] = [
+  [/\b(?:verbind|verknüpf|verknuepf|trenn|entkoppel|synchronisier|abgleich|aktualisier)\w*\b.{0,40}\b(?:bank\w*|konto|konten|revolut|raiffeisen|trade republic|n26|bawag|erste bank)\b|\bbankverbindung\w*\b.{0,30}\b(?:einricht|hinzufüg|hinzufueg|lösch|loesch|entfern|trenn)\w*/,
+    "Bankverbindungen richtest du unter Einstellungen → Bankverbindungen ein. Dafür brauchst du die Anmeldung bei deiner Bank – das geht aus Sicherheitsgründen nicht im Chat.", "Einstellungen", "/einstellungen"],
+  [/\b(?:google drive|gmail|google-konto|google konto)\b.{0,40}\b(?:verbind|verknüpf|verknuepf|trenn|anmeld|einricht)\w*|\b(?:verbind|verknüpf|verknuepf|trenn)\w*\b.{0,40}\b(?:google drive|gmail)\b/,
+    "Google Drive und Gmail verbindest oder trennst du unter Einstellungen; die Anmeldung bei Google geht nur dort.", "Einstellungen", "/einstellungen"],
+  [/\bbenachrichtigung\w*\b.{0,30}\b(?:aktivier|einschalt|ausschalt|deaktivier|erlaub|abstell)\w*|\b(?:aktivier|schalt)\w*\b.{0,20}\bbenachrichtigung/,
+    "Benachrichtigungen schaltest du unter Einstellungen → Benachrichtigungen ein oder aus; dein Browser fragt dafür um Erlaubnis.", "Einstellungen", "/einstellungen"],
+  [/\b(?:backup|sicherung|export)\w*\b.{0,30}\b(?:mach|erstell|herunterlad|lad|einspiel|wiederherstell)\w*|\b(?:exportier|sicher)\w*\b.{0,30}\b(?:daten|buchungen|umsätze|umsaetze|alles)\b|^(?:bitte\s+)?(?:mach|erstell|leg|lad|spiel)\w*\b.{0,20}\b(?:backup|sicherung|export)\w*/,
+    "Backups und Exporte erstellst oder spielst du unter Einstellungen → Sicherung ein; die Datei lädt bzw. wählt dein Browser.", "Einstellungen", "/einstellungen"],
+  [/\b(?:lad|importier|hochlad|scann)\w*\b.{0,40}\b(?:abrechnung|lohnzettel|lohnabrechnung|kontoauszug|auszug|csv|pdf|screenshot|kassenbon|beleg|rechnung)\w*|\bkassenbon\w*\b.{0,20}\baufteil/,
+    "Dateien wie Lohnabrechnungen, Kontoauszüge oder Kassenbons lädst du über „Importieren“ in der Kopfzeile oder bei der Buchung hoch – im Chat kann ich keine Dateien annehmen.", "Umsätze", "/umsaetze"],
+  [/\b(?:akzentfarbe|app-?farbe|farbe der app|animationen|bewegungen)\b.{0,30}\b(?:änder|aender|setz|stell|aus|reduzier|wechsel)\w*/,
+    "Akzentfarbe und Bewegung stellst du unter Einstellungen → Darstellung ein; dort siehst du die Vorschau sofort.", "Einstellungen", "/einstellungen"],
+];
 const invent = /^(?:bitte\s+)?(?:erfind\w*|denk dir)\b.{0,40}\b(?:kontostand|zahl\w*|betrag|beträge|buchung\w*|gehalt|daten)\b/;
 
 // "Was ist 15 % von 2400?", "Rechne 1200 / 12": plain arithmetic is computed, never guessed by the model.
@@ -75,15 +90,19 @@ export function fixedReply(input: string): FixedReply | undefined {
   const math = expression.exec(lower);
   const result = math ? evaluate(math[1].trim()) : undefined;
   if (math && result !== undefined) return { text: `${math[1].trim().replace(/\s*([+\-*/×÷:])\s*/g, " $1 ")} = ${format(result)}` };
+  // Films, weather, recipes, general facts, jokes: not this assistant's job.
+  const away = offTopicReply(input);
+  if (away) return away;
+  const elsewhere = /\?\s*$/.test(lower) && !/^(?:kannst|könntest|koenntest|würdest|wuerdest) du\b/.test(lower) ? undefined : appOnly.find(([pattern]) => pattern.test(lower));
+  if (elsewhere) return { text: elsewhere[1], card: { kind: "answer", title: elsewhere[2], lines: [], page: { label: `${elsewhere[2]} öffnen`, href: elsewhere[3] } } };
   if (instructions.test(lower)) return { text: "Meine internen Anweisungen behalte ich für mich. Frag mich aber gern alles zu deinen Finanzen.",
     suggestions: ["Was kannst du alles?", "Was bleibt mir diesen Monat?"] };
   if (distress.test(lower)) return { text: "Oh, das ist unangenehm. Lass uns gemeinsam schauen, was bis zum nächsten Gehalt noch ansteht – dann weißt du, woran du bist.",
     suggestions: ["Reicht mein Geld bis zum Gehalt?", "Welche Fixkosten kommen noch?", "Wo kann ich sparen?"] };
-  if (weather.test(lower)) return { text: "Aktuelle Wetterdaten habe ich leider nicht – ein Blick in deine Wetter-App hilft dir da schneller weiter." };
   if (invent.test(lower)) return { text: "Erfinden mag ich nichts – ich rechne nur mit deinen echten Daten. Soll ich dir stattdessen deinen echten Stand zeigen?",
     suggestions: ["Wie sieht mein Kontostand aus?", "Was bleibt mir diesen Monat?"] };
   if (deleteAll.test(lower)) return {
-    text: "Alles auf einmal lösche ich per Chat nicht – das ließe sich nicht rückgängig machen. Einzelne Buchungen löschst du in den Umsätzen, ein Backup findest du in den Einstellungen.",
+    text: "Alles auf einmal lösche ich per Chat nicht. Einzelne Buchungen lösche ich gern – nenn mir Datum und Betrag, zum Beispiel „Lösch die Buchung vom 3.8. über 249 €“. Ein Backup findest du in den Einstellungen.",
     card: { kind: "answer", title: "Umsätze", lines: [], page: { label: "Umsätze öffnen", href: "/umsaetze" } },
   };
   if (theme.test(lower) && /wechsel|aktivier|schalt|mach|stell|änder|aender|bitte|^(?:dark|light|dunkel|hell|nacht)/.test(lower)) {

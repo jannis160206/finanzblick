@@ -7,17 +7,15 @@ describe("small talk", () => {
     ["Hallo, wie geht's dir?", "mood"], ["wie gehts", "mood"], ["Danke!", "thanks"], ["super danke dir", "thanks"], ["Vielen Dank 🙏", "thanks"],
     ["tschüss", "bye"], ["bis später", "bye"], ["Wer bist du?", "who"], ["ok", "ack"], ["alles klar, passt", "ack"],
     ["???", "unclear"], ["hmm", "unclear"], ["äh", "unclear"], ["asdfgh", "unclear"], ["...", "unclear"], ["Wie viel?", "unclear"],
-    ["Na, alles gut?", "mood"], ["Wer hat dich gebaut?", "maker"], ["Danke, das hilft mir", "thanks"], ["ich weiß nicht", "unsure"], ["keine Ahnung", "unsure"],
+    ["Na, alles gut?", "mood"], ["Hey, wie war dein Tag so?", "mood"], ["Was machst du gerade?", "mood"], ["Wer hat dich gebaut?", "maker"], ["Danke, das hilft mir", "thanks"], ["ich weiß nicht", "unsure"], ["keine Ahnung", "unsure"],
     ["Wer hat Finanzblick gemacht?", "maker"], ["Mach mal", "unsure"], ["und jetzt?", "unsure"],
-    ["Sag mal, bist du eine KI?", "who"], ["Was ist heute für ein Tag?", "date"], ["Erzähl mir einen Witz", "joke"], ["Erzähl mir was Lustiges", "joke"],
+    ["Sag mal, bist du eine KI?", "who"],
   ])("%s → %s", (text, kind) => expect(detectSmallTalk(text)).toBe(kind));
 
-  it("answers the date, jokes and \"bist du eine KI?\" without the model", () => {
-    expect(smallTalk("Was ist heute für ein Tag?", { hour: 10, now: new Date("2026-11-11T10:00:00") })?.text).toBe("Heute ist Mittwoch, der 11. November 2026.");
-    expect(smallTalk("Erzähl mir einen Witz", { hour: 10, seed: 1 })?.text).toMatch(/Sparschwein/);
+  it("answers \"bist du eine KI?\" and leaves jokes, the date and the clock to the scope gate", () => {
     expect(smallTalk("Bist du eine KI?", { hour: 10 })?.text).toMatch(/^Ja, ich bin eine KI/);
     expect(smallTalk("Bist du ein Mensch?", { hour: 10 })?.text).toMatch(/^Nein, ich bin kein Mensch, sondern eine KI/);
-    expect(detectSmallTalk("Erzähl mir einen Witz über Katzen")).toBeUndefined();
+    for (const text of ["Erzähl mir einen Witz", "Was ist heute für ein Tag?", "Wie spät ist es in Tokio?"]) expect(detectSmallTalk(text), text).toBeUndefined();
   });
 
   it.each(["Hallo, wie viel hab ich im Oktober fürs Essen ausgegeben?", "Hi, kann ich mir im Mai 900 € leisten?", "Was geht alles im Dashboard?",
@@ -31,9 +29,5 @@ describe("small talk", () => {
     expect(smallTalk("danke", { hour: 12 })?.text).toMatch(/gern/i);
     expect(smallTalk("Wie viel hab ich ausgegeben?", { hour: 12 })).toBeUndefined();
     expect(smallTalk("???", { hour: 12 })).toMatchObject({ text: expect.stringMatching(/\?$/), suggestions: expect.any(Array) });
-    const now = new Date("2026-11-11T12:00:00Z");
-    expect(smallTalk("Wie spät ist es in Tokio?", { hour: 13, now })?.text).toBe("In Tokio ist es gerade 21:00 Uhr.");
-    expect(smallTalk("wie viel uhr ist es in new york", { hour: 13, now })?.text).toBe("In New York ist es gerade 07:00 Uhr.");
-    expect(smallTalk("Wie spät ist es in Atlantis?", { hour: 13, now })?.text).toMatch(/^Die genaue Uhrzeit in Atlantis kenne ich nicht/);
   });
 });

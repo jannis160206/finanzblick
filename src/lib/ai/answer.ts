@@ -13,8 +13,6 @@ export const answerRequestSchema = z.object({
   evidence: z.string().max(1500).optional(),
   // The agent the orchestrator chose; it decides the voice. Without one the general chat answers.
   agent: z.enum(agentIds).optional(),
-  // A plain fact ("Hauptstadt von Kanada") wants one sober sentence.
-  brief: z.boolean().optional(),
 }).strict();
 export type AnswerRequest = z.infer<typeof answerRequestSchema>;
 
@@ -31,26 +29,6 @@ function unwrapJson(content: string): string {
   }
 }
 
-// Topic hints are added only when the question asks for them; in the fixed prompt the model brought films up unasked.
-function topicHint(question: string): string {
-  // Fixed lists of well-known titles: the small model otherwise invents titles and years. Only for wishes ("Buchtipp"), never for "Buchung".
-  const wish = /tipp|empfehl|vorschl|\bsoll ich\b|\bguten?\b|\bkennst du\b|\bschauen\b|\blesen\b|\bhören\b|\bhoeren\b/i.test(question);
-  if (/\b(?:buch|bücher|buecher|buchtipps?|romane?|lektüre|lektuere)\b|\bwas soll ich lesen\b/i.test(question) && wish)
-    return "Wähle ein, zwei Bücher aus dieser Liste und erfinde keine anderen: „Der kleine Prinz“, „Der Alchimist“, „Momo“, „Harry Potter und der Stein der Weisen“, „Die unendliche Geschichte“. Nenne kein Erscheinungsjahr.";
-  if (/\b(?:serie|serien|serientipps?)\b/i.test(question) && wish)
-    return "Wähle ein, zwei Serien aus dieser Liste und erfinde keine anderen: „Friends“, „Breaking Bad“, „Dark“, „Stranger Things“, „The Office“. Nenne kein Erscheinungsjahr.";
-  if (/\b(?:film|filme|filmtipps?|kino)\b/i.test(question) && wish)
-    return "Wähle ein, zwei Filme aus dieser Liste und erfinde keine anderen: „Forrest Gump“, „Ziemlich beste Freunde“, „Zurück in die Zukunft“, „Der Herr der Ringe“, „Das Leben ist schön“. Nenne kein Erscheinungsjahr.";
-  if (/\b(?:musik|songs?|lieder|album|alben|podcasts?|musiktipps?)\b/i.test(question) && wish)
-    return "Nenne nur echte, sehr bekannte Künstler oder Titel und kein Erscheinungsjahr.";
-  if (/\bwas (?:soll|könnte|koennte|kann) ich (?:heute |morgen |am wochenende )?(?:kochen|essen|backen)\b|\bkochidee\w*\b/i.test(question))
-    return "Schlag ein, zwei bekannte, einfache Gerichte vor (etwa Spaghetti aglio e olio, Gemüsepfanne, Omelett), in ein, zwei Sätzen, ohne Zutatenliste.";
-  if (recipeQuestion(question))
-    return "Antworte in zwei, drei kurzen Sätzen ohne Mengenangaben: was es ist, die üblichen Grundzutaten und die wichtigsten Schritte. Stell keine Rückfrage.";
-  return "";
-}
-const recipeQuestion = (question: string) => /\b(?:rezept\w*|zubereit\w*)\b|\bwie (?:mache|macht|koche|kocht|backe|backt|bereite|bereitet) (?:ich|man)\b/i.test(question);
-
 function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, evidence?: string): ChatMessage[] {
   return [
     { role: "system", content: answerPrompt(input.agent ?? "general") },
@@ -59,15 +37,12 @@ function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, ev
       evidence ? `Werkzeug-Ergebnis zu dieser Frage (verlässlich berechnet):\n${evidence}` : "",
       input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
       `Frage: ${input.question}`,
-      input.brief ? (recipeQuestion(input.question) ? topicHint(input.question) : "Antworte sachlich in einem kurzen Satz, ohne Zusatz.")
-        : (input.agent ?? "general") === "general" ? topicHint(input.question) : "",
     ].filter(Boolean).join("\n\n") },
   ];
 }
 
 // Specialists keep it short; the general chat gets a little more room and a livelier temperature.
-const answerOptions = (agent: AgentId = "general", brief = false) => brief ? { maxTokens: 160, temperature: 0.1 }
-  : agent === "general" ? { maxTokens: 320, temperature: 0.4 } : { maxTokens: 300, temperature: 0.3 };
+const answerOptions = (agent: AgentId = "general") => agent === "general" ? { maxTokens: 320, temperature: 0.4 } : { maxTokens: 300, temperature: 0.3 };
 
 // Amounts written inside texts (tool results, health check) and the user's own numbers in the question count as backed, too.
 function backing(facts: Record<string, unknown>, evidence?: string, question?: string) {
@@ -121,16 +96,22 @@ function groundedText(content: string, source: object, check: (sentence: string,
   return kept.length >= 2 && /\p{L}/u.test(kept) ? kept : undefined;
 }
 
+// Small models sometimes repeat the user's question in the middle of the answer; that sentence is dropped.
+const plainWords = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+const echoes = (sentence: string, question: string) => !!question.trim() && plainWords(sentence) === plainWords(question);
+
 function prepare(input: AnswerRequest) {
   const facts = cleanFacts(input.facts, 1500);
   const evidence = input.evidence ? cleanUntrusted(input.evidence, 1500) : undefined;
-  return { facts, evidence, source: backing(facts, evidence, input.question), check: answerCheck(input.agent, facts, evidence) };
+  const check = answerCheck(input.agent, facts, evidence);
+  return { facts, evidence, source: backing(facts, evidence, input.question),
+    check: (sentence: string, source: object) => !echoes(sentence, input.question) && check(sentence, source) };
 }
 
 // A grounded free answer: every number, link and account number must come from the facts or the tool result.
 export async function answerFreeQuestion(input: AnswerRequest, options: ChatOptions = {}): Promise<{ text?: string; source: "KI" }> {
   const { facts, evidence, source, check } = prepare(input);
-  const answer = await chat(answerMessages(input, facts, evidence), { ...options, ...answerOptions(input.agent, input.brief) });
+  const answer = await chat(answerMessages(input, facts, evidence), { ...options, ...answerOptions(input.agent) });
   const text = groundedText(answer.content, source, check);
   return text ? { text, source: "KI" } : { source: "KI" };
 }
@@ -156,7 +137,7 @@ export async function* streamFreeAnswer(input: AnswerRequest, options: ChatOptio
   const { facts, evidence, source, check } = prepare(input);
   let content = "";
   let shown = "";
-  for await (const piece of chatStream(answerMessages(input, facts, evidence), { ...options, ...answerOptions(input.agent, input.brief) })) {
+  for await (const piece of chatStream(answerMessages(input, facts, evidence), { ...options, ...answerOptions(input.agent) })) {
     content += piece;
     const visible = visiblePrefix(content, source, check);
     if (visible === shown) continue;

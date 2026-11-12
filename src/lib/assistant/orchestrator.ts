@@ -1,7 +1,6 @@
 import { normalizeMessage } from "./normalize";
 import { detectSmallTalk } from "./smalltalk";
 import { fixedReply } from "./fixed-replies";
-import { factTopic } from "./knowledge";
 import { assistantTools, detectTool, mentionsName, type AssistantTool } from "./tools";
 
 /**
@@ -29,7 +28,7 @@ export const toolOwner: Record<AssistantTool, AgentId> = {
   query: "transactions", booking: "transactions", rule: "transactions", cleanup: "transactions", why: "transactions",
   security: "transactions", refunds: "transactions", context: "transactions", orders: "transactions", shared: "transactions",
   month_review: "transactions", review: "transactions",
-  contracts: "contracts", cancel: "contracts",
+  contracts: "contracts", cancel: "contracts", contract_new: "contracts", contract_edit: "contracts",
   budget: "budget", budget_plan: "budget", pulse: "budget", forecast: "budget", funds: "budget", account_rule: "budget",
   affordability: "budget", savings_goal: "budget", expense: "budget", edit: "budget", batch: "budget", whatif: "budget",
   coach: "budget", check: "budget", briefing: "budget", insights: "budget", accounts: "budget", amex: "budget",
@@ -46,7 +45,7 @@ const words = (list: string) => new RegExp(String.raw`(?<![\p{L}\p{N}])(?:${list
 const signals: Record<SpecialistId, RegExp[]> = {
   transactions: [words(String.raw`buchung\p{L}*|umsätze|spend|spent|spending|expenses?|groceries|getankt|eingekauft|gekauft|bestellt|gelassen|gespart|umsatz|ausgegeben|bezahlt|gezahlt|eingenommen|überweisung\p{L}*|abbuchung\p{L}*|lastschrift\p{L}*|händler\p{L}*|kategori\p{L}*|rückerstattung\p{L}*|retoure\p{L}*|gutschrift\p{L}*|doppelt|bestellung\p{L}*|klarna|paypal|monatsbericht|rückblick|verdächtig\p{L}*`),
     /\bwo(?:hin)? (?:geht|fließt|fliesst|landet|verschwindet|bleibt) (?:\S+ ){0,2}geld\b/],
-  contracts: [words(String.raw`vertr[aä]g\p{L}*|abos?|abonnement\p{L}*|subscriptions?|kündig\p{L}*|laufzeit\p{L}*|versicherung\p{L}*|mitgliedschaft\p{L}*|streaming|handytarif|stromanbieter`)],
+  contracts: [words(String.raw`vertr[aä]g\p{L}*|\p{L}*abos?|abonnement\p{L}*|subscriptions?|kündig\p{L}*|laufzeit\p{L}*|versicherung\p{L}*|mitgliedschaft\p{L}*|streaming|handytarif|stromanbieter`)],
   budget: [words(String.raw`\p{L}*budget\p{L}*|übrig|konto|kontos|pleite|blank|leisten|leistbar|ausgehen|knapp|prognose|kontostand|kontostände|sparkonto|girokonto|konten|sparziel\p{L}*|sparen|sparsam|zurücklegen|notgroschen|reserve|puffer|vermögen|monatsende|monatsplan|anleg\p{L}*|veranlagen|etfs?|depot|zinsen|kredit\p{L}*|(?:spar)?rate|amex|pleite`),
     /geht sich|reicht (?:mein |das |es |unser )?geld/],
   payroll: [words(String.raw`grenzsteuersatz|steuersatz|steuerklassen?|verkehrsabsetzbetrag|familienbonus|gehalt(?:s\p{L}*|es)?|lohn(?:zettel|abrechnung\p{L}*|steuer)?|brutto|netto|abrechnung\p{L}*|sonderzahlung\p{L}*|urlaubszuschuss|urlaubsgeld|weihnachtsgeld|weihnachtsremuneration|jahressechstel|sechstel|successbonus|bonus|prämie\p{L}*|steuer\p{L}*|veranlagung|steuerausgleich|absetz\p{L}*|finanzamt|home.?office|rufbereitschaft|überstunden|sozialversicherung`)],
@@ -63,8 +62,7 @@ export function aboutMoney(input: string): boolean {
 
 // Creative or plain chat requests ("Schreib mir ein Gedicht über Sparen") belong to the general chat, even when they mention money.
 const CHAT_REQUEST = /\b(?:gedicht\w*|witz\w*|reim\w*|lied\w*|songtext\w*|geschichte\w*|kurzgeschichte\w*|rezept\w*|haiku)\b|^(?:erzähl|erzaehl)\w* mir (?:einen|eine|was|etwas)\b/;
-// "Rezept für Pfannkuchen" names a dish that can be looked up, so it goes through the tools like other fact questions.
-export const chatRequest = (input: string) => CHAT_REQUEST.test(normalizeMessage(input).toLowerCase()) && !factTopic(input);
+export const chatRequest = (input: string) => CHAT_REQUEST.test(normalizeMessage(input).toLowerCase());
 // "Kann man mit 3000 netto in Wien gut leben?" asks about people in general, not about the user's own data.
 export const generalQuestion = (lower: string) => /\bman\b/.test(lower) && !/\b(?:ich|mir|mich|mein\w*|wir|uns|unser\w*)\b/.test(lower);
 

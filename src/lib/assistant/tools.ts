@@ -1,13 +1,15 @@
 import { amexQuestion, balanceQuestion, budgetQuestion, goalsQuestion } from "./accounts";
 import { comparePattern, trendPattern } from "./answers";
 import { bookingRequest } from "./bookings";
+import { bookingActionRequest } from "./booking-actions";
+import { contractEditRequest, contractNewRequest } from "./contract-requests";
 import { budgetPlanRequest } from "./budget-plan";
 import { cancelQuestion } from "./cancel";
 import { checkQuestion } from "./check";
 import { forecastQuestion } from "./forecast";
 import { loanQuestion, reminderListQuestion, reminderRequest, reviewQuestion } from "./extras";
 import { detectAction, findExtra } from "./intent";
-import { factTopic, knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
+import { knowledgeListQuestion, knowledgeQuestion, knowledgeTopics } from "./knowledge";
 import { marketQuestion } from "./market";
 import { normalizeMessage, stripAck } from "./normalize";
 import { budgetLineQuestion, pulseQuestion } from "./pulse";
@@ -27,7 +29,7 @@ export const assistantTools = [
   "savings_goal", "expense", "affordability", "query", "accounts", "amex", "budget", "briefing", "check", "edit", "booking", "batch", "rule",
   "remember", "forget", "memory", "changes", "undo", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "loan", "reminder", "review",
   "explain", "help", "ask", "cancel", "why", "forecast", "whatif", "pulse", "orders", "funds", "account_rule", "budget_plan",
-  "security", "month_review", "shared", "networth", "refunds", "cleanup", "contracts", "context", "insights", "payroll",
+  "security", "month_review", "shared", "networth", "refunds", "cleanup", "contracts", "context", "insights", "payroll", "contract_new", "contract_edit",
 ] as const;
 export type AssistantTool = typeof assistantTools[number];
 export const draftTools = ["savings_goal", "expense", "affordability"] as const satisfies readonly AssistantTool[];
@@ -44,8 +46,10 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   budget: "Monatsplan: was diesen oder einen kommenden Monat übrig bleibt, wie viel man noch ausgeben kann",
   briefing: "Wochenüberblick: was ist fällig, was hat sich geändert",
   check: "Finanz-Check: Bewertung der eigenen Finanzen (Sparquote, Fixkosten, Reserve), z. B. „Bin ich sparsam?“, „Wie stehe ich finanziell da?“",
-  edit: "bestehendes Sparziel, geplante Ausgabe oder Notgroschen-/Urlaubs-/Sparkonto-Ziel ändern, verschieben, aussetzen, umbenennen, löschen, als erreicht markieren, vom Sparkonto zahlen oder mit Raphael teilen",
-  booking: "bestehende Buchungen bearbeiten: Anzeigename ändern („Benenne BILLA DANKT in Billa um“), aus dem Monatsplan nehmen, als Fixkosten oder geprüft markieren",
+  edit: "bestehendes Sparziel, geplante Ausgabe oder Notgroschen-/Urlaubs-/Sparkonto-Ziel ändern, verschieben, aussetzen, umbenennen, löschen, als erreicht markieren, vom Sparkonto zahlen oder mit Raphael teilen; " +
+    "Positionen im Monatsplan anlegen, umbenennen, löschen und Monatswerte setzen (z. B. „Setz die Miete im Dezember auf 700 €“, „Füg eine Position Fitnessstudio hinzu“)",
+  booking: "bestehende Buchungen bearbeiten: Anzeigename ändern („Benenne BILLA DANKT in Billa um“), aus dem Monatsplan nehmen, als Fixkosten oder geprüft markieren, ignorieren, " +
+    "einzelne Buchungen löschen („Lösch die Buchung vom 3.8. über 249 €“) oder mit einem Tag versehen („Tagge die Buchungen vom 10. bis 15.8. mit Malaga 2026“)",
   batch: "mehrere Änderungen in einer Nachricht, z. B. „Erhöhe Japan auf 4.000 € und schieb das Pickerl auf April“",
   rule: "Händler oder Buchungen einer Kategorie zuordnen, z. B. „Lieferando ist immer Essen“",
   remember: "sich etwas merken, z. B. Puffer oder Gehaltstag",
@@ -71,7 +75,7 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   whatif: "Was-wäre-wenn-Rechner: Abo kündigen und/oder monatlich mehr sparen und sehen, wann ein Sparziel früher erreicht ist (z. B. „Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“)",
   orders: "Offene Online-Bestellungen aus Gmail (Bestellbestätigungen, Klarna, PayPal, Kauf auf Rechnung) mit Betrag und Fälligkeit, die noch nicht abgebucht wurden (z. B. „Welche Bestellungen sind noch offen?“, „Was muss ich bei Klarna noch zahlen?“)",
   funds: "Konten-Check: ob sich eine Ausgabe oder ein Kauf mit den Konten ausgeht, die man dafür verwenden darf, mit OK / nicht OK und von welchem Konto zahlen – legt nichts an (z. B. „Kann ich mir eine Kaffeemaschine um 850 € leisten?“, „Geht sich ein Ölwechsel um 120 € aus?“, „Reifen 600 € ok?“, „Welche Konten darf ich wofür verwenden?“)",
-  account_rule: "Kontoregel festlegen, wofür ein Konto verwendet werden darf (z. B. „Sparkonto ist für alle Ausgaben“, „Trade Republic nur für Autowerkstatt und Ölwechsel“, „Notgroschen nicht angreifen“)",
+  account_rule: "Kontoregel festlegen oder löschen, wofür ein Konto verwendet werden darf (z. B. „Sparkonto ist für alle Ausgaben“, „Trade Republic nur für Autowerkstatt und Ölwechsel“, „Notgroschen nicht angreifen“)",
   budget_plan: "monatliches Budget einer Ausgabenkategorie (Lebensmittel & Haushalt, Mittagessen, Tanken, Freizeit, Restaurants & Lieferdienste, Geschenke, Giro Puffer) erhöhen, senken, auf einen Betrag setzen, zurücksetzen oder Geld zwischen zwei Budgets umschichten (z. B. „Plan für Lebensmittel um 50 € erhöhen“, „Tankbudget auf 200 €“, „50 € von Freizeit zu Restaurants umschichten“)",
   cleanup: "alle offenen Buchungen (Prüfliste, Kategorie Prüfen) auf einmal zuordnen (z. B. „Arbeite alle Prüfen-Buchungen ab“, „Ordne alle offenen Buchungen zu“)",
   security: "Sicherheits-Check: verdächtige oder doppelte Abbuchungen, ungewöhnlich hohe Beträge, Kleinst-Testabbuchungen, teurer gewordene und neue Abos (z. B. „Gibt es verdächtige Buchungen?“, „Wurde ich doppelt abgebucht?“, „Welche Abos sind teurer geworden?“)",
@@ -82,7 +86,10 @@ export const toolDescriptions: Record<AssistantTool, string> = {
   contracts: "Vertragsordner: erkannte und eigene Verträge und Abos auflisten, einzelne Verträge mit Betrag, Jahreskosten, nächster Abbuchung, Kündigungsfrist und Preisänderung (z. B. „Welche Abos habe ich?“, „Wann läuft Netflix aus?“, „Was kostet mich Spotify im Jahr?“); Kündigen selbst ist cancel",
   context: "die gerade angezeigten oder ausgewählten Buchungen der aktuellen Seite auswerten: Summe, Top-Kategorien und Händler, mögliche Doppelbuchungen, unklare Kategorien (z. B. „Was ist mit den angezeigten Buchungen?“, „Fass die ausgewählten Buchungen zusammen“)",
   insights: "proaktive Hinweise: knappes Monatsende, Budgetüberschreitungen, Kündigungsfristen, Preiserhöhungen, Sparziele in Gefahr, Doppelbuchungen, ungewöhnliche Ausgaben, unklare Kategorien (z. B. „Was fällt dir auf?“, „Gibt es Auffälligkeiten?“)",
-  payroll: "Gehalt und Lohnabrechnung: Netto, Brutto, Lohnsteuer und SV der letzten Abrechnung, nächste Sonderzahlung mit Anteil zu 6 % und voll versteuert, Jahressechstel (z. B. „Wie viel netto bekomme ich?“, „Was bleibt vom Weihnachtsgeld?“)",
+  payroll: "Gehalt und Lohnabrechnung: Netto, Brutto, Lohnsteuer und SV der letzten Abrechnung, nächste Sonderzahlung mit Anteil zu 6 % und voll versteuert, Jahressechstel (z. B. „Wie viel netto bekomme ich?“, „Was bleibt vom Weihnachtsgeld?“); " +
+    "auch den Successbonus in Prozent des Grundgehalts einstellen („Setz den Successbonus auf 120 %“)",
+  contract_new: "neuen Vertrag oder neues Abo Schritt für Schritt anlegen (z. B. „Leg einen neuen Vertrag an“, „Neues Abo: Disney+ 9,99 € im Monat“)",
+  contract_edit: "bestehenden Vertrag ändern: bestätigen, ausblenden („ist kein Vertrag“), als gekündigt markieren, wieder aktivieren, Betrag, Rhythmus, nächste Abbuchung, Kündigungsfrist, Mindestlaufzeit, Kategorie, Notiz ändern, eigene Angaben verwerfen, selbst angelegten Vertrag löschen (z. B. „Netflix ist gekündigt zum 31.12.“, „Kündigungsfrist von Magenta ist 3 Monate“)",
   pulse: "Monats-Puls mit echtem Kontostand: wie viel man heute/pro Tag bis zum Gehalt noch sicher ausgeben kann, ob das Gehalt schon da ist, welche Budgets oder Kategorien schneller als üblich laufen und welche Fixkosten noch abgebucht werden (z. B. „Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“)",
 };
 
@@ -118,7 +125,7 @@ const explainPattern = new RegExp([
 const months = "jänner|januar|februar|feber|märz|april|mai|juni|juli|august|september|oktober|november|dezember";
 const periodWords = new RegExp(`\\b(?:${months})\\b|letzte[nrs]? (?:monat|woche|jahr)|vorigen? (?:monat|jahr)|diese[nrs]? (?:monat|woche|jahr)|\\bheuer\\b|\\bvorjahr\\b|\\b20\\d{2}\\b`);
 const spentWords = /ausgegeben|ausgaben|bezahlt|gezahlt|verdient|eingenommen|einnahmen|gekostet|kostet mich|kosten mich|abos?\b|abonnement|größte|teuerste|buchung|überwiesen|wohin|wofür|geht.*weg|verbraucht|durchschnitt|draufgegangen|drauf gegangen|gelassen|verballert|verprasst|rausgehauen|ausgeben|gebe ich|geb ich|liegen gelassen|gezahlt|verbraten|\bdrauf\b|war ich (?:bei|beim|im|in)\b|preiserhöh|teurer geworden|\bbestellt\b|fixkosten|fixe kosten|laufenden kosten|\bzahl(?:e)? ich\b|gespart|übrig geblieben|uebrig geblieben/;
-const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert|getankt|eingekauft|gekauft|bestellt|(?:rein|herein|ein)gekommen|eingegangen)\b/;
+const pastSpending = /^(?:wie ?viel|was)\b.*\b(?:gebe|geben|gibst)\b.*\baus\s*\??$|^(?:wie ?viel|was)\b.*\b(?:ausgegeben|bezahlt|eingenommen|verdient|draufgegangen|gelassen|verballert|getankt|eingekauft|gekauft|bestellt|(?:rein|herein|ein)gekommen|eingegangen)\b/;
 const spendingQuestion = (lower: string) =>
   /\b(?:wo(?:hin)?|wofür|wofuer) (?:geht|gehen|fließt|fliesst|landet|verschwindet|bleibt) (?:mein|das|unser)(?: meiste)? geld/.test(lower) ||
   /\bwo(?:hin)? (?:ist|sind|ging|gingen|floss|landete) .{0,40}\bgeld\b.{0,12}\b(?:hin|geblieben|gelandet)\b/.test(lower) ||
@@ -192,9 +199,16 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/rückgängig|\bundo\b|mach (?:das|es) wieder|zurücknehmen|nimm (?:das|es|die änderung|die letzte änderung) (?:wieder )?zurück|mach (?:das|es) ungeschehen|stopp?,? das war falsch/.test(lower)) return "undo";
   if (/(?:welche|letzte[nr]?|deine|alle)\s+änderungen|änderungsprotokoll|was hast du (?:\S+ ){0,2}(?:geändert|gemacht|umgestellt)|protokoll/.test(lower)) return "changes";
   if (reminderListQuestion(lower) && !/\bvergiss\b|lösch/.test(lower) || reminderRequest(lower)) return "reminder";
+  // Contracts: a new one step by step, or a change to an existing one ("Netflix ist gekündigt", "Kündigungsfrist von Magenta ist 3 Monate").
+  if (contractNewRequest(lower)) return "contract_new";
+  if (contractEditRequest(lower, known)) return "contract_edit";
+  // Bookings: delete one or set and remove tags.
+  if (bookingActionRequest(text)) return "booking";
+  // Month-plan positions: "Füg eine Position Fitnessstudio hinzu", "Lösch die Position Strom".
+  if (/\b(?:plan)?position\b/.test(lower) && /\b(?:füg|fueg|leg|trag|nimm|erstell|neue|hinzu|anleg|lösch|loesch|entfern|benenn|umbenenn|änder|aender|setz|mach)\w*/.test(lower) && !/\?\s*$/.test(lower)) return "edit";
   if (monthReviewQuestion(lower)) return "month_review";
   if (reviewQuestion(lower)) return "review";
-  if (accountRuleRequest(lower)) return "account_rule";
+  if (accountRuleRequest(lower) || /\b(?:lösch|loesch|entfern|vergiss|streich)\w*\b.{0,30}\bkontoregel/.test(lower)) return "account_rule";
   if (budgetPlanRequest(lower, known)) return "budget_plan";
   if (budgetLineQuestion(lower)) return "budget";
   // "Wie hoch ist meine Miete?" is a booking question; without bookings the answer says so.
@@ -203,6 +217,7 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   if (/^(?:welche|zeig\w*(?: mir)?) (?:abos|verträge|vertraege|versicherungen) (?:sind|wurden) (?:\S+ )?teurer/.test(lower)) return "contracts";
   if (securityQuestion(lower)) return "security";
   if (cleanupQuestion(lower)) return "cleanup";
+  if (/raphael|rafael/.test(lower) && /\b(?:buchung\w*|umsatz|umsätze)\b/.test(lower) && /\bteil\w*|\bgeteilt\b/.test(lower) && !/\?\s*$/.test(lower)) return "booking";
   if (sharedQuestion(lower) && !known) return "shared";
   if (refundQuestion(lower)) return "refunds";
   if (netWorthQuestion(lower)) return "networth";
@@ -278,8 +293,6 @@ function detectRaw(text: string, names: string[]): AssistantTool | undefined {
   // "Erklär mir meine Finanzen" is about the user's money, not about how the app works.
   if (/erklär|erklaer|versteh/.test(lower) && /\bmeine?[nrs]?\s+(?:finanzen|geld|ausgaben|lage|situation|konten|monat)\b/.test(lower)) return "check";
   if (explainPattern.test(lower)) return "explain";
-  // "Wie hoch ist der Großglockner?": looked up, so the model never guesses a number.
-  if (factTopic(text, names)) return "knowledge";
   const newGoal = /\bneue[snr]?\b|anlegen|erstell|\bsparen\b.*\bbis\b|\bbis\b.*\bsparen\b/.test(lower);
   if (known && !newGoal && (findExtra(text) || /(?:keine|ohne)\s+extra|extras?\s+(?:lösch|loesch|entfern|streich|weg)/.test(lower))) return "edit";
   // "Zahl das Pickerl vom Sparkonto", "Teil den Urlaub mit Raphael", "Nimm das Pickerl aus dem Plan".

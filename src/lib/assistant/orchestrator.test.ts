@@ -98,10 +98,8 @@ describe("routing without the model", () => {
   it("recognises chat requests and money topics", () => {
     expect(chatRequest("schreib mir ein gedicht über mein konto")).toBe(true);
     expect(chatRequest("Schreib die Kündigung für Netflix")).toBe(false);
-    // A named dish is looked up like other facts; a recipe wish without a dish stays with the chat.
-    expect(chatRequest("Gib mir ein einfaches Rezept für Pfannkuchen")).toBe(false);
-    expect(route("Gib mir ein einfaches Rezept für Pfannkuchen")).toMatchObject({ agent: "general", tool: "knowledge" });
-    expect(chatRequest("Hast du ein Rezept für mich?")).toBe(true);
+    // Recipes are turned away by the general chat without a tool or the model.
+    expect(route("Gib mir ein einfaches Rezept für Pfannkuchen")).toEqual({ agent: "general", via: "rule" });
     expect(aboutMoney("Wie wird das Wetter morgen?")).toBe(false);
     expect(aboutMoney("Was kostet mich Spotify?")).toBe(true);
     expect(aboutMoney("Wie viel ist übrig?")).toBe(true);

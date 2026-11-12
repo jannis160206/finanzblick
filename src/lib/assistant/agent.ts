@@ -2,10 +2,10 @@ import { classify, type Dashboard } from "@/lib/calc";
 import { canonicalCategory, type Category } from "@/lib/categories";
 import { currency, dateLabel } from "@/lib/format";
 import { savingsGoals } from "@/lib/goals";
-import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, PlannedOneOff, SavingsGoal } from "@/lib/types";
+import type { AppState, AssistantCard, AssistantChange, AssistantKnowledge, AssistantOperation, ContractDraft, PlannedOneOff, SavingsGoal } from "@/lib/types";
 import { financialCheck } from "./check";
 import { answerQuestion, depotProjection, findCategories, goalProgressQuestion, goalsStatus, namedGoal, parsePeriod, savingsCoach, taxDeductibles, weeklyBriefing } from "./answers";
-import { accountBalances, amexQuestion, amexSettlement, monthBudget, goalsQuestion } from "./accounts";
+import { accountBalances, amexQuestion, amexSettlement, balances, monthBudget, goalsQuestion } from "./accounts";
 import { explainDashboard } from "./explain";
 import { loanAnswer, parseReminder, reminderList, reminderListQuestion, reminderRequest, yearReview } from "./extras";
 import { homeOfficeStart } from "./homeoffice";
@@ -22,7 +22,12 @@ import { forecastAnswer } from "./forecast";
 import { budgetLineAnswer, pulseAnswer } from "./pulse";
 import { payrollAnswer } from "./payroll";
 import { ordersAnswer } from "./orders";
-import { fundsAnswer, giroTopUp, rulesResult, topUpText } from "./funds";
+import { fundsAnswer, giroTopUp, parseAccountRules, rulesResult, topUpText } from "./funds";
+import { bookingAction, bookingActionRequest } from "./booking-actions";
+import { contractEdit } from "./contract-actions";
+import { detectContracts } from "@/lib/contracts";
+import { contractDraftOperation, contractStepReply, startContractDraft } from "./contract-draft";
+import { planRowAction } from "./plan-rows";
 import { whatIfAnswer } from "./whatif-answer";
 import { parseBudgetPlan } from "./budget-plan";
 import { bookingFilter, cleanupPlan, filterLabel, hasFilter, matchesFilter, merchantRows, resolveMerchants } from "./cleanup";
@@ -32,7 +37,9 @@ import type { AssistantPageContext } from "@/lib/assistant-context";
 import type { CopilotInsight } from "@/lib/copilot-insights";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
-export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[] };
+export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[];
+  /** A contract the chat is creating step by step; the message keeps it until it is saved or dropped. */
+  contractDraft?: ContractDraft };
 type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot;
   knowledge?: { found: AssistantKnowledge[]; fresh?: string[]; offline?: boolean };
   /** What the user is looking at (route, filters, selection); stays in the browser. */
@@ -156,13 +163,41 @@ function editPlanned(item: PlannedOneOff, text: string, asOf: string): { operati
   return { operations: [update], title: `Geplante Ausgabe „${item.name}“ ändern` };
 }
 
+// The open step of a new contract, or its preview with the change to confirm.
+export function contractDraftResult(state: AppState, draft: ContractDraft, asOf: string): AgentResult {
+  const reply = contractStepReply(draft, state, asOf);
+  const operation = draft.step === "preview" ? contractDraftOperation(draft) : undefined;
+  if (!operation) return { ...reply, contractDraft: draft };
+  const preview = previewChange(state, [operation], `Vertrag „${operation.name}“ anlegen`, asOf);
+  return preview.change ? { ...preview, text: reply.text, contractDraft: draft } : { ...preview, contractDraft: { ...draft, step: "name" } };
+}
+
+function planRows(state: AppState, text: string, asOf: string): AgentResult | undefined {
+  const plan = planRowAction(state, text, asOf);
+  if (!plan) return undefined;
+  return "operations" in plan ? previewChange(state, plan.operations, plan.title, asOf) : plan;
+}
+
 function edit({ state, asOf, hints }: Context, text: string): AgentResult {
+  // "Füg eine Position Fitnessstudio hinzu", "Lösch die Position Strom": the month plan.
+  if (/\b(?:plan)?position\b/i.test(text)) {
+    const positions = planRows(state, text, asOf);
+    if (positions) return positions;
+  }
   const goals = savingsGoals(state).filter((goal) => !goal.completedAt || /lösch|entfern/.test(text.toLowerCase()));
   const planned = (state.plannedOneOffs ?? []).filter((item) => item.date.slice(0, 7) >= asOf.slice(0, 7) || item.installments > 1);
   const hinted = `${text} ${hints?.goal ?? ""} ${hints?.planned ?? ""}`;
   const goal = matchName(text, goals, (item) => item.name) ?? (hints?.goal ? matchName(hinted, goals, (item) => item.name) : undefined);
   const item = matchName(text, planned, (entry) => entry.name) ?? (hints?.planned ? matchName(hinted, planned, (entry) => entry.name) : undefined);
   const lower = text.toLowerCase();
+  // "Erhöhe das Sparziel Urlaub in Japan auf 3500 €": a named goal that does not exist is not the vacation setting.
+  const namedGoal = /\b[Ss]parziel\s+[„"]?(\p{Lu}[\p{L}\d-]*(?:\s+(?:in|für|nach|\p{Lu}[\p{L}\d-]*))+)/u.exec(text)?.[1];
+  if (!goal && !item && namedGoal) {
+    const names = goals.map((entry) => entry.name);
+    return names.length ? { text: `Ein Sparziel „${namedGoal}“ finde ich nicht. Welches meinst du? Zur Auswahl: ${names.join(", ")}.`, choices: names }
+      : { text: `Ein Sparziel „${namedGoal}“ gibt es noch nicht. Soll ich es anlegen? Sag zum Beispiel „Ich möchte ein Sparziel ${namedGoal} anlegen“.`,
+        suggestions: [`Ich möchte ein Sparziel ${namedGoal} anlegen`] };
+  }
   if (!goal && !item) {
     const setting = settingKeys.find(([pattern]) => pattern.test(lower));
     if (setting) {
@@ -173,8 +208,19 @@ function edit({ state, asOf, hints }: Context, text: string): AgentResult {
     // "Setz die Sparrate im Mai aus" without a name: only clear when exactly one goal has a fixed rate.
     const funded = goals.filter((entry) => entry.funding && entry.funding.monthly > 0);
     if (/\brate\b|sparrate/.test(lower) && funded.length === 1) return run(state, editGoal(funded[0], text, asOf), asOf);
+    // "Setz die Miete im Dezember auf 700 €": a position of the month plan.
+    const positions = planRows(state, text, asOf);
+    if (positions) return positions;
+    // "Ändere den Netflix Betrag auf 15,99 €": a contract, named without the word "Vertrag".
+    if (matchName(text, detectContracts(state, asOf), (contract) => contract.name)) {
+      const change = contractEdit(state, text, asOf);
+      return "operations" in change ? previewChange(state, change.operations, change.title, asOf) : change;
+    }
     const names = [...goals.map((entry) => entry.name), ...planned.slice(0, 8).map((entry) => entry.name)];
-    return names.length ? { text: `Welches meinst du? Zur Auswahl: ${names.join(", ")}.`, choices: names } : { text: "Ich finde noch keine Sparziele oder geplanten Ausgaben, die ich ändern könnte." };
+    const rows = state.financeRows.slice(0, 6).map((row) => `„${row.label}“`);
+    const known = rows.length ? ` Im Monatsplan gibt es die Positionen ${rows.join(", ")}.` : "";
+    return names.length ? { text: `Welches meinst du? Zur Auswahl: ${names.join(", ")}.${known}`, choices: names }
+      : { text: `Ich finde kein Sparziel, keine geplante Ausgabe und keine Position, die dazu passt.${known}` };
   }
   const goalFirst = goal && (!item || /sparziel|ziel|rate|spar/.test(lower) || goal.name.length >= item.name.length);
   return run(state, goalFirst ? editGoal(goal!, text, asOf) : editPlanned(item!, text, asOf), asOf);
@@ -185,6 +231,12 @@ function run(state: AppState, plan: { operations: AssistantOperation[]; title: s
 }
 
 function booking({ state, asOf, hints }: Context, text: string): AgentResult {
+  if (bookingActionRequest(text)) {
+    const action = bookingAction(state, text, asOf, hints?.merchant);
+    if (!("operations" in action)) return action;
+    const preview = previewChange(state, action.operations, action.title, asOf);
+    return { ...preview, card: action.card, text: preview.change ? `${action.title}. Bitte prüfen und bestätigen:` : preview.text };
+  }
   const plan = bookingEdit(state, text, asOf, hints?.merchant);
   if (typeof plan === "string") return { text: plan };
   const preview = previewChange(state, plan.operations, plan.title, asOf);
@@ -193,6 +245,41 @@ function booking({ state, asOf, hints }: Context, text: string): AgentResult {
 
 const nameList = (state: AppState, asOf: string) => [...savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name),
   ...(state.plannedOneOffs ?? []).filter((item) => item.date.slice(0, 7) >= asOf.slice(0, 7) || item.installments > 1).map((item) => item.name)];
+
+// "Sparkonto ist für alle Ausgaben", "Lösch die Kontoregel für Trade Republic": shown as a change and saved only after confirming.
+function accountRule({ state, dashboard, asOf }: Context, text: string): AgentResult {
+  const lower = text.toLowerCase();
+  const rules = state.accountRules ?? [];
+  if (/\b(?:lösch|loesch|entfern|vergiss|streich)\w*/.test(lower)) {
+    // "Girokonto" means the account the rule was saved for ("Raiffeisen Giro"), like when the rule was set.
+    const alias = parseAccountRules(`${text.replace(/\b(?:lösch|loesch|entfern|vergiss|streich)\w*|\bkontoregel\w*|\bregel\w*|\bdie\b|\bfür\b|\bvom\b|\bdas\b/gi, " ").trim()} ist für alle Ausgaben`,
+      balances(state, dashboard).map((item) => item.name))[0]?.account;
+    const rule = matchName(text.replace(/\bkontoregel\w*|\bregel\w*/gi, " "), rules, (item) => item.account)
+      ?? (alias ? rules.find((item) => item.account.toLowerCase() === alias.toLowerCase()) : undefined);
+    if (!rule) return rules.length ? { text: `Welche Kontoregel soll ich löschen? Es gibt Regeln für ${rules.map((item) => item.account).join(", ")}.`,
+      choices: rules.slice(0, 4).map((item) => `Lösch die Kontoregel für ${item.account}`) } : { text: "Es gibt noch keine Kontoregeln." };
+    return previewChange(state, [{ op: "account_rule_delete", ruleId: rule.id }], `Kontoregel für ${rule.account} löschen`, asOf);
+  }
+  const names = [...balances(state, dashboard).map((item) => item.name), ...savingsGoals(state).map((goal) => goal.name)];
+  const parsed = parseAccountRules(text, names);
+  if (!parsed.length) {
+    const list = rulesResult(state, dashboard, asOf);
+    return { ...list, text: `Welches Konto meinst du und wofür darf es verwendet werden? Zum Beispiel „Sparkonto ist für alle Ausgaben“ oder „Trade Republic nur für Autowerkstatt, Ölwechsel“. ${list.text}`.slice(0, 2000) };
+  }
+  return previewChange(state, parsed.slice(0, 20).map((rule) => ({ op: "account_rule" as const, account: rule.account, use: rule.use, purposes: rule.purposes })),
+    parsed.length === 1 ? `Kontoregel für ${parsed[0].account}` : `${parsed.length} Kontoregeln`, asOf);
+}
+
+// "Setz den Successbonus auf 120 %", "Schalte den Successbonus aus": the payroll model setting.
+export function bonusRequest(text: string): number | undefined {
+  const lower = text.toLowerCase();
+  if (!/\b(?:success\s?bonus|erfolgsbonus|bonus)\b/.test(lower) || /\?\s*$|^(?:wie|was|wann|warum|wieso|wird|ist|bekomm)/.test(lower)) return undefined;
+  if (/\b(?:aus(?:schalten)?|abschalten|deaktivier\w*|kein(?:en)?)\b/.test(lower) && !/\d/.test(lower)) return 0;
+  const value = /(\d{1,3}(?:[.,]\d{1,2})?)\s*(?:%|prozent)/.exec(lower);
+  if (!value || !/\b(?:setz\w*|stell\w*|änder\w*|aender\w*|trag\w*|auf|beträgt|betraegt|ist|liegt|mach\w*)\b/.test(lower)) return undefined;
+  const number = Number(value[1].replace(",", "."));
+  return number >= 0 && number <= 500 ? number : undefined;
+}
 
 // Several commands in one message become one preview and one undo step.
 function batch(context: Context, text: string): AgentResult {
@@ -372,7 +459,11 @@ function help(): AgentResult {
     { label: "Monats-Puls", detail: "„Wie viel kann ich heute noch ausgeben?“, „Ist mein Gehalt schon da?“, „Bin ich im Budget?“ – mit echtem Kontostand" },
     { label: "Monatsbudget", detail: "„Was bleibt mir diesen Monat übrig?“" },
     { label: "Ändern und merken", detail: "„Erhöh Japan auf 4.000 € und schieb es auf Juli“, „Zahl das Pickerl vom Sparkonto“, „Puffer immer 500 €“" },
-    { label: "Buchungen bearbeiten", detail: "„Benenne BILLA DANKT in Billa um“, „Netflix ist Fixkosten“, „Nimm die Buchung vom 3.11. aus dem Plan“" },
+    { label: "Buchungen bearbeiten", detail: "„Benenne BILLA DANKT in Billa um“, „Netflix ist Fixkosten“, „Nimm die Buchung vom 3.11. aus dem Plan“, „Lösch die Buchung vom 3.8. über 249 €“" },
+    { label: "Tags", detail: "„Tagge die Buchungen vom 10. bis 15.8. mit Malaga 2026“, „Entferne den Tag Malaga“" },
+    { label: "Verträge anlegen und ändern", detail: "„Leg einen neuen Vertrag an“ – Schritt für Schritt –, „Netflix ist gekündigt zum 31.12.“, „Bestätige Spotify“, „Kündigungsfrist von Magenta ist 3 Monate“" },
+    { label: "Monatsplan", detail: "„Setz die Miete im Dezember auf 700 €“, „Füg eine Position Fitnessstudio hinzu“, „Lebensmittelbudget um 50 € erhöhen“" },
+    { label: "Konten und Gehalt einstellen", detail: "„Sparkonto ist für alle Ausgaben“, „Setz den Successbonus auf 120 %“" },
     { label: "Steuer und Depot", detail: "„Was kann ich absetzen?“, „100 € im Monat in einen ETF“" },
     { label: "Live aus dem Internet", detail: "„Wie hoch ist die Inflation?“, „Welche Zinsen fürs Sparkonto?“, „3.000 € in Yen“" },
     { label: "Begriffe erklären und dazulernen", detail: "„Was ist ein ETF?“, „Was bedeutet KESt?“, „Was hast du gelernt?“" },
@@ -386,7 +477,7 @@ function help(): AgentResult {
     { label: "Was wäre wenn", detail: "„Wenn ich Netflix kündige und 200 € mehr spare, wann erreiche ich Japan?“ – mit Schiebereglern" },
     { label: "Steuer-Mappe", detail: "„Steuer-Mappe 2026“ – absetzbare Buchungen nach Kennzahl, als CSV" },
   ];
-  return { text: "Gern! Ich kenne deine Buchungen, Sparziele und geplanten Ausgaben und kann damit rechnen, planen und Dinge für dich einstellen. Am besten fragst du einfach drauflos:",
+  return { text: "Gern! Ich helfe dir bei allem rund um deine Finanzen und erledige fast alles, was du in der App auch selbst machen kannst – jede Änderung zeige ich dir vorher zum Bestätigen:",
     card: { kind: "answer", title: "Womit ich dir helfen kann", lines, note: "Alle Zahlen rechnet der Code nach. Geändert wird nur, wenn du bestätigst." },
     suggestions: ["Gib mir den Wochenüberblick", "Was kann ich im Dashboard alles einstellen?", "Ich will 200 € mehr im Monat sparen"] };
 }
@@ -433,7 +524,13 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
       return typeof operation === "string" ? { text: operation } : previewChange(state, [operation], "Erinnerung anlegen", asOf);
     }
     case "review": return yearReview(state, text, asOf);
-    case "cancel": return cancelAnswer(state, text, asOf);
+    case "cancel": {
+      // The letter is only half of it: one tap marks the contract as cancelled, like the switch in the contract dialog.
+      const answer = cancelAnswer(state, text, asOf);
+      const name = answer.card?.kind === "cancel" ? answer.card.title.replace(/^Kündigungshilfe · /, "") : undefined;
+      const end = /\bzum\s+(\d{1,2}\.\s?\d{1,2}\.(?:\s?\d{2,4})?)/.exec(text)?.[1];
+      return name ? { ...answer, suggestions: [`${name} ist gekündigt${end ? ` zum ${end}` : ""}`.slice(0, 120), ...(answer.suggestions ?? [])].slice(0, 4) } : answer;
+    }
     case "why": return whyAnswer(state, text);
     case "forecast": return forecastAnswer(state, dashboard, asOf);
     case "whatif": return whatIfAnswer(state, dashboard, text, asOf);
@@ -448,7 +545,7 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
     }
     case "orders": return ordersAnswer(state, asOf);
     case "funds": return fundsAnswer(state, dashboard, text, asOf);
-    case "account_rule": return rulesResult(state, dashboard, asOf);
+    case "account_rule": return accountRule(context, text);
     case "security": return securityCheck(state, asOf);
     case "cleanup": {
       const plan = cleanupPlan(state);
@@ -464,8 +561,23 @@ export function executeTool(tool: AssistantTool, input: string, context: Context
       context.previous ?? []);
     case "context": return contextAnswer(state, text, context.page);
     case "insights": return insightsAnswer(state, dashboard, asOf, context.insights);
-    case "payroll": return payrollAnswer(state, text, asOf);
+    case "payroll": {
+      const bonus = bonusRequest(text);
+      return bonus === undefined ? payrollAnswer(state, text, asOf)
+        : previewChange(state, [{ op: "bonus_percent", value: bonus }], bonus === 0 ? "Successbonus ausschalten" : `Successbonus auf ${bonus.toLocaleString("de-DE")} % setzen`, asOf);
+    }
+    case "contract_new": return contractDraftResult(state, startContractDraft(text, state, asOf, `manual:${crypto.randomUUID()}`), asOf);
+    case "contract_edit": {
+      const plan = contractEdit(state, text, asOf, context.page);
+      return "operations" in plan ? previewChange(state, plan.operations, plan.title, asOf) : plan;
+    }
     case "budget_plan": {
+      // "Setz Tanken im Dezember auf 150 €", "Tanken ab Jänner auf 120 €": single months of the month plan, like editing those cells.
+      if (/\b(?:im|für|fuer|ab|von|bis)\s+(?:jänner|jaenner|januar|feber|februar|märz|maerz|april|mai|juni|juli|august|september|oktober|november|dezember)\b/i.test(text)
+        && !/\bum\s+\d/.test(text)) {
+        const months = planRows(state, text, asOf);
+        if (months?.change) return months;
+      }
       const parsed = parseBudgetPlan(state, text, asOf);
       return "operations" in parsed ? previewChange(state, parsed.operations, parsed.title, asOf) : parsed;
     }

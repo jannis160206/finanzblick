@@ -42,6 +42,9 @@ describe("payroll specialist", () => {
     expect(bonus).toMatch(/^Der Successbonus kommt voraussichtlich mit der Dezember-Abrechnung \(ausgezahlt im Jänner\)/);
     expect(bonus).toMatch(/zu 6 %, .+ voll versteuert\. Netto bleiben etwa /);
     expect(payrollAnswer(state, "Wie hoch ist mein Urlaubsgeld?").text).toMatch(/^Der Urlaubszuschuss kam mit der Juni-Abrechnung/);
+    // Asked in the past tense, a month means the one that has passed, not next year's.
+    expect(payrollAnswer(state, "Was war mein Netto im Oktober?", "2026-11-11").text)
+      .toMatch(new RegExp(`^Im Oktober 2026 kamen ${currency(2780)} netto aus der September-Abrechnung`));
     expect(payrollAnswer(state, "Was ist das Jahressechstel?").text).toMatch(/^Das Jahressechstel ist .+ Bei dir liegt es derzeit bei /);
     expect(payrollAnswer(state, "Was ist der Unterschied zwischen Brutto und Netto?").text).toMatch(/^Brutto ist dein Gehalt vor allen Abzügen/);
     const tax = payrollAnswer(state, "Warum zahle ich so viel Lohnsteuer?").text;

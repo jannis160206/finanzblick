@@ -19,6 +19,13 @@ describe("assistant AI interpretation", () => {
     expect(reply).toMatchObject({ source: "KI", tool: "savings_goal", draft: { action: "savings_goal", name: "Japan", amount: 3000, startCapital: 500, fromAccount: "Sparkonto", date: "2027-07-31" } });
   });
 
+  it("fills a plain answer to the open draft's question without asking the model", async () => {
+    const pending = { action: "savings_goal" as const, name: "Urlaub in Japan" };
+    const reply = await interpretAssistantMessage({ message: "3000 €", asOf: "2026-10-07", pending });
+    expect(chat).not.toHaveBeenCalled();
+    expect(reply).toMatchObject({ source: "Regel", via: "rule", tool: "savings_goal", draft: { name: "Urlaub in Japan", amount: 3000 }, question: expect.stringMatching(/Bis wann/) });
+  });
+
   it("falls back to the rule parser when the NPU is offline", async () => {
     chat.mockRejectedValue(new AiUnavailableError());
     const reply = await interpretAssistantMessage({ message: "Im März kommt das Pickerl", asOf: "2026-10-07" });

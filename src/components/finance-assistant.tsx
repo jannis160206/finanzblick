@@ -12,15 +12,16 @@ import { PageHeading } from "@/components/finance-ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
+import { contractDraftResult, executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
 import { balances } from "@/lib/assistant/accounts";
-import { giroTopUp, parseAccountRules, ruleText, rulesResult, storeAccountRules, topUpText } from "@/lib/assistant/funds";
+import { giroTopUp, topUpText } from "@/lib/assistant/funds";
 import { readAnswerStream } from "@/lib/ai/answer-stream";
 import { weeklyBriefing } from "@/lib/assistant/answers";
-import { lastDay, mergeDraft, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
+import { draftSuggestions, lastDay, mergeDraft, missingField, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
 import { extractMemories } from "@/lib/assistant/memory";
 import { smallTalk, starterSuggestions } from "@/lib/assistant/smalltalk";
 import { applyOperations, OperationError, recordChange, recordCreation, undoChange } from "@/lib/assistant/operations";
+import { cancelDraft, confirmDraft, continueContractDraft, contractStepReply, leavesDraft } from "@/lib/assistant/contract-draft";
 import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOperation, monthBasis, planningHorizon, planSavingsGoal, type Affordability } from "@/lib/assistant/plan";
 import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
@@ -30,7 +31,7 @@ import { currentAssistantContext, type AssistantPageContext } from "@/lib/assist
 import { useDashboardExtras } from "@/components/dashboard/use-dashboard-extras";
 import { currentNavItem } from "@/components/shell/navigation";
 import { currenciesIn, type MarketSnapshot } from "@/lib/assistant/market";
-import { factTopic, findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
+import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPhrase, matchPhrase, relevantKnowledge, storeKnowledge } from "@/lib/assistant/knowledge";
 import { resolveFollowUp, resolvePronoun } from "@/lib/assistant/followup";
 import { splitQuestion } from "@/lib/assistant/combined";
 import { explainAgain, fixedReply, topicClarify } from "@/lib/assistant/fixed-replies";
@@ -178,8 +179,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(reply ? [{ id: newId(), role: "assistant" as const, text: reply, at: Date.now() }] : [])], also);
   const addDraftMessage = (draft: AssistantDraft, source: AssistantMessage["source"] = "Regel", run: Pick<AssistantMessage, "via" | "ms"> = {}) => {
     const question = missingQuestion(draft);
+    const suggestions = draftSuggestions(draft, state.settings.asOf);
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
-      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action], ...run }]);
+      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action],
+        ...(suggestions ? { suggestions } : {}), ...run }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
     meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms"> = {}) => {
@@ -187,7 +190,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const message = {
       id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
       ...(result.card ? { card: result.card } : {}), ...(result.change ? { change: result.change } : {}),
-      ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.change || result.undoId ? { status: "preview" as const } : {}),
+      ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.contractDraft ? { contractDraft: result.contractDraft } : {}),
+      ...(result.change || result.undoId ? { status: "preview" as const } : result.contractDraft ? { status: "question" as const } : {}),
       ...(suggestions?.length ? { suggestions: [...new Set(suggestions)].map((item) => item.slice(0, 120)).slice(0, 4) } : {}),
       ...(meta.tool ? { tool: meta.tool.slice(0, 40) } : {}), ...(meta.asked ? { asked: meta.asked.slice(0, 1000) } : {}), ...(meta.agent ? { agent: meta.agent } : {}),
       ...(meta.via ? { via: meta.via } : {}), ...(meta.ms !== undefined ? { ms: Math.max(0, Math.round(meta.ms)) } : {}),
@@ -270,12 +274,16 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const markUndone = (logId: string) => (item: AssistantMessage): AssistantMessage =>
     item.change?.logId === logId || item.undoId === logId ? { ...item, status: "undone" } : item;
 
-  function applyChange(message: AssistantMessage) {
+  // `said`: the typed confirmation ("Ja"), shown in the chat together with a short reply.
+  function applyChange(message: AssistantMessage, said?: string) {
     const change = message.change!;
     const logId = newId();
     const at = timestamp();
+    const typed: AssistantMessage[] = said ? [{ id: newId(), role: "user", text: said, at },
+      { id: newId(), role: "assistant", text: `Erledigt: ${change.title}. Rückgängig geht jederzeit über den Knopf oben.`.slice(0, 2000), at: at + 1, source: "Regel",
+        ...(message.agent ? { agent: message.agent } : {}) }] : [];
     if (commit((current) => recordChange(current, applyOperations(current, change.operations, { asOf: current.settings.asOf, now: at }), { id: logId, at, title: change.title }),
-      (items) => items.map((item) => item.id === message.id ? { ...item, status: "applied", change: { ...change, logId } } : item))) toast.success("Übernommen");
+      (items) => [...items.map((item) => item.id === message.id ? { ...item, status: "applied" as const, change: { ...change, logId } } : item), ...typed])) toast.success("Übernommen");
   }
   function undo(logId: string) {
     const title = state.assistantChanges?.find((entry) => entry.id === logId)?.title ?? "Änderung";
@@ -317,7 +325,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }, [ready, storageError]);
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
-  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, brief = false) {
+  async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string) {
     try {
       const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
@@ -329,7 +337,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence } : {}), ...(brief ? { brief } : {}) }),
+          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence } : {}) }),
         });
         if (!response.ok) return undefined;
         if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
@@ -374,14 +382,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // Terms are answered from learned knowledge; unknown or outdated ones are looked up once via the MCP server and remembered.
   async function loadKnowledge(text: string, names: string[]) {
     const topics = knowledgeTopics(text, names, true);
-    const general = Boolean(factTopic(text, names));
     const found: AssistantKnowledge[] = [], fresh: AssistantKnowledge[] = [], used: string[] = [];
     let offline = false;
     for (const topic of topics) {
       const stored = findKnowledge(state.assistantKnowledge, topic);
       if (stored && !isStale(stored)) { found.push(stored); used.push(stored.id); continue; }
       try {
-        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}${general ? "&general=1" : ""}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
+        const response = await fetch(`/api/knowledge?q=${encodeURIComponent(topic)}`, { cache: "no-store", signal: AbortSignal.timeout(15000) });
         if (!response.ok) throw new Error();
         const { hit } = await response.json() as { hit?: KnowledgeHit | null };
         if (hit?.title && hit.text && hit.url) {
@@ -399,13 +406,71 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     return { found, fresh: fresh.map((entry) => entry.id), offline };
   }
 
+  // A contract created step by step: the answer fills the open step; "Ja" on the preview saves it, "Abbrechen" drops it.
+  async function continueContract(message: AssistantMessage, text: string): Promise<boolean> {
+    const draft = message.contractDraft!;
+    const asOf = state.settings.asOf;
+    const startedAt = Date.now();
+    const userMessage: AssistantMessage = { id: newId(), role: "user", text, at: Date.now() };
+    if (cancelDraft(text)) {
+      setInput("");
+      save((items) => [...items.map((item) => item.id === message.id ? { ...item, status: "dismissed" as const } : item), userMessage,
+        { id: newId(), role: "assistant", text: "Alles klar, ich lege keinen Vertrag an.", at: Date.now(), source: "Regel", agent: "contracts" }]);
+      return true;
+    }
+    if (message.status === "preview" && message.change && confirmDraft(text)) {
+      setInput("");
+      applyChange(message, text);
+      return true;
+    }
+    // A new question, a greeting or another topic in between is answered normally; the contract stays where it was.
+    if (/\?\s*$/.test(text) || leavesDraft(text, draft.step === "name")) return false;
+    const next = continueContractDraft(draft, text, state, asOf);
+    if (!next.understood && (detectTool(text, knownNames()) || text.split(/\s+/).length > 5)) return false;
+    setInput("");
+    setBusy(true);
+    save((items) => [...items.map((item) => item.id !== message.id ? item : item.status === "preview" ? { ...item, status: "dismissed" as const }
+      : { ...item, status: undefined }), userMessage]);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, 450 - (Date.now() - startedAt))));
+    const result = next.understood ? contractDraftResult(state, next.draft, asOf)
+      : { ...contractStepReply(draft, state, asOf), contractDraft: draft };
+    addResult(next.understood ? result : { ...result, text: `Das habe ich nicht ganz verstanden. ${result.text}` }, "Regel",
+      { tool: "contract_new", agent: "contracts", via: "rule", ms: Date.now() - startedAt });
+    setBusy(false);
+    inputRef.current?.focus();
+    return true;
+  }
+
   async function send(event?: FormEvent, preset?: string) {
     event?.preventDefault();
     const text = (preset ?? input).trim().slice(0, 1000);
     if (!text || busy || storageError) return;
     // Only the latest answer's open draft takes follow-ups ("lieber 4000"); once the chat moved on, a new message is a new request.
     const latest = messages.findLast((item) => item.role === "assistant");
-    const pending = latest?.draft && (latest.status === "question" || latest.status === "preview") ? latest.draft : undefined;
+    if (latest?.contractDraft && (latest.status === "question" || latest.status === "preview") && await continueContract(latest, text)) return;
+    // "Ja" or "Nein" right below a preview does the same as its buttons.
+    if (latest?.change && latest.status === "preview" && !latest.draft && !latest.contractDraft) {
+      if (confirmDraft(text)) {
+        setInput("");
+        applyChange(latest, text);
+        return;
+      }
+      if (cancelDraft(text) || /^(?:nein|ne|nö|lieber nicht|verwerfen|nicht übernehmen)[.!]*$/i.test(text.trim())) {
+        setInput("");
+        save((items) => [...items.map((item) => item.id === latest.id ? { ...item, status: "dismissed" as const } : item), { id: newId(), role: "user", text, at: Date.now() },
+          { id: newId(), role: "assistant", text: "Alles klar, ich habe nichts geändert.", at: Date.now(), source: "Regel", ...(latest.agent ? { agent: latest.agent } : {}) }]);
+        return;
+      }
+    }
+    // "Abbrechen" while a goal or an expense is being asked for: nothing is saved.
+    if (latest?.draft && (latest.status === "question" || latest.status === "preview") && cancelDraft(text)) {
+      setInput("");
+      save((items) => [...items.map((item) => item.id === latest.id ? { ...item, status: "dismissed" as const } : item), { id: newId(), role: "user", text, at: Date.now() },
+        { id: newId(), role: "assistant", text: "Alles klar, ich habe nichts gespeichert.", at: Date.now(), source: "Regel", agent: toolOwner[latest.draft!.action] }]);
+      return;
+    }
+    const pending = latest?.draft && (latest.status === "question" || latest.status === "preview")
+      && !leavesDraft(text, missingField(latest.draft) === "name") ? latest.draft : undefined;
     const asOf = state.settings.asOf;
     const startedAt = Date.now();
     // Rough duration of this run for the admin view, from sending to the answer.
@@ -570,17 +635,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
     const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent, agentEvidence(agent, state, dashboard, asOf, work)) : undefined;
     await settle();
-    if (tool === "account_rule") {
-      // "Sparkonto ist für alle Ausgaben", "Trade Republic nur für Autowerkstatt": saved right away, deletable under „Gedächtnis“.
-      const rules = parseAccountRules(work, [...balances(state, dashboard).map((item) => item.name), ...goals]);
-      if (rules.length) {
-        const next = { ...state, accountRules: storeAccountRules(state.accountRules, rules) };
-        update((current) => ({ ...current, accountRules: storeAccountRules(current.accountRules, rules) }));
-        addResult(rulesResult(next, dashboard, asOf, `Gemerkt: ${rules.map((rule) => `${rule.account} ${ruleText(rule)}`).join("; ")}. ` +
-          "Bei „Kann ich mir … leisten?“ prüfe ich ab jetzt genau diese Konten und sage dir OK oder nicht OK."), "Regel", { tool, asked: work, ...run, ms: elapsed() });
-      } else addResult({ text: "Welches Konto meinst du und wofür darf es verwendet werden? Zum Beispiel „Sparkonto ist für alle Ausgaben“ oder „Trade Republic nur für Autowerkstatt, Ölwechsel“.",
-        suggestions: ["Welche Konten darf ich wofür verwenden?"] }, reply.source, { ...run, ms: elapsed() });
-    } else if (tool === "remember") {
+    if (tool === "remember") {
       // An explicit "Merk dir …" is saved right away; it can be undone or deleted under „Gedächtnis“.
       const operation = parseMemory(work);
       if (operation) remember([operation]);
@@ -595,19 +650,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       } catch {
         result = { text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." };
       }
-      // Nothing reliable to look up ("Hauptstadt von Australien"): the general chat answers from general knowledge instead.
-      let worded = false;
-      if (tool === "knowledge" && knowledge && !knowledge.found.length) {
-        const said = await freeAnswer(work, history, "general", undefined, true);
-        if (said) { result = { text: said, suggestions: agentSuggestions.general }; worded = true; }
-      } else if (tool === "knowledge" && knowledge?.found.length && factTopic(work)) {
-        // "Hauptstadt von Australien": the article is the evidence, the model only reads the answer out of it.
-        const said = await freeAnswer(work, [], "general", knowledge.found.map((entry) => `${entry.title}: ${entry.text}`).join("\n\n").slice(0, 1500), true);
-        // A question back ("Kannst du mir verraten, was …?") is no answer; the article's own sentences stay then.
-        if (said && !said.includes("?")) { result = { ...result, text: said }; worded = true; }
-      }
       // The tool computed the numbers; the model turns them into a direct answer to the actual question. The card stays.
-      if (!worded && route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
+      // A term without a reliable finance article keeps the tool's honest answer instead of a guess.
+      if (!(tool === "knowledge" && knowledge && !knowledge.found.length) && route.converse && converseOn(tool, result, work, tool !== ruleTool) && !changingTools.includes(tool) && !result.change && !result.undoId && !result.choices) {
         const said = await freeAnswer(work, history, agent, evidenceText(result));
         if (said) result = { ...result, text: said };
       }

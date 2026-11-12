@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { assistantDraftSchema, dateSchema, type AssistantDraft } from "@/lib/types";
-import { groundModelExtraction, mergeDraft, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
+import { groundModelExtraction, mergeDraft, missingField, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
 import { normalizeMessage } from "@/lib/assistant/normalize";
 import { agentTools, chatRequest, parseAgent, routeByRules, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
 import { detectTool, isAssistantTool, isDraftTool, matchName, type AssistantTool } from "@/lib/assistant/tools";
@@ -122,6 +122,14 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
   // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.
   if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
     return { agent: toolOwner[ruleTool], via: "rule", tool: ruleTool, hints: {}, source: "Regel" };
+  // A plain answer to the open draft's question ("3000 €", "bis Juni 2027", "Urlaub in Japan") needs no model: the rules fill it in.
+  if (input.pending && !ruleTool) {
+    const quick = mergeDraft(input.pending, { ...parsed, action: parsed.action ?? input.pending.action }, {}, input.message, input.asOf);
+    if (quick && quick.action === input.pending.action && missingField(quick) !== missingField(input.pending)) {
+      const question = missingQuestion(quick);
+      return { agent: toolOwner[quick.action], via: "rule", tool: quick.action, hints: {}, draft: quick, ...(question ? { question } : {}), source: "Regel" };
+    }
+  }
   // Orchestrator: an open draft and every rule tool name their owner; otherwise small talk and signal words decide.
   const decision: RouteDecision | undefined = input.pending ? { agent: toolOwner[input.pending.action], via: "rule" }
     : ruleTool ? { agent: toolOwner[ruleTool], tool: ruleTool, via: "rule" } : routeByRules(input.message, names);

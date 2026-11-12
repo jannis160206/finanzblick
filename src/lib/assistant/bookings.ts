@@ -19,6 +19,9 @@ const reviewedOff = /ungeprüft|ungeprueft|nicht (?:als )?geprüft|nicht (?:als 
 const ignoreOn = /\bignorier\w*|aus (?:der|den|allen) (?:statistik\w*|auswertung\w*)|in keiner (?:statistik|auswertung)/;
 const ignoreOff = /nicht (?:mehr )?ignorier\w*|wieder (?:berücksichtig|beruecksichtig)\w*|wieder in (?:die|den) (?:statistik\w*|auswertung\w*)/;
 const planIgnore = /(?:im|aus dem) (?:monats)?plan ignorier/;
+// "Teil die Buchung vom 20.10. mit Raphael"; the app cannot unshare a booking, so "nicht geteilt" only gets an explanation.
+const shareOff = /nicht (?:mehr )?(?:mit (?:raphael|rafael) )?geteilt|nicht (?:mehr )?teilen|teilen aufheben|ungeteilt/;
+const shareOn = /\bteil\w*\b.{0,60}\b(?:raphael|rafael)\b|\b(?:raphael|rafael)\b.{0,40}\bteil\w*|\bals geteilt\b|\bmit (?:raphael|rafael) geteilt\b/;
 const question = /^(?:wie|was|welche\w*|wo|wann|warum|wieso|weshalb|zeig mir|hab(?:e)? ich|sind|ist|gibt)\b|\?\s*$/;
 const renamePatterns = [
   /^(?:bitte\s+)?(?:benenn\w*|nenn\w*)\s+(.+?)\s+in\s+[„"']?(.+?)[“"']?\s+um\s*[.!]?$/i,
@@ -33,7 +36,8 @@ const fillers = new Set(["alle", "die", "der", "das", "den", "dem", "des", "buch
   "jetzt", "immer", "eine", "einen", "ein", "mein", "meine", "meinen", "raus", "rein", "aufnehmen", "nehmen", "auf", "gehört", "gehoert", "zu", "variabel",
   "ignorieren", "ignorier", "euro", "€", "januar", "jänner", "februar", "feber", "märz", "april", "mai", "juni", "juli", "august", "september", "oktober",
   "november", "dezember", "monat", "diesen", "letzten", "heuer", "seit", "es", "sie", "er", "dieser", "diese", "dieses", "ignoriere", "ignoriert",
-  "statistik", "statistiken", "auswertung", "auswertungen", "berücksichtigen", "beruecksichtigen", "keiner", "allen"]);
+  "statistik", "statistiken", "auswertung", "auswertungen", "berücksichtigen", "beruecksichtigen", "keiner", "allen",
+  "mit", "raphael", "rafael", "teil", "teile", "teilen", "geteilt", "hälfte"]);
 
 export function renameRequest(text: string): { target: string; alias: string } | undefined {
   for (const pattern of renamePatterns) {
@@ -53,10 +57,11 @@ export function bookingRequest(text: string, known: boolean): boolean {
   if ((planOut.test(lower) || planIn.test(lower)) && (!known || bookingWord)) return true;
   if (fixedWord.test(lower) && fixedVerb.test(lower) && !/\bwie ?viel\b|\bwelche\b/.test(lower)) return true;
   if (reviewedWord.test(lower) && /markier|\bals\b|abhak|\bhak|\bsetz/.test(lower)) return true;
+  if ((shareOn.test(lower) || shareOff.test(lower)) && bookingWord) return true;
   return !known && renameRequest(text) !== undefined;
 }
 
-const dateIn = (text: string, asOf: string) => {
+export const dateIn = (text: string, asOf: string) => {
   const match = /\b(?:vom|am|den)\s+(\d{1,2})\.\s?(\d{1,2})\.?(?:\s?(20\d{2}|\d{2})\b)?/.exec(text);
   if (!match) return undefined;
   const year = match[3] ? (match[3].length === 2 ? `20${match[3]}` : match[3]) : asOf.slice(0, 4);
@@ -64,13 +69,13 @@ const dateIn = (text: string, asOf: string) => {
   // Without a year a date after today means last year.
   return !match[3] && date > asOf ? `${Number(year) - 1}${date.slice(4)}` : date;
 };
-const amountIn = (text: string) => {
+export const amountIn = (text: string) => {
   const match = /(\d{1,3}(?:\.\d{3})*|\d+)(?:,(\d{1,2}))?\s*(?:€|euro)/i.exec(text);
   return match ? parseAmount(`${match[1]}${match[2] ? `,${match[2]}` : ""}`) : undefined;
 };
 
 // The merchant is the longest run of words (up to 3) that actually appears in the bookings.
-function findTarget(rows: Transaction[], text: string): string | undefined {
+export function findTarget(rows: Transaction[], text: string): string | undefined {
   const words = text.replace(/[„“"'.,!?:;()]/g, " ").replace(/-buchung\w*/gi, " ").split(/\s+/).filter(Boolean);
   for (let size = 3; size >= 1; size--) {
     for (let start = 0; start + size <= words.length; start++) {
@@ -87,9 +92,11 @@ export type BookingPlan = { operations: AssistantOperation[]; title: string; car
 
 export function bookingEdit(state: AppState, text: string, asOf: string, hint?: string): BookingPlan | string {
   const lower = text.toLowerCase();
+  if (shareOff.test(lower)) return "Eine geteilte Buchung lässt sich auch in den Umsätzen nicht wieder auf ungeteilt stellen. Wenn Raphael dir dafür nichts schuldet, kannst du sie unter „Geteilte Kosten“ als erledigt markieren.";
   const rename = renameRequest(text);
   const update: Extract<AssistantOperation, { op: "transaction_update" }> = { op: "transaction_update", ids: ["pending"] };
   if (rename) update.alias = rename.alias;
+  else if (shareOn.test(lower)) update.sharedWithRaphael = true;
   else if (ignoreOff.test(lower)) update.ignored = false;
   else if (ignoreOn.test(lower) && !planIgnore.test(lower)) update.ignored = true;
   else {
@@ -109,7 +116,7 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
   const everything = !merchant && !date && amount === undefined && update.reviewed !== undefined && /\balle\b|\balles\b/.test(lower);
   if (!merchant && !date && amount === undefined && !everything)
     return rename ? `Ich finde keine Buchungen mit „${rename.target}“. Wie steht der Händler in den Umsätzen?` : "Welche Buchungen meinst du? Nenne den Händler, ein Datum (z. B. „vom 3.11.“) oder einen Betrag.";
-  const rows = state.transactions.filter((row) => (!merchant || matchesTransactionSearch(row, merchant)) &&
+  const rows = state.transactions.filter((row) => (!update.sharedWithRaphael || row.amount < 0 && !row.sharedWithRaphael) && (!merchant || matchesTransactionSearch(row, merchant)) &&
     (!date || row.date === date) && (amount === undefined || Math.abs(Math.abs(row.amount) - amount) < 0.005) &&
     (!period || row.date >= period.from && row.date <= period.to) && (!everything || !row.ignored && !!row.reviewed !== update.reviewed))
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -117,7 +124,7 @@ export function bookingEdit(state: AppState, text: string, asOf: string, hint?: 
     .filter(Boolean).join(" ");
   if (!rows.length) return `Ich finde keine Buchung ${what}.`;
   update.ids = rows.slice(0, 2000).map((row) => row.id);
-  const action = update.alias ? `als „${update.alias}“ anzeigen` : update.ignored ? "ignorieren (zählt in keiner Statistik)"
+  const action = update.alias ? `als „${update.alias}“ anzeigen` : update.sharedWithRaphael ? "mit Raphael teilen (du zahlst die Hälfte)" : update.ignored ? "ignorieren (zählt in keiner Statistik)"
     : update.ignored === false ? "wieder berücksichtigen" : update.includeInPlan === false ? "aus dem Monatsplan nehmen"
     : update.includeInPlan ? "wieder in den Monatsplan nehmen" : update.fixedCost === true ? "als Fixkosten markieren" : update.fixedCost === false ? "nicht mehr als Fixkosten zählen"
     : update.reviewed === false ? "als ungeprüft markieren" : "als geprüft markieren";

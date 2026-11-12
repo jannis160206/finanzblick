@@ -188,7 +188,9 @@ const categoryWords: [RegExp, Category[], string][] = [
   [/urlaub|reise|flug|hotel/, ["Urlaub"], "Urlaub"],
   [/sport|fitness|\bgym\b/, ["Sport & Fitness"], "Sport & Fitness"],
   [/freizeit|hobby|hobbys/, ["Freizeit", "Entertainment"], "Freizeit"],
-  [/entertainment|kino|streaming|games|spiele/, ["Entertainment"], "Entertainment"],
+  // Streaming services are booked as subscriptions.
+  [/streaming|musikabo|serienabo/, ["Abonnements", "Entertainment"], "Streaming"],
+  [/entertainment|kino|games|spiele/, ["Entertainment"], "Entertainment"],
   [/gesundheit|apotheke|\barzt\b/, ["Gesundheit"], "Gesundheit"],
   [/drogerie/, ["Drogerie"], "Drogerie"],
   [/körperpflege|friseur|frisör|barber/, ["Körperpflege"], "Körperpflege"],

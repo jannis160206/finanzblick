@@ -18,7 +18,7 @@ describe("fixed replies", () => {
       expect(fixedReply(text), text).toMatchObject({ text: expect.stringMatching(/^Oh, das ist unangenehm/), suggestions: expect.arrayContaining(["Reicht mein Geld bis zum Gehalt?"]) });
     expect(fixedReply("Mein Konto ist leer, wann kommt das Gehalt?")).toBeUndefined();
     for (const text of ["Wie wird das Wetter morgen?", "Regnet es heute?", "Wie warm wird es am Wochenende?"])
-      expect(fixedReply(text)?.text, text).toMatch(/^Aktuelle Wetterdaten habe ich leider nicht/);
+      expect(fixedReply(text)?.text, text).toMatch(/^Zum Wetter kann ich dir nichts sagen – ich bin nur für deine Finanzen und die App da/);
     // Data questions stay with their tools.
     for (const text of ["Zeig mir meine Abos", "Zeig mir alle Buchungen über 100 Euro", "Lösche das Sparziel Japan", "Was ist ein ETF?"]) expect(fixedReply(text), text).toBeUndefined();
     expect(detectTool("Lösche alle meine Buchungen")).toBeUndefined();

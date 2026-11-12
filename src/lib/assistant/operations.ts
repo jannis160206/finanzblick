@@ -5,17 +5,33 @@ import { planningEndMonth } from "@/lib/planning-range";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { corePocket, pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { assignTransactions } from "@/lib/transaction-tools";
+import { contractPatch, detectContracts, intervalLabel, noticeLabel, upsertContractOverride, type Contract } from "@/lib/contracts";
+import { removeFixedPlanRow } from "@/lib/fixed-plan";
+import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
+import { successBonusPercent } from "@/lib/payroll-analysis";
+import { setTag } from "@/lib/tags";
 import { addMonth } from "./intent";
 import { defaultBudgetAmount, variableBudgetLines } from "@/lib/variable-budgets";
 import {
-  assistantMemorySchema, emptyMonth, MAX_ASSISTANT_CHANGES, MAX_ASSISTANT_MEMORY, plannedOneOffSchema, savingsGoalSchema,
-  type AppState, type AssistantChangeLog, type AssistantOperation, type AssistantUndo, type PlannedOneOff, type SavingsGoal, type Transaction,
+  assistantMemorySchema, contractOverrideSchema, emptyMonth, financeRowSchema, MAX_ACCOUNT_RULES, MAX_ASSISTANT_CHANGES, MAX_ASSISTANT_MEMORY, MAX_CONTRACTS,
+  plannedOneOffSchema, savingsGoalSchema, type AccountRule, type AppState, type AssistantChangeLog, type AssistantOperation, type AssistantUndo, type ContractOverride,
+  type FinanceRow, type PlannedOneOff, type SavingsGoal, type Transaction,
 } from "@/lib/types";
 
 export type Diff = { label: string; before: string; after: string };
 export type AppliedChange = { state: AppState; diffs: Diff[]; undo: AssistantUndo };
 
 const settingLabels = { emergencyTarget: "Notgroschen-Ziel", vacationTarget: "Urlaubs-Ziel", savingsTarget: "Sparkonto-Ziel" } as const;
+const statusLabels: Record<Contract["status"], string> = { review: "Vorschlag", active: "aktiv", cancelled: "gekündigt", ignored: "ausgeblendet" };
+const kindLabels: Record<FinanceRow["kind"], string> = { income: "Einnahme", fixed: "Fixkosten", variable: "variabel" };
+// Fields the contract wizard edits; "Änderungen verwerfen" clears exactly these.
+const editedKeys = ["name", "category", "amount", "interval", "nextDate", "notice", "termEnd", "autoRenew", "renewalMonths", "note"] as const;
+const squash = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+const ruleText = (rule: Pick<AccountRule, "use" | "purposes">) =>
+  rule.use === "any" ? "für alle Ausgaben" : rule.use === "never" ? "nie angreifen" : `nur für ${rule.purposes.join(", ")}`;
+const matchText = (match: ContractOverride["match"]) => !match ? "aus" : [match.text && `Text „${match.text}“`,
+  match.amountMin !== undefined && `ab ${currency(match.amountMin)}`, match.amountMax !== undefined && `bis ${currency(match.amountMax)}`,
+  match.account && `Konto ${match.account}`].filter(Boolean).join(", ") || "aus";
 const none = "–";
 const rate = (goal: SavingsGoal) => goal.funding ? `${currency(goal.funding.monthly)} / Monat` : "automatisch";
 const plannedTotal = (item: PlannedOneOff) => item.total ?? Math.round(item.amount * item.installments * 100) / 100;
@@ -44,9 +60,46 @@ function snapshotPlanned(undo: AssistantUndo, state: AppState, id: string) {
 }
 function snapshotSetting(undo: AssistantUndo, state: AppState, key: NonNullable<AssistantUndo["settings"]>[number]["key"]) {
   undo.settings ??= [];
-  if (!undo.settings.some((entry) => entry.key === key)) undo.settings.push({ key, before: state.settings[key] });
+  if (!undo.settings.some((entry) => entry.key === key)) undo.settings.push({ key, before: state.settings[key] ?? null });
 }
-function snapshotTransactions(undo: AssistantUndo, rows: Transaction[]) {
+function snapshotContract(undo: AssistantUndo, state: AppState, id: string) {
+  undo.contracts ??= [];
+  if (!undo.contracts.some((entry) => entry.id === id)) undo.contracts.push({ id, before: (state.contracts ?? []).find((entry) => entry.id === id) ?? null });
+}
+function snapshotRow(undo: AssistantUndo, state: AppState, id: string) {
+  undo.financeRows ??= [];
+  if (!undo.financeRows.some((entry) => entry.id === id)) undo.financeRows.push({ id, before: state.financeRows.find((row) => row.id === id) ?? null });
+}
+// Side effects of shared helpers (fixed-cost marks, learned merchants, receipts) are remembered too, so undo restores them.
+function snapshotSideEffects(undo: AssistantUndo, before: AppState, after: AppState) {
+  const rows = new Map(before.transactions.map((row) => [row.id, row]));
+  snapshotTransactions(undo, after.transactions.flatMap((row) => { const previous = rows.get(row.id); return previous && previous !== row ? [previous] : []; }));
+  const rules = new Map((before.merchantRules ?? []).map((rule) => [rule.key, rule]));
+  undo.merchantRules ??= [];
+  for (const rule of after.merchantRules ?? []) {
+    const previous = rules.get(rule.key);
+    if (previous !== rule && !undo.merchantRules.some((entry) => entry.key === rule.key)) undo.merchantRules.push({ key: rule.key, before: previous ?? null });
+  }
+  const receipts = new Map((before.fixedReceipts ?? []).map((receipt) => [receipt.key, receipt]));
+  undo.fixedReceipts ??= [];
+  for (const receipt of after.fixedReceipts ?? []) {
+    const previous = receipts.get(receipt.key);
+    if (previous && previous !== receipt && !undo.fixedReceipts.some((entry) => entry.key === receipt.key)) undo.fixedReceipts.push({ key: receipt.key, before: previous });
+  }
+}
+function findContract(state: AppState, id: string, asOf: string): Contract {
+  const contract = detectContracts(state, asOf).find((item) => item.id === id);
+  if (!contract) throw new OperationError("Diesen Vertrag gibt es nicht mehr.");
+  return contract;
+}
+function saveContract(state: AppState, id: string, patch: Partial<Omit<ContractOverride, "id" | "updatedAt">>, undo: AssistantUndo, now: number): AppState {
+  snapshotContract(undo, state, id);
+  const contracts = upsertContractOverride(state.contracts, id, patch, Math.floor(now));
+  if (contracts.length > MAX_CONTRACTS) throw new OperationError(`Es sind höchstens ${MAX_CONTRACTS} Verträge möglich.`);
+  if (!contractOverrideSchema.safeParse(contracts.find((entry) => entry.id === id)).success) throw new OperationError("Die Angaben für den Vertrag sind ungültig.");
+  return { ...state, contracts };
+}
+function snapshotTransactions(undo: AssistantUndo, rows: Transaction[], withTags = false) {
   undo.transactions ??= [];
   const known = new Set(undo.transactions.map((entry) => entry.id));
   for (const row of rows) if (!known.has(row.id)) undo.transactions.push({
@@ -58,6 +111,8 @@ function snapshotTransactions(undo: AssistantUndo, rows: Transaction[]) {
     ...(row.fixedCost !== undefined ? { fixedCost: row.fixedCost } : {}),
     ...(row.merchantNameConfirmed !== undefined ? { merchantNameConfirmed: row.merchantNameConfirmed } : {}),
     ...(row.ignored !== undefined ? { ignored: row.ignored } : {}),
+    ...(withTags ? { tags: row.tags ?? [] } : {}),
+    sharedWithRaphael: row.sharedWithRaphael === true,
   });
 }
 const yesNo = (value: boolean | undefined) => value ? "ja" : "nein";
@@ -267,6 +322,11 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         diffs.push({ label: `${label}: geprüft`, before: tally((row) => yesNo(row.reviewed)), after: yesNo(operation.reviewed) });
       if (operation.ignored !== undefined && changed((row) => Boolean(row.ignored), operation.ignored))
         diffs.push({ label: `${label}: ignoriert`, before: tally((row) => yesNo(row.ignored)), after: yesNo(operation.ignored) });
+      if (operation.sharedWithRaphael) {
+        if (!rows.some((row) => row.amount < 0)) throw new OperationError("Teilen geht nur bei Ausgaben.");
+        if (changed((row) => row.amount < 0 ? row.sharedWithRaphael === true : true, true))
+          diffs.push({ label: `${label}: mit Raphael geteilt`, before: tally((row) => yesNo(row.sharedWithRaphael)), after: "ja, du zahlst die Hälfte" });
+      }
       if (diffs.length === start) throw new OperationError(`An ${rows.length === 1 ? "dieser Buchung" : "diesen Buchungen"} würde sich nichts ändern.`);
       snapshotTransactions(undo, rows);
       return { ...state, transactions: state.transactions.map((row) => {
@@ -278,6 +338,7 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
         if (operation.reviewed !== undefined) next.reviewed = operation.reviewed;
         if (operation.ignored === true) next.ignored = true;
         else if (operation.ignored === false) delete next.ignored;
+        if (operation.sharedWithRaphael && row.amount < 0) next.sharedWithRaphael = true;
         return next;
       }) };
     }
@@ -354,6 +415,202 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       if (!adjustment) delete next[line.id];
       return { ...state, budgetAdjustments: next };
     }
+    case "contract_create": {
+      if ((state.contracts ?? []).some((entry) => entry.id === operation.contractId)) throw new OperationError("Diesen Vertrag gibt es schon.");
+      const { op: _op, contractId, ...fields } = operation;
+      void _op;
+      const patch = { manual: true, status: "confirmed" as const, ...fields,
+        ...(fields.termEnd ? { autoRenew: fields.autoRenew ?? true, renewalMonths: fields.autoRenew === false ? undefined : fields.renewalMonths ?? 12 } : { autoRenew: undefined, renewalMonths: undefined }) };
+      diffs.push({ label: "Neuer Vertrag", before: none, after: `${fields.name}: ${currency(fields.amount)} ${intervalLabel[fields.interval]}`.slice(0, 200) });
+      diffs.push({ label: `${fields.name}: nächste Abbuchung`, before: none, after: dateLabel(fields.nextDate) });
+      diffs.push({ label: `${fields.name}: Kategorie`, before: none, after: fields.category });
+      if (fields.notice) diffs.push({ label: `${fields.name}: Kündigungsfrist`, before: none, after: noticeLabel(fields.notice) });
+      if (fields.termEnd) diffs.push({ label: `${fields.name}: Mindestlaufzeit bis`, before: none,
+        after: `${dateLabel(fields.termEnd)}${patch.autoRenew ? `, verlängert sich um ${patch.renewalMonths} Monate` : ", endet dann"}` });
+      if (fields.match) diffs.push({ label: `${fields.name}: Buchungen automatisch zuordnen`, before: none, after: matchText(fields.match).slice(0, 200) });
+      if (fields.note) diffs.push({ label: `${fields.name}: Notiz`, before: none, after: fields.note.slice(0, 200) });
+      return saveContract(state, contractId, patch, undo, context.now);
+    }
+    case "contract_update": {
+      const contract = findContract(state, operation.contractId, context.asOf);
+      const stored = (state.contracts ?? []).find((entry) => entry.id === contract.id);
+      const patch: Partial<Omit<ContractOverride, "id" | "updatedAt">> = {};
+      const label = (field: string) => `${contract.name}: ${field}`;
+      const set = <K extends keyof ContractOverride>(key: K, value: ContractOverride[K] | undefined, field: string, before: string, after: string) => {
+        if (before === after) return;
+        Object.assign(patch, { [key]: value });
+        diffs.push({ label: label(field), before, after });
+      };
+      if (operation.name !== undefined) set("name", operation.name, "Name", contract.name, operation.name);
+      if (operation.category !== undefined) set("category", operation.category, "Kategorie", contract.category, operation.category);
+      if (operation.amount !== undefined) set("amount", operation.amount, "Betrag", currency(contract.amount), currency(operation.amount));
+      if (operation.interval !== undefined) set("interval", operation.interval, "Rhythmus", intervalLabel[contract.interval], intervalLabel[operation.interval]);
+      if (operation.nextDate !== undefined) set("nextDate", operation.nextDate, "Nächste Abbuchung", contract.nextDate ? dateLabel(contract.nextDate) : none, dateLabel(operation.nextDate));
+      if (operation.notice !== undefined) set("notice", operation.notice ?? undefined, "Kündigungsfrist", contract.notice ? noticeLabel(contract.notice) : none, operation.notice ? noticeLabel(operation.notice) : none);
+      if (operation.termEnd !== undefined) {
+        set("termEnd", operation.termEnd ?? undefined, "Mindestlaufzeit bis", contract.termEnd ? dateLabel(contract.termEnd) : none, operation.termEnd ? dateLabel(operation.termEnd) : none);
+        if (operation.termEnd === null) Object.assign(patch, { autoRenew: undefined, renewalMonths: undefined });
+      }
+      if (operation.autoRenew !== undefined) set("autoRenew", operation.autoRenew, "Verlängert sich automatisch", yesNo(contract.autoRenew), yesNo(operation.autoRenew));
+      if (operation.renewalMonths !== undefined) set("renewalMonths", operation.renewalMonths, "Verlängerung", `${contract.renewalMonths} Monate`, `${operation.renewalMonths} Monate`);
+      if (operation.note !== undefined) set("note", operation.note || undefined, "Notiz", contract.note ?? none, operation.note || none);
+      if (operation.match !== undefined) set("match", operation.match ?? undefined, "Buchungen automatisch zuordnen", matchText(stored?.match), matchText(operation.match ?? undefined));
+      if (!Object.keys(patch).length) throw new OperationError(`An „${contract.name}“ würde sich nichts ändern.`);
+      // Editing a suggestion confirms it, like saving it in the wizard.
+      if (contract.status === "review") {
+        patch.status = "confirmed";
+        diffs.push({ label: label("Status"), before: statusLabels.review, after: "bestätigt" });
+      }
+      return saveContract(state, contract.id, contractPatch(contract, patch), undo, context.now);
+    }
+    case "contract_action": {
+      const contract = findContract(state, operation.contractId, context.asOf);
+      const status = statusLabels[contract.status];
+      const change = (patch: Partial<Omit<ContractOverride, "id" | "updatedAt">>, after: string) => {
+        diffs.push({ label: `${contract.name}: Status`, before: status, after });
+        return saveContract(state, contract.id, contractPatch(contract, patch), undo, context.now);
+      };
+      switch (operation.action) {
+        case "confirm":
+          if (contract.status !== "review") throw new OperationError(`„${contract.name}“ ist schon ${contract.status === "ignored" ? "ausgeblendet – stell ihn zuerst wieder her" : "bestätigt"}.`);
+          return change({ status: "confirmed" }, "bestätigt");
+        case "ignore":
+          if (contract.status === "ignored") throw new OperationError(`„${contract.name}“ ist schon ausgeblendet.`);
+          return change({ status: "ignored" }, "kein Vertrag (ausgeblendet)");
+        case "restore":
+          if (contract.status !== "ignored") throw new OperationError(`„${contract.name}“ ist nicht ausgeblendet.`);
+          return change({ status: undefined }, "wiederhergestellt");
+        case "cancel": {
+          const end = operation.date ?? contract.effectiveEnd ?? contract.nextDate ?? context.asOf;
+          if (contract.status === "cancelled" && contract.cancelledAt === end) throw new OperationError(`„${contract.name}“ ist schon zum ${dateLabel(end)} gekündigt.`);
+          return change({ status: "cancelled", cancelledAt: end }, `gekündigt, endet ${dateLabel(end)}`);
+        }
+        case "reactivate":
+          if (contract.status !== "cancelled") throw new OperationError(`„${contract.name}“ ist nicht gekündigt.`);
+          return change({ status: "confirmed", cancelledAt: undefined }, "wieder aktiv");
+        case "reset":
+          if (!contract.edited) throw new OperationError(`An „${contract.name}“ gibt es keine eigenen Änderungen zum Verwerfen.`);
+          diffs.push({ label: `${contract.name}: eigene Angaben`, before: "geändert", after: "verworfen, wie erkannt" });
+          return saveContract(state, contract.id, contractPatch(contract, Object.fromEntries(editedKeys.map((key) => [key, undefined]))), undo, context.now);
+        case "remove": {
+          if (contract.source !== "manual") throw new OperationError(`„${contract.name}“ wurde aus deinen Buchungen erkannt. Entfernen geht nur bei selbst angelegten Verträgen – ausblenden kann ich ihn aber.`);
+          snapshotContract(undo, state, contract.id);
+          diffs.push({ label: `Vertrag ${contract.name}`, before: `${currency(contract.amount)} ${intervalLabel[contract.interval]}`, after: "entfernt" });
+          return { ...state, contracts: (state.contracts ?? []).filter((entry) => entry.id !== contract.id) };
+        }
+      }
+      throw new OperationError("Diese Aktion kenne ich nicht.");
+    }
+    case "transaction_delete": {
+      const ids = new Set(operation.ids);
+      const rows = state.transactions.filter((row) => ids.has(row.id));
+      if (!rows.length) throw new OperationError("Die Buchungen gibt es nicht mehr.");
+      undo.removedTransactions ??= [];
+      let receipts = state.fixedReceipts;
+      for (const row of rows) {
+        const keys = new Set([row.id, statementFingerprint(row), legacyFingerprint(row)]);
+        const linked = (receipts ?? []).filter((item) => keys.has(item.key));
+        receipts = receipts?.filter((item) => !keys.has(item.key));
+        undo.removedTransactions.push({ transaction: row, receipts: linked.slice(0, 20) });
+        diffs.push({ label: `${dateLabel(row.date)} · ${row.merchantAlias || row.description}`.slice(0, 200), before: currency(row.amount), after: "gelöscht" });
+      }
+      return { ...state, transactions: state.transactions.filter((row) => !ids.has(row.id)), ...(receipts ? { fixedReceipts: receipts } : {}) };
+    }
+    case "transaction_tag": {
+      const ids = new Set(operation.ids);
+      const rows = state.transactions.filter((row) => ids.has(row.id));
+      if (!rows.length) throw new OperationError("Die Buchungen gibt es nicht mehr.");
+      const next = setTag(state, ids, operation.tag, operation.remove);
+      const touched = rows.filter((row) => next.transactions.find((item) => item.id === row.id) !== row);
+      if (!touched.length) throw new OperationError(operation.remove ? `Keine dieser Buchungen hat den Tag „${operation.tag}“.`
+        : `${rows.length === 1 ? "Die Buchung hat" : "Die Buchungen haben"} den Tag schon oder schon ${10} Tags.`);
+      snapshotTransactions(undo, touched, true);
+      diffs.push({ label: `${touched.length} ${touched.length === 1 ? "Buchung" : "Buchungen"}: Tag #${operation.tag.replace(/^#+/, "")}`.slice(0, 200),
+        before: operation.remove ? "gesetzt" : "ohne", after: operation.remove ? "entfernt" : "gesetzt" });
+      return next;
+    }
+    case "plan_row_save": {
+      const existing = state.financeRows.find((row) => row.id === operation.rowId);
+      if (operation.create) {
+        if (existing) throw new OperationError("Diese Position gibt es schon.");
+        if (state.financeRows.length >= 200) throw new OperationError("Es sind höchstens 200 Positionen möglich. Entferne zuerst eine nicht mehr benötigte Position.");
+        const parsed = financeRowSchema.safeParse({ id: operation.rowId, label: operation.label, kind: operation.kind ?? "fixed",
+          ...(operation.planCategory ? { planCategory: operation.planCategory } : {}), values: {} });
+        if (!parsed.success) throw new OperationError("Für eine neue Position brauche ich eine Bezeichnung.");
+        snapshotRow(undo, state, operation.rowId);
+        diffs.push({ label: "Neue Position im Monatsplan", before: none, after: `${parsed.data.label} (${kindLabels[parsed.data.kind]})` });
+        return { ...state, financeRows: [...state.financeRows, parsed.data] };
+      }
+      if (!existing) throw new OperationError("Diese Position gibt es nicht mehr.");
+      const revised: FinanceRow = { ...existing, label: operation.label ?? existing.label, kind: operation.kind ?? existing.kind,
+        planCategory: operation.planCategory === undefined ? existing.planCategory : operation.planCategory ?? undefined };
+      if (revised.planCategory === undefined) delete revised.planCategory;
+      if (revised.label !== existing.label) diffs.push({ label: `${existing.label}: Bezeichnung`, before: existing.label, after: revised.label });
+      if (revised.kind !== existing.kind) diffs.push({ label: `${existing.label}: Bereich`, before: kindLabels[existing.kind], after: kindLabels[revised.kind] });
+      if (revised.planCategory !== existing.planCategory) diffs.push({ label: `${existing.label}: Kategorie`, before: existing.planCategory ?? none, after: revised.planCategory ?? none });
+      if (!financeRowSchema.safeParse(revised).success) throw new OperationError("Die neuen Angaben für die Position sind ungültig.");
+      snapshotRow(undo, state, existing.id);
+      if (revised.fixedSource && revised.kind !== "fixed") {
+        const removed = removeFixedPlanRow(state, revised);
+        snapshotSideEffects(undo, state, removed);
+        return { ...removed, financeRows: [...removed.financeRows, { ...revised, fixedSource: undefined }] };
+      }
+      return { ...state, financeRows: state.financeRows.map((row) => row.id === existing.id ? revised : row) };
+    }
+    case "plan_row_delete": {
+      const existing = state.financeRows.find((row) => row.id === operation.rowId);
+      if (!existing) throw new OperationError("Diese Position gibt es nicht mehr.");
+      snapshotRow(undo, state, existing.id);
+      diffs.push({ label: `Position ${existing.label}`, before: kindLabels[existing.kind], after: "gelöscht" });
+      if (existing.fixedSource) diffs.push({ label: `${existing.label}: Buchungen`, before: "als Fixkosten markiert", after: "bleiben, ohne Fixkosten-Markierung" });
+      const next = removeFixedPlanRow(state, existing);
+      snapshotSideEffects(undo, state, next);
+      return next;
+    }
+    case "plan_value": {
+      const existing = state.financeRows.find((row) => row.id === operation.rowId);
+      if (!existing) throw new OperationError("Diese Position gibt es nicht mehr.");
+      const shown = (value: number | null | undefined) => value === undefined || value === null ? (existing.kind === "variable" ? "automatisch" : currency(0)) : currency(value);
+      const months = [...new Set(operation.months)].sort().filter((month) => (existing.values[month] ?? null) !== operation.value);
+      if (!months.length) throw new OperationError(`${existing.label} ist dort schon ${operation.value === null ? "automatisch" : currency(operation.value)}.`);
+      snapshotRow(undo, state, existing.id);
+      // One line per month; a long range is summed up as one line.
+      if (months.length <= 3) for (const month of months)
+        diffs.push({ label: `${existing.label} · ${monthLabel(month)}`, before: shown(existing.values[month]), after: shown(operation.value) });
+      else diffs.push({ label: `${existing.label} · ${monthLabel(months[0])} bis ${monthLabel(months.at(-1)!)}`.slice(0, 200),
+        before: [...new Set(months.map((month) => shown(existing.values[month])))].join(", ").slice(0, 200), after: `${shown(operation.value)} pro Monat` });
+      const values = Object.fromEntries(months.map((month) => [month, operation.value]));
+      return { ...state, financeRows: state.financeRows.map((row) => row.id !== existing.id ? row : {
+        ...row, ...(row.kind === "variable" ? { overrides: { ...row.overrides, ...values } } : {}), values: { ...row.values, ...values } }) };
+    }
+    case "account_rule": {
+      const rules = state.accountRules ?? [];
+      const replaced = rules.find((rule) => squash(rule.account) === squash(operation.account));
+      if (!replaced && rules.length >= MAX_ACCOUNT_RULES) throw new OperationError(`Es sind höchstens ${MAX_ACCOUNT_RULES} Kontoregeln möglich. Lösch zuerst eine.`);
+      const rule: AccountRule = { id: context.id(), account: operation.account, use: operation.use, purposes: operation.use === "only" ? operation.purposes : [], at: Math.floor(context.now) };
+      if (rule.use === "only" && !rule.purposes.length) throw new OperationError("Wofür darf das Konto verwendet werden?");
+      if (replaced && replaced.use === rule.use && replaced.purposes.join("|") === rule.purposes.join("|")) throw new OperationError(`Für ${replaced.account} gilt das schon.`);
+      undo.accountRules ??= [];
+      if (replaced) undo.accountRules.push({ id: replaced.id, before: replaced });
+      undo.accountRules.push({ id: rule.id, before: null });
+      diffs.push({ label: `Konto ${operation.account}`, before: replaced ? ruleText(replaced) : "keine Regel", after: ruleText(rule) });
+      return { ...state, accountRules: [...rules.filter((item) => item.id !== replaced?.id), rule] };
+    }
+    case "account_rule_delete": {
+      const rule = (state.accountRules ?? []).find((item) => item.id === operation.ruleId);
+      if (!rule) throw new OperationError("Diese Kontoregel gibt es nicht mehr.");
+      undo.accountRules ??= [];
+      undo.accountRules.push({ id: rule.id, before: rule });
+      diffs.push({ label: `Konto ${rule.account}`, before: ruleText(rule), after: "keine Regel" });
+      return { ...state, accountRules: (state.accountRules ?? []).filter((item) => item.id !== rule.id) };
+    }
+    case "bonus_percent": {
+      const before = successBonusPercent(state.settings);
+      if (before === operation.value) throw new OperationError(`Der Successbonus ist schon ${before.toLocaleString("de-DE")} %.`);
+      snapshotSetting(undo, state, "successBonusPercent");
+      diffs.push({ label: "Successbonus (vom Grundgehalt)", before: `${before.toLocaleString("de-DE")} %`, after: operation.value === 0 ? "aus" : `${operation.value.toLocaleString("de-DE")} %` });
+      return { ...state, settings: { ...state.settings, successBonusPercent: operation.value } };
+    }
   }
 }
 
@@ -418,7 +675,9 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
   }
   if (undo.settings?.length) {
     const settings = { ...next.settings };
-    for (const { key, before } of undo.settings) Object.assign(settings, { [key]: before });
+    for (const { key, before } of undo.settings) {
+      if (before === null) delete settings[key]; else Object.assign(settings, { [key]: before });
+    }
     next.settings = settings;
   }
   if (undo.months?.length) {
@@ -446,6 +705,8 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
       if (before.merchantAlias !== undefined) delete restored.merchantNameConfirmed;
       const result = { ...restored, ...before };
       if (result.merchantAlias === "") delete result.merchantAlias;
+      if (before.tags && !before.tags.length) delete result.tags;
+      if (before.sharedWithRaphael === false) delete result.sharedWithRaphael;
       return result;
     });
   }
@@ -472,6 +733,40 @@ export function undoChange(state: AppState, logId: string, now = Date.now()): Ap
       if (before === null) delete adjustments[line]; else adjustments[line] = before;
     }
     next.budgetAdjustments = adjustments;
+  }
+  if (undo.contracts?.length) {
+    let contracts = [...(next.contracts ?? [])];
+    for (const { id, before } of [...undo.contracts].reverse()) {
+      const exists = contracts.some((entry) => entry.id === id);
+      contracts = before === null ? contracts.filter((entry) => entry.id !== id)
+        : exists ? contracts.map((entry) => entry.id === id ? before : entry) : [...contracts, before];
+    }
+    next.contracts = contracts;
+  }
+  if (undo.removedTransactions?.length) {
+    const present = new Set(next.transactions.map((row) => row.id));
+    next.transactions = [...next.transactions, ...undo.removedTransactions.map((entry) => entry.transaction).filter((row) => !present.has(row.id))];
+    const receipts = undo.removedTransactions.flatMap((entry) => entry.receipts);
+    if (receipts.length) {
+      const known = new Set((next.fixedReceipts ?? []).map((receipt) => receipt.key));
+      next.fixedReceipts = [...(next.fixedReceipts ?? []), ...receipts.filter((receipt) => !known.has(receipt.key))];
+    }
+  }
+  if (undo.financeRows?.length) {
+    let rows = [...next.financeRows];
+    for (const { id, before } of [...undo.financeRows].reverse()) {
+      const exists = rows.some((row) => row.id === id);
+      rows = before === null ? rows.filter((row) => row.id !== id) : exists ? rows.map((row) => row.id === id ? before : row) : [...rows, before];
+    }
+    next.financeRows = rows;
+  }
+  if (undo.accountRules?.length) {
+    let rules = [...(next.accountRules ?? [])];
+    for (const { id, before } of [...undo.accountRules].reverse()) {
+      rules = rules.filter((rule) => rule.id !== id);
+      if (before) rules.push(before);
+    }
+    next.accountRules = rules.sort((a, b) => a.at - b.at);
   }
   next = { ...next, assistantChanges: (next.assistantChanges ?? []).map((entry) => entry.id === logId ? { ...entry, undoneAt: now } : entry) };
   return next;
