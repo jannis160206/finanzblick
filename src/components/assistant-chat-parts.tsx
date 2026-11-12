@@ -1,13 +1,13 @@
 "use client";
 
-import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { type ComponentPropsWithoutRef, type FormEvent, type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, m } from "motion/react";
 import { useTheme } from "next-themes";
 import { BorderBeam } from "border-beam";
 import { BotAvatar, type BotAvatarState, type BotAvatarType } from "bot-avatars";
 import { MetalFx } from "metal-fx";
 import { ThinkingOrb } from "thinking-orbs";
-import { ArrowUp, Check, Copy, RefreshCw, Square, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ArrowUp, Check, Copy, MessageSquarePlus, RefreshCw, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 import { dialogSpring, exitTween, useMotionMode } from "@/components/ui/premium-dialog/motion";
 import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
 import { workStatus, type WorkActivity, type WorkStatus } from "@/lib/assistant/status";
@@ -231,19 +231,27 @@ export function ChatEmptyState({ prompts, disabled, onPick }: {
   </section>;
 }
 
-function ActionButton({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: ReactNode }) {
-  return <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick}
-    className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-muted hover:text-foreground focus-visible:text-foreground active:scale-90 disabled:opacity-35 motion-reduce:active:scale-100">
+function ActionButton({ label, onClick, disabled, pressed, children }: { label: string; onClick: () => void; disabled?: boolean; pressed?: boolean; children: ReactNode }) {
+  return <button type="button" aria-label={label} title={label} disabled={disabled} onClick={onClick} aria-pressed={pressed}
+    className={cn("inline-flex min-h-8 min-w-8 items-center justify-center rounded-lg text-muted-foreground transition-[background-color,color,transform] duration-150 hover:bg-muted hover:text-foreground focus-visible:text-foreground active:scale-90 disabled:opacity-35 motion-reduce:active:scale-100",
+      pressed && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary disabled:opacity-100")}>
     {children}
   </button>;
 }
 
-/** Quiet actions under an answer: copy, ask again, and the thumbs that teach the assistant. */
-export function MessageActions({ text, onRegenerate, feedback, onFeedback, disabled, className }: {
-  text: string; onRegenerate?: () => void; feedback?: "up" | "down"; onFeedback?: (value: "up" | "down") => void; disabled: boolean; className?: string;
+export type FeedbackValue = "up" | "down";
+
+/**
+ * Quiet actions under an answer: copy, ask again, and 👍/👎. A rating is saved at once; 👎 opens a short comment field
+ * (after 👍 it is one click away), and the comment completes the same feedback entry.
+ */
+export function MessageActions({ text, onRegenerate, feedback, comment, onFeedback, onComment, commenting = false, onCommenting, disabled, className }: {
+  text: string; onRegenerate?: () => void; feedback?: FeedbackValue; comment?: string; onFeedback?: (value: FeedbackValue) => void;
+  onComment?: (comment: string) => void; commenting?: boolean; onCommenting?: (open: boolean) => void; disabled: boolean; className?: string;
 }) {
   const [copied, setCopied] = useState<"ok" | "failed">();
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const commentButton = useRef<HTMLButtonElement>(null);
   useEffect(() => () => clearTimeout(timer.current), []);
   async function copy() {
     clearTimeout(timer.current);
@@ -255,21 +263,96 @@ export function MessageActions({ text, onRegenerate, feedback, onFeedback, disab
     }
     timer.current = setTimeout(() => setCopied(undefined), 1800);
   }
-  return <div className={cn("flex items-center gap-0.5 pl-11", className)} role="group" aria-label="Aktionen zur Antwort">
-    <ActionButton label="Antwort kopieren" onClick={() => void copy()}>
-      {copied === "ok" ? <Check aria-hidden="true" className="size-3.5 text-primary" /> : <Copy aria-hidden="true" className="size-3.5" />}
-    </ActionButton>
-    <span role="status" className={cn("text-2xs transition-opacity duration-150", copied ? "opacity-100" : "opacity-0")}>
-      {copied === "ok" ? "Kopiert" : copied === "failed" ? "Kopieren nicht möglich" : ""}
-    </span>
-    {onRegenerate && <ActionButton label="Neu generieren" onClick={onRegenerate} disabled={disabled}><RefreshCw aria-hidden="true" className="size-3.5" /></ActionButton>}
-    {feedback ? <span className="inline-flex items-center gap-1.5 px-1.5 text-2xs text-muted-foreground">
-      {feedback === "up" ? <ThumbsUp aria-hidden="true" className="size-3.5 text-primary" /> : <ThumbsDown aria-hidden="true" className="size-3.5" />}Danke für dein Feedback</span>
-      : onFeedback && <>
-        <ActionButton label="Hilfreich" onClick={() => onFeedback("up")} disabled={disabled}><ThumbsUp aria-hidden="true" className="size-3.5" /></ActionButton>
-        <ActionButton label="Nicht hilfreich – ich lerne daraus" onClick={() => onFeedback("down")} disabled={disabled}><ThumbsDown aria-hidden="true" className="size-3.5" /></ActionButton>
+  const close = (refocus: boolean) => {
+    onCommenting?.(false);
+    // Back to where the field was opened, so keyboard users do not lose their place.
+    if (refocus) requestAnimationFrame(() => commentButton.current?.focus());
+  };
+  return <div className={cn("pl-11", className)}>
+    <div className="flex flex-wrap items-center gap-0.5" role="group" aria-label="Aktionen zur Antwort">
+      <ActionButton label="Antwort kopieren" onClick={() => void copy()}>
+        {copied === "ok" ? <Check aria-hidden="true" className="size-3.5 text-primary" /> : <Copy aria-hidden="true" className="size-3.5" />}
+      </ActionButton>
+      <span role="status" className={cn("text-2xs transition-opacity duration-150", copied ? "opacity-100" : "opacity-0")}>
+        {copied === "ok" ? "Kopiert" : copied === "failed" ? "Kopieren nicht möglich" : ""}
+      </span>
+      {onRegenerate && <ActionButton label="Neu generieren" onClick={onRegenerate} disabled={disabled}><RefreshCw aria-hidden="true" className="size-3.5" /></ActionButton>}
+      {onFeedback && <>
+        <ActionButton label={feedback === "up" ? "Als hilfreich bewertet" : "Hilfreich"} pressed={feedback === "up"} onClick={() => onFeedback("up")}
+          disabled={disabled || !!feedback}><ThumbsUp aria-hidden="true" className="size-3.5" /></ActionButton>
+        <ActionButton label={feedback === "down" ? "Als nicht hilfreich bewertet" : "Nicht hilfreich – mit Kommentar"} pressed={feedback === "down"}
+          onClick={() => onFeedback("down")} disabled={disabled || !!feedback}><ThumbsDown aria-hidden="true" className="size-3.5" /></ActionButton>
       </>}
+      {feedback && <span className="inline-flex items-center gap-1 pl-1 text-2xs text-muted-foreground">
+        Feedback gespeichert
+        {onComment && !commenting && <button ref={commentButton} type="button" onClick={() => onCommenting?.(true)}
+          className="ml-1 inline-flex min-h-8 items-center gap-1 rounded-lg px-1.5 text-muted-foreground underline-offset-2 transition-colors hover:bg-muted hover:text-foreground focus-visible:text-foreground">
+          <MessageSquarePlus aria-hidden="true" className="size-3.5" />{comment ? "Kommentar ändern" : "Kommentar hinzufügen"}
+        </button>}
+      </span>}
+    </div>
+    {onComment && <FeedbackComment open={commenting} value={feedback} initial={comment}
+      onSubmit={(value) => { onComment(value); close(true); }} onCancel={() => close(true)} />}
   </div>;
+}
+
+/** The small comment field below a rated answer; Enter sends, Shift+Enter starts a new line, Escape closes. */
+function FeedbackComment({ open, value, initial, onSubmit, onCancel }: {
+  open: boolean; value?: FeedbackValue; initial?: string; onSubmit: (comment: string) => void; onCancel: () => void;
+}) {
+  const mode = useMotionMode();
+  const id = useId();
+  const field = useRef<HTMLTextAreaElement>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const [draft, setDraft] = useState(initial ?? "");
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setDraft(initial ?? "");
+  }
+  useEffect(() => {
+    if (open) requestAnimationFrame(() => field.current?.focus());
+  }, [open]);
+  // The chat sits in a dialog that closes on Escape before the field sees the key; inside the field Escape only closes the field.
+  useEffect(() => {
+    if (!open) return;
+    const keep = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && event.target instanceof Node && form.current?.contains(event.target)) event.preventDefault();
+    };
+    window.addEventListener("keydown", keep, true);
+    return () => window.removeEventListener("keydown", keep, true);
+  }, [open]);
+  const submit = (event?: FormEvent) => {
+    event?.preventDefault();
+    if (draft.trim()) onSubmit(draft.trim());
+  };
+  const motion = mode === "full"
+    ? { initial: { opacity: 0, y: -6, scale: 0.98 }, animate: { opacity: 1, y: 0, scale: 1 }, exit: { opacity: 0, y: -4, transition: exitTween }, transition: dialogSpring }
+    : mode === "reduced" ? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0, transition: exitTween }, transition: { duration: 0.12 } }
+      : { initial: false as const };
+  return <AnimatePresence initial={false}>
+    {open && <m.form ref={form} key="comment" {...motion} onSubmit={submit} aria-label="Kommentar zum Feedback"
+      className="mt-1.5 max-w-md origin-top rounded-xl border border-border/70 bg-card p-2.5 shadow-card">
+      <label htmlFor={id} className="mb-1.5 block text-xs font-medium text-foreground/85">
+        {value === "down" ? "Was war nicht gut?" : "Was war gut?"} <span className="font-normal text-muted-foreground">(optional)</span>
+      </label>
+      <textarea ref={field} id={id} rows={2} maxLength={2000} value={draft} onChange={(event) => setDraft(event.target.value)}
+        aria-describedby={`${id}-hint`}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") { event.preventDefault(); onCancel(); }
+          else if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) submit(event);
+        }}
+        placeholder={value === "down" ? "z. B. Die Zahl stimmt nicht, gemeint war …" : "z. B. Genau so hilft es mir"}
+        className="block w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed text-foreground transition-[border-color,box-shadow] duration-150 placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40" />
+      <p id={`${id}-hint`} className="mt-1 text-2xs text-muted-foreground">Wird mit Frage und Antwort für die Fehlersuche gespeichert; Kontonummern und Passwörter werden entfernt.</p>
+      <div className="mt-2 flex justify-end gap-1.5">
+        <button type="button" onClick={onCancel}
+          className="inline-flex min-h-8 items-center rounded-lg px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:text-foreground">Schließen</button>
+        <button type="submit" disabled={!draft.trim()}
+          className="inline-flex min-h-8 items-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-95 disabled:bg-muted disabled:text-muted-foreground motion-reduce:active:scale-100">Senden</button>
+      </div>
+    </m.form>}
+  </AnimatePresence>;
 }
 
 /**

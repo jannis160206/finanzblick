@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { Dialog } from "radix-ui";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatEmptyState, ComposerButton, createLiveRun, LiveAnswer, MessageActions } from "@/components/assistant-chat-parts";
 import { workStatus } from "@/lib/assistant/status";
@@ -36,6 +37,50 @@ it("copies an answer and confirms it for screen readers", async () => {
   expect(writeText).toHaveBeenCalledWith("Im November hast du 412 € ausgegeben.");
   fireEvent.click(screen.getByRole("button", { name: "Neu generieren" }));
   expect(onRegenerate).toHaveBeenCalledOnce();
+});
+
+it("saves a rating at once, opens the comment field after 👎 and sends the comment with Enter", async () => {
+  const onFeedback = vi.fn();
+  const onComment = vi.fn();
+  const onCommenting = vi.fn();
+  const props = { text: "Antwort", disabled: false, onFeedback, onComment, onCommenting };
+  const { rerender } = render(<MessageActions {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Nicht hilfreich – mit Kommentar" }));
+  expect(onFeedback).toHaveBeenCalledWith("down");
+  rerender(<MessageActions {...props} feedback="down" commenting />);
+  expect(screen.getByRole("button", { name: "Als nicht hilfreich bewertet" }).getAttribute("aria-pressed")).toBe("true");
+  expect(screen.getByText("Feedback gespeichert")).toBeTruthy();
+  const field = screen.getByRole("textbox", { name: /Was war nicht gut\?/ });
+  await waitFor(() => expect(document.activeElement).toBe(field));
+  expect(screen.getByRole("button", { name: "Senden" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.change(field, { target: { value: "  Die Summe stimmt nicht  " } });
+  fireEvent.keyDown(field, { key: "Enter" });
+  expect(onComment).toHaveBeenCalledWith("Die Summe stimmt nicht");
+  expect(onCommenting).toHaveBeenLastCalledWith(false);
+});
+
+it("offers an optional comment after 👍 and closes the field with Escape", () => {
+  const onCommenting = vi.fn();
+  const onComment = vi.fn();
+  const { rerender } = render(<MessageActions text="Antwort" disabled={false} feedback="up" onFeedback={vi.fn()} onComment={onComment} onCommenting={onCommenting} />);
+  expect(screen.getByRole("button", { name: "Als hilfreich bewertet" }).hasAttribute("disabled")).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: /Kommentar hinzufügen/ }));
+  expect(onCommenting).toHaveBeenCalledWith(true);
+  rerender(<MessageActions text="Antwort" disabled={false} feedback="up" commenting onFeedback={vi.fn()} onComment={onComment} onCommenting={onCommenting} />);
+  fireEvent.keyDown(screen.getByRole("textbox", { name: /Was war gut\?/ }), { key: "Escape" });
+  expect(onCommenting).toHaveBeenLastCalledWith(false);
+  expect(onComment).not.toHaveBeenCalled();
+});
+
+it("closes only the comment field on Escape, not the assistant dialog around it", () => {
+  const onOpenChange = vi.fn();
+  const onCommenting = vi.fn();
+  render(<Dialog.Root open onOpenChange={onOpenChange}><Dialog.Portal><Dialog.Content aria-describedby={undefined}><Dialog.Title>Finanz-Assistent</Dialog.Title>
+    <MessageActions text="Antwort" disabled={false} feedback="down" commenting onFeedback={vi.fn()} onComment={vi.fn()} onCommenting={onCommenting} />
+  </Dialog.Content></Dialog.Portal></Dialog.Root>);
+  fireEvent.keyDown(screen.getByRole("textbox", { name: /Was war nicht gut\?/ }), { key: "Escape" });
+  expect(onCommenting).toHaveBeenLastCalledWith(false);
+  expect(onOpenChange).not.toHaveBeenCalled();
 });
 
 it("greets with the orchestrator and its specialists and offers starter questions", () => {

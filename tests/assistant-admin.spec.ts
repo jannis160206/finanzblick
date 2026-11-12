@@ -42,7 +42,7 @@ test.describe("assistant orchestrator admin", () => {
       await expect(page).toHaveURL(/\/einstellungen\/orchestrator$/);
 
       await expect(page.getByRole("heading", { level: 1, name: "Orchestrator" })).toBeVisible();
-      for (const name of ["Aufbau", "Agenten", "Letzte Läufe", "Werkzeuge"]) await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
+      for (const name of ["Aufbau", "Agenten", "Letzte Läufe", "Werkzeuge", "Feedback"]) await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
       await expect(page.getByRole("group", { name: "Orchestrator-Baum" })).toBeVisible();
       await expect(page.getByText(/^KI bereit · Qwen3-8B/)).toBeVisible();
       const runs = page.getByRole("list", { name: "Letzte Läufe" });

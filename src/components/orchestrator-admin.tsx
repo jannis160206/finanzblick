@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronLeft, Inbox, MessageSquareText, RefreshCw, Workflow } from "lucide-react";
+import { ChevronLeft, Download, Inbox, MessageSquareText, RefreshCw, ThumbsDown, ThumbsUp, Workflow } from "lucide-react";
 import { FinancialData } from "@/components/financial-data";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
@@ -186,20 +186,80 @@ async function readStatus(): Promise<AiStatus> {
   }
 }
 
-/** Read-only admin view of the assistant's orchestrator: tree, agents, recent runs and tools. */
+type FeedbackOverview = {
+  file: string;
+  count: { total: number; like: number; dislike: number; withComment: number };
+  latest: { id: string; rating: "like" | "dislike"; summary: string; recordedAt: string }[];
+};
+type FeedbackLoad = { state: "loading" } | { state: "ready"; data: FeedbackOverview } | { state: "admin" } | { state: "error" };
+
+async function readFeedbackOverview(): Promise<FeedbackLoad> {
+  try {
+    const response = await fetch("/api/assistant-feedback", { cache: "no-store" });
+    if (response.status === 403) return { state: "admin" };
+    if (!response.ok) return { state: "error" };
+    const data = await response.json() as Partial<FeedbackOverview>;
+    return typeof data.file === "string" && data.count && Array.isArray(data.latest) ? { state: "ready", data: data as FeedbackOverview } : { state: "error" };
+  } catch {
+    return { state: "error" };
+  }
+}
+
+const copilotPrompt = "Lies assistant-feedback.json. Fang bei den Einträgen mit rating \"dislike\" an, finde zu jedem die Ursache im Code und behebe sie mit einem Test.";
+
+function Feedback({ load }: { load: FeedbackLoad }) {
+  return <div className="space-y-4 text-sm">
+    <p className="text-muted-foreground">Jedes 👍 und 👎 unter einer Antwort landet mit Frage, vollständiger Antwort, Agent, Werkzeug, Status-Schritten, Wissens- und Webquellen
+      und den Nachrichten davor in einer einzigen JSON-Datei. Kontonummern, E-Mail-Adressen und Passwörter werden vorher entfernt.</p>
+    {load.state === "loading" ? <p className="text-muted-foreground">Lade …</p>
+      : load.state === "admin" ? <p className="text-muted-foreground">Die Feedback-Datei kann nur der Administrator ansehen und herunterladen.</p>
+        : load.state === "error" ? <p className="text-muted-foreground">Die Feedback-Datei ist gerade nicht lesbar.</p>
+          : <>
+            <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-[auto_1fr]">
+              <dt className="text-muted-foreground">Datei</dt>
+              <dd className="min-w-0"><code className="break-all rounded bg-muted px-1.5 py-0.5 text-xs">{load.data.file}</code></dd>
+              <dt className="text-muted-foreground">Einträge</dt>
+              <dd className="flex flex-wrap items-center gap-x-3 gap-y-1 tabular-nums">
+                <span>{load.data.count.total}</span>
+                <span className="inline-flex items-center gap-1"><ThumbsUp aria-hidden="true" className="size-3.5 text-primary" /><span className="sr-only">Hilfreich: </span>{load.data.count.like}</span>
+                <span className="inline-flex items-center gap-1"><ThumbsDown aria-hidden="true" className="size-3.5" /><span className="sr-only">Nicht hilfreich: </span>{load.data.count.dislike}</span>
+                <span className="text-muted-foreground">{load.data.count.withComment} mit Kommentar</span>
+              </dd>
+            </dl>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button asChild size="sm" variant="outline"><a href="/api/assistant-feedback?download=1" download="assistant-feedback.json">
+                <Download aria-hidden="true" />Herunterladen</a></Button>
+              <p className="text-xs text-muted-foreground">Für Copilot, z. B.: „{copilotPrompt}“</p>
+            </div>
+            {load.data.latest.length > 0 && <FinancialData as="ul" aria-label="Neuestes Feedback" className="divide-y divide-border/70">
+              {load.data.latest.map((entry) => <li key={entry.id} className="flex items-start gap-3 py-2.5">
+                {entry.rating === "like" ? <ThumbsUp aria-label="Hilfreich" className="mt-0.5 size-4 shrink-0 text-primary" />
+                  : <ThumbsDown aria-label="Nicht hilfreich" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />}
+                <span className="min-w-0 flex-1 break-words">{entry.summary.replace(/^(?:👍|👎)\s*/u, "")}</span>
+                <time dateTime={entry.recordedAt} className="shrink-0 text-xs text-muted-foreground tabular-nums">{timeFormat.format(new Date(entry.recordedAt))}</time>
+              </li>)}
+            </FinancialData>}
+          </>}
+  </div>;
+}
+
+/** Read-only admin view of the assistant's orchestrator: tree, agents, recent runs, tools and the feedback file. */
 export function OrchestratorAdmin() {
   const { state } = useFinance();
   const runs = useMemo(() => assistantRuns(state.assistantChat ?? []), [state.assistantChat]);
   const [status, setStatus] = useState<AiStatus>();
   const [loading, setLoading] = useState(true);
+  const [feedback, setFeedback] = useState<FeedbackLoad>({ state: "loading" });
   useEffect(() => {
     let alive = true;
     void readStatus().then((next) => { if (alive) { setStatus(next); setLoading(false); } });
+    void readFeedbackOverview().then((next) => { if (alive) setFeedback(next); });
     return () => { alive = false; };
   }, []);
   const refresh = () => {
     setLoading(true);
     void readStatus().then((next) => { setStatus(next); setLoading(false); });
+    void readFeedbackOverview().then(setFeedback);
   };
   const times = runs.flatMap((run) => run.ms === undefined ? [] : [run.ms]).sort((a, b) => a - b);
   const median = times.length ? times[Math.floor(times.length / 2)] : undefined;
@@ -221,6 +281,7 @@ export function OrchestratorAdmin() {
         <Runs runs={runs} />
       </Section>
       <Section id="orchestrator-tools" title="Werkzeuge" meta="Jedes Werkzeug gehört genau einem Agenten"><Tools /></Section>
+      <Section id="orchestrator-feedback" title="Feedback" meta="👍/👎 aus dem Chat, für die Fehlersuche mit Copilot"><Feedback load={feedback} /></Section>
     </div>
   </div>;
 }

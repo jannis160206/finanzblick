@@ -9,6 +9,7 @@ Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledi
 | OpenVINO Model Server (OVMS) | Stellt `Qwen3-8B-int4-cw-ov` auf der NPU als OpenAI-kompatible API unter `http://127.0.0.1:8000/v3` bereit, dazu `Qwen3-Embedding-0.6B-int8-ov` (CPU) unter `/v3/embeddings` |
 | `/api/ai/knowledge` | Durchsucht das lokale Finanzwissen und die vom Nutzer bestätigten Antworten hybrid (Vektor und Stichwort, höchstens drei Treffer); siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#lokales-finanzwissen-rag) |
 | `/api/ai/web-search` | Websuche des Finanz-Assistenten: nur Suchwörter, bis zu drei öffentliche Quellen zum Vergleichen; siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#freie-formulierungen-websuche-und-selbstlernen) |
+| `/api/assistant-feedback` | 👍/👎 mit Kommentar und Kontext in die Feedback-Datei schreiben; Übersicht und Download nur für den Administrator; siehe [ASSISTANT-ORCHESTRATOR.md](ASSISTANT-ORCHESTRATOR.md#feedback-datei-für-copilot) |
 | `AiReviewAssistant` (Browser) | Schickt offene Prüfungen in Achterpaketen an `/api/ai/categorize` und übernimmt nur sichere Antworten |
 | `/api/ai/logo` | Sucht ein Händlerlogo (Wikidata/Commons, offizielle Webseite, Marken-Domain) und legt es in den privaten `Logo/`-Ordner |
 | `/api/ai/logos` | Sucht der Reihe nach Logos für alle Zahlungsempfänger, die noch keines haben (siehe „Händler-Logos“) |
@@ -49,6 +50,7 @@ Optionale Variablen in `.env.local`:
 | `FINANZBLICK_WEB_SEARCH` | an | `off` schaltet die automatische Websuche des Finanz-Assistenten ab |
 | `FINANZBLICK_SEARXNG_URL` | – | eigene SearXNG-Instanz (JSON-Format aktiviert) statt Bing, z. B. `http://127.0.0.1:8888` |
 | `BRAVE_SEARCH_API_KEY` | – | Brave-Search-API statt Bing, wenn kein SearXNG gesetzt ist |
+| `FINANZBLICK_FEEDBACK_FILE` | `data/assistant-feedback.json`, in Produktion neben der Datenbank | Absoluter Pfad der Feedback-Datei des Finanz-Assistenten |
 
 ## Was automatisch passiert
 
@@ -161,7 +163,7 @@ Die KI wählt nur ein Werkzeug (`src/lib/assistant/tools.ts`) und nennt Namen au
   - *Wissen aus dem Internet:* Begriffsfragen wie „Was ist ein ETF?“, „Was bedeutet KESt?“ oder „Unterschied zwischen Tagesgeld und Festgeld“ schlägt er über `/api/knowledge` und das MCP-Werkzeug `search_knowledge` nach und speichert die Erklärung (`assistantKnowledge`, höchstens 100 Einträge). Beim nächsten Mal antwortet er sofort und auch offline; nach 90 Tagen frischt er den Eintrag auf. Gelerntes Wissen fließt auch in freie KI-Antworten ein. Ins Internet geht nur der Begriff. Fragen zu eigenen Daten oder zum Dashboard („Was ist ein Pocket?“, „Was sind meine Abos?“) bleiben bei den anderen Werkzeugen. „Was hast du gelernt?“ zeigt alles.
   - *Formulierungen:* Versteht nur die KI eine Nachricht (die Regeln nicht), merkt er sich die Formulierung mit dem gewählten Werkzeug, Beträge als Platzhalter (`assistantPhrases`, höchstens 200). Die gleiche Formulierung beantwortet er danach ohne NPU-Aufruf. Das gilt nur für Werkzeuge, die allein aus dem Text rechnen, nicht für Änderungen oder Entwürfe.
 - **Selbst lernend** (`src/lib/assistant/learning.ts`):
-  - *Feedback:* 👍 unter einer Antwort merkt sich die Formulierung für das gewählte Werkzeug. 👎 vergisst sie, notiert die Frage als offen und fragt „Was hast du gemeint?“. Die Antwort darauf (oder „Nein, ich meinte …“) lernt die ursprüngliche Formulierung für das richtige Werkzeug.
+  - *Feedback:* 👍 unter einer Antwort merkt sich die Formulierung für das gewählte Werkzeug. 👎 vergisst sie, notiert die Frage als offen und öffnet ein Kommentarfeld. Eine anders formulierte Frage direkt danach (oder „Nein, ich meinte …“) lernt die ursprüngliche Formulierung für das richtige Werkzeug. Jede Bewertung landet mit Kontext in der [Feedback-Datei](ASSISTANT-ORCHESTRATOR.md#feedback-datei-für-copilot).
   - *Eigene Bezeichnungen:* „Mit Japan meine ich Motorrad“ speichert eine Bezeichnung (`assistantAliases`, höchstens 100), die vor jeder Nachricht eingesetzt wird. Kennt er einen Namen nicht und du wählst bei „Welches meinst du?“ eines aus, merkt er sich das unbekannte Wort automatisch und führt den Befehl mit dem richtigen Namen aus.
   - *Offene Fragen:* Was er nicht versteht, kommt in `assistantGaps` (höchstens 50). Beim Öffnen versucht er bis zu drei offene Fragen erneut, mit Regeln und KI, und lernt sie, wenn es klappt. „Was kannst du noch nicht?“ und „Gedächtnis“ zeigen Bezeichnungen und offene Fragen.
 - **Arbeitnehmerveranlagung (Österreich):** Spenden, Kirchenbeitrag, Gewerkschaft, Fortbildung, Arbeitsmittel und Krankheitskosten eines Jahres als Liste. Ersetzt keine Steuerberatung.

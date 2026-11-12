@@ -192,7 +192,7 @@ export function Settings() {
           </ul>
         </nav>
         {/* Hidden admin view of the assistant: deliberately quiet, outside the category list. */}
-        <Link href="/einstellungen/orchestrator"
+        <Link href="/einstellungen/orchestrator" title="Aufbau, Läufe und Feedback-Datei des Finanz-Assistenten"
           className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:px-3",
             searching && "max-lg:hidden")}>
           <Workflow aria-hidden="true" className="size-3.5" />Assistent-Orchestrator

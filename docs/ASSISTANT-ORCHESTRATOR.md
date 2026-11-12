@@ -93,11 +93,47 @@ Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orche
 - **Agenten:** Zuständigkeit, Kurzbeschreibung, Modell (Router und Hauptmodell aus `/api/ai/status`) und Zahl der letzten Läufe.
 - **Letzte Läufe:** bis zu 50 Anfragen aus dem Chatverlauf mit Zeit, Agent, Weg, Status (beantwortet, Rückfrage, unklar, Fehler) und grober Dauer. Keine Token-Angaben.
 - **Werkzeuge:** Tabelle je Agent; Werkzeuge, die Daten ändern, sind markiert und laufen nur nach Bestätigung.
-- **Aktualisieren** lädt den KI-Status neu. Bearbeiten lässt sich nichts.
+- **Feedback:** Ort der Feedback-Datei, Zahl der 👍/👎 und Kommentare, die neuesten fünf Einträge und **Herunterladen** (siehe [Feedback-Datei](#feedback-datei-für-copilot)).
+- **Aktualisieren** lädt den KI-Status und die Feedback-Übersicht neu. Bearbeiten lässt sich nichts.
 
 Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall) und `ms` (Dauer). Das ist JSON im bestehenden Verlauf, keine Migration.
 
 **Dateien:** `src/lib/assistant/orchestrator-info.ts` (Daten), `src/components/orchestrator-admin.tsx` (Ansicht), `src/app/(dashboard)/einstellungen/orchestrator/page.tsx` (Route).
+
+## Feedback-Datei für Copilot
+
+Unter jeder Antwort des Assistenten stehen 👍 und 👎 in der dezenten Aktionsleiste (neben Kopieren und Neu generieren). Jede Bewertung landet sofort in einer einzigen JSON-Datei, mit so viel Kontext, dass man sie direkt an Copilot geben kann, um Probleme zu finden und zu beheben.
+
+- **Bedienung:**
+  - 👍 speichert sofort; „Kommentar hinzufügen“ ergänzt optional einen Text.
+  - 👎 speichert sofort und öffnet ein kleines Kommentarfeld („Was war nicht gut?“). Enter sendet, Umschalt+Enter macht eine neue Zeile, Escape schließt.
+  - Danach zeigen die Leiste „Feedback gespeichert“ und eine kurze Meldung „Feedback gespeichert“ bzw. „Kommentar gespeichert“.
+  - Ein späterer Kommentar ergänzt denselben Eintrag (gleiche `id`, `updatedAt`).
+  - Auch „Das war falsch“ im Chat zählt als 👎 (auch nach einem 👍) und öffnet das Feld. „Das hat geholfen“ nach einer Web-Antwort zählt als 👍; „Passt“ nach einem 👎 ändert die Bewertung nicht.
+  - Escape im Kommentarfeld schließt nur das Feld, nicht den Assistenten.
+- **Lernen bleibt:**
+  - 👍 lernt die Formulierung wie bisher; bei einer Web-Antwort wird sie gemerkt.
+  - 👎 vergisst die Formulierung, notiert die Frage als offen und sperrt eine Web-Antwort samt Quellen. Der Kommentar zu einer Web-Antwort wird zusätzlich als Korrektur-Hinweis gespeichert.
+  - Statt einer eigenen Rückfrage im Chat gibt es jetzt das Kommentarfeld. Eine anders formulierte Frage direkt danach (oder „Nein, ich meinte …“) lernt der Assistent weiterhin.
+- **Inhalt je Eintrag** (`feedbackEntrySchema` in `src/lib/assistant/feedback.ts`):
+  - Zeitstempel (`recordedAt`, `updatedAt`), `rating` (`like`/`dislike`), optionaler `comment` und eine Zeile `summary` zum Überfliegen;
+  - die Frage (`question`) und die vollständige Antwort (`answer`): Text, Agent mit Name, Werkzeug, Weg des Orchestrators, KI oder Regel, Dauer, Karte (bis zu 12 Zeilen), Vorschläge, offene Änderung oder Formular;
+  - die Live-Status-Schritte der Antwort (`steps`), z. B. „Lese deine Nachricht…“, „Suche aktuelle Informationen…“;
+  - `retrieval`: lokales Finanzwissen gesucht und welche Abschnitte genutzt wurden, bestätigte Antwort, Websuche mit Quellen, Marktdaten, Sprachmodell;
+  - `context`: bis zu vier Nachrichten vor der Antwort;
+  - App-Seite, Stichtag, Bildschirmgröße, Sprache, Farbschema und reduzierte Bewegung;
+  - KI-Einstellungen des Servers (Modell, Einbettungsmodell, Websuche);
+  - im Kontomodus die Konto-Id, keine Namen.
+- **Aufbau der Datei:** Vorne stehen Erklärungen für Copilot (`forCopilot`, `fields`, `privacy`) und die Zahlen (`count`), danach `entries`, älteste zuerst. Höchstens 1.000 Einträge; darüber fallen die ältesten weg. Ist die Datei von Hand kaputt editiert oder zeigt der Pfad auf eine fremde Datei, wird sie nie überschrieben; Speichern meldet dann einen Fehler.
+- **Datenschutz:** Der Server entfernt vor dem Speichern aus allen Freitexten IBANs, Karten-, Konto-, Sozialversicherungs- und Telefonnummern, E-Mail-Adressen, Passwörter, Tokens und Schlüssel, auch im Kommentar. Beträge und Händlernamen bleiben, weil sie für die Fehlersuche nötig sind. Die Datei hat die Rechte 0600.
+- **Ort:**
+  - Entwicklung: `data/assistant-feedback.json`, in `.gitignore`, wird nie committet.
+  - Produktion: neben der Kontodatenbank, z. B. `/var/lib/finanzblick/assistant-feedback.json`, weil der App-Ordner dort schreibgeschützt ist.
+  - `FINANZBLICK_FEEDBACK_FILE` (absoluter Pfad) legt einen anderen Ort fest; nie unter `public/`.
+- **API:** `POST /api/assistant-feedback` schreibt (angemeldet, gleiche Herkunft, höchstens 60 je Minute). `GET` liefert Ort, Zahlen und die neuesten Einträge, `GET ?download=1` die ganze Datei; beides im Kontomodus nur für den Administrator.
+- **Nutzung mit Copilot:** Datei unter **Einstellungen → „Assistent-Orchestrator“ → Feedback → Herunterladen** holen und z. B. mit diesem Auftrag übergeben: „Lies assistant-feedback.json. Fang bei den Einträgen mit rating "dislike" an, finde zu jedem die Ursache im Code und behebe sie mit einem Test.“
+
+**Dateien:** `src/lib/assistant/feedback.ts` (Eintrag, Schwärzung, Dateiformat), `src/lib/server/feedback-store.ts` (Ort, Schreiben), `src/app/api/assistant-feedback/route.ts`, `src/components/assistant-chat-parts.tsx` (`MessageActions`, Kommentarfeld), `src/components/finance-assistant.tsx` (Status-Schritte je Antwort, Speichern).
 
 ## Chat-Test 1 (11.11.2026)
 
@@ -377,7 +413,7 @@ Fragen und Aufträge funktionieren unabhängig von der genauen Formulierung. Bei
   - Dieselbe Frage in anderen Worten beantwortet er sofort aus dem Gedächtnis, ohne Routing, Suche oder Modell („Von dir bestätigt“).
   - Ähnliche Fragen durchsuchen bestätigte Antworten zusammen mit dem lokalen Finanzwissen. Die Antworten werden einmal eingebettet, per Inhalts-Hash in `sqlite-vec` gehalten und nur mit den Einträgen der jeweiligen Anfrage verglichen; ohne Einbettungsmodell zählt die Wortüberschneidung.
   - Jede Bestätigung und jede Wiederverwendung rückt eine Antwort ein wenig nach vorne, höchstens um 0,06. Beim Aufräumen des Gedächtnisses bleiben bestätigte und oft genutzte Antworten am längsten.
-- **👎** markiert die Antwort als abgelehnt: Sie wird nie wieder vorgeschlagen, und ihre Quellen lässt die nächste Suche zu dieser Frage weg. Der Assistent fragt, was nicht stimmt. Die Korrektur speichert er als Hinweis und gibt sie künftigen Antworten zu dieser Frage mit.
+- **👎** markiert die Antwort als abgelehnt: Sie wird nie wieder vorgeschlagen, und ihre Quellen lässt die nächste Suche zu dieser Frage weg. Im Kommentarfeld unter der Antwort kann man sagen, was nicht stimmt. Diese Korrektur speichert er als Hinweis und gibt sie künftigen Antworten zu dieser Frage mit.
 - Alles liegt im bestehenden JSON-Finanzstand mit optionalen Feldern; die Datenbankstruktur bleibt unverändert. Unter „Gedächtnis“ ist jeder Eintrag sichtbar und löschbar.
 
 **Dateien:** `src/lib/assistant/intents.ts`, `src/lib/assistant/public-facts.ts`, `src/lib/assistant/web-learning.ts`, `src/lib/assistant/combined.ts`, `src/lib/web/search.ts`, `src/lib/web/web-answer.ts`, `src/app/api/ai/web-search/route.ts`, `src/lib/knowledge-base/` (gelernte Treffer), `src/components/finance-assistant.tsx`.
@@ -410,7 +446,8 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `payroll.test.ts`: Gehaltswerkzeug und Fakten-Ausschnitte.
 - `eval-cases.test.ts`: Eigentümer jeder goldenen Frage; grenzwertige Fragen nie beim falschen Spezialisten.
 - `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten und Gehaltsfrage im Browser bei 390 und 1440 px.
-- `tests/assistant-admin.spec.ts`: Admin-Ansicht nur über die Einstellungen erreichbar, alle vier Bereiche, kein horizontales Scrollen bei 1440 px hell und 390 px dunkel.
+- `tests/assistant-admin.spec.ts`: Admin-Ansicht nur über die Einstellungen erreichbar, alle Bereiche samt Feedback, kein horizontales Scrollen bei 1440 px hell und 390 px dunkel.
+- Feedback-Datei: `feedback.test.ts` (Eintrag mit Kontext, Wissen und Websuche, Schwärzung, Ergänzen und Grenze), `feedback-store.test.ts` (Ort, gleichzeitiges Schreiben, beschädigte Datei bleibt, Route mit Schwärzung, ungültige und fremde Anfragen), `assistant-chat-parts.test.tsx` (👍/👎, Kommentarfeld mit Fokus, Enter, Escape schließt nur das Feld), `orchestrator-admin.test.tsx` (Feedback-Bereich, nur Administrator).
 - `orchestrator-info.test.ts`, `orchestrator-admin.test.tsx`: Läufe aus dem Verlauf, Status, Werkzeugliste und Darstellung.
 - Korrekturen aus dem Chat-Test: `conversation.test.ts` (`converseOn`, Budget-Empfehlung), `payroll.test.ts`, `pulse.test.ts`, `copilot.test.ts`, `cancel.test.ts`, `learning.test.ts`, `smalltalk.test.ts`, `phrasing.test.ts`, `speed.test.ts`.
 - Korrekturen aus Chat-Test 2: `fixed-replies.test.ts` (feste Antworten, Rechnen, Rückfragen), `combined.test.ts` (kombinierte Fragen), `knowledge.test.ts` (Faktenfragen, allgemeine Artikel), `conversation.test.ts` (kopierte Sätze), `check.test.ts`, `everyday.test.ts`, `market.test.ts`, `insights.test.ts`, `orchestrator.test.ts`, `speed.test.ts` (Themenhinweise, knappe Faktenantwort).

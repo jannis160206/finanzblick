@@ -35,6 +35,7 @@ import {
   rejectWebAnswer, searchesAgain, WEB_FIX_TOOL, WEB_TOOL, webEntryId,
 } from "@/lib/assistant/web-learning";
 import { webEvidence, webFallbackAnswer, webLinks, type WebSearchResult } from "@/lib/web/web-answer";
+import { buildFeedbackEntry, type FeedbackEntry } from "@/lib/assistant/feedback";
 import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
 import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
@@ -145,6 +146,12 @@ function pageContext(): AssistantPageContext | null {
   return { route, title: currentNavItem(route)?.label ?? "Finanzblick" };
 }
 const timestamp = () => Date.now();
+// Screen, language, color scheme and motion setting for the feedback file; nothing that identifies the device.
+function clientInfo(theme?: string): FeedbackEntry["client"] {
+  if (typeof window === "undefined") return undefined;
+  return { viewport: `${window.innerWidth}x${window.innerHeight}`, ...(navigator.language ? { language: navigator.language.slice(0, 20) } : {}),
+    ...(theme ? { theme: theme.slice(0, 10) } : {}), reducedMotion: !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches };
+}
 
 function previewText(draft: AssistantDraft) {
   const prefix = draft.whatIf ? "Was-wäre-wenn, nichts wird gespeichert. " : "";
@@ -174,7 +181,7 @@ const monthEnd = (month: string) => `${month}-${String(lastDay(month)).padStart(
 
 export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number; send?: boolean } } = {}) {
   const { state: stored, dashboard, update, storageError, ready } = useFinance();
-  const { setTheme } = useTheme();
+  const { setTheme, resolvedTheme } = useTheme();
   const extras = useDashboardExtras();
   // New messages and what a run learned (phrasings, aliases, memories) collect here while the chat is in use; the app's state
   // takes them in one step once the chat is idle, so the pages behind it do not re-render and save for every single message.
@@ -217,6 +224,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const running = useRef(false);
   const streamed = useRef<string | undefined>(undefined);
   const setStreaming = (text?: string) => { streamed.current = text; live.setText(text); };
+  // The live steps of the running answer, attached to the answer for the feedback file.
+  const runSteps = useRef<string[]>([]);
+  useEffect(() => live.subscribe(() => {
+    const step = live.get().status?.text;
+    if (running.current && step && runSteps.current.at(-1) !== step && runSteps.current.length < 12) runSteps.current.push(step.slice(0, 80));
+  }), [live]);
+  const takeSteps = () => {
+    const steps = runSteps.current;
+    runSteps.current = [];
+    return running.current && steps.length ? { steps } : {};
+  };
+  // The answer whose feedback comment field is open.
+  const [commentFor, setCommentFor] = useState<string>();
   // The question shows the moment it is sent; the stored message takes its place once routing has run.
   const [echo, setEcho] = useState<{ text: string; at: number }>();
   // Answers that came out of a run: their bot takes over from the orb, and an answer that was streamed does not enter twice.
@@ -316,9 +336,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const suggestions = draftSuggestions(draft, state.settings.asOf);
     const id = newId();
     noteHandoff(id);
+    const steps = takeSteps();
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
       { id, role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action],
-        ...(suggestions ? { suggestions } : {}), ...run }]);
+        ...(suggestions ? { suggestions } : {}), ...run, ...steps }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
     meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources" | "links" | "knowledgeId"> = {}) => {
@@ -335,6 +356,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(meta.links?.length ? { links: meta.links.slice(0, 4) } : {}), ...(meta.knowledgeId ? { knowledgeId: meta.knowledgeId } : {}),
       ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
+      ...takeSteps(),
     };
     const parsed = assistantMessageSchema.safeParse(message);
     noteHandoff(message.id);
@@ -343,40 +365,64 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const knownNames = () => [...savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50),
     ...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth).map((item) => item.name.slice(0, 100)))].slice(0, 110);
 
-  // 👍 reinforces how the question was understood; 👎 forgets it and asks what was meant, so the next answer teaches the right way.
-  function giveFeedback(message: AssistantMessage, value: "up" | "down") {
-    const asked = message.asked;
-    if (!asked) return;
-    // A web search answer: 👍 stores it as local knowledge, 👎 rejects it and asks for the correction.
-    if (isWebAnswer(message)) {
-      const answer = { id: newId(), question: asked, text: message.text, links: message.links, target: message.knowledgeId };
-      writeGlobal((current) => {
-        const chat = (current.assistantChat ?? []).map((item) => item.id === message.id ? { ...item, feedback: value } : item);
-        if (value === "up") return { ...current, assistantChat: chat, assistantKnowledge: learnWebAnswer(current.assistantKnowledge, answer) };
-        // The question back remembers which entry it belongs to, so the correction reaches exactly that one.
-        const ask: AssistantMessage = { id: newId(), role: "assistant", at: Date.now(), source: "Regel", agent: "general", tool: WEB_FIX_TOOL, correcting: asked.slice(0, 1000),
-          knowledgeId: webEntryId(current.assistantKnowledge, answer),
-          text: "Danke für die Rückmeldung – diese Antwort schlage ich nicht mehr vor. Was stimmt daran nicht? Schreib mir kurz die Korrektur, dann berücksichtige ich sie künftig.",
-          suggestions: ["Die Angabe ist veraltet", "Das gilt so nicht in Österreich", "Such im Internet nochmal danach"] };
-        return { ...current, assistantChat: [...chat, ask].slice(-MAX_ASSISTANT_MESSAGES), assistantKnowledge: rejectWebAnswer(current.assistantKnowledge, answer) };
-      });
-      if (value === "up") toast.success("Danke, gemerkt – nächstes Mal antworte ich ohne neue Suche");
+  // Every rating goes into the feedback file with as much context as possible (question, answer, route, steps, sources, chat).
+  async function storeFeedback(message: AssistantMessage, success: string) {
+    if (!message.feedback || !message.feedbackId) return;
+    try {
+      const entry = buildFeedbackEntry({ id: message.feedbackId, message, thread: messages, rating: message.feedback === "up" ? "like" : "dislike",
+        comment: message.feedbackComment, page: pageContext(), asOf: state.settings.asOf, client: clientInfo(resolvedTheme) });
+      const response = await fetch("/api/assistant-feedback", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
+        body: JSON.stringify(entry), signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error();
+      toast.success(success);
+    } catch {
+      toast.error("Das Feedback konnte gerade nicht gespeichert werden. Bitte später noch einmal versuchen.");
+    }
+  }
+
+  // 👍 reinforces how the question was understood; 👎 forgets it and opens the comment field. A web answer is kept or rejected.
+  // `change`: "Das war falsch" in the chat turns an earlier 👍 into 👎 (same entry in the feedback file).
+  function giveFeedback(message: AssistantMessage, value: "up" | "down", options: { change?: boolean } = {}) {
+    if (message.feedback === value || message.feedback && !options.change) {
+      if (value === "down") setCommentFor(message.id);
       return;
     }
+    const asked = message.asked;
+    const feedbackId = message.feedbackId ?? newId();
+    const web = !!asked && isWebAnswer(message);
+    const answer = web ? { id: newId(), question: asked, text: message.text, links: message.links, target: message.knowledgeId } : undefined;
     const tool = message.tool && isAssistantTool(message.tool) ? message.tool : undefined;
-    const learnable = !!tool && learnableTools.includes(tool) && detectTool(asked, knownNames()) !== tool;
+    const teaches = !!asked && !message.correcting && !web;
+    const learnable = teaches && !!tool && learnableTools.includes(tool) && detectTool(asked, knownNames()) !== tool;
+    // A rejected web answer remembers its knowledge entry, so a comment reaches exactly that one as a correction.
+    const knowledgeId = answer && value === "down" ? webEntryId(state.assistantKnowledge, answer) : undefined;
+    const rated: AssistantMessage = { ...message, feedback: value, feedbackId, ...(knowledgeId ? { knowledgeId } : {}) };
     writeGlobal((current) => {
-      const chat = (current.assistantChat ?? []).map((item) => item.id === message.id ? { ...item, feedback: value } : item);
+      const chat = (current.assistantChat ?? []).map((item) => item.id === message.id ? { ...item, ...rated } : item);
+      if (answer) return { ...current, assistantChat: chat,
+        assistantKnowledge: value === "up" ? learnWebAnswer(current.assistantKnowledge, answer) : rejectWebAnswer(current.assistantKnowledge, answer) };
+      if (!teaches) return { ...current, assistantChat: chat };
       if (value === "up") return { ...current, assistantChat: chat,
         assistantPhrases: learnable ? learnPhrase(current.assistantPhrases, asked, tool!) : current.assistantPhrases,
         assistantGaps: tool ? resolveGap(current.assistantGaps, asked, tool) : current.assistantGaps };
-      const ask: AssistantMessage = { id: newId(), role: "assistant", at: Date.now(), source: "Regel", correcting: asked.slice(0, 1000),
-        text: `Danke für die ehrliche Rückmeldung. Was hast du mit „${asked.slice(0, 120)}“ gemeint? Schreib es kurz anders, dann lerne ich es für das nächste Mal.`,
-        suggestions: ["Was kannst du alles?"] };
-      return { ...current, assistantChat: [...chat, ask].slice(-MAX_ASSISTANT_MESSAGES),
-        assistantPhrases: unlearnPhrase(current.assistantPhrases, asked), assistantGaps: recordGap(current.assistantGaps, asked) };
+      return { ...current, assistantChat: chat, assistantPhrases: unlearnPhrase(current.assistantPhrases, asked), assistantGaps: recordGap(current.assistantGaps, asked) };
     });
-    if (value === "up") toast.success("Danke, das merke ich mir");
+    if (value === "down") setCommentFor(message.id);
+    void storeFeedback(rated, value === "up" && web ? "Feedback gespeichert – nächstes Mal antworte ich ohne neue Suche" : "Feedback gespeichert");
+  }
+
+  // The comment completes the same entry in the feedback file; on a rejected web answer it is also kept as a correction.
+  function commentFeedback(message: AssistantMessage, comment: string) {
+    const current = messages.find((item) => item.id === message.id) ?? message;
+    const text = comment.trim().slice(0, 2000);
+    setCommentFor(undefined);
+    if (!text || !current.feedback || !current.feedbackId) return;
+    const commented: AssistantMessage = { ...current, feedbackComment: text };
+    const correction = current.feedback === "down" && current.asked && isWebAnswer(current) ? { question: current.asked, target: current.knowledgeId } : undefined;
+    writeGlobal((next) => ({ ...next,
+      assistantChat: (next.assistantChat ?? []).map((item) => item.id === current.id ? { ...item, feedbackComment: text } : item),
+      ...(correction ? { assistantKnowledge: noteWebAnswer(next.assistantKnowledge, correction, text) } : {}) }));
+    void storeFeedback(commented, "Kommentar gespeichert");
   }
 
   // Self-improvement: questions it could not answer before are tried again in the background, e.g. once the local model is back.
@@ -661,6 +707,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     setEcho({ text, at: Date.now() });
     setBusy(true);
     live.reset();
+    runSteps.current = [];
+    setCommentFor(undefined);
     setStatus(workStatus.read);
     await afterPaint();
     try {
@@ -735,12 +783,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // After a web answer "Das hat geholfen" confirms it; after its 👎 the next message is the correction, unless it searches again.
     const webQuestion = pending ? undefined : lastAnswer?.tool === WEB_FIX_TOOL ? lastAnswer.correcting : lastAnswer && isWebAnswer(lastAnswer) ? lastAnswer.asked : undefined;
     const searchAgain = !!webQuestion && searchesAgain(text);
-    if (webQuestion && lastAnswer && isWebAnswer(lastAnswer) && helpedReply(text)) {
+    // A rejected answer stays rejected: "Passt" after 👎 is just a reply, never a confirmation.
+    if (webQuestion && lastAnswer && isWebAnswer(lastAnswer) && lastAnswer.feedback !== "down" && helpedReply(text)) {
       const confirmed = lastAnswer;
+      // "Das hat geholfen" counts as 👍, in the feedback file too.
+      const rated = confirmed.feedback === "up" ? undefined : { ...confirmed, feedback: "up" as const, feedbackId: confirmed.feedbackId ?? newId() };
       setBusy(true);
-      save((items) => [...items.map((item) => item.id === confirmed.id ? { ...item, feedback: "up" as const } : item), { id: newId(), role: "user", text, at: Date.now() }]);
-      if (confirmed.feedback !== "up") learn((current) => ({ ...current, assistantKnowledge: learnWebAnswer(current.assistantKnowledge,
-        { id: newId(), question: webQuestion, text: confirmed.text, links: confirmed.links, target: confirmed.knowledgeId }) }));
+      save((items) => [...items.map((item) => item.id === confirmed.id && rated ? { ...item, feedback: rated.feedback, feedbackId: rated.feedbackId } : item),
+        { id: newId(), role: "user", text, at: Date.now() }]);
+      if (rated) {
+        learn((current) => ({ ...current, assistantKnowledge: learnWebAnswer(current.assistantKnowledge,
+          { id: newId(), question: webQuestion, text: confirmed.text, links: confirmed.links, target: confirmed.knowledgeId }) }));
+        void storeFeedback(rated, "Feedback gespeichert");
+      }
       await settle();
       addResult({ text: "Freut mich! Ich habe mir die Antwort gemerkt – fragst du wieder danach, weiß ich es sofort, ohne neue Suche.",
         suggestions: ["Was hast du gelernt?", ...starterSuggestions.slice(0, 2)] }, "Regel", { agent: "general", via: "rule", ms: elapsed() });
@@ -762,11 +817,17 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // Corrections teach the earlier phrasing: "Nein, ich meinte …", or the answer to "Was hast du gemeint?".
     const fix = !pending && lastAnswer?.asked ? correction(text) : undefined;
     if (fix && !fix.text && lastAnswer) {
-      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
-      giveFeedback(lastAnswer, "down");
+      // Question and reply first: the rating's global write then takes all three in one update.
+      save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() },
+        { id: newId(), role: "assistant", at: Date.now() + 1, source: "Regel", ...(lastAnswer.agent ? { agent: lastAnswer.agent } : {}),
+          ...(lastAnswer.asked && !isWebAnswer(lastAnswer) ? { correcting: lastAnswer.asked.slice(0, 1000) } : {}),
+          text: "Danke, dein Feedback ist gespeichert. Was war falsch? Schreib es ins Feld unter der Antwort – oder stell die Frage einfach anders, dann lerne ich daraus." }]);
+      giveFeedback(lastAnswer, "down", { change: true });
       return;
     }
-    const original = pending || lastAnswer?.tool === WEB_FIX_TOOL ? undefined : fix ? lastAnswer?.asked : lastAnswer?.correcting;
+    // After 👎 the next message may rephrase the question; only a real rephrasing (see `rephrases`) is learned.
+    const original = pending || lastAnswer?.tool === WEB_FIX_TOOL ? undefined : fix ? lastAnswer?.asked
+      : lastAnswer?.correcting ?? (lastAnswer?.feedback === "down" && !isWebAnswer(lastAnswer) ? lastAnswer.asked : undefined);
     let work = searchAgain && webQuestion ? webQuestion : fix?.text ?? text;
     // "Such im Internet nach …" always searches, also for a question the local knowledge could answer.
     const forceWeb = searchAgain || asksForWebSearch(text);
@@ -1100,7 +1161,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // Handlers for the message rows; read when clicked, so the rows never need to re-render for a new handler.
   const rowActions = useRef<RowActions | null>(null);
   useLayoutEffect(() => {
-    rowActions.current = { addResult, applyChange, setMessage, undo, setEditing, createGoal, createExpense, regenerate, giveFeedback,
+    rowActions.current = { addResult, applyChange, setMessage, undo, setEditing, createGoal, createExpense, regenerate, giveFeedback, commentFeedback, setCommentFor,
       ask: (text) => void send(undefined, text) };
   });
   const lastId = messages.at(-1)?.id;
@@ -1145,7 +1206,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
             const handoff = message.role === "assistant" ? handoffs.current.get(message.id) : undefined;
             // A question already showed when it was sent, and a streamed answer stays where it was; neither enters a second time.
             return <MessageRow key={message.id} message={message} state={state} dashboard={dashboard} last={message.id === lastId} live={message.id === liveId}
-              pending={message.id === pendingId} editing={editing === message.id} locked={!!storageError} handoff={handoff} actions={rowActions}
+              pending={message.id === pendingId} editing={editing === message.id} commenting={commentFor === message.id} locked={!!storageError} handoff={handoff}
+              actions={rowActions}
               enter={!initialIds.has(message.id) && message.role === "assistant" && !handoff?.streamed} />;
           })}
         </ChatBusy>
@@ -1195,13 +1257,15 @@ type RowActions = {
   ask: (text: string) => void;
   regenerate: (message: AssistantMessage) => void;
   giveFeedback: (message: AssistantMessage, value: "up" | "down") => void;
+  commentFeedback: (message: AssistantMessage, comment: string) => void;
+  setCommentFor: (id?: string) => void;
 };
 // Whether an answer is being worked on; only the small row footers read it, so starting a run does not re-render every message.
 const ChatBusy = createContext(false);
 
 /** One message with its cards; it renders again only when its own props change, so a new message renders just itself. */
-const MessageRow = memo(function MessageRow({ message, state, dashboard, last, live, pending, editing, locked, enter, handoff, actions }: {
-  message: AssistantMessage; state: AppState; dashboard: Dashboard; last: boolean; live: boolean; pending: boolean; editing: boolean; locked: boolean;
+const MessageRow = memo(function MessageRow({ message, state, dashboard, last, live, pending, editing, commenting, locked, enter, handoff, actions }: {
+  message: AssistantMessage; state: AppState; dashboard: Dashboard; last: boolean; live: boolean; pending: boolean; editing: boolean; commenting: boolean; locked: boolean;
   enter: boolean; handoff?: { activity: WorkActivity; streamed: boolean }; actions: RefObject<RowActions | null>;
 }) {
   const act = () => actions.current;
@@ -1245,21 +1309,26 @@ const MessageRow = memo(function MessageRow({ message, state, dashboard, last, l
             onUndo={() => message.undoId && act()?.undo(message.undoId)} />
         </GlowFrame>}
     </div>}
-    <RowFooter message={message} last={last} locked={locked} actions={actions} />
+    <RowFooter message={message} last={last} locked={locked} commenting={commenting} actions={actions} />
   </MessageEnter>;
 });
 
-function RowFooter({ message, last, locked, actions }: { message: AssistantMessage; last: boolean; locked: boolean; actions: RefObject<RowActions | null> }) {
+function RowFooter({ message, last, locked, commenting, actions }: {
+  message: AssistantMessage; last: boolean; locked: boolean; commenting: boolean; actions: RefObject<RowActions | null>;
+}) {
   const busy = useContext(ChatBusy);
   return <>
     {message.suggestions && !busy && last &&
       <QuickReplies items={message.suggestions} disabled={locked} onPick={(text) => actions.current?.ask(text)} />}
     {message.role === "assistant" && message.status !== "dismissed" && <MessageActions text={message.text} disabled={busy || locked}
-      // The newest answer keeps its actions in view; older ones show them on hover or focus, touch screens always.
-      className={cn(!last && "transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover/message:opacity-100 focus-within:opacity-100")}
+      // The newest answer and an open comment keep their actions in view; older ones show them on hover or focus, touch screens always.
+      className={cn(!last && !commenting && "transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover/message:opacity-100 focus-within:opacity-100")}
       onRegenerate={message.source === "KI" && message.asked && last && !message.change && !message.draft
         ? () => actions.current?.regenerate(message) : undefined}
-      feedback={message.feedback} onFeedback={message.asked && !message.correcting ? (value) => actions.current?.giveFeedback(message, value) : undefined} />}
+      feedback={message.feedback} comment={message.feedbackComment} commenting={commenting}
+      onFeedback={(value) => actions.current?.giveFeedback(message, value)}
+      onComment={message.feedbackId ? (comment) => actions.current?.commentFeedback(message, comment) : undefined}
+      onCommenting={(open) => actions.current?.setCommentFor(open ? message.id : undefined)} />}
   </>;
 }
 

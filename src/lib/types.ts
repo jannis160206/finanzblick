@@ -718,6 +718,11 @@ export const assistantMessageSchema = z.object({
   tool: z.string().max(40).optional(),
   asked: z.string().max(1000).optional(),
   feedback: z.enum(["up", "down"]).optional(),
+  // The entry in the feedback file (data/assistant-feedback.json) and the comment the user added to their 👍/👎.
+  feedbackId: agentIdSchema.optional(),
+  feedbackComment: z.string().trim().min(1).max(2000).optional(),
+  // The live status steps of the run that produced this answer, for the feedback file.
+  steps: z.array(z.string().max(80)).max(12).optional(),
   correcting: z.string().max(1000).optional(),
   clarify: z.string().max(1000).optional(),
 }).strict();

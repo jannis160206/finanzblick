@@ -17,7 +17,7 @@ function renderAdmin(chat: AppState["assistantChat"] = []) {
 }
 
 it("shows the tree, the agents with their models, the runs and the tools read-only", async () => {
-  const fetcher = vi.fn(async () => Response.json({ available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov", device: "NPU" }));
+  const fetcher = vi.fn(async (_url: string) => Response.json({ available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov", device: "NPU" }));
   vi.stubGlobal("fetch", fetcher);
   renderAdmin([
     { id: "u1", role: "user", text: "Wie viel netto bekomme ich?", at: Date.UTC(2026, 10, 11, 9, 30) },
@@ -50,7 +50,7 @@ it("shows the tree, the agents with their models, the runs and the tools read-on
   // Read-only: nothing to edit, only a refresh.
   expect(screen.queryAllByRole("textbox")).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "Aktualisieren" }));
-  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url === "/api/ai/status")).toHaveLength(2));
 });
 
 it("explains an empty run list and an unreachable model", async () => {
@@ -59,4 +59,24 @@ it("explains an empty run list and an unreachable model", async () => {
   expect(await screen.findByText("KI nicht erreichbar · nur Regeln")).toBeTruthy();
   expect(screen.getByText("Noch keine Läufe")).toBeTruthy();
   expect(screen.getByRole("button", { name: "Assistent öffnen" })).toBeTruthy();
+});
+
+it("shows where the feedback file lies, its counts and the latest entries, with a download for Copilot", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url === "/api/assistant-feedback"
+    ? Response.json({ file: "data/assistant-feedback.json", count: { total: 3, like: 1, dislike: 2, withComment: 1 },
+      latest: [{ id: "fb-1", rating: "dislike", summary: "👎 Umsätze / query: „Wie viel für Essen?“ – Kommentar: „Zu hoch“", recordedAt: "2026-11-12T13:00:00.000Z" }] })
+    : Response.json({ available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov" })));
+  renderAdmin();
+  const section = screen.getByRole("region", { name: "Feedback" });
+  expect(await within(section).findByText("data/assistant-feedback.json")).toBeTruthy();
+  expect(within(section).getByText("1 mit Kommentar")).toBeTruthy();
+  expect(within(section).getByRole("link", { name: "Herunterladen" }).getAttribute("href")).toBe("/api/assistant-feedback?download=1");
+  expect(within(section).getByRole("list", { name: "Neuestes Feedback" }).textContent).toContain("Umsätze / query: „Wie viel für Essen?“ – Kommentar: „Zu hoch“");
+});
+
+it("tells other users that only the admin sees the feedback file", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => url === "/api/assistant-feedback" ? Response.json({ error: "nein" }, { status: 403 })
+    : Response.json({ available: false, model: "" })));
+  renderAdmin();
+  expect(await screen.findByText("Die Feedback-Datei kann nur der Administrator ansehen und herunterladen.")).toBeTruthy();
 });

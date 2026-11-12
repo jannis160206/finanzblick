@@ -51,6 +51,8 @@ next-env.d.ts
 *.sqlite-shm
 *.sqlite-wal
 *.sqlite-journal
+# assistant feedback with real questions and answers (see docs/ASSISTANT-ORCHESTRATOR.md)
+/data/assistant-feedback.json*
 /test-results/
 /playwright-report/
 *.log
