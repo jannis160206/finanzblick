@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ChevronLeft, Download, Inbox, MessageSquareText, RefreshCw, ThumbsDown, ThumbsUp, Workflow } from "lucide-react";
+import { Ban, Check, CheckCheck, ChevronLeft, Clock, Download, Inbox, MessageSquareText, RefreshCw, ThumbsDown, ThumbsUp, Undo2, Workflow, X, type LucideIcon } from "lucide-react";
 import { FinancialData } from "@/components/financial-data";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { askAssistant } from "@/lib/assistant-bus";
 import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
 import {
-  agentInfo, agentOrder, agentToolList, assistantRuns, changesData, orchestratorSteps, runStatusLabel, toolLabel, viaLabel,
-  type AssistantRun, type RunStatus,
+  agentInfo, agentOrder, agentToolList, assistantRuns, callStateLabel, changesData, orchestratorSteps, runStatusLabel, toolLabel, viaLabel,
+  type AssistantRun, type CallState, type RunCall, type RunStatus,
 } from "@/lib/assistant/orchestrator-info";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +24,11 @@ const agentDot: Record<AgentId, string> = {
 };
 const statusTone: Record<RunStatus, "success" | "info" | "warning" | "destructive"> = {
   answered: "success", question: "info", unclear: "warning", error: "destructive",
+};
+// Each call state has its own icon, so success and failure never rely on color alone.
+const callIcon: Record<CallState, { icon: LucideIcon; tone: string }> = {
+  ok: { icon: Check, tone: "text-success" }, applied: { icon: CheckCheck, tone: "text-success" }, failed: { icon: X, tone: "text-destructive" },
+  pending: { icon: Clock, tone: "text-warning" }, dismissed: { icon: Ban, tone: "text-muted-foreground" }, undone: { icon: Undo2, tone: "text-muted-foreground" },
 };
 const shortModel = (name: string) => name.split("/").at(-1) ?? name;
 const duration = (ms: number) => ms < 60_000 ? `${Math.max(0.1, Math.round(ms / 100) / 10).toLocaleString("de-AT")} s` : `${Math.round(ms / 60_000)} min`;
@@ -121,12 +126,29 @@ function Agents({ status, runs }: { status?: AiStatus; runs: AssistantRun[] }) {
   </ul>;
 }
 
+// The tools of one run as small chips: what was done, the tool's technical name and how it ended (icon plus text for screen readers).
+function Calls({ calls }: { calls: RunCall[] }) {
+  return <ul aria-label="Werkzeugaufrufe" className="col-span-2 mt-1.5 flex flex-wrap gap-1">
+    {calls.map((call, index) => {
+      const { icon: Icon, tone } = callIcon[call.state];
+      return <li key={`${index}:${call.tool}`} title={`${call.label} · ${callStateLabel[call.state]}`}
+        className="inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-muted/70 px-1.5 py-0.5 text-xs">
+        <Icon aria-hidden="true" className={cn("size-3 shrink-0", tone)} />
+        <span className="sr-only">{callStateLabel[call.state]}: </span>
+        <span className="min-w-0 break-words">{call.summary}</span>
+        <span className="sr-only">, Werkzeug </span>
+        <code className="shrink-0 font-mono text-2xs text-muted-foreground">{call.tool}</code>
+      </li>;
+    })}
+  </ul>;
+}
+
 function Runs({ runs }: { runs: AssistantRun[] }) {
   if (!runs.length) return <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border/70 p-5">
     <Inbox aria-hidden="true" className="size-5 text-muted-foreground" />
     <div>
       <p className="text-sm font-medium">Noch keine Läufe</p>
-      <p className="mt-0.5 text-xs text-muted-foreground">Jede Frage an den Assistenten erscheint hier mit Agent, Status und Dauer.</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">Jede Frage an den Assistenten erscheint hier mit Agent, Werkzeugen, Status und Dauer.</p>
     </div>
     <Button type="button" variant="outline" size="sm" onClick={() => askAssistant()}><MessageSquareText aria-hidden="true" />Assistent öffnen</Button>
   </div>;
@@ -145,6 +167,7 @@ function Runs({ runs }: { runs: AssistantRun[] }) {
         <Badge variant={statusTone[run.status]}>{runStatusLabel[run.status]}</Badge>
         {run.ms !== undefined && <span className="text-xs tabular-nums text-muted-foreground">{duration(run.ms)}</span>}
       </div>
+      {run.calls.length > 0 && <Calls calls={run.calls} />}
     </li>)}
   </FinancialData>;
 }

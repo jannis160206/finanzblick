@@ -17,6 +17,7 @@ const thread: AssistantMessage[] = [
   { id: "m4", role: "user", text: "Wie hoch ist die Geringfügigkeitsgrenze 2026?", at: at + 3 },
   { id: "m5", role: "assistant", text: "551,10 € im Monat [1].", at: at + 4, agent: "general", tool: "web", source: "KI", asked: "Wie hoch ist die Geringfügigkeitsgrenze 2026?",
     steps: [workStatus.read.text, workStatus.knowledge.text, workStatus.web.text, workStatus.compare.text],
+    calls: [{ tool: "knowledge_search", ok: true, summary: "Kein Wissen gefunden" }, { tool: "web", ok: true, summary: "Websuche" }],
     links: [{ title: "oesterreich.gv.at – Geringfügigkeitsgrenze", url: "https://www.oesterreich.gv.at/g" }] },
 ];
 
@@ -40,6 +41,8 @@ describe("feedback entries", () => {
   it("record the knowledge layer and the web search with their sources", () => {
     const entry = buildFeedbackEntry({ id: "fb-00000002", message: thread[4], thread, rating: "like" });
     expect(entry.retrieval).toMatchObject({ knowledgeLayer: { searched: true }, webSearch: { used: true, sources: thread[4].links } });
+    expect(entry.answer.calls).toEqual(thread[4].calls);
+    expect(feedbackEntrySchema.safeParse(entry).success).toBe(true);
     expect(entry.context).toHaveLength(4);
     expect(feedbackSummary(entry)).toBe("👍 Allgemeiner Chat (Orchestrator) / web: „Wie hoch ist die Geringfügigkeitsgrenze 2026?“");
   });

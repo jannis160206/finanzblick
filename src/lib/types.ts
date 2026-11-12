@@ -711,6 +711,13 @@ export const webLinkSchema = z.object({
   url: z.string().max(500).regex(/^https:\/\/[^\s"<>]+$/),
 }).strict();
 export type WebLinkEntry = z.infer<typeof webLinkSchema>;
+// One tool call of an answer: the tool, whether it worked and a short action phrase, never arguments, amounts or the user's words.
+export const assistantToolCallSchema = z.object({
+  tool: z.string().min(1).max(40),
+  ok: z.boolean(),
+  summary: z.string().max(80),
+}).strict();
+export type AssistantToolCall = z.infer<typeof assistantToolCallSchema>;
 export const assistantMessageSchema = z.object({
   id: z.string().min(1).max(100),
   role: z.enum(["user", "assistant"]),
@@ -747,6 +754,8 @@ export const assistantMessageSchema = z.object({
   feedbackComment: z.string().trim().min(1).max(2000).optional(),
   // The live status steps of the run that produced this answer, for the feedback file.
   steps: z.array(z.string().max(80)).max(12).optional(),
+  // The tools the run called for this answer, in order (lookups, web search, the answering tool), for "Letzte Läufe" in the admin view.
+  calls: z.array(assistantToolCallSchema).max(8).optional(),
   correcting: z.string().max(1000).optional(),
   clarify: z.string().max(1000).optional(),
 }).strict();

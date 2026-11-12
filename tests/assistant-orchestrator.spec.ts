@@ -90,5 +90,9 @@ test.describe("assistant orchestrator", () => {
     await ask(page, "Ja");
     await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "{}").contracts?.some((item: { name?: string }) => item.name === "Fitness Park"), storageKey))
       .toBe(true);
+    // Every run records its tool calls for the admin view, the confirming "Ja" included.
+    const calls = await page.evaluate((key) => (JSON.parse(localStorage.getItem(key) ?? "{}").assistantChat ?? [])
+      .flatMap((item: { calls?: unknown[] }) => item.calls ?? []), storageKey);
+    expect(calls).toContainEqual({ tool: "contract_new", ok: true, summary: "Lege Vertrag an" });
   });
 });

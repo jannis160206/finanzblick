@@ -46,8 +46,9 @@ test.describe("assistant orchestrator admin", () => {
       await expect(page.getByRole("group", { name: "Orchestrator-Baum" })).toBeVisible();
       await expect(page.getByText(/^KI bereit · Qwen3-8B/)).toBeVisible();
       const runs = page.getByRole("list", { name: "Letzte Läufe" });
-      await expect(runs.getByRole("listitem")).toHaveCount(2);
+      await expect(runs.locator(":scope > li")).toHaveCount(2);
       await expect(runs.getByText("Wie viel netto bekomme ich?")).toBeVisible();
+      await expect(runs.getByRole("list", { name: "Werkzeugaufrufe" }).first()).toContainText("Erfolgreich: Antwort formulieren");
       await expect(page.getByRole("list", { name: "Werkzeuge Gehalt & Steuern" })).toContainText("Gehalt");
       await expect(page.getByRole("button", { name: "Aktualisieren" })).toBeEnabled();
 

@@ -53,6 +53,26 @@ it("shows the tree, the agents with their models, the runs and the tools read-on
   await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url === "/api/ai/status")).toHaveLength(2));
 });
 
+it("shows the tool calls of each run as chips with their outcome in words, not only as an icon", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov" })));
+  renderAdmin([
+    { id: "u1", role: "user", text: "Wie viel netto bekomme ich?", at: Date.UTC(2026, 10, 11, 9, 30) },
+    { id: "a1", role: "assistant", text: "Deine letzte Abrechnung …", at: Date.UTC(2026, 10, 11, 9, 30, 1), agent: "payroll", tool: "payroll" },
+    { id: "u2", role: "user", text: "Wie hoch ist die Geringfügigkeitsgrenze?", at: Date.UTC(2026, 10, 11, 9, 31) },
+    { id: "a2", role: "assistant", text: "Das finde ich gerade nicht.", at: Date.UTC(2026, 10, 11, 9, 31, 4), agent: "general", tool: "free",
+      calls: [{ tool: "knowledge_search", ok: true, summary: "Wissen nachschlagen" }, { tool: "web", ok: false, summary: "Websuche" }, { tool: "free", ok: true, summary: "Antwort formulieren" }] },
+  ]);
+  expect(await screen.findByText("KI bereit · Qwen3-8B-int4-cw-ov")).toBeTruthy();
+  const [newest, older] = within(screen.getByRole("list", { name: "Letzte Läufe" })).getAllByRole("listitem")
+    .filter((item) => item.parentElement?.getAttribute("aria-label") === "Letzte Läufe");
+  expect(newest.textContent).toContain("Allgemeiner Chat");
+  expect(within(within(newest).getByRole("list", { name: "Werkzeugaufrufe" })).getAllByRole("listitem").map((chip) => chip.textContent)).toEqual([
+    "Erfolgreich: Wissen nachschlagen, Werkzeug knowledge_search", "Fehlgeschlagen: Websuche, Werkzeug web", "Erfolgreich: Antwort formulieren, Werkzeug free",
+  ]);
+  expect(within(older).getByRole("listitem").getAttribute("title")).toBe("Gehaltsübersicht · Erfolgreich");
+  expect(within(older).getByRole("listitem").textContent).toBe("Erfolgreich: Gehaltsübersicht, Werkzeug payroll");
+});
+
 it("explains an empty run list and an unreachable model", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
   renderAdmin();

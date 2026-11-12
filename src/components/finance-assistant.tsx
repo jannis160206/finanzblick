@@ -36,6 +36,7 @@ import {
 } from "@/lib/assistant/web-learning";
 import { webEvidence, webFallbackAnswer, webLinks, type WebSearchResult } from "@/lib/web/web-answer";
 import { buildFeedbackEntry, type FeedbackEntry } from "@/lib/assistant/feedback";
+import { failedAnswer, lookupTool, toolCall } from "@/lib/assistant/orchestrator-info";
 import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
 import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
@@ -61,7 +62,7 @@ import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import {
   appStateSchema, assistantDraftSchema, assistantMessageSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
-  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantOperation, type WebLinkEntry,
+  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantOperation, type AssistantToolCall, type WebLinkEntry,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -258,6 +259,17 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     runSteps.current = [];
     return running.current && steps.length ? { steps } : {};
   };
+  // The tools the running answer called (lookups, web search); the next answer it writes takes them, plus its own tool.
+  const runCalls = useRef<AssistantToolCall[]>([]);
+  const noteCall = (call: AssistantToolCall) => {
+    if (running.current && runCalls.current.length < 8) runCalls.current.push(call);
+  };
+  const takeCalls = (own?: AssistantToolCall) => {
+    const noted = running.current ? runCalls.current : [];
+    runCalls.current = [];
+    const calls = own && !noted.some((call) => call.tool === own.tool) ? [...noted, own] : noted;
+    return calls.length ? { calls: calls.slice(-8) } : {};
+  };
   // The answer whose feedback comment field is open.
   const [commentFor, setCommentFor] = useState<string>();
   // The question shows the moment it is sent; the stored message takes its place once routing has run.
@@ -360,9 +372,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const id = newId();
     noteHandoff(id);
     const steps = takeSteps();
+    const calls = takeCalls(toolCall(draft.action));
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
       { id, role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action],
-        ...(suggestions ? { suggestions } : {}), ...run, ...steps }]);
+        ...(suggestions ? { suggestions } : {}), ...run, ...steps, ...calls }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
     meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources" | "links" | "knowledgeId"> = {}) => {
@@ -380,6 +393,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(meta.correcting ? { correcting: meta.correcting.slice(0, 1000) } : {}),
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
       ...takeSteps(),
+      ...takeCalls(meta.tool ? toolCall(meta.tool, { ok: !failedAnswer(result.text), change: result.change }) : undefined),
     };
     const parsed = assistantMessageSchema.safeParse(message);
     noteHandoff(message.id);
@@ -512,9 +526,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const change = message.change!;
     const logId = newId();
     const at = timestamp();
+    const tool = message.tool ?? message.calls?.at(-1)?.tool;
     const typed: AssistantMessage[] = said ? [{ id: newId(), role: "user", text: said, at },
       { id: newId(), role: "assistant", text: `Erledigt: ${change.title}. Rückgängig geht jederzeit über den Knopf oben.`.slice(0, 2000), at: at + 1, source: "Regel",
-        ...(message.agent ? { agent: message.agent } : {}) }] : [];
+        ...(message.agent ? { agent: message.agent } : {}), ...(tool ? { calls: [toolCall(tool, { change })] } : {}) }] : [];
     if (commit((current) => recordChange(current, applyOperations(current, change.operations, { asOf: current.settings.asOf, now: at }), { id: logId, at, title: change.title }),
       (items) => [...items.map((item) => item.id === message.id ? { ...item, status: "applied" as const, change: { ...change, logId } } : item), ...typed])) toast.success("Übernommen");
   }
@@ -533,8 +548,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const logId = newId();
     const at = timestamp();
     const text = `Gemerkt: ${operations.map((operation) => operation.text).join(" · ")}`.slice(0, 300);
+    const calls = takeCalls(toolCall("remember"));
     commit((current) => recordChange(current, applyOperations(current, operations, { asOf: current.settings.asOf, now: at }), { id: logId, at, title: text }),
-      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel", agent: "general" }], true);
+      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel", agent: "general", ...calls }], true);
   }
 
   // Proactive start: one weekly overview per day, built only from your own data.
@@ -601,16 +617,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   async function loadMarket(text: string, signal?: AbortSignal): Promise<MarketSnapshot | undefined> {
     const codes = currenciesIn(text).sort().join(",");
     const cached = marketCache.current.get(codes);
-    if (cached && Date.now() - cached.at < 30 * 60 * 1000) return cached.value;
+    if (cached && Date.now() - cached.at < 30 * 60 * 1000) {
+      noteCall(toolCall(lookupTool.market));
+      return cached.value;
+    }
+    let value: MarketSnapshot | undefined;
     try {
       const response = await fetch(`/api/market?currencies=${encodeURIComponent(codes)}`, { cache: "no-store", signal: withTimeout(15000, signal) });
-      if (!response.ok) return cached?.value;
-      const value = await response.json() as MarketSnapshot;
-      marketCache.current.set(codes, { at: Date.now(), value });
-      return value;
+      if (response.ok) {
+        value = await response.json() as MarketSnapshot;
+        marketCache.current.set(codes, { at: Date.now(), value });
+      }
     } catch {
-      return cached?.value;
+      // Unreachable: the values from earlier stay.
     }
+    if (!signal?.aborted) noteCall(toolCall(lookupTool.market, { ok: !!value }));
+    return value ?? cached?.value;
   }
 
   // Terms are answered from learned knowledge; unknown or outdated ones are looked up once via the MCP server and remembered.
@@ -637,6 +659,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       }
     }
     if (fresh.length || used.length) learn((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, fresh, used) }));
+    if (topics.length && !signal?.aborted) noteCall(toolCall(lookupTool.lexicon, { ok: !offline, empty: !found.length }));
     return { found, fresh: fresh.map((entry) => entry.id), offline };
   }
 
@@ -648,8 +671,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     try {
       const response = await fetch("/api/ai/knowledge", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500), ...(learned.length ? { learned } : {}) }), signal: withTimeout(5000, signal) });
-      return response.ok ? await response.json() as LocalKnowledgeSearch : undefined;
+      const result = response.ok ? await response.json() as LocalKnowledgeSearch : undefined;
+      noteCall(toolCall(lookupTool.knowledge, { ok: !!result, empty: !Array.isArray(result?.hits) || !result.hits.length }));
+      return result;
     } catch {
+      if (!signal?.aborted) noteCall(toolCall(lookupTool.knowledge, { ok: false }));
       return undefined;
     }
   }
@@ -662,8 +688,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const response = await fetch("/api/ai/web-search", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500), ...(avoid.length ? { avoid } : {}) }), signal: withTimeout(15000, signal) });
       const result = response.ok ? await response.json() as WebSearchResult : undefined;
+      noteCall(toolCall(WEB_TOOL, { ok: !!result, empty: !result?.sources?.length }));
       return result?.sources?.length ? result : undefined;
     } catch {
+      if (!signal?.aborted) noteCall(toolCall(WEB_TOOL, { ok: false }));
       return undefined;
     }
   }
@@ -747,6 +775,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     setBusy(true);
     live.reset();
     runSteps.current = [];
+    runCalls.current = [];
     setCommentFor(undefined);
     setStatus(workStatus.read);
     await afterPaint();
@@ -897,6 +926,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     if (chat) {
       if (fixed?.theme && chat === fixed) setTheme(fixed.theme);
       const switched = fixed?.device && chat === fixed ? deviceReply(fixed, fixed.device) : chat;
+      if (chat === fixed && (fixed.theme || fixed.device)) noteCall(toolCall("settings", { ok: switched.text === fixed.text }));
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
       await settle();
@@ -971,6 +1001,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
           }
         } else {
           const said = await freeAnswer(work, history, partAgent, agentEvidence(partAgent, state, dashboard, asOf, part.text), signal);
+          if (!said && !signal.aborted) noteCall(toolCall("free", { ok: false }));
           result = { text: said ?? "Den zweiten Teil beantworte ich gern extra – frag mich einfach noch einmal danach." };
         }
         await settle();
@@ -1129,6 +1160,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(wisdom?.hits.length ? { sources: wisdom.hits.map((hit) => hit.title) } : {}) });
     else {
       learn((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
+      // Without a web answer the model was asked for a free answer and gave none.
+      if (!web) noteCall(toolCall("free", { ok: false }));
       // A question back with the closest options instead of a refusal; the rephrasing is learned for next time.
       const options = clarifyChoices(work);
       addResult(options ? { text: options.text, suggestions: options.options }

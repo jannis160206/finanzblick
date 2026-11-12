@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "@/lib/types";
 import { agentIds } from "./orchestrator";
-import { agentOrder, agentToolList, assistantRuns, toolLabel } from "./orchestrator-info";
+import { agentOrder, agentToolList, assistantRuns, lookupTool, toolCall, toolLabel } from "./orchestrator-info";
 import { assistantTools } from "./tools";
 
 const user = (id: string, at: number, text: string): AssistantMessage => ({ id, role: "user", text, at });
@@ -37,5 +37,37 @@ describe("orchestrator admin data", () => {
     ]);
     expect(assistantRuns(chat, 2)).toHaveLength(2);
     expect(assistantRuns([])).toEqual([]);
+  });
+
+  it("lists the tool calls of all answers of a run with their outcome, and the answering tool of older answers", () => {
+    const change = { title: "Spar", diffs: [], operations: [
+      { op: "categorize" as const, ids: ["t1", "t2"], category: "Lebensmittel" as const, learn: false },
+      { op: "transaction_tag" as const, ids: ["t1"], tag: "Urlaub" },
+    ] };
+    const chat: AssistantMessage[] = [
+      user("u1", 1_000, "Was ist ein ETF und was habe ich für Essen ausgegeben?"),
+      answer("a1", 1_400, { tool: "free", calls: [toolCall(lookupTool.knowledge, { empty: true }), toolCall("web", { ok: false }), toolCall("free")] }),
+      answer("a1b", 1_500, { tool: "query", calls: [toolCall("query", { ok: false })] }),
+      user("u2", 2_000, "Kategorisiere Spar als Lebensmittel"),
+      answer("a2", 2_300, { tool: "booking", change, status: "applied", calls: [toolCall("booking", { change })] }),
+      user("u3", 3_000, "Sparziel Japan"),
+      answer("a3", 3_200, { draft: { action: "savings_goal" }, status: "dismissed", calls: [toolCall("savings_goal")] }),
+      user("u4", 4_000, "Merk dir: Puffer 500 €"),
+      answer("a4", 4_200, { tool: "remember", status: "preview", calls: [toolCall("remember")] }),
+      // Answers from before the calls were recorded only know their tool.
+      user("u5", 5_000, "Wie viel netto bekomme ich?"), answer("a5", 5_300, { tool: "payroll" }),
+      user("u6", 6_000, "Kaputt"), answer("a6", 6_100, { tool: "query", text: "Dabei ist etwas schiefgegangen. Bitte formuliere es etwas anders." }),
+      user("u7", 7_000, "Hallo"), answer("a7", 7_100),
+    ];
+    const calls = Object.fromEntries(assistantRuns(chat).map((run) => [run.id, run.calls.map((call) => `${call.tool} · ${call.summary} · ${call.state}`)]));
+    expect(calls).toEqual({
+      u1: ["knowledge_search · Kein Wissen gefunden · ok", "web · Websuche · failed", "free · Antwort formulieren · ok", "query · Ausgaben & Einnahmen · failed"],
+      u2: ["booking · Kategorisiere Buchungen und eine weitere Änderung · applied"],
+      u3: ["savings_goal · Plane Sparziel · dismissed"],
+      u4: ["remember · Merke mir etwas · pending"],
+      u5: ["payroll · Gehaltsübersicht · ok"],
+      u6: ["query · Ausgaben & Einnahmen · failed"],
+      u7: [],
+    });
   });
 });

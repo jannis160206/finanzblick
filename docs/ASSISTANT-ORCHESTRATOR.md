@@ -92,11 +92,13 @@ Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orche
 - **Aufbau:** Baum vom Orchestrator über die drei Entscheidungsschritte (Regeln, Signalwörter, Modell-Rückfall) zu den vier Spezialisten und dem allgemeinen Chat, mit KI-Status.
 - **Agenten:** Zuständigkeit, Kurzbeschreibung, Modell (Router und Hauptmodell aus `/api/ai/status`) und Zahl der letzten Läufe.
 - **Letzte Läufe:** bis zu 50 Anfragen aus dem Chatverlauf mit Zeit, Agent, Weg, Status (beantwortet, Rückfrage, unklar, Fehler) und grober Dauer. Keine Token-Angaben.
+  - Darunter stehen dezent die Werkzeugaufrufe des Laufs als kleine Chips, in Reihenfolge: Kurzbeschreibung (z. B. „Kategorisiere Buchung“, „Lege Vertrag an“, „Websuche“, „Wissen nachschlagen“), technischer Werkzeugname und ein Symbol für den Ausgang – erfolgreich, fehlgeschlagen oder bei Änderungen wartet auf Bestätigung, übernommen, verworfen, rückgängig gemacht. Der Ausgang steht für Screenreader auch als Text da, nicht nur als Farbe.
+  - Erfasst werden das antwortende Werkzeug (bei kombinierten Fragen jedes Teils), Suchen im lokalen Finanzwissen und im Lexikon, Marktdaten, die Websuche, die freie Antwort des Modells, automatisch Gemerktes und das getippte „Ja“, das eine Änderung übernimmt. Fehler („Dabei ist etwas schiefgegangen“, nicht erreichbare Suche, keine Modellantwort) zählen als fehlgeschlagen. Die Kurzbeschreibung kommt aus Werkzeug und Art der Änderung, nie aus Argumenten, Beträgen oder dem Text des Nutzers. Ältere Antworten ohne diese Liste zeigen ihr eines Werkzeug.
 - **Werkzeuge:** Tabelle je Agent; Werkzeuge, die Daten ändern, sind markiert und laufen nur nach Bestätigung.
 - **Feedback:** Ort der Feedback-Datei, Zahl der 👍/👎 und Kommentare, die neuesten fünf Einträge und **Herunterladen** (siehe [Feedback-Datei](#feedback-datei-für-copilot)).
 - **Aktualisieren** lädt den KI-Status und die Feedback-Übersicht neu. Bearbeiten lässt sich nichts.
 
-Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall) und `ms` (Dauer). Das ist JSON im bestehenden Verlauf, keine Migration.
+Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall), `ms` (Dauer) und `calls` (höchstens acht Werkzeugaufrufe mit `tool`, `ok` und `summary`; der Ausgang einer Änderung folgt ihrem `status`). Das ist JSON im bestehenden Verlauf, keine Migration.
 
 **Dateien:** `src/lib/assistant/orchestrator-info.ts` (Daten), `src/components/orchestrator-admin.tsx` (Ansicht), `src/app/(dashboard)/einstellungen/orchestrator/page.tsx` (Route).
 
@@ -117,7 +119,7 @@ Unter jeder Antwort des Assistenten stehen 👍 und 👎 in der dezenten Aktions
   - Statt einer eigenen Rückfrage im Chat gibt es jetzt das Kommentarfeld. Eine anders formulierte Frage direkt danach (oder „Nein, ich meinte …“) lernt der Assistent weiterhin.
 - **Inhalt je Eintrag** (`feedbackEntrySchema` in `src/lib/assistant/feedback.ts`):
   - Zeitstempel (`recordedAt`, `updatedAt`), `rating` (`like`/`dislike`), optionaler `comment` und eine Zeile `summary` zum Überfliegen;
-  - die Frage (`question`) und die vollständige Antwort (`answer`): Text, Agent mit Name, Werkzeug, Weg des Orchestrators, KI oder Regel, Dauer, Karte (bis zu 12 Zeilen), Vorschläge, offene Änderung oder Formular;
+  - die Frage (`question`) und die vollständige Antwort (`answer`): Text, Agent mit Name, Werkzeug, Weg des Orchestrators, KI oder Regel, Dauer, Karte (bis zu 12 Zeilen), Vorschläge, offene Änderung oder Formular und die Werkzeugaufrufe (`calls`);
   - die Live-Status-Schritte der Antwort (`steps`), z. B. „Lese deine Nachricht…“, „Suche aktuelle Informationen…“;
   - `retrieval`: lokales Finanzwissen gesucht und welche Abschnitte genutzt wurden, bestätigte Antwort, Websuche mit Quellen, Marktdaten, Sprachmodell;
   - `context`: bis zu vier Nachrichten vor der Antwort;
@@ -493,7 +495,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten und Gehaltsfrage im Browser bei 390 und 1440 px.
 - `tests/assistant-admin.spec.ts`: Admin-Ansicht nur über die Einstellungen erreichbar, alle Bereiche samt Feedback, kein horizontales Scrollen bei 1440 px hell und 390 px dunkel.
 - Feedback-Datei: `feedback.test.ts` (Eintrag mit Kontext, Wissen und Websuche, Schwärzung, Ergänzen und Grenze), `feedback-store.test.ts` (Ort, gleichzeitiges Schreiben, beschädigte Datei bleibt, Route mit Schwärzung, ungültige und fremde Anfragen), `assistant-chat-parts.test.tsx` (👍/👎, Kommentarfeld mit Fokus, Enter, Escape schließt nur das Feld), `orchestrator-admin.test.tsx` (Feedback-Bereich, nur Administrator).
-- `orchestrator-info.test.ts`, `orchestrator-admin.test.tsx`: Läufe aus dem Verlauf, Status, Werkzeugliste und Darstellung.
+- `orchestrator-info.test.ts`, `orchestrator-admin.test.tsx`: Läufe aus dem Verlauf, Status, Werkzeugaufrufe samt Ausgang (auch für ältere Antworten), Werkzeugliste und Darstellung.
 - Korrekturen aus dem Chat-Test: `conversation.test.ts` (`converseOn`, Budget-Empfehlung), `payroll.test.ts`, `pulse.test.ts`, `copilot.test.ts`, `cancel.test.ts`, `learning.test.ts`, `smalltalk.test.ts`, `phrasing.test.ts`, `speed.test.ts`.
 - Korrekturen aus Chat-Test 2: `fixed-replies.test.ts` (feste Antworten, Rechnen, Rückfragen), `combined.test.ts` (kombinierte Fragen), `knowledge.test.ts` (Faktenfragen, allgemeine Artikel), `conversation.test.ts` (kopierte Sätze), `check.test.ts`, `everyday.test.ts`, `market.test.ts`, `insights.test.ts`, `orchestrator.test.ts`, `speed.test.ts` (Themenhinweise, knappe Faktenantwort).
 - Finanz-Fokus und App-Aktionen: `scope.test.ts` (fachfremde Themen, Geldbezug geht vor), `app-actions.test.ts` (jede neue Operation samt Rückgängig), `app-chat.test.ts` (Routing, Vertragsdialog Schritt für Schritt, Ja/Abbrechen, Buchungen, Monatsplan, Kontoregeln, Successbonus, Links).
