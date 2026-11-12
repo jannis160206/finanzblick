@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { ChatEmptyState, ComposerButton, MessageActions, StatusLine } from "@/components/assistant-chat-parts";
+import { ChatEmptyState, ComposerButton, createLiveRun, LiveAnswer, MessageActions } from "@/components/assistant-chat-parts";
 import { workStatus } from "@/lib/assistant/status";
 
 // jsdom has no canvas; the orb and the bots simply draw nothing.
@@ -49,10 +49,32 @@ it("greets with the orchestrator and its specialists and offers starter question
   expect(onPick).toHaveBeenCalledWith("Wie viel ist noch frei?");
 });
 
-it("shows what the assistant is doing with a thinking orb that matches the work", () => {
-  const { container } = render(<StatusLine status={workStatus.knowledge} />);
+it("shows only the thinking orb and the current step while an answer is worked on", async () => {
+  const live = createLiveRun();
+  live.setStatus(workStatus.knowledge);
+  const { container } = render(<LiveAnswer live={live} />);
   expect(screen.getByText("Suche passendes Wissen…")).toBeTruthy();
-  const line = container.querySelector("[data-status-line]");
-  expect(line?.getAttribute("data-activity")).toBe("searching");
-  expect(line?.querySelector("canvas")?.getAttribute("aria-hidden")).toBe("true");
+  expect(container.querySelector("[data-status-line]")?.getAttribute("data-activity")).toBe("searching");
+  // One canvas: the orb in the avatar's place; the bot only appears once the answer is done.
+  const canvases = container.querySelectorAll("canvas");
+  expect(canvases).toHaveLength(1);
+  expect(canvases[0].closest("[data-orb]")?.getAttribute("data-orb")).toBe("searching");
+  act(() => live.setStatus({ ...workStatus.answer, agent: "budget" }));
+  live.setText("Bis Monatsende");
+  live.setText("Bis Monatsende sind 412 € frei");
+  expect(await screen.findByText("frei")).toBeTruthy();
+  expect(container.querySelector("[data-orb]")?.getAttribute("data-orb")).toBe("composing");
+  expect(screen.getByText("Budget & Prognose · KI")).toBeTruthy();
+});
+
+it("draws streamed words at most once per frame and clears at once", async () => {
+  const live = createLiveRun();
+  const seen: (string | undefined)[] = [];
+  live.subscribe(() => seen.push(live.get().text));
+  live.setText("Ein");
+  live.setText("Ein Wort");
+  live.setText("Ein Wort nach");
+  await waitFor(() => expect(seen).toEqual(["Ein Wort nach"]));
+  live.setText(undefined);
+  expect(seen).toEqual(["Ein Wort nach", undefined]);
 });

@@ -41,6 +41,7 @@ import { AutomationContext } from "@/components/automation-context";
 import { prepareLoadedState } from "@/lib/finance-hydrate";
 import { runFinanceTask, type PreparedState, type SettlePreview } from "@/lib/finance-worker";
 import { automationEventSchema, type AutomationEvent } from "@/lib/automation/schema";
+import { figuresOf, onlyAssistantChanged, parseAssistantChanges, shareFigures, withAssistantState } from "@/lib/assistant-state";
 
 function FinanceNotifications() {
   const { locked } = useSecurityMode();
@@ -174,6 +175,12 @@ function reducer(store: Store, action: Action | AppendAction): Store {
     case "update": {
       const updated = action.updater(store.data);
       if (updated === store.data) return store;
+      // Chat, memory and learned phrasings change no figure: only they are checked, and plan, review queue and dashboard stay.
+      if (!store.planCapacityBlocked && onlyAssistantChanged(store.data, updated)) {
+        const data = parseAssistantChanges(store.data, updated);
+        shareFigures(data, store.data);
+        return { ...store, data, saved: false, actionError: undefined };
+      }
       try {
         return {
           ...store,
@@ -238,10 +245,20 @@ async function prepareOffMainThread(data: AppState): Promise<AppState | null> {
   return state;
 }
 
+// A state that differs from an earlier one only in the assistant's data shares that state's dashboard.
+function dashboardOf(state: AppState): Dashboard {
+  const figures = figuresOf(state);
+  const known = knownDashboards.get(state) ?? knownDashboards.get(figures);
+  if (known) return known;
+  const dashboard = calculateDashboard(state);
+  knownDashboards.set(figures, dashboard);
+  return dashboard;
+}
+
 function createDashboardGetter(state: AppState) {
   // Keep each lazy result bound to its state, including across save-status renders.
   let dashboard: Dashboard | undefined = knownDashboards.get(state);
-  return () => (dashboard ??= calculateDashboard(state));
+  return () => (dashboard ??= dashboardOf(state));
 }
 
 export function FinanceProvider({
@@ -531,7 +548,9 @@ export function FinanceProvider({
     void offThread.then((preview) => {
       if (!preview.changed) return;
       void import("@/lib/automation/settle-open").then(({ settleOpenReviews }) => {
-        dispatch({ type: "update", updater: (current) => current === base ? preview.state : settleOpenReviews(current) });
+        // A chat written in the meantime changes no figure; the result still applies.
+        dispatch({ type: "update", updater: (current) => current === base ? preview.state
+          : onlyAssistantChanged(base, current) ? withAssistantState(preview.state, current) : settleOpenReviews(current) });
       });
     }, onMainThread);
   }, [store.ready, store.blocked, store.error, store.data]);

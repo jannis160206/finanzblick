@@ -92,6 +92,62 @@ aufbereitet.
 - Der Mobile-Wert von 90 wird mit großen Haushaltsbüchern daher nicht ganz erreicht; mit kleinen Ständen
   und am Desktop (94–100) sind die Ziele erfüllt.
 
+## Finanz-Assistent: flüssiger Chat (November 2026)
+
+**Symptom:** Beim Absenden (Enter, Senden, Vorschlag) fror die Oberfläche ein, bis die Antwort kam. Der Denk-Orb ruckelte, und Stopp reagierte erst nach Sekunden.
+
+**Messmethode:**
+- Playwright gegen `next dev` (so läuft die App lokal), Edge, 1440 × 1000 px.
+- Synthetischer Stand mit 4.043 Buchungen über drei Jahre, 5 offenen Prüfungen und 60 Chatnachrichten.
+- Im Browser gemessen: Lücken zwischen Bildern (`requestAnimationFrame`), Long Tasks, Event Timing für Tastatur und Klick, CPU-Profil über das Chrome DevTools Protocol.
+
+**Ursachen**
+
+1. **Jede Chatnachricht lief durch den ganzen Finanzstand:** Der Reducer prüfte den kompletten Stand mit Zod und rechnete `queueLedgerReview` und `synchronizePlan` über alle Buchungen neu. Danach rechnete er das Dashboard neu, die Seite hinter dem Chat (Übersicht) renderte komplett neu, und `useDashboardExtras` schickte den ganzen Stand erneut an den Worker. Pro Frage gab es zwei bis fünf solcher Durchläufe, darunter einen direkt beim Enter, bevor die Frage überhaupt zu sehen war.
+2. **Wettlauf mit der Hintergrundzuordnung:** `AiReviewAssistant` rechnet offene Prüfungen im Worker. Änderte sich der Stand in der Zwischenzeit, verwarf er das Ergebnis und rechnete `autoAssignOpenReviews` noch einmal im Haupt-Thread. Der Chat ändert den Stand mit jeder Nachricht und löste das daher regelmäßig aus. Mit vielen offenen Prüfungen blockierte das 30 s und länger. Dasselbe Muster hatte das Abschließen offener Prüfungen im Provider.
+3. **Streaming renderte den ganzen Verlauf:** Jedes Wort renderte den Assistenten mit allen Nachrichten und Karten neu.
+4. **Doppelte Arbeit pro Frage:** Evidenz für eine freie Antwort wurde auch bei Werkzeug-Antworten gebaut (rund 200 ms), die Vertragserkennung lief bei jeder Frage. `commit()` prüfte auch Gedächtnis-Einträge gegen den ganzen Stand.
+5. **Der hüpfende Bot** neben der laufenden Antwort zeichnete Fell auf Canvas, jedes Bild.
+
+**Maßnahmen**
+
+- **Nur-Assistent-Änderungen** (`src/lib/assistant-state.ts`): Ändert ein Update nur Chat, gelernte Formulierungen, Wissen oder das Änderungsprotokoll, prüft der Reducer nur diese Felder. Das Gedächtnis zählt nicht dazu, weil gemerkter Puffer, Zahltag oder Girostand in Prognose, Nettovermögen und Hinweise einfließen. Plan, Prüfungsliste und Buchungen behalten ihre Objekte. Dashboard (`dashboardOf`) und `useDashboardExtras` werden über `figuresOf` vom vorigen Stand übernommen, statt neu gerechnet.
+- **Wettlauf behoben:** Hat sich zwischendurch nur Assistenten-Wissen geändert, übernehmen Prüfungszuordnung, Internet-Zuordnung und das Abschließen offener Prüfungen das Worker-Ergebnis und hängen den neuen Chat an (`withAssistantState`). Nur echte Datenänderungen lösen den zweiten Durchlauf aus.
+- **Chat lokal sammeln:** Während einer Antwort schreibt der Chat nichts in den globalen Stand. Frage, Antwort, gelernte Formulierungen und Gedächtnis sammeln sich lokal. Die nächste Frage und „Nicht merken“ sehen sie schon. In einem Schritt gehen sie in den Finanzstand:
+  - 1,2 s nach der Antwort, sobald der Browser untätig ist;
+  - beim Schließen des Chats; eine noch laufende Antwort schreibt danach direkt;
+  - beim Verlassen oder Neuladen der Seite, synchron gespeichert (`flushSync`);
+  - vor jeder anderen Änderung am Finanzstand, die der Chat auslöst.
+
+  Chatänderungen werden dabei auf den gespeicherten Verlauf nachgespielt, statt ihn zu ersetzen. So bleiben Nachrichten erhalten, die zwischendurch per Synchronisation gekommen sind.
+- **Sofort sichtbar:** Die Frage, der Orb und Stopp erscheinen, bevor Routing und Werkzeuge laufen. Vor rechenintensiven Werkzeugen darf der Browser erst den neuen Schritt zeichnen.
+- **Live-Speicher für die laufende Antwort:** Status und gestreamte Wörter rendern nur die laufende Zeile, höchstens einmal pro Bild.
+- **Memoisierte Nachrichten:** Eine neue Nachricht rendert nur sich selbst. Ob eine Antwort läuft, lesen nur die kleinen Fußzeilen der Nachrichten.
+- **Weniger doppelte Arbeit:**
+  - Evidenz nur noch für freie Antworten;
+  - Vertragsnamen einmal je Finanzstand, vorbereitet im Leerlauf;
+  - Gedächtnis-Einträge nur gegen ihr Schema geprüft;
+  - der Metall-Ring wird im Leerlauf vorbereitet.
+- **Während der Antwort nur der Orb:** Der Bot erscheint erst mit der fertigen Antwort. Ältere Bots zeichnen nicht mehr.
+- **Eingabe bleibt aktiv:** Man kann weitertippen, Enter wartet auf die laufende Antwort, Stopp bricht sofort ab.
+
+**Ergebnis** (`next dev`, großer Stand, zwei Läufe auf dem endgültigen Stand):
+
+| Messung | vorher | nachher |
+|---|---|---|
+| Enter bis zur Reaktion (Event Timing) | 1.424 ms | 40–64 ms |
+| Antwort mit Streaming: Zeit mit Bildlücken > 50 ms | 6,6 s von 8,6 s | 0,3 s von rund 4 s |
+| Längste Bildlücke dabei (Orb steht) | 1.334 ms | 105–121 ms |
+| Long Tasks dabei | 14 (4,7 s) | 1 (rund 60 ms) |
+| Klick auf einen Vorschlag | 1.520 ms, längste Lücke 1,4 s | 40–56 ms, längste Lücke 53 ms, keine Long Tasks |
+| Stopp bis „Senden“ | 1,9 s | unter 0,3 s, keine Long Tasks |
+| Tippen (45 Zeichen, 60 Nachrichten im Verlauf) | – | keine Long Tasks, längste Lücke 19–30 ms |
+| Mit 1.600 offenen Prüfungen: Vorschlag | 37 s eingefroren | 2,2 s (nur mit der Korrektur des Wettlaufs gemessen, vor dem Umbau des Chats) |
+
+**Grenzen:**
+- Werkzeuge rechnen weiter im Haupt-Thread. Der Monats-Puls braucht mit 4.000 Buchungen rund 100 ms. In dieser Zeit steht der Orb kurz still; der neue Schritt ist vorher schon gezeichnet.
+- Die Übergabe an den Finanzstand nach einer Antwort rendert die Seite hinter dem Chat einmal neu. Das geschieht im Leerlauf, nicht mehr während der Antwort.
+
 ## Reproduktion
 
 1. `npm run build`

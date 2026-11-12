@@ -1,7 +1,7 @@
 "use client";
 
-import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useRef, useState } from "react";
-import { AnimatePresence, m, type TargetAndTransition } from "motion/react";
+import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { AnimatePresence, m } from "motion/react";
 import { useTheme } from "next-themes";
 import { BorderBeam } from "border-beam";
 import { BotAvatar, type BotAvatarState, type BotAvatarType } from "bot-avatars";
@@ -9,8 +9,8 @@ import { MetalFx } from "metal-fx";
 import { ThinkingOrb } from "thinking-orbs";
 import { ArrowUp, Check, Copy, RefreshCw, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 import { dialogSpring, exitTween, useMotionMode } from "@/components/ui/premium-dialog/motion";
-import type { AgentId } from "@/lib/assistant/orchestrator";
-import type { WorkStatus } from "@/lib/assistant/status";
+import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
+import { workStatus, type WorkActivity, type WorkStatus } from "@/lib/assistant/status";
 import { cn } from "@/lib/utils";
 
 /** Each agent has its own bot: the star is the orchestrator (and the general chat it falls back to), every specialist a shape of its own. */
@@ -38,40 +38,129 @@ export function AgentAvatar({ agent, state = "default", size = 32, still, label,
     className={cn("shrink-0", className)} {...(label ? { "aria-label": label, title: label } : { "aria-hidden": true })} />;
 }
 
-/** The avatar beside a running answer: the orchestrator's star while it reads and routes, then the specialist that took over. */
-export function WorkingAvatar({ agent }: { agent: AgentId }) {
+/** What a running answer shows: the current step and the words streamed so far. */
+export type LiveRun = { status?: WorkStatus; text?: string };
+export type LiveRunStore = ReturnType<typeof createLiveRun>;
+
+/**
+ * Status and streamed words of the running answer live outside React state, so only the live row re-renders;
+ * words arrive faster than the screen refreshes and are drawn at most once per frame.
+ */
+export function createLiveRun() {
+  let value: LiveRun = {};
+  let queued: string | undefined;
+  let frame: { cancel: () => void } | undefined;
+  const listeners = new Set<() => void>();
+  const publish = (next: LiveRun) => {
+    value = next;
+    for (const listener of listeners) listener();
+  };
+  const nextFrame = (run: () => void) => {
+    if (typeof requestAnimationFrame === "function" && !document.hidden) {
+      const id = requestAnimationFrame(run);
+      return { cancel: () => cancelAnimationFrame(id) };
+    }
+    const id = setTimeout(run, 16);
+    return { cancel: () => clearTimeout(id) };
+  };
+  return {
+    get: () => value,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    setStatus(status: WorkStatus | undefined | ((current?: WorkStatus) => WorkStatus | undefined)) {
+      const next = typeof status === "function" ? status(value.status) : status;
+      if (next !== value.status) publish({ ...value, status: next });
+    },
+    setText(text?: string) {
+      queued = text;
+      if (text === undefined) {
+        frame?.cancel();
+        frame = undefined;
+        if (value.text !== undefined) publish({ ...value, text: undefined });
+        return;
+      }
+      frame ??= nextFrame(() => {
+        frame = undefined;
+        if (queued !== value.text) publish({ ...value, text: queued });
+      });
+    },
+    reset() {
+      frame?.cancel();
+      frame = undefined;
+      queued = undefined;
+      if (value.status || value.text !== undefined) publish({});
+    },
+  };
+}
+
+/** The thinking orb in the avatar's place while an answer is worked on; it moves like the work (searching, solving, composing …). */
+export function OrbAvatar({ activity, className }: { activity: WorkActivity; className?: string }) {
   const mode = useMotionMode();
-  if (mode !== "full") return <AgentAvatar agent={agent} state="working" className="mt-0.5" />;
-  return <span className="mt-0.5 grid size-8 shrink-0">
-    <AnimatePresence mode="popLayout" initial={false}>
-      <m.span key={agent} className="col-start-1 row-start-1 inline-flex"
-        initial={{ opacity: 0, scale: 0.6, filter: "blur(4px)" }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
-        exit={{ opacity: 0, scale: 0.6, filter: "blur(4px)", transition: exitTween }} transition={dialogSpring}>
-        <AgentAvatar agent={agent} state="working" />
-      </m.span>
-    </AnimatePresence>
+  const orb = <ThinkingOrb state={activity} size={32} paused={mode !== "full"} aria-hidden="true" />;
+  return <span className={cn("mt-0.5 grid size-8 shrink-0 place-items-center", className)} data-orb={activity}>
+    {mode === "none" ? orb : <AnimatePresence mode="popLayout" initial={false}>
+      <m.span key={activity} className="col-start-1 row-start-1 inline-flex"
+        initial={mode === "full" ? { opacity: 0, scale: 0.6, filter: "blur(3px)" } : { opacity: 0 }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+        exit={mode === "full" ? { opacity: 0, scale: 0.6, filter: "blur(3px)", transition: exitTween } : { opacity: 0, transition: exitTween }}
+        transition={mode === "full" ? dialogSpring : { duration: 0.16 }}>{orb}</m.span>
+    </AnimatePresence>}
   </span>;
 }
 
-/** What the assistant is doing right now: a thinking orb that moves like the work (searching, solving, composing …) and a short text. */
+/** The step the assistant is on right now; each new step slides in sharp from a soft blur. */
 export function StatusLine({ status, className }: { status: WorkStatus; className?: string }) {
   const mode = useMotionMode();
-  const swap = (key: string, child: ReactNode, initial: TargetAndTransition, exit: TargetAndTransition) => mode === "none" ? child
-    : <AnimatePresence mode="popLayout" initial={false}>
-      <m.span key={key} className="col-start-1 row-start-1 inline-flex min-w-0" initial={mode === "full" ? initial : { opacity: 0 }}
-        animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-        exit={mode === "full" ? { ...exit, transition: exitTween } : { opacity: 0, transition: exitTween }}
-        transition={mode === "full" ? dialogSpring : { duration: 0.16 }}>{child}</m.span>
-    </AnimatePresence>;
-  return <span className={cn("inline-flex min-w-0 items-center gap-2 text-[0.8125rem] text-muted-foreground", className)}
-    data-status-line="" data-activity={status.activity}>
-    <span className="grid size-5 shrink-0 place-items-center">
-      {swap(status.activity, <ThinkingOrb state={status.activity} size={20} paused={mode !== "full"} aria-hidden="true" />,
-        { opacity: 0, scale: 0.5, filter: "blur(3px)" }, { opacity: 0, scale: 0.5, filter: "blur(3px)" })}
-    </span>
-    <span className="grid min-w-0">
-      {swap(status.text, <span className="truncate">{status.text}</span>, { opacity: 0, y: 6, filter: "blur(3px)" }, { opacity: 0, y: -6, filter: "blur(3px)" })}
-    </span>
+  const text = <span className="truncate">{status.text}</span>;
+  return <span className={cn("grid min-w-0 text-[0.8125rem] text-muted-foreground", className)} data-status-line="" data-activity={status.activity}>
+    {mode === "none" ? text : <AnimatePresence mode="popLayout" initial={false}>
+      <m.span key={status.text} className="col-start-1 row-start-1 inline-flex min-w-0"
+        initial={mode === "full" ? { opacity: 0, y: 6, filter: "blur(3px)" } : { opacity: 0 }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+        exit={mode === "full" ? { opacity: 0, y: -6, filter: "blur(3px)", transition: exitTween } : { opacity: 0, transition: exitTween }}
+        transition={mode === "full" ? dialogSpring : { duration: 0.16 }}>{text}</m.span>
+    </AnimatePresence>}
+  </span>;
+}
+
+/**
+ * The answer that is being worked on: the orb, the current step and the streamed words inside a traveling beam.
+ * It subscribes to the live store itself, so streaming never re-renders the conversation above it.
+ */
+export function LiveAnswer({ live }: { live: LiveRunStore }) {
+  const { status = workStatus.read, text } = useSyncExternalStore(live.subscribe, live.get, live.get);
+  const row = useRef<HTMLDivElement>(null);
+  // Keeps the growing answer in view; instant, so a smooth scroll per frame does not fight the next one.
+  useLayoutEffect(() => { row.current?.scrollIntoView?.({ block: "end" }); }, [text, status.text]);
+  return <div ref={row} data-live-answer="">
+    <MessageEnter animate mine={false} className="flex items-start gap-3" aria-busy="true">
+      <OrbAvatar activity={status.activity} />
+      <GlowFrame kind="working" active className={text ? "min-w-0 max-w-[85%]" : "min-w-0"}>
+        {text ? <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
+          <StatusLine status={status} className="mb-1.5" />
+          <span className="sr-only">Assistent: </span><StreamingText text={text} />
+          {status.agent && status.agent !== "general" && <span className="mt-1.5 block text-2xs text-muted-foreground">{agentLabel[status.agent]} · KI</span>}
+        </div>
+          : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status} /></div>}
+      </GlowFrame>
+    </MessageEnter>
+  </div>;
+}
+
+/** The orb that worked on an answer gives way to the bot of the agent who wrote it; afterwards only the bot stays. */
+export function HandoffAvatar({ agent, activity, live }: { agent: AgentId; activity: WorkActivity; live: boolean }) {
+  const mode = useMotionMode();
+  const [orb, setOrb] = useState(true);
+  if (mode !== "full") return <AgentAvatar agent={agent} still={!live} className="mt-0.5" />;
+  return <span className="relative mt-0.5 grid size-8 shrink-0 place-items-center" data-handoff="">
+    {orb && <m.span className="absolute inset-0 grid place-items-center" initial={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+      animate={{ opacity: 0, scale: 0.4, filter: "blur(4px)" }} transition={{ duration: 0.26, ease: [0.32, 0.72, 0, 1] }} onAnimationComplete={() => setOrb(false)}>
+      <ThinkingOrb state={activity} size={32} aria-hidden="true" />
+    </m.span>}
+    <m.span className="inline-flex" initial={{ opacity: 0, scale: 0.5, filter: "blur(4px)" }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
+      transition={{ ...dialogSpring, delay: 0.08 }}>
+      <AgentAvatar agent={agent} still={!live} />
+    </m.span>
   </span>;
 }
 
@@ -195,6 +284,16 @@ export function ComposerButton({ busy, disabled, onStop }: { busy: boolean; disa
   // created once instead of on every keystroke.
   const [armed, setArmed] = useState(false);
   if (!armed && live && mode === "full") setArmed(true);
+  // Prepared while the browser is idle, so the first keystroke does not wait for the WebGL setup.
+  useEffect(() => {
+    if (armed || mode !== "full") return;
+    if (typeof requestIdleCallback === "function") {
+      const id = requestIdleCallback(() => setArmed(true), { timeout: 3000 });
+      return () => cancelIdleCallback(id);
+    }
+    const id = setTimeout(() => setArmed(true), 1500);
+    return () => clearTimeout(id);
+  }, [armed, mode]);
   const icon = mode === "full" ? { initial: { opacity: 0, scale: 0.6, rotate: busy ? -90 : 90 }, animate: { opacity: 1, scale: 1, rotate: 0 }, transition: dialogSpring }
     : mode === "reduced" ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.12 } } : { initial: false as const };
   return <span className="relative isolate inline-flex shrink-0">

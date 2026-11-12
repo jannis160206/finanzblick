@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
 import { Brain, CalendarClock, Check, CircleHelp, Columns2, History, Pencil, PiggyBank, Trash2, Undo2, X } from "lucide-react";
 import { useTheme } from "next-themes";
+import { flushSync } from "react-dom";
 import { toast } from "sonner";
 import { ChangeCard, ChangesPanel, FreeChart, MemoryPanel, ResultCard } from "@/components/assistant-cards";
-import { AgentAvatar, ChatEmptyState, ComposerButton, GlowFrame, MessageActions, MessageEnter, StatusLine, StreamingText, WorkingAvatar } from "@/components/assistant-chat-parts";
+import { AgentAvatar, ChatEmptyState, ComposerButton, createLiveRun, GlowFrame, HandoffAvatar, LiveAnswer, MessageActions, MessageEnter } from "@/components/assistant-chat-parts";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { HomeOfficeCard } from "@/components/homeoffice-card";
@@ -27,7 +28,8 @@ import { buildPlannedOneOff, buildSavingsGoal, checkAffordability, goalExtraOper
 import { changingTools, conversationRoute, converseOn, evidenceText, freshPart } from "@/lib/assistant/conversation";
 import { detectTool, isAssistantTool, isDraftTool, type AssistantTool } from "@/lib/assistant/tools";
 import { agentLabel, isAgentId, isRouteVia, routeByRules, routeBySignals, toolOwner, wantsKnowledge, type AgentId, type RouteVia } from "@/lib/assistant/orchestrator";
-import { statusFor, workStatus, type WorkStatus } from "@/lib/assistant/status";
+import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
+import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
 import type { LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
 import { agentEvidence, agentFacts, agentSuggestions } from "@/lib/assistant/specialist-context";
@@ -99,6 +101,33 @@ const listMonths = (months: string[]) => {
 const newId = () => crypto.randomUUID();
 // A request ends after its own time limit or when the user stops the answer, whichever comes first.
 const withTimeout = (ms: number, signal?: AbortSignal) => signal ? AbortSignal.any([signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms);
+// Lets the browser paint (the question, the orb, the next step) before synchronous work continues.
+const afterPaint = () => new Promise<void>((resolve) => {
+  if (typeof requestAnimationFrame !== "function" || document.hidden) {
+    setTimeout(resolve, 0);
+    return;
+  }
+  requestAnimationFrame(() => setTimeout(resolve, 0));
+});
+// Contract names for one-word questions; detection scans the whole ledger, so it runs once per set of figures.
+const contractNameCache = new WeakMap<AppState, { asOf: string; names: string[] }>();
+function contractNames(state: AppState, asOf: string) {
+  const figures = figuresOf(state);
+  const cached = contractNameCache.get(figures);
+  if (cached?.asOf === asOf) return cached.names;
+  const names = detectContracts(state, asOf).map((contract) => contract.name);
+  contractNameCache.set(figures, { asOf, names });
+  return names;
+}
+// Runs `work` once the browser is idle, at the latest after `timeout` ms.
+function whenIdle(work: () => void, timeout: number) {
+  if (typeof requestIdleCallback === "function") {
+    const id = requestIdleCallback(work, { timeout });
+    return () => cancelIdleCallback(id);
+  }
+  const id = setTimeout(work, Math.min(timeout, 400));
+  return () => clearTimeout(id);
+}
 // What the user is looking at; pages add filters and selections, otherwise the route is enough.
 function pageContext(): AssistantPageContext | null {
   const published = currentAssistantContext();
@@ -136,10 +165,23 @@ const monthDiff = (from: string, to: string) => {
 const monthEnd = (month: string) => `${month}-${String(lastDay(month)).padStart(2, "0")}`;
 
 export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page" | "panel"; prompt?: { text: string; at: number; send?: boolean } } = {}) {
-  const { state, dashboard, update, storageError, ready } = useFinance();
+  const { state: stored, dashboard, update, storageError, ready } = useFinance();
   const { setTheme } = useTheme();
   const extras = useDashboardExtras();
-  const messages = state.assistantChat ?? [];
+  // New messages and what a run learned (phrasings, aliases, memories) collect here while the chat is in use; the app's state
+  // takes them in one step once the chat is idle, so the pages behind it do not re-render and save for every single message.
+  // Chat changes are kept as steps and replayed onto the stored chat, so messages that arrived meanwhile (sync) stay.
+  const [localChat, setLocalChat] = useState<AssistantMessage[] | null>(null);
+  const localChatRef = useRef<AssistantMessage[] | null>(null);
+  const chatChanges = useRef<((items: AssistantMessage[]) => AssistantMessage[])[]>([]);
+  const pendingSteps = useRef<((current: AppState) => AppState)[]>([]);
+  const [pendingVersion, setPendingVersion] = useState(0);
+  // What the chat works with: the stored state plus everything learned but not handed over yet.
+  const state = useMemo(() => pendingSteps.current.reduce((next, step) => step(next), stored), [stored, pendingVersion]);
+  const globalChat = useRef(stored.assistantChat);
+  useLayoutEffect(() => { globalChat.current = stored.assistantChat; }, [stored.assistantChat]);
+  const mounted = useRef(true);
+  const messages = localChat ?? state.assistantChat ?? [];
   const [input, setInput] = useState(prompt?.text ?? "");
   // A question started from a booking, budget or category lands in the input, ready to send.
   const [seenPrompt, setSeenPrompt] = useState(prompt?.at);
@@ -160,12 +202,17 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     void send(undefined, prompt.text);
   }, [prompt?.at, prompt?.send, ready, storageError]);
   const [busy, setBusy] = useState(false);
-  const [streaming, setStreamingState] = useState<string>();
-  // The live status line while an answer is being worked on, and the handle that stops it.
-  const [status, setStatus] = useState<WorkStatus>();
+  // Step and streamed words of the running answer (only the live row subscribes to them), and the handle that stops it.
+  const [live] = useState(createLiveRun);
+  const setStatus = live.setStatus;
   const activeRun = useRef<AbortController | null>(null);
+  const running = useRef(false);
   const streamed = useRef<string | undefined>(undefined);
-  const setStreaming = (text?: string) => { streamed.current = text; setStreamingState(text); };
+  const setStreaming = (text?: string) => { streamed.current = text; live.setText(text); };
+  // The question shows the moment it is sent; the stored message takes its place once routing has run.
+  const [echo, setEcho] = useState<{ text: string; at: number }>();
+  // Answers that came out of a run: their bot takes over from the orb, and an answer that was streamed does not enter twice.
+  const handoffs = useRef(new Map<string, { activity: WorkActivity; streamed: boolean }>());
   // Messages that were already there when the chat opened stay still; new ones spring in.
   const [initialIds] = useState(() => new Set((state.assistantChat ?? []).map((item) => item.id)));
   const [editing, setEditing] = useState<string>();
@@ -174,29 +221,95 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const briefed = useRef(false);
   const marketCache = useRef(new Map<string, { at: number; value: MarketSnapshot }>());
-  // The agent whose answer is streaming right now, for the label above the growing text.
-  const [answering, setAnswering] = useState<AgentId>();
-  const started = messages.some((message) => message.role === "user");
+  const started = !!echo || messages.some((message) => message.role === "user");
   // The newest answer's bot is awake; a result waiting for "Bestätigen" glows until it is decided.
   const newest = busy ? undefined : messages.findLast((message) => message.role === "assistant");
   const liveId = newest?.id;
   const pendingId = newest?.status === "preview" && (newest.change || newest.draft) ? newest.id : undefined;
   // Before the first question the greeting stays in view; afterwards the newest message does.
-  useEffect(() => { if (started) endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [started, messages.length, busy, streaming, status]);
+  useEffect(() => { if (started) endRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [started, messages.length, busy, echo]);
 
-  const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) =>
+  // Everything collected locally goes into the app's state first, then `updater`; nothing collected is lost or reordered.
+  const writeGlobal = useCallback((updater?: (current: AppState) => AppState) => {
+    const changes = chatChanges.current;
+    const steps = pendingSteps.current;
+    if (!changes.length && !steps.length && !updater) return;
+    chatChanges.current = [];
+    pendingSteps.current = [];
+    localChatRef.current = null;
+    if (changes.length) setLocalChat(null);
     update((current) => {
-      const next = also ? also(current) : current;
-      return { ...next, assistantChat: change(current.assistantChat ?? []).slice(-MAX_ASSISTANT_MESSAGES) };
+      const chatted = changes.length ? { ...current, assistantChat: changes.reduce((items, change) => change(items), current.assistantChat ?? [])
+        .slice(-MAX_ASSISTANT_MESSAGES) } : current;
+      const collected = steps.reduce((next, step) => step(next), chatted);
+      return updater ? updater(collected) : collected;
     });
+  }, [update]);
+  const flush = useCallback(() => writeGlobal(), [writeGlobal]);
+  // Leaving or reloading the page: committed and saved synchronously, before the page is gone.
+  const persistNow = useCallback(() => {
+    if (chatChanges.current.length || pendingSteps.current.length) flushSync(flush);
+  }, [flush]);
+  useEffect(() => {
+    if (busy || !chatChanges.current.length && !pendingSteps.current.length) return;
+    // A moment after an answer, so the bot's entrance runs smoothly before the pages behind the chat update.
+    let cancel = () => {};
+    const timer = setTimeout(() => { cancel = whenIdle(flush, 2000); }, 1200);
+    return () => {
+      clearTimeout(timer);
+      cancel();
+    };
+  }, [busy, localChat, pendingVersion, flush]);
+  // The first question needs the contract names; they are found while the chat is still idle.
+  useEffect(() => whenIdle(() => { contractNames(state, state.settings.asOf); }, 4000), [state]);
+  // Closing the chat or leaving the page hands everything over at once; a run that is still going writes directly afterwards.
+  useEffect(() => {
+    mounted.current = true;
+    const away = () => { if (document.visibilityState === "hidden") persistNow(); };
+    window.addEventListener("pagehide", persistNow);
+    window.addEventListener("beforeunload", persistNow);
+    document.addEventListener("visibilitychange", away);
+    return () => {
+      mounted.current = false;
+      window.removeEventListener("pagehide", persistNow);
+      window.removeEventListener("beforeunload", persistNow);
+      document.removeEventListener("visibilitychange", away);
+      flush();
+    };
+  }, [flush, persistNow]);
+  const writeLocal = (change: (items: AssistantMessage[]) => AssistantMessage[]) => {
+    if (!mounted.current) {
+      update((current) => ({ ...current, assistantChat: change(current.assistantChat ?? []).slice(-MAX_ASSISTANT_MESSAGES) }));
+      return;
+    }
+    const next = change(localChatRef.current ?? globalChat.current ?? []).slice(-MAX_ASSISTANT_MESSAGES);
+    chatChanges.current.push(change);
+    localChatRef.current = next;
+    setLocalChat(next);
+  };
+  // What a running answer learns (phrasings, aliases, knowledge, memories) is stored together with its chat afterwards;
+  // the next question and "Nicht merken" already see it.
+  const learn = (step: (current: AppState) => AppState) => {
+    if (running.current && mounted.current) pendingSteps.current.push(step);
+    else writeGlobal(step);
+  };
+  const save = (change: (items: AssistantMessage[]) => AssistantMessage[], also?: (current: AppState) => AppState) => {
+    if (!also) return writeLocal(change);
+    writeGlobal((current) => ({ ...also(current), assistantChat: change(current.assistantChat ?? []).slice(-MAX_ASSISTANT_MESSAGES) }));
+  };
+  const noteHandoff = (id: string) => {
+    if (running.current) handoffs.current.set(id, { activity: live.get().status?.activity ?? "composing", streamed: !!streamed.current?.trim() });
+  };
   const setMessage = (id: string, patch: Partial<AssistantMessage>, reply?: string, also?: (current: AppState) => AppState) =>
     save((items) => [...items.map((item) => item.id === id ? { ...item, ...patch } : item),
       ...(reply ? [{ id: newId(), role: "assistant" as const, text: reply, at: Date.now() }] : [])], also);
   const addDraftMessage = (draft: AssistantDraft, source: AssistantMessage["source"] = "Regel", run: Pick<AssistantMessage, "via" | "ms"> = {}) => {
     const question = missingQuestion(draft);
     const suggestions = draftSuggestions(draft, state.settings.asOf);
+    const id = newId();
+    noteHandoff(id);
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
-      { id: newId(), role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action],
+      { id, role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action],
         ...(suggestions ? { suggestions } : {}), ...run }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
@@ -215,6 +328,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
     };
     const parsed = assistantMessageSchema.safeParse(message);
+    noteHandoff(message.id);
     save((items) => [...items, parsed.success ? parsed.data : { id: message.id, role: "assistant", text: message.text, at: message.at }]);
   };
   const knownNames = () => [...savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50),
@@ -226,7 +340,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     if (!asked) return;
     const tool = message.tool && isAssistantTool(message.tool) ? message.tool : undefined;
     const learnable = !!tool && learnableTools.includes(tool) && detectTool(asked, knownNames()) !== tool;
-    update((current) => {
+    writeGlobal((current) => {
       const chat = (current.assistantChat ?? []).map((item) => item.id === message.id ? { ...item, feedback: value } : item);
       if (value === "up") return { ...current, assistantChat: chat,
         assistantPhrases: learnable ? learnPhrase(current.assistantPhrases, asked, tool!) : current.assistantPhrases,
@@ -263,21 +377,30 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         if (tool && learnableTools.includes(tool)) solved.push({ text: gap.text, tool });
       }
       if (!solved.length) return;
-      update((current) => solved.reduce((next, item) => ({ ...next,
+      writeGlobal((current) => solved.reduce((next, item) => ({ ...next,
         assistantPhrases: learnPhrase(next.assistantPhrases, item.text, item.tool), assistantGaps: resolveGap(next.assistantGaps, item.text, item.tool) }), current));
       toast.success(`Selbst nachgelernt · ${solved.length === 1 ? "1 offene Frage" : `${solved.length} offene Fragen`}`);
     })();
   }, [ready, storageError]);
 
-  // Checks the change against the current snapshot first, so the provider never receives an invalid state.
-  const commit = (run: (current: AppState) => AppState, chat?: (items: AssistantMessage[]) => AssistantMessage[]) => {
+  // Checks the change against the current snapshot first, so the provider never receives an invalid state; a change of only the
+  // assistant's own data (memory, change log) checks just that. `later`: inside a running answer it is stored with its chat.
+  const commit = (run: (current: AppState) => AppState, chat?: (items: AssistantMessage[]) => AssistantMessage[], later = false) => {
     try {
-      if (!appStateSchema.safeParse(run(state)).success) throw new OperationError("Die Änderung passt nicht zu deinen Daten.");
+      const next = run(state);
+      const valid = onlyAssistantChanged(state, next) ? (() => { try { parseAssistantChanges(state, next); return true; } catch { return false; } })()
+        : appStateSchema.safeParse(next).success;
+      if (!valid) throw new OperationError("Die Änderung passt nicht zu deinen Daten.");
     } catch (error) {
       toast.error(errorText(error));
       return false;
     }
-    update((current) => {
+    if (later && running.current && mounted.current) {
+      learn((current) => { try { return run(current); } catch { return current; } });
+      if (chat) writeLocal(chat);
+      return true;
+    }
+    writeGlobal((current) => {
       try {
         const next = run(current);
         return chat ? { ...next, assistantChat: chat(next.assistantChat ?? []).slice(-MAX_ASSISTANT_MESSAGES) } : next;
@@ -317,7 +440,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const at = timestamp();
     const text = `Gemerkt: ${operations.map((operation) => operation.text).join(" · ")}`.slice(0, 300);
     commit((current) => recordChange(current, applyOperations(current, operations, { asOf: current.settings.asOf, now: at }), { id: logId, at, title: text }),
-      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel", agent: "general" }]);
+      (items) => [...items, { id: newId(), role: "assistant", text, at, status: "applied", undoId: logId, source: "Regel", agent: "general" }], true);
   }
 
   // Proactive start: one weekly overview per day, built only from your own data.
@@ -348,7 +471,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
-      setAnswering(agent);
       // The general chat keeps the conversation; a specialist only needs the last exchange.
       const context = agent === "general" ? history : history.slice(-2);
       const ask = async (past: typeof history) => {
@@ -419,7 +541,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         if (stored) { found.push(stored); used.push(stored.id); }
       }
     }
-    if (fresh.length || used.length) update((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, fresh, used) }));
+    if (fresh.length || used.length) learn((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, fresh, used) }));
     return { found, fresh: fresh.map((entry) => entry.id), offline };
   }
 
@@ -442,13 +564,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const startedAt = Date.now();
     const userMessage: AssistantMessage = { id: newId(), role: "user", text, at: Date.now() };
     if (cancelDraft(text)) {
-      setInput("");
       save((items) => [...items.map((item) => item.id === message.id ? { ...item, status: "dismissed" as const } : item), userMessage,
         { id: newId(), role: "assistant", text: "Alles klar, ich lege keinen Vertrag an.", at: Date.now(), source: "Regel", agent: "contracts" }]);
       return true;
     }
     if (message.status === "preview" && message.change && confirmDraft(text)) {
-      setInput("");
       applyChange(message, text);
       return true;
     }
@@ -456,7 +576,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     if (/\?\s*$/.test(text) || leavesDraft(text, draft.step === "name")) return false;
     const next = continueContractDraft(draft, text, state, asOf);
     if (!next.understood && (detectTool(text, knownNames()) || text.split(/\s+/).length > 5)) return false;
-    setInput("");
     setBusy(true);
     save((items) => [...items.map((item) => item.id !== message.id ? item : item.status === "preview" ? { ...item, status: "dismissed" as const }
       : { ...item, status: undefined }), userMessage]);
@@ -466,7 +585,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     addResult(next.understood ? result : { ...result, text: `Das habe ich nicht ganz verstanden. ${result.text}` }, "Regel",
       { tool: "contract_new", agent: "contracts", via: "rule", ms: Date.now() - startedAt });
     setBusy(false);
-    inputRef.current?.focus();
     return true;
   }
 
@@ -474,7 +592,37 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   async function send(event?: FormEvent, preset?: string, options: { without?: string[] } = {}) {
     event?.preventDefault();
     const text = (preset ?? input).trim().slice(0, 1000);
-    if (!text || busy || storageError) return;
+    if (!text || busy || running.current || storageError) return;
+    running.current = true;
+    // The question, the orb and the stop button show at once; routing and tools start once the browser has painted them.
+    // A suggestion leaves what was typed in the meantime; a question sent from the input (or prefilled there) clears it.
+    if (preset === undefined || input.trim() === text) setInput("");
+    const controller = new AbortController();
+    activeRun.current = controller;
+    setEcho({ text, at: Date.now() });
+    setBusy(true);
+    live.reset();
+    setStatus(workStatus.read);
+    await afterPaint();
+    try {
+      await answer(text, options, controller.signal);
+    } finally {
+      running.current = false;
+      activeRun.current = null;
+      if (pendingSteps.current.length) setPendingVersion((value) => value + 1);
+      streamed.current = undefined;
+      live.reset();
+      setEcho(undefined);
+      setBusy(false);
+      // A clicked suggestion disappears with the answer: mouse and keyboard continue in the input, touch screens keep the keyboard closed.
+      void afterPaint().then(() => {
+        const active = document.activeElement;
+        if ((!active || active === document.body) && window.matchMedia?.("(pointer: fine)").matches) inputRef.current?.focus();
+      });
+    }
+  }
+
+  async function answer(text: string, options: { without?: string[] }, signal: AbortSignal) {
     const thread = options.without?.length ? messages.filter((item) => !options.without!.includes(item.id)) : messages;
     // Only the latest answer's open draft takes follow-ups ("lieber 4000"); once the chat moved on, a new message is a new request.
     const latest = thread.findLast((item) => item.role === "assistant");
@@ -482,12 +630,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // "Ja" or "Nein" right below a preview does the same as its buttons.
     if (latest?.change && latest.status === "preview" && !latest.draft && !latest.contractDraft) {
       if (confirmDraft(text)) {
-        setInput("");
         applyChange(latest, text);
         return;
       }
       if (cancelDraft(text) || /^(?:nein|ne|nö|lieber nicht|verwerfen|nicht übernehmen)[.!]*$/i.test(text.trim())) {
-        setInput("");
         save((items) => [...items.map((item) => item.id === latest.id ? { ...item, status: "dismissed" as const } : item), { id: newId(), role: "user", text, at: Date.now() },
           { id: newId(), role: "assistant", text: "Alles klar, ich habe nichts geändert.", at: Date.now(), source: "Regel", ...(latest.agent ? { agent: latest.agent } : {}) }]);
         return;
@@ -495,7 +641,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     // "Abbrechen" while a goal or an expense is being asked for: nothing is saved.
     if (latest?.draft && (latest.status === "question" || latest.status === "preview") && cancelDraft(text)) {
-      setInput("");
       save((items) => [...items.map((item) => item.id === latest.id ? { ...item, status: "dismissed" as const } : item), { id: newId(), role: "user", text, at: Date.now() },
         { id: newId(), role: "assistant", text: "Alles klar, ich habe nichts gespeichert.", at: Date.now(), source: "Regel", agent: toolOwner[latest.draft!.action] }]);
       return;
@@ -508,31 +653,31 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // Rough duration of this run for the admin view, from sending to the answer.
     const elapsed = () => Date.now() - startedAt;
     // Short pause, so instant rule answers still read like a reply instead of a page jump.
-    const settle = () => new Promise((resolve) => setTimeout(resolve, Math.max(0, 650 - (Date.now() - startedAt))));
+    const settle = () => new Promise<void>((resolve) => {
+      if (signal.aborted) return resolve();
+      const timer = setTimeout(resolve, Math.max(0, 650 - (Date.now() - startedAt)));
+      signal.addEventListener("abort", () => { clearTimeout(timer); resolve(); }, { once: true });
+    });
     const names = knownNames();
     const lastAnswer = thread.findLast((item) => item.role === "assistant");
     // Teaching own words: "Mit Japan meine ich Motorrad".
     const teaching = pending ? undefined : aliasTeaching(text);
     if (teaching) {
-      setInput("");
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
       const target = pickName(teaching.to, names) ?? teaching.to;
-      update((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, teaching.from, target) }));
+      learn((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, teaching.from, target) }));
       await settle();
       addResult({ text: `Gemerkt: Wenn du „${teaching.from}“ schreibst, meinst du „${target}“. Das gilt ab sofort überall im Chat; unter „Gedächtnis“ kannst du es wieder löschen.`,
         suggestions: [`Wie weit bin ich bei ${teaching.from}?`, "Was hast du gelernt?"] }, "Regel", { agent: "general", via: "rule", ms: elapsed() });
       setBusy(false);
-      inputRef.current?.focus();
       return;
     }
     // Corrections teach the earlier phrasing: "Nein, ich meinte …", or the answer to "Was hast du gemeint?".
     const fix = !pending && lastAnswer?.asked ? correction(text) : undefined;
     if (fix && !fix.text && lastAnswer) {
-      setInput("");
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
       giveFeedback(lastAnswer, "down");
-      inputRef.current?.focus();
       return;
     }
     const original = pending ? undefined : fix ? lastAnswer?.asked : lastAnswer?.correcting;
@@ -547,11 +692,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     }
     const aliased = applyAliases(state.assistantAliases, work);
     work = resolvePronoun(aliased.text, lastAnswer?.card);
-    if (aliased.used.length) update((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
+    if (aliased.used.length) learn((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
     // Bare words ("Netflix", "500", "Geld") get a short question back; a bare account or goal name shows its balance.
     const open = !pending && !original && !chosen;
     const topic = open ? topicClarify(work, state, { accounts: balances(state, dashboard).map((item) => item.name),
-      goals: savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name), contracts: detectContracts(state, asOf).map((contract) => contract.name) }) : undefined;
+      goals: savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name), contracts: contractNames(state, asOf) }) : undefined;
     if (topic && "rewrite" in topic) work = topic.rewrite;
     const fixed = open ? fixedReply(work) : undefined;
     // "Erklär das nochmal" after small talk has nothing to explain: ask what is meant.
@@ -561,37 +706,27 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       (topic && "reply" in topic ? topic.reply : undefined) : undefined;
     if (chat) {
       if (fixed?.theme && chat === fixed) setTheme(fixed.theme);
-      setInput("");
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
       await settle();
       addResult(chat, "Regel", { agent: "general", via: "rule", ms: elapsed() });
       setBusy(false);
-      inputRef.current?.focus();
       return;
     }
     const history = thread.slice(-6).map((item) => ({ role: item.role, text: item.text.slice(0, 500) }));
     const goals = savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50);
     const planned = [...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth)
       .map((item) => item.name.slice(0, 100)))].slice(0, 60);
-    setInput("");
     setBusy(true);
     save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
-    const controller = new AbortController();
-    activeRun.current = controller;
-    const { signal } = controller;
     // Stopped by the user: what was already written stays as the answer, otherwise a short note.
     const halted = (agent: AgentId = "general") => {
       if (!signal.aborted) return false;
       const partial = streamed.current?.trim();
-      setStreaming(undefined);
-      setAnswering(undefined);
-      setStatus(undefined);
-      setBusy(false);
-      activeRun.current = null;
       addResult({ text: partial ? `${partial} …` : "Gestoppt. Frag gern noch einmal oder anders." }, partial ? "KI" : "Regel",
         { agent, via: "rule", ms: elapsed(), ...(partial ? { tool: "free", asked: work } : {}) });
-      inputRef.current?.focus();
+      setStreaming(undefined);
+      setStatus(undefined);
       return true;
     };
     let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
@@ -609,6 +744,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
           setStatus(statusFor(part.tool, partAgent));
           const market = part.tool === "market" || part.tool === "depot" ? await loadMarket(part.text, signal) : undefined;
           const knowledge = part.tool === "knowledge" ? await loadKnowledge(part.text, [...goals, ...planned], signal) : undefined;
+          await afterPaint();
           try {
             result = executeTool(part.tool, part.text, { state, dashboard, asOf, market, knowledge, page: pageContext(), insights: extras?.copilot });
           } catch {
@@ -622,19 +758,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         if (halted(partAgent)) return;
         addResult(result.suggestions ? result : { ...result, suggestions: part.tool ? followUps[part.tool] : agentSuggestions[partAgent] },
           part.tool ? "Regel" : "KI", { tool: part.tool ?? "free", asked: part.text, agent: partAgent, via: "rule", ms: elapsed() });
+        setStreaming(undefined);
       }
-      setStreaming(undefined);
-      setAnswering(undefined);
       setStatus(undefined);
-      setBusy(false);
-      activeRun.current = null;
-      inputRef.current?.focus();
       return;
     }
     if (follow) reply = { tool: follow.tool, source: "Regel" };
     else if (learned && isAssistantTool(learned.tool)) {
       reply = { tool: learned.tool, source: "Regel" };
-      update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, learned.tool) }));
+      learn((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, learned.tool) }));
     } else try {
       // When the rules already know the specialist, its bot and step show while the server still reads the details.
       const early = pending ? undefined : routeByRules(work, [...goals, ...planned]);
@@ -675,18 +807,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     setStatus(statusFor(tool ?? (reply.draft && !route.skipDraft ? reply.draft.action : undefined), agent));
     // Only the model understood this phrasing; remember it so the rules answer it directly next time.
     if (tool && reply.source === "KI" && learnableTools.includes(tool) && !Object.values(reply.hints ?? {}).some((value) => value !== undefined && value !== null) &&
-      !detectTool(work, [...goals, ...planned])) update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
+      !detectTool(work, [...goals, ...planned])) learn((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, work, tool),
         assistantGaps: resolveGap(current.assistantGaps, work, tool) }));
     // What was learned from this message is said at the start of the answer.
     const notes: string[] = [];
     // An explicit "Nein, ich meinte …" always teaches; after "da komme ich nicht mit" only a real rephrasing, not the next topic.
     if (original && tool && learnableTools.includes(tool) && original !== work && !detectTool(original, [...goals, ...planned]) && (fix || rephrases(original, work))) {
-      update((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, original, tool), assistantGaps: resolveGap(current.assistantGaps, original, tool) }));
+      learn((current) => ({ ...current, assistantPhrases: learnPhrase(current.assistantPhrases, original, tool), assistantGaps: resolveGap(current.assistantGaps, original, tool) }));
       notes.push(`Danke, gelernt: „${original.slice(0, 80)}“ verstehe ich ab jetzt so.`);
     }
     if (alias) {
       const learnedAlias = alias;
-      update((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, learnedAlias.from, learnedAlias.to) }));
+      learn((current) => ({ ...current, assistantAliases: learnAlias(current.assistantAliases, learnedAlias.from, learnedAlias.to) }));
       notes.push(`Gemerkt: Mit „${alias.from}“ meinst du „${alias.to}“.`);
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
@@ -694,8 +826,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // The orchestrator decides whether general finance knowledge helps; its few short hits go in as extra evidence.
     const wisdom = !tool && !parsed?.success && wantsKnowledge(work, { agent }) ? await searchLocalKnowledge(work, signal) : undefined;
     if (halted(agent)) return;
-    const evidence = [knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work)].filter(Boolean).join("\n\n") || undefined;
-    const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent, evidence, signal) : undefined;
+    // The agent's evidence scans the ledger; it is only built when a written answer needs it.
+    const free = !tool && !parsed?.success ? await freeAnswer(work, history, agent,
+      [knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work)].filter(Boolean).join("\n\n") || undefined, signal) : undefined;
     await settle();
     if (halted(agent)) return;
     if (tool === "remember") {
@@ -713,6 +846,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const knowledge = term && !known ? await loadKnowledge(work, [...goals, ...planned], signal) : undefined;
       if (halted(agent)) return;
       setStatus(statusFor(tool, agent));
+      await afterPaint();
       try {
         result = known ? localKnowledgeAnswer(known, local!.hits) : executeTool(tool, work, { state, dashboard, asOf, hints: reply.hints, previous: follow?.previous,
           market, knowledge, page: pageContext(), insights: extras?.copilot });
@@ -735,7 +869,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     else if (free) addResult(withNotes({ text: free, suggestions: agentSuggestions[agent] }), "KI", { tool: "free", asked: work, ...run, ms: elapsed(),
       ...(wisdom?.hits.length ? { sources: wisdom.hits.map((hit) => hit.title) } : {}) });
     else {
-      update((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
+      learn((current) => ({ ...current, assistantGaps: recordGap(current.assistantGaps, work) }));
       addResult({ text: "Hm, da komme ich gerade nicht mit. Magst du es mir anders sagen? Die neue Formulierung merke ich mir für das nächste Mal. " +
         "Frag mich zum Beispiel nach deinen Ausgaben, einem Sparziel oder ob sich ein Kauf ausgeht.",
       suggestions: ["Was kannst du alles?", ...starterSuggestions.slice(0, 2)] }, "Regel", { correcting: work, ...run, ms: elapsed() });
@@ -746,11 +880,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (memories.length) remember(memories);
     }
     setStreaming(undefined);
-    setAnswering(undefined);
     setStatus(undefined);
-    setBusy(false);
-    activeRun.current = null;
-    inputRef.current?.focus();
   }
 
   // Stop: ends the running request; send() keeps what was already written.
@@ -808,6 +938,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       toast.success("Geplante Ausgabe angelegt");
   }
 
+  // Handlers for the message rows; read when clicked, so the rows never need to re-render for a new handler.
+  const rowActions = useRef<RowActions | null>(null);
+  useLayoutEffect(() => {
+    rowActions.current = { addResult, applyChange, setMessage, undo, setEditing, createGoal, createExpense, regenerate, giveFeedback,
+      ask: (text) => void send(undefined, text) };
+  });
+  const lastId = messages.at(-1)?.id;
+
   const changes = state.assistantChanges ?? [];
   const memory = state.assistantMemory ?? [];
   const memoryCount = memory.length + (state.assistantKnowledge?.length ?? 0) + (state.accountRules?.length ?? 0);
@@ -819,7 +957,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       <Button type="button" variant={panel === "changes" ? "secondary" : "outline"} size="sm" className={actionSize} aria-pressed={panel === "changes"}
         onClick={() => setPanel(panel === "changes" ? undefined : "changes")}><History aria-hidden="true" className="size-4" />Änderungen{changes.length ? ` (${changes.length})` : ""}</Button>
       {messages.length > 0 && <Button type="button" variant="outline" size="sm" className={actionSize} onClick={() => {
-        if (window.confirm("Den gesamten Chatverlauf löschen? Angelegte Ziele, Ausgaben, das Gedächtnis und die Änderungsliste bleiben erhalten.")) update((current) => ({ ...current, assistantChat: [] }));
+        if (window.confirm("Den gesamten Chatverlauf löschen? Angelegte Ziele, Ausgaben, das Gedächtnis und die Änderungsliste bleiben erhalten.")) writeGlobal((current) => ({ ...current, assistantChat: [] }));
       }}><Trash2 aria-hidden="true" className="size-4" />Verlauf löschen</Button>}
   </>;
   return <div className={panelMode ? "flex h-full min-h-0 flex-col" : "mx-auto flex max-w-4xl flex-col"}>
@@ -832,83 +970,37 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     {panel === "changes" && <ChangesPanel changes={changes} disabled={!!storageError} onUndo={undo} />}
     {panel === "memory" && <MemoryPanel memory={memory} knowledge={state.assistantKnowledge ?? []} phrases={state.assistantPhrases?.length ?? 0}
       disabled={!!storageError} onDelete={forget}
-      onForgetKnowledge={(id) => { update((current) => ({ ...current, assistantKnowledge: (current.assistantKnowledge ?? []).filter((entry) => entry.id !== id) })); toast.success("Vergessen"); }}
-      onResetPhrases={() => { update((current) => ({ ...current, assistantPhrases: [] })); toast.success("Gelernte Formulierungen zurückgesetzt"); }}
+      onForgetKnowledge={(id) => { writeGlobal((current) => ({ ...current, assistantKnowledge: (current.assistantKnowledge ?? []).filter((entry) => entry.id !== id) })); toast.success("Vergessen"); }}
+      onResetPhrases={() => { writeGlobal((current) => ({ ...current, assistantPhrases: [] })); toast.success("Gelernte Formulierungen zurückgesetzt"); }}
       aliases={state.assistantAliases ?? []} gaps={state.assistantGaps ?? []} rules={state.accountRules ?? []}
-      onForgetRule={(id) => { update((current) => ({ ...current, accountRules: (current.accountRules ?? []).filter((entry) => entry.id !== id) })); toast.success("Kontoregel gelöscht"); }}
-      onForgetAlias={(from) => { update((current) => ({ ...current, assistantAliases: (current.assistantAliases ?? []).filter((entry) => entry.from !== from) })); toast.success("Vergessen"); }}
-      onRemoveGap={(text) => update((current) => ({ ...current, assistantGaps: (current.assistantGaps ?? []).filter((entry) => entry.text !== text) }))} />}
+      onForgetRule={(id) => { writeGlobal((current) => ({ ...current, accountRules: (current.accountRules ?? []).filter((entry) => entry.id !== id) })); toast.success("Kontoregel gelöscht"); }}
+      onForgetAlias={(from) => { writeGlobal((current) => ({ ...current, assistantAliases: (current.assistantAliases ?? []).filter((entry) => entry.from !== from) })); toast.success("Vergessen"); }}
+      onRemoveGap={(text) => writeGlobal((current) => ({ ...current, assistantGaps: (current.assistantGaps ?? []).filter((entry) => entry.text !== text) }))} />}
     </div>}
     <section className={panelMode ? "flex min-h-0 flex-1 flex-col border-t border-border/60" : "panel flex min-h-[60vh] flex-col p-4 sm:p-6"} aria-label="Chat mit dem Finanz-Assistenten">
       <FinancialData className={panelMode ? "flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-contain px-4 py-5 sm:px-6" : "flex flex-1 flex-col gap-5"} aria-live="polite">
         {!started &&
           <ChatEmptyState prompts={starterPrompts} disabled={busy || !!storageError} onPick={(text) => void send(undefined, text)} />}
-        {messages.map((message) => <MessageEnter key={message.id} animate={!initialIds.has(message.id)} mine={message.role === "user"}
-          className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
-          data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
-          <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} faded={message.status === "dismissed"}
-            live={message.id === liveId}>
-            {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
-              onResult={storageError ? undefined : (result) => addResult(result, "Regel")} />}
-          </Bubble>
-          {message.card?.kind === "homeoffice" && <div className="pl-11">
-            <HomeOfficeCard card={message.card} state={state} disabled={!!storageError} onResult={(result) => addResult(result, "Regel")} /></div>}
-          {message.change && message.status !== "dismissed" && <div className="pl-11">
-            <GlowFrame kind="pending" active={message.status === "preview" && message.id === pendingId}>
-              <ChangeCard message={message} disabled={!!storageError} onApply={() => applyChange(message)}
-                onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
-                onUndo={() => message.change?.logId && undo(message.change.logId)} />
-            </GlowFrame>
-          </div>}
-          {message.undoId && !message.draft && !message.change && message.status !== "dismissed" && <div className="flex flex-wrap items-center gap-2 pl-11">
-            {message.status === "preview" ? <>
-              <Button type="button" size="sm" className="min-h-10" disabled={!!storageError} onClick={() => undo(message.undoId!)}><Undo2 aria-hidden="true" className="size-4" />Rückgängig machen</Button>
-              <Button type="button" size="sm" variant="ghost" className="min-h-10" onClick={() => setMessage(message.id, { status: "dismissed" })}><X aria-hidden="true" className="size-4" />Doch nicht</Button>
-            </> : message.status === "applied" ? <Button type="button" size="sm" variant="ghost" className="min-h-10 text-muted-foreground" disabled={!!storageError}
-              onClick={() => undo(message.undoId!)}><Undo2 aria-hidden="true" className="size-4" />Nicht merken</Button>
-              : message.status === "undone" && <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Undo2 aria-hidden="true" className="size-3.5" />Rückgängig gemacht</p>}
-          </div>}
-          {message.draft && message.status !== "question" && <div className="pl-11">
-            {editing === message.id
-              ? <DraftEditor draft={message.draft} onCancel={() => setEditing(undefined)} onSave={(draft) => {
-                setEditing(undefined);
-                const question = missingQuestion(draft);
-                setMessage(message.id, { draft, status: question ? "question" : "preview", text: question ?? previewText(draft) });
-              }} />
-              : <GlowFrame kind="pending" active={message.status === "preview" && message.id === pendingId}>
-                <DraftCard key={`${message.id}:${JSON.stringify(message.draft)}`} message={message} state={state} dashboard={dashboard} disabled={!!storageError}
-                  onEdit={() => setEditing(message.id)}
-                  onDismiss={() => setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts gespeichert.")}
-                  onCreateGoal={(draft) => createGoal(message, draft)} onCreateExpense={(draft) => createExpense(message, draft)}
-                  onUndo={() => message.undoId && undo(message.undoId)} />
-              </GlowFrame>}
-          </div>}
-          {message.suggestions && !busy && message.id === messages.at(-1)?.id &&
-            <QuickReplies items={message.suggestions} disabled={!!storageError} onPick={(text) => void send(undefined, text)} />}
-          {message.role === "assistant" && message.status !== "dismissed" && <MessageActions text={message.text} disabled={busy || !!storageError}
-            // The newest answer keeps its actions in view; older ones show them on hover or focus, touch screens always.
-            className={cn(message.id !== messages.at(-1)?.id && "transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover/message:opacity-100 focus-within:opacity-100")}
-            onRegenerate={message.source === "KI" && message.asked && message.id === messages.at(-1)?.id && !message.change && !message.draft
-              ? () => regenerate(message) : undefined}
-            feedback={message.feedback} onFeedback={message.asked && !message.correcting ? (value) => giveFeedback(message, value) : undefined} />}
-        </MessageEnter>)}
-        {busy && <MessageEnter animate mine={false} className="flex items-start gap-3" aria-busy="true">
-          <WorkingAvatar agent={status?.agent ?? answering ?? "general"} />
-          <GlowFrame kind="working" active className={streaming ? "min-w-0 max-w-[85%]" : "min-w-0"}>
-            {streaming ? <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
-              <StatusLine status={status ?? workStatus.answer} className="mb-1.5 flex" />
-              <span className="sr-only">Assistent: </span><StreamingText text={streaming} />
-              {answering && answering !== "general" && <span className="mt-1.5 block text-2xs text-muted-foreground">{agentLabel[answering]} · KI</span>}
-            </div>
-              : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status ?? workStatus.read} /></div>}
-          </GlowFrame>
-        </MessageEnter>}
+        <ChatBusy value={busy}>
+          {messages.map((message) => {
+            const handoff = message.role === "assistant" ? handoffs.current.get(message.id) : undefined;
+            // A question already showed when it was sent, and a streamed answer stays where it was; neither enters a second time.
+            return <MessageRow key={message.id} message={message} state={state} dashboard={dashboard} last={message.id === lastId} live={message.id === liveId}
+              pending={message.id === pendingId} editing={editing === message.id} locked={!!storageError} handoff={handoff} actions={rowActions}
+              enter={!initialIds.has(message.id) && message.role === "assistant" && !handoff?.streamed} />;
+          })}
+        </ChatBusy>
+        {echo && !messages.some((message) => message.role === "user" && message.at >= echo.at) &&
+          <MessageEnter animate mine className="group/message flex flex-col gap-2" data-role="user" data-echo="">
+            <Bubble role="user" text={echo.text} />
+          </MessageEnter>}
+        {busy && <LiveAnswer live={live} />}
         <div ref={endRef} />
       </FinancialData>
       <form onSubmit={send} className={panelMode ? "shrink-0 px-4 pt-3 pb-1 sm:px-6" : "mt-5"}>
         <Label htmlFor="assistant-input" className="sr-only">Nachricht an den Finanz-Assistenten</Label>
         <div className="flex items-end gap-2 rounded-2xl border border-input bg-card p-1.5 pl-4 shadow-card transition-[border-color,box-shadow] duration-200 focus-within:border-primary/60 focus-within:ring-4 focus-within:ring-primary/15">
-          <textarea id="assistant-input" ref={inputRef} value={input} rows={1} maxLength={1000} disabled={busy}
+          <textarea id="assistant-input" ref={inputRef} value={input} rows={1} maxLength={1000}
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
@@ -933,6 +1025,85 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     </section>
   </div>;
 }
+type RowActions = {
+  addResult: (result: AgentResult, source: AssistantMessage["source"]) => void;
+  applyChange: (message: AssistantMessage) => void;
+  setMessage: (id: string, patch: Partial<AssistantMessage>, reply?: string) => void;
+  undo: (logId: string) => void;
+  setEditing: (id?: string) => void;
+  createGoal: (message: AssistantMessage, draft: AssistantDraft) => void;
+  createExpense: (message: AssistantMessage, draft: AssistantDraft) => void;
+  ask: (text: string) => void;
+  regenerate: (message: AssistantMessage) => void;
+  giveFeedback: (message: AssistantMessage, value: "up" | "down") => void;
+};
+// Whether an answer is being worked on; only the small row footers read it, so starting a run does not re-render every message.
+const ChatBusy = createContext(false);
+
+/** One message with its cards; it renders again only when its own props change, so a new message renders just itself. */
+const MessageRow = memo(function MessageRow({ message, state, dashboard, last, live, pending, editing, locked, enter, handoff, actions }: {
+  message: AssistantMessage; state: AppState; dashboard: Dashboard; last: boolean; live: boolean; pending: boolean; editing: boolean; locked: boolean;
+  enter: boolean; handoff?: { activity: WorkActivity; streamed: boolean }; actions: RefObject<RowActions | null>;
+}) {
+  const act = () => actions.current;
+  return <MessageEnter animate={enter} mine={message.role === "user"}
+    className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
+    data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
+    <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} faded={message.status === "dismissed"}
+      live={live} handoff={handoff}>
+      {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
+        onResult={locked ? undefined : (result) => act()?.addResult(result, "Regel")} />}
+    </Bubble>
+    {message.card?.kind === "homeoffice" && <div className="pl-11">
+      <HomeOfficeCard card={message.card} state={state} disabled={locked} onResult={(result) => act()?.addResult(result, "Regel")} /></div>}
+    {message.change && message.status !== "dismissed" && <div className="pl-11">
+      <GlowFrame kind="pending" active={message.status === "preview" && pending}>
+        <ChangeCard message={message} disabled={locked} onApply={() => act()?.applyChange(message)}
+          onDismiss={() => act()?.setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
+          onUndo={() => message.change?.logId && act()?.undo(message.change.logId)} />
+      </GlowFrame>
+    </div>}
+    {message.undoId && !message.draft && !message.change && message.status !== "dismissed" && <div className="flex flex-wrap items-center gap-2 pl-11">
+      {message.status === "preview" ? <>
+        <Button type="button" size="sm" className="min-h-10" disabled={locked} onClick={() => act()?.undo(message.undoId!)}><Undo2 aria-hidden="true" className="size-4" />Rückgängig machen</Button>
+        <Button type="button" size="sm" variant="ghost" className="min-h-10" onClick={() => act()?.setMessage(message.id, { status: "dismissed" })}><X aria-hidden="true" className="size-4" />Doch nicht</Button>
+      </> : message.status === "applied" ? <Button type="button" size="sm" variant="ghost" className="min-h-10 text-muted-foreground" disabled={locked}
+        onClick={() => act()?.undo(message.undoId!)}><Undo2 aria-hidden="true" className="size-4" />Nicht merken</Button>
+        : message.status === "undone" && <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Undo2 aria-hidden="true" className="size-3.5" />Rückgängig gemacht</p>}
+    </div>}
+    {message.draft && message.status !== "question" && <div className="pl-11">
+      {editing
+        ? <DraftEditor draft={message.draft} onCancel={() => act()?.setEditing(undefined)} onSave={(draft) => {
+          act()?.setEditing(undefined);
+          const question = missingQuestion(draft);
+          act()?.setMessage(message.id, { draft, status: question ? "question" : "preview", text: question ?? previewText(draft) });
+        }} />
+        : <GlowFrame kind="pending" active={message.status === "preview" && pending}>
+          <DraftCard key={`${message.id}:${JSON.stringify(message.draft)}`} message={message} state={state} dashboard={dashboard} disabled={locked}
+            onEdit={() => act()?.setEditing(message.id)}
+            onDismiss={() => act()?.setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts gespeichert.")}
+            onCreateGoal={(draft) => act()?.createGoal(message, draft)} onCreateExpense={(draft) => act()?.createExpense(message, draft)}
+            onUndo={() => message.undoId && act()?.undo(message.undoId)} />
+        </GlowFrame>}
+    </div>}
+    <RowFooter message={message} last={last} locked={locked} actions={actions} />
+  </MessageEnter>;
+});
+
+function RowFooter({ message, last, locked, actions }: { message: AssistantMessage; last: boolean; locked: boolean; actions: RefObject<RowActions | null> }) {
+  const busy = useContext(ChatBusy);
+  return <>
+    {message.suggestions && !busy && last &&
+      <QuickReplies items={message.suggestions} disabled={locked} onPick={(text) => actions.current?.ask(text)} />}
+    {message.role === "assistant" && message.status !== "dismissed" && <MessageActions text={message.text} disabled={busy || locked}
+      // The newest answer keeps its actions in view; older ones show them on hover or focus, touch screens always.
+      className={cn(!last && "transition-opacity duration-150 [@media(hover:hover)]:opacity-0 group-hover/message:opacity-100 focus-within:opacity-100")}
+      onRegenerate={message.source === "KI" && message.asked && last && !message.change && !message.draft
+        ? () => actions.current?.regenerate(message) : undefined}
+      feedback={message.feedback} onFeedback={message.asked && !message.correcting ? (value) => actions.current?.giveFeedback(message, value) : undefined} />}
+  </>;
+}
+
 function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: boolean; onPick: (text: string) => void }) {
   return <div className="flex flex-wrap gap-2 pl-11" aria-label="Vorschläge">
     {[...new Set(items)].map((item) => <button key={item} type="button" disabled={disabled} onClick={() => onPick(item)}
@@ -940,8 +1111,9 @@ function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: 
   </div>;
 }
 
-function Bubble({ role, text, source, agent, sources, faded, live, children }: {
-  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; faded?: boolean; live?: boolean; children?: React.ReactNode;
+function Bubble({ role, text, source, agent, sources, faded, live, handoff, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; faded?: boolean; live?: boolean;
+  handoff?: { activity: WorkActivity }; children?: React.ReactNode;
 }) {
   if (role === "user") return <div className={cn("flex justify-end", faded && "opacity-60")}>
     <div className="min-w-0 max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-card sm:max-w-[75%]">
@@ -951,7 +1123,8 @@ function Bubble({ role, text, source, agent, sources, faded, live, children }: {
   const label = [agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? "KI" : ""].filter(Boolean).join(" · ");
   // Only the newest answer's bot stays awake; older ones keep their pose, so a long chat costs no extra frames.
   return <div className={cn("flex items-start gap-3", faded && "opacity-60")}>
-    <AgentAvatar agent={agent ?? "general"} still={!live} className="mt-0.5" />
+    {handoff ? <HandoffAvatar agent={agent ?? "general"} activity={handoff.activity} live={!!live} />
+      : <AgentAvatar agent={agent ?? "general"} still={!live} className="mt-0.5" />}
     <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
       <span className="sr-only">Assistent: </span><span className="whitespace-pre-line">{text}</span>
       {(label || sources?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">

@@ -273,6 +273,28 @@ describe("FinanceProvider lazy dashboard and assignment integration", () => {
     expect(dashboard).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the dashboard, plan and review queue when only the assistant's chat or memory changes", () => {
+    const dashboard = vi.spyOn(calc, "calculateDashboard");
+    const view = renderFinance(fixture(), <DashboardReader label="month" />);
+    const before = view.read();
+    const calls = dashboard.mock.calls.length;
+    expect(calls).toBeGreaterThan(0);
+    act(() => view.read().update((state) => ({ ...state,
+      assistantChat: [{ id: "q1", role: "user", text: "Wie viel ist noch frei?", at: 1 }],
+      assistantPhrases: [{ pattern: "was ist frei", tool: "pulse", at: 1 }] })));
+    const after = view.read();
+    expect(after.state).not.toBe(before.state);
+    expect(after.state.assistantChat).toHaveLength(1);
+    expect(after.state.transactions).toBe(before.state.transactions);
+    expect(after.state.financeRows).toBe(before.state.financeRows);
+    expect(after.state.reviewQueue).toBe(before.state.reviewQueue);
+    expect(after.dashboard).toBe(before.dashboard);
+    expect(dashboard).toHaveBeenCalledTimes(calls);
+    // An invalid chat entry is still rejected, as with any other update.
+    expect(() => act(() => view.read().update((state) => ({ ...state,
+      assistantChat: [{ id: "q2", role: "robot", text: "?", at: 2 }] } as unknown as typeof state)))).toThrow();
+  });
+
   it("binds previously unread snapshots to their state and invalidates on replacement and cross-tab hydration", () => {
     const dashboard = vi.spyOn(calc, "calculateDashboard");
     const view = renderFinance(fixture());

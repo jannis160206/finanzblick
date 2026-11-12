@@ -14,6 +14,7 @@ import { recordAiSuggestions, type AiSuggestionEntry } from "@/lib/ai/suggestion
 import { pendingWebLookups, recordWebCategories, webHabits, type WebTarget } from "@/lib/ai/web-categories";
 import { runFinanceTask, type AssignPreview } from "@/lib/finance-worker";
 import type { AppState } from "@/lib/types";
+import { onlyAssistantChanged, withAssistantState } from "@/lib/assistant-state";
 
 const assignPreview = (base: AppState, outcome: AutoAssignResult): AssignPreview =>
   outcome.state === base ? { changed: false, applied: outcome.applied } : { changed: true, state: outcome.state, applied: outcome.applied };
@@ -99,7 +100,9 @@ export function AiReviewAssistant() {
     let cancelled = false;
     const apply = (preview: AssignPreview) => {
       if (cancelled || !preview.changed) return;
-      update((current) => current === base ? preview.state : autoAssignOpenReviews(current).state);
+      // A chat written while the worker ran changes no figure, so its result still applies instead of a second pass here.
+      update((current) => current === base ? preview.state
+        : onlyAssistantChanged(base, current) ? withAssistantState(preview.state, current) : autoAssignOpenReviews(current).state);
       const done = preview.applied.length;
       if (done) toast.success(`${done} Buchung${done === 1 ? "" : "en"} per Händlerregel, Historie oder Erstattung zugeordnet`);
     };
@@ -136,7 +139,8 @@ export function AiReviewAssistant() {
           ?? assignPreview(base, autoAssignAndCount(recordWebCategories(base, found, now)));
         if (signal.aborted) return;
         const next = preview.changed ? preview.state : base;
-        update((current) => current === base ? next : autoAssignAndCount(recordWebCategories(current, found)).state);
+        update((current) => current === base ? next
+          : onlyAssistantChanged(base, current) ? withAssistantState(next, current) : autoAssignAndCount(recordWebCategories(current, found)).state);
         webTotals.current += preview.applied.length;
         if (!pendingWebLookups(next, 1, webAttempted.current).length && webTotals.current) {
           const done = webTotals.current;
