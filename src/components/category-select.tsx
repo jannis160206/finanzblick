@@ -16,6 +16,7 @@ type CategorySelectProps = Pick<ComponentProps<"select">,
 > & {
   label: string;
   className?: string;
+  searchClassName?: string;
   excludeReview?: boolean;
 } & ({
   allowAll: true;
@@ -31,7 +32,7 @@ type CategorySelectProps = Pick<ComponentProps<"select">,
 
 export function CategorySelect(props: CategorySelectProps) {
   useNativeSelectBoundary();
-  const { label, className, excludeReview, disabled, value, id, name, onBlur } = props;
+  const { label, className, searchClassName, excludeReview, disabled, value, id, name, onBlur } = props;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -120,7 +121,7 @@ export function CategorySelect(props: CategorySelectProps) {
         if (next) { setQuery(""); setActive(0); }
       }}>
         <PopoverTrigger asChild>
-          <Button type="button" size="icon" variant="ghost" disabled={disabled}
+          <Button type="button" size="icon" variant="ghost" disabled={disabled} className={searchClassName}
             aria-label={searchLabel} title="Kategorien durchsuchen">
             <Search className="size-4" />
           </Button>
