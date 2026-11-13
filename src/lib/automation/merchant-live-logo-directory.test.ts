@@ -6,7 +6,7 @@ import { AccountDatabase } from "@/lib/server/database";
 import { blankTestState, createTestDirectory } from "@/lib/server/test-support";
 import { transactionSchema } from "@/lib/types";
 import { AutomationStore } from "./store";
-import { localLogoGrants } from "./merchant-local-logos";
+import { importSuppliedLocalLogos, localLogoGrants } from "./merchant-local-logos";
 import { accountMerchantBookingPresentations } from "./merchant-booking-presentations";
 import {
   LIVE_LOGO_USAGE_FILE,
@@ -126,6 +126,31 @@ it("picks up logos added later and keeps working when one file is unusable", asy
     "beta shop",
   ]);
   expect(console.error).toHaveBeenCalled();
+});
+
+it("takes back the logo of a deleted file and restores it when the file returns", async () => {
+  await logo("Alpha.png");
+  await logo("Gamma.png");
+  await allowAccount();
+  await sync();
+  await rm(join(logos, "Gamma.png"));
+  await sync();
+  expect([...localLogoGrants(store, userId).keys()]).toEqual(["alpha"]);
+  await logo("Gamma.png");
+  await sync();
+  expect([...localLogoGrants(store, userId).keys()].sort()).toEqual(["alpha", "gamma"]);
+});
+
+it("keeps logos imported from elsewhere under another declaration", async () => {
+  await mkdir(join(directory, "Other"));
+  await writeFile(join(directory, "Other", "Delta.png"), await raster());
+  await importSuppliedLocalLogos(store, {
+    userId, rightsReference: "Operator import from another folder.", directory: join(directory, "Other"),
+  });
+  await logo("Alpha.png");
+  await allowAccount();
+  await sync();
+  expect([...localLogoGrants(store, userId).keys()].sort()).toEqual(["alpha", "delta"]);
 });
 
 it("does nothing without a usage declaration for this account", async () => {

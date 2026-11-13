@@ -13,12 +13,7 @@ export { shouldShowMerchantMark } from "@/lib/merchant-mark-policy";
 import type { Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { isAtmBooking } from "@/lib/atm-logo";
-import {
-  merchantLogoName,
-  merchantNameMarkKey,
-  merchantLogoBookingId,
-  merchantBookingMarkKey,
-} from "@/lib/automation/merchant-mark-name";
+import { merchantMarkFor } from "@/lib/automation/merchant-mark-name";
 
 function initials(alias: string) {
   const words = alias.match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -104,27 +99,14 @@ export function MerchantMark({
     "inline-flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-xs font-semibold text-muted-foreground",
     className,
   );
-  const name = merchantLogoName(booking);
-  const bookingId = merchantLogoBookingId(booking);
-  const bookingLogo =
-    bookingId && marks !== null
-      ? marks.get(merchantBookingMarkKey(bookingId))
-      : null;
-  const logo = isAtmBooking(booking)
-    ? bookingLogo
-    : bookingLogo?.merchantId.startsWith("private-")
-      ? bookingLogo
-      : booking.merchantId
-        ? marks !== null
-          ? marks.get(booking.merchantId)
-          : booking.merchantLogo === true
-            ? { merchantId: booking.merchantId, version: undefined }
-            : null
-        : name && marks !== null
-          ? marks.get(merchantNameMarkKey(name))
-          : bookingId && marks !== null
-            ? bookingLogo
-            : null;
+  const logo =
+    marks !== null
+      ? merchantMarkFor(booking, (key) => marks.get(key))
+      : !isAtmBooking(booking) &&
+          booking.merchantId &&
+          booking.merchantLogo === true
+        ? { merchantId: booking.merchantId, version: undefined }
+        : null;
   if (
     !shouldShowMerchantMark(
       booking,

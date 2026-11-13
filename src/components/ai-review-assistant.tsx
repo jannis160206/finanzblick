@@ -24,7 +24,8 @@ const WEB_BATCH = 8;
 const LOGO_SWEEP_ROUNDS = 40;
 const LOGO_SWEEP_PAUSE_MS = 3_000;
 const LOGO_SWEEP_LIMIT_PAUSE_MS = 60_000;
-const logoSweep = { started: false };
+// One sweep at a time for the whole tab; a later import (more bookings) starts the next one.
+const logoSweep = { running: false, bookings: 0 };
 
 async function postJson<T>(url: string, body: unknown, signal: AbortSignal): Promise<T> {
   const response = await fetch(url, {
@@ -50,6 +51,7 @@ export function AiReviewAssistant() {
   const latest = useRef(state);
   const totals = useRef({ applied: 0, open: 0 });
   const [webBusy, setWebBusy] = useState(false);
+  const [logoRound, setLogoRound] = useState(0);
   const webAttempted = useRef(new Set<string>());
   const webTotals = useRef(0);
   useEffect(() => {
@@ -161,11 +163,13 @@ export function AiReviewAssistant() {
   }, [ready, storageError, webBusy, openKey, retry, update]);
 
   // Payees without a logo get one from the internet (Wikidata/Commons, the official website, the brand's
-  // own domain), a few at a time in the background. Not found ones are retried by the server after 30 days.
-  const hasBookings = state.transactions.length > 0;
+  // own domain), a few at a time in the background, after loading and again after every import. Not found
+  // ones are retried by the server after 30 days, or sooner once the search improves.
+  const bookingCount = state.transactions.length;
   useEffect(() => {
-    if (!ready || storageError || !hasBookings || logoSweep.started) return;
-    logoSweep.started = true;
+    if (!ready || storageError || !bookingCount || logoSweep.running || bookingCount <= logoSweep.bookings) return;
+    logoSweep.running = true;
+    logoSweep.bookings = bookingCount;
     // Not tied to this component: the sweep goes on in the background while the user navigates.
     const signal = new AbortController().signal;
     void (async () => {
@@ -183,11 +187,15 @@ export function AiReviewAssistant() {
         }
       } catch {
         // Offline, logged out or another sweep running; the next page load continues.
+      } finally {
+        logoSweep.running = false;
+        // Bookings imported meanwhile get their own sweep.
+        setLogoRound((value) => value + 1);
       }
       if (saved)
         toast.success(`${saved} neue${saved === 1 ? "s" : ""} Händler-Logo${saved === 1 ? "" : "s"} geladen`);
     })();
-  }, [ready, storageError, hasBookings]);
+  }, [ready, storageError, bookingCount, logoRound]);
 
   useEffect(() => {
     if (!available || !ready || storageError || busy || !openKey) return;

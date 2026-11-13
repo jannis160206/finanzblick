@@ -9,7 +9,9 @@ import { normalizeLocalLogoName } from "@/lib/automation/merchant-local-logos";
 import { MAX_LOGO_INPUT, normalizeLogoRaster } from "@/lib/automation/merchant-logo-raster";
 import { chat, type ChatOptions } from "./client";
 import { extractJsonArray } from "./categorize";
-import { checkLimit, decodeEntities, domainSlug, fetchPage, IP_HOST, type MerchantPlace, openStreetMapShop, PARKED, politeSlot } from "./industry";
+import {
+  checkLimit, decodeEntities, domainSlug, fetchPage, IP_HOST, type MerchantPlace, openStreetMapShop, PARKED, pauseHost, politeSlot,
+} from "./industry";
 
 const USER_AGENT = "Finanzblick/1.0 (private dashboard; local merchant logos)";
 // The live importer and the per-account quota (1024 stored logos) both stay above this.
@@ -20,12 +22,14 @@ const WIKI_INTERVAL_MS = 1_500;
 const MIN_ICON_PIXELS = 64;
 const MAX_ICON_TRIES = 5;
 const TIMEOUT_MS = 10_000;
+const API_BUSY_PAUSE_MS = 120_000;
 
 export type LogoOutcome =
   | { status: "exists"; file: string }
   | { status: "saved"; file: string; source: string; entity?: string }
   // transient: a source could not be asked (rate limit, timeout), so try again later.
-  | { status: "not-found"; reason: string; transient?: boolean };
+  // needsModel: several companies carry the name and only the local model could tell them apart.
+  | { status: "not-found"; reason: string; transient?: boolean; needsModel?: boolean; cause?: string };
 
 export type LogoFinderOptions = {
   directory?: string;
@@ -40,6 +44,8 @@ export type LogoFinderOptions = {
   requireConfirmation?: boolean;
   /** Where the card was used; lets OpenStreetMap name the local shop's website. */
   place?: MerchantPlace;
+  /** Known identity of the merchant (curated brand or the user's override): skips the name search. */
+  hint?: { wikidata?: string; website?: string };
   throttleMs?: number;
 };
 
@@ -106,7 +112,14 @@ async function getJson(url: URL, fetcher: typeof fetch, signal: AbortSignal | un
   });
   checkLimit(url.host, response);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json() as Promise<unknown>;
+  const body = await response.json() as unknown;
+  // MediaWiki reports overload inside a 200 answer ("cirrussearch-too-busy-error", "maxlag", "ratelimited").
+  const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+  if (typeof code === "string") {
+    if (/busy|maxlag|ratelimit|readonly/i.test(code)) pauseHost(url.host, API_BUSY_PAUSE_MS);
+    throw new Error(`${url.host}: ${code}`);
+  }
+  return body;
 }
 
 function claimValue(entity: z.infer<typeof entitySchema>["entities"][string], property: string) {
@@ -152,25 +165,50 @@ async function wikidataEntities(
   });
 }
 
+// Descriptions of things that carry a shop's name without being one: places, people, works.
+const NOT_A_BUSINESS = /\b(?:familienname|vorname|nachname|given name|family name|surname|gemeinde\b|\w*stadt\b|dorf\b|\w*bezirk\b|borough|district|county|provinz|province|landkreis|gymnasium|schule\b|school|universität|university|hochschule|ortschaft|ortsteil|stadtteil|bezirk|municipality|city in|city of|capital|town in|village|commune|fluss|river|berg in|mountain|film|album|single|song|lied|roman\b|novel|episode|fernsehserie|television series|musiker|musician|sänger|singer|politiker|politician|fußballspieler|footballer|schauspieler|actor|actress|asteroid|gattung|genus|species|protein|wikimedia)/i;
+// Descriptions of companies and brands, in German and English.
+const BUSINESS = /(?:unternehmen|firma|konzern|kette|marke|handel|supermarkt|discounter|drogerie|restaurant|fast.?food|gastronomie|bank|versicherung|hotel|tankstelle|mineralöl|telekom|mobilfunk|fluggesellschaft|airline|company|corporation|brand|retail|chain|supermarket|store|operator|betreiber|anbieter|dienstleist|plattform|platform|website|online|hersteller|manufacturer|verkehrs|logistik|lieferdienst|delivery|streaming|software|publisher|entwickler|developer|carrier|railway|bahn)/i;
+
+/** place: the name only belongs to towns, people or works, so no website of that name is a shop's either. */
+type Choice = { chosen?: Candidate; needsModel?: boolean; place?: boolean };
+
 async function chooseCandidate(
   name: string, context: string | undefined, candidates: Candidate[], ai: ChatOptions | false, confirm = false,
-) {
-  const wanted = normalizeLocalLogoName(name);
-  const exact = candidates.filter((candidate) => candidate.names.some((value) => normalizeLocalLogoName(value) === wanted));
-  if (exact.length === 1 && !confirm) return exact[0];
-  if (!candidates.length || !ai) return undefined;
+): Promise<Choice> {
+  // Accents and case do not matter ("ΚΑΦΕΝΕΙΟ" is "Καφενείο").
+  const fold = (value: string) => normalizeLocalLogoName(value.normalize("NFKD").replace(/\p{M}/gu, ""));
+  const wanted = fold(name);
+  const named = candidates.filter((candidate) => candidate.names.some((value) => fold(value) === wanted));
+  // A town's website or a surname's namesake is never a shop's logo.
+  const exact = named.filter((candidate) => !NOT_A_BUSINESS.test(candidate.description));
+  if (named.length && !exact.length) return { place: true };
+  if (!confirm) {
+    if (exact.length === 1) return { chosen: exact[0] };
+    // Several entries of one brand (the company and its trademark) share their logo or website.
+    const marks = new Set(exact.map((candidate) => candidate.logo ?? candidate.website));
+    if (exact.length > 1 && marks.size === 1) return { chosen: exact[0] };
+    const businesses = exact.filter((candidate) => BUSINESS.test(candidate.description));
+    if (businesses.length === 1) return { chosen: businesses[0] };
+  }
+  // The model only picks among real brands with their own Commons logo: it confused short or local names
+  // with a pistol, a London borough, a school and an Israeli broadcaster when websites were allowed.
+  const brands = candidates.filter((candidate) => candidate.logo && !NOT_A_BUSINESS.test(candidate.description));
+  if (!brands.length || (wanted.match(/\p{L}/gu)?.length ?? 0) < 3) return {};
+  if (!ai) return { needsModel: true };
   // The model must positively confirm the brand; otherwise no logo is stored.
-  const options = candidates.map((candidate) => `${candidate.id}: ${cleanUntrusted(candidate.label, 120)} – ${cleanUntrusted(candidate.description, 200)}`).join("\n");
+  const options = brands.map((candidate) => `${candidate.id}: ${cleanUntrusted(candidate.label, 120)} – ${cleanUntrusted(candidate.description, 200)}`).join("\n");
   const answer = await chat([
     { role: "system", content: "Du ordnest einen Händlernamen aus einer österreichischen Bankbuchung dem richtigen Wikidata-Unternehmen zu. Antworte nur mit JSON: [{\"id\":\"Q…\",\"confidence\":0-100}] oder [{\"id\":null,\"confidence\":0}] wenn keiner sicher passt. " + DATA_RULE },
     { role: "user", content: `Händler: ${cleanUntrusted(name, 120)}${context ? `\nBuchungstext: ${cleanUntrusted(context, 300)}` : ""}\nKandidaten:\n${options}` },
   ], { ...ai, maxTokens: 40 }).catch(() => undefined);
-  if (!answer) return undefined;
+  if (!answer) return { needsModel: true };
   const parsed = z.array(z.object({ id: z.string().nullable(), confidence: z.coerce.number() }))
     .safeParse(extractJsonArray(answer.content));
   const choice = parsed.success ? parsed.data[0] : undefined;
-  if (!choice?.id || choice.confidence < 90) return undefined;
-  return candidates.find((candidate) => candidate.id === choice.id);
+  if (!choice?.id || choice.confidence < 90) return {};
+  const chosen = brands.find((candidate) => candidate.id === choice.id);
+  return chosen ? { chosen } : {};
 }
 
 async function readBytes(response: Response, max: number) {
@@ -193,11 +231,21 @@ async function readBytes(response: Response, max: number) {
   return Buffer.concat(chunks);
 }
 
-// Public https images only; redirects are followed by hand so they cannot reach local hosts.
+// Social networks' own icons: a shop page links them, but they are never the shop's logo.
+// Domain marketplaces and parking pages show their own branding on any name for sale.
+const PARKING_HOST = /(?:^|\.)(?:domainmarket\.com|dan\.com|sedo\.com|sedoparking\.com|afternic\.com|hugedomains\.com|bodis\.com|parkingcrew\.net|above\.com|undeveloped\.com|godaddy\.com|parklogic\.com|domainnameshop\.com)$/i;
+const SOCIAL_HOST = /(?:^|\.)(?:facebook\.com|fbcdn\.net|instagram\.com|twitter\.com|x\.com|twimg\.com|youtube\.com|ytimg\.com|linkedin\.com|licdn\.com|tiktok\.com|pinterest\.com|whatsapp\.com|tripadvisor\.[a-z.]+|google\.com|gstatic\.com)$/i;
+const siteOf = (host: string) => host.toLowerCase().split(".").slice(-2).join(".");
+
+// Public https images only; redirects are followed by hand so they cannot reach local hosts, and an icon that
+// redirects to another site (a parked "/apple-touch-icon.png" sending to Facebook) is not the shop's.
 async function fetchImage(start: URL, fetcher: typeof fetch, signal?: AbortSignal) {
   let url = start;
   for (let hop = 0; hop < 3; hop++) {
-    if (url.protocol !== "https:" || IP_HOST.test(url.hostname) || url.hostname === "localhost") return undefined;
+    if (url.protocol !== "https:" || IP_HOST.test(url.hostname) || url.hostname === "localhost" || SOCIAL_HOST.test(url.hostname) ||
+      PARKING_HOST.test(url.hostname))
+      return undefined;
+    if (hop > 0 && siteOf(url.hostname) !== siteOf(start.hostname)) return undefined;
     const response = await fetcher(url, {
       headers: { Accept: "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8", "User-Agent": USER_AGENT },
       redirect: "manual", signal: timeoutSignal(signal), cache: "no-store",
@@ -232,12 +280,19 @@ export async function logoPngFromImage(bytes: Buffer, type = "") {
   return (await normalizeLogoRaster(bytes, { suppliedLocalFile: true })) ?? undefined;
 }
 
+export async function blankOnWhite(png: Buffer) {
+  const flat = await sharp(png).flatten({ background: "#ffffff" }).png().toBuffer().catch(() => undefined);
+  const stats = flat ? await sharp(flat).stats().catch(() => undefined) : undefined;
+  return !!stats && stats.channels.slice(0, 3).every((channel) => channel.stdev < 3);
+}
+
 async function downloadCommonsLogo(file: string, fetcher: typeof fetch, signal: AbortSignal | undefined, interval: number) {
   const info = new URL("https://commons.wikimedia.org/w/api.php");
   info.search = new URLSearchParams({
     action: "query", titles: `File:${file}`, prop: "imageinfo", iiprop: "url", iiurlwidth: "256", format: "json",
   }).toString();
-  const pages = imageInfoSchema.parse(await getJson(info, fetcher, signal, interval)).query.pages;
+  // A logo file Commons no longer has (renamed, deleted) is no pause, just no logo.
+  const pages = imageInfoSchema.safeParse(await getJson(info, fetcher, signal, interval)).data?.query.pages ?? {};
   const image = Object.values(pages)[0]?.imageinfo?.[0];
   const source = image?.thumburl ?? image?.url;
   if (!source) return undefined;
@@ -247,10 +302,11 @@ async function downloadCommonsLogo(file: string, fetcher: typeof fetch, signal: 
   const response = await fetcher(url, {
     headers: { "User-Agent": USER_AGENT },
     signal: timeoutSignal(signal, 15_000),
-    redirect: "error",
+    redirect: "manual",
     cache: "no-store",
   });
   checkLimit(url.host, response);
+  if (response.status === 429 || response.status >= 500) throw new Error(`HTTP ${response.status}`);
   if (!response.ok) return undefined;
   const bytes = await readBytes(response, MAX_LOGO_INPUT);
   const png = bytes ? await logoPngFromImage(bytes, response.headers.get("content-type") ?? "") : undefined;
@@ -265,8 +321,11 @@ function attribute(tag: string, name: string): string | undefined {
 
 // Logo candidates a homepage declares, best first: the square app icon, a vector
 // icon, large icons, the header logo, a logo share image, the classic touch icon.
-export function pageLogoCandidates(html: string, base: URL): URL[] {
+export function pageLogoCandidates(html: string, base: URL, brand?: string): URL[] {
   const found: { url: URL; score: number }[] = [];
+  // A page logo image must carry the brand or the site's name; footers also show partners' and agencies' logos.
+  const own = [base.hostname.replace(/^www\./i, "").split(".")[0], ...(brand ?? "").split(/\s+/)]
+    .map(siteSlug).filter((word) => word.length >= 3);
   const add = (href: string | undefined, score: number) => {
     if (!href || /^data:/i.test(href.trim())) return;
     try {
@@ -292,7 +351,7 @@ export function pageLogoCandidates(html: string, base: URL): URL[] {
     if (images >= 3) break;
     const src = attribute(tag, "src") ?? attribute(tag, "data-src");
     const hints = [src, attribute(tag, "alt"), attribute(tag, "class"), attribute(tag, "id")].join(" ");
-    if (!/logo/i.test(hints)) continue;
+    if (!/logo/i.test(hints) || !own.some((word) => siteSlug(hints).includes(word))) continue;
     images++;
     add(src, 250 - images);
   }
@@ -300,6 +359,11 @@ export function pageLogoCandidates(html: string, base: URL): URL[] {
     const key = (attribute(tag, "property") ?? attribute(tag, "name") ?? attribute(tag, "itemprop") ?? "").toLowerCase();
     const content = attribute(tag, "content");
     if (key === "logo" || (/^(?:og:image|twitter:image)$/.test(key) && /logo/i.test(content ?? ""))) add(content, 200);
+  }
+  // The organization's logo from its structured data: "logo": "…" or "logo": { "url": "…" }.
+  for (const [, script] of html.matchAll(/<script\b[^>]*application\/ld\+json[^>]*>([\s\S]{0,20000}?)<\/script>/gi)) {
+    for (const match of script.matchAll(/"logo"\s*:\s*(?:"([^"]{1,500})"|\{[^{}]{0,500}?"(?:url|contentUrl)"\s*:\s*"([^"]{1,500})")/g))
+      add((match[1] ?? match[2]).replace(/\\\//g, "/"), 270);
   }
   add("/apple-touch-icon.png", 100);
   const unique = new Map<string, { url: URL; score: number }>();
@@ -310,15 +374,64 @@ export function pageLogoCandidates(html: string, base: URL): URL[] {
   return [...unique.values()].sort((a, b) => b.score - a.score).map((entry) => entry.url);
 }
 
+const manifestSchema = z.object({
+  icons: z.array(z.object({ src: z.string().max(500), sizes: z.string().max(100).optional(), purpose: z.string().max(60).optional() }).loose()).max(40),
+}).loose();
+
+// The app icons of the site's web app manifest, largest first (192–512 px squares, made for home screens).
+async function manifestIcons(page: { url: URL; html: string }, fetcher: typeof fetch, signal?: AbortSignal): Promise<URL[]> {
+  const tag = [...page.html.matchAll(/<link\b[^>]*>/gi)].map(([value]) => value)
+    .find((value) => /(?:^|\s)manifest(?:\s|$)/i.test(attribute(value, "rel") ?? ""));
+  const href = tag && attribute(tag, "href");
+  if (!href) return [];
+  let url: URL;
+  try {
+    url = new URL(href, page.url);
+  } catch {
+    return [];
+  }
+  if (url.protocol === "http:") url.protocol = "https:";
+  const file = await fetchImage(url, fetcher, signal).catch(() => undefined);
+  if (!file || file.bytes.length > 64 * 1024) return [];
+  let parsed: z.infer<typeof manifestSchema> | undefined;
+  try {
+    parsed = manifestSchema.safeParse(JSON.parse(file.bytes.toString("utf8"))).data;
+  } catch {
+    return [];
+  }
+  const size = (sizes = "") => Math.max(0, ...[...sizes.matchAll(/(\d+)x(\d+)/gi)].map((match) => Math.min(Number(match[1]), Number(match[2]))));
+  return (parsed?.icons ?? [])
+    .filter((icon) => !/monochrome/i.test(icon.purpose ?? "") && (size(icon.sizes) >= 96 || /\.svg(?:[?#]|$)/i.test(icon.src)))
+    .sort((left, right) => Math.min(size(right.sizes), 512) - Math.min(size(left.sizes), 512))
+    .flatMap((icon) => {
+      try {
+        return [new URL(icon.src, url)];
+      } catch {
+        return [];
+      }
+    });
+}
+
 async function logoFromPage(
-  page: { url: URL; html: string }, fetcher: typeof fetch, signal?: AbortSignal,
+  page: { url: URL; html: string }, fetcher: typeof fetch, signal?: AbortSignal, brand?: string,
+  seen?: { pictures: number },
 ): Promise<{ png: Buffer; source: string } | undefined> {
-  for (const url of pageLogoCandidates(page.html, page.url).slice(0, MAX_ICON_TRIES)) {
+  // A page that loads its pictures from a domain marketplace is a name for sale.
+  if (PARKING_HOST.test(page.url.hostname) || /\/\/(?:[\w-]+\.)*(?:domainmarket\.com|dan\.com|sedo\.com|afternic\.com|hugedomains\.com)\//i.test(page.html))
+    return undefined;
+  const [best, ...rest] = pageLogoCandidates(page.html, page.url, brand);
+  // The manifest's app icon comes right after the best icon the page names itself, before guessed paths.
+  const manifest = (await manifestIcons(page, fetcher, signal)).slice(0, 2);
+  const ordered = best && best.pathname !== "/apple-touch-icon.png" ? [best, ...manifest, ...rest] : [...manifest, ...(best ? [best] : []), ...rest];
+  const candidates = [...new Map(ordered.map((url) => [url.href, url])).values()];
+  for (const url of candidates.slice(0, MAX_ICON_TRIES)) {
     signal?.throwIfAborted();
     if (url.protocol === "http:") url.protocol = "https:";
     const image = await fetchImage(url, fetcher, signal).catch(() => undefined);
     const png = image ? await logoPngFromImage(image.bytes, image.type) : undefined;
-    if (png) return { png, source: url.href };
+    // A white logo for dark headers or a plain colour square shows nothing on the light badge: try the next icon.
+    if (png && !(await blankOnWhite(png))) return { png, source: url.href };
+    if (png && seen) seen.pictures++;
   }
   return undefined;
 }
@@ -341,18 +454,21 @@ async function logoFromGuessedSite(name: string, fetcher: typeof fetch, signal?:
       .map((tag) => attribute(tag, "content") ?? "").join(" ");
     const text: string = `${title} ${siteName}`;
     if (!text.trim() || PARKED.test(text) || !siteSlug(text).includes(slug)) continue;
-    const logo = await logoFromPage(page, fetcher, signal);
-    if (logo) return logo;
+    const seen = { pictures: 0 };
+    const logo = await logoFromPage(page, fetcher, signal, name, seen);
+    // A site presenting the brand with pictures that only show nothing here (a white logo) is the merchant's;
+    // the same name under another ending is a namesake then.
+    if (logo || seen.pictures) return logo;
   }
   return undefined;
 }
 
-async function logoFromWebsite(website: string, fetcher: typeof fetch, signal?: AbortSignal) {
+async function logoFromWebsite(website: string, fetcher: typeof fetch, signal?: AbortSignal, brand?: string) {
   const url = new URL(website);
   url.protocol = "https:";
   const page = await fetchPage(url, fetcher, signal);
   if (!page) return undefined;
-  return logoFromPage(page, fetcher, signal);
+  return logoFromPage(page, fetcher, signal, brand);
 }
 
 export async function findMerchantLogo(
@@ -367,32 +483,48 @@ export async function findMerchantLogo(
   const fetcher = options.fetcher ?? fetch;
   const interval = options.throttleMs ?? WIKI_INTERVAL_MS;
   let transient = false;
+  let cause: string | undefined;
+  // A registry that cannot answer now (rate limit, timeout) is asked again soon.
   const fail = (error: unknown) => {
     if (options.signal?.aborted) throw error;
     transient = true;
+    cause ??= error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 160) : "unknown";
     return undefined;
   };
-  // 1. The logo Wikidata records for the company, 2. its official website's icon,
-  // 3. the brand or website OpenStreetMap records for the shop where the card was used,
-  // 4. the website its name suggests.
-  const candidates = (await wikidataCandidates(name, fetcher, options.signal, interval).catch(fail)) ?? [];
-  let chosen = await chooseCandidate(name, context, candidates, options.ai ?? {}, options.requireConfirmation);
-  const shop = !chosen && options.place
+  // A shop's own website that does not load is simply no source; it must not hold up the merchants after it.
+  const unavailable = (error: unknown) => {
+    if (options.signal?.aborted) throw error;
+    return undefined;
+  };
+  // 0. A known identity (curated brand, the user's override), 1. the logo Wikidata records for the company,
+  // 2. its official website's icon, 3. the brand or website OpenStreetMap records for the shop where the
+  // card was used, 4. the website its name suggests.
+  const hinted = options.hint?.wikidata
+    ? (await wikidataEntities([options.hint.wikidata], fetcher, options.signal, interval).catch(fail))?.[0] : undefined;
+  const found = hinted || options.hint?.website ? undefined : await wikidataCandidates(name, fetcher, options.signal, interval).catch(fail);
+  const choice: Choice = hinted || options.hint?.website ? { chosen: hinted }
+    : await chooseCandidate(name, context, found ?? [], options.ai ?? {}, options.requireConfirmation);
+  // Without Wikidata's answer nobody knows whether the name is a town or a person: no guessing then.
+  const registryAnswered = !!(hinted || options.hint?.website) || found !== undefined;
+  let chosen = choice.chosen;
+  const shop = !chosen && !options.hint && options.place
     ? await openStreetMapShop(name, options.place, { fetcher, signal: options.signal, throttleMs: options.throttleMs }).catch(fail)
     : undefined;
   if (shop?.wikidata)
     chosen = (await wikidataEntities([shop.wikidata], fetcher, options.signal, interval).catch(fail))?.[0];
   let logo: { png: Buffer; source: string } | undefined;
   if (chosen?.logo) logo = await downloadCommonsLogo(chosen.logo, fetcher, options.signal, interval).catch(fail);
-  if (!logo && chosen?.website) logo = await logoFromWebsite(chosen.website, fetcher, options.signal).catch(fail);
-  if (!logo && shop?.website) logo = await logoFromWebsite(shop.website.href, fetcher, options.signal).catch(fail);
-  if (!logo && !chosen && !shop && options.guessWebsite !== false)
+  if (!logo && options.hint?.website) logo = await logoFromWebsite(options.hint.website, fetcher, options.signal, name).catch(unavailable);
+  if (!logo && chosen?.website) logo = await logoFromWebsite(chosen.website, fetcher, options.signal, chosen.label).catch(unavailable);
+  if (!logo && shop?.website) logo = await logoFromWebsite(shop.website.href, fetcher, options.signal, name).catch(unavailable);
+  if (!logo && !chosen && !shop && !options.hint && !choice.place && registryAnswered && options.guessWebsite !== false)
     logo = await logoFromGuessedSite(name, fetcher, options.signal);
   if (!logo)
     return {
       status: "not-found",
-      reason: chosen ? "Logo konnte nicht sicher geladen werden" : "Kein eindeutiges Unternehmen mit Logo gefunden",
-      ...(transient ? { transient: true } : {}),
+      reason: chosen || options.hint ? "Logo konnte nicht sicher geladen werden"
+        : choice.needsModel ? "Mehrere Unternehmen dieses Namens, lokale KI nötig" : "Kein eindeutiges Unternehmen mit Logo gefunden",
+      ...(transient ? { transient: true, ...(cause ? { cause } : {}) } : {}), ...(choice.needsModel && !chosen ? { needsModel: true } : {}),
     };
   await mkdir(directory, { recursive: true });
   // The live importer ignores the temporary name, so it never sees a partial file.

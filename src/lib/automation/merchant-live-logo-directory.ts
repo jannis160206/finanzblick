@@ -7,7 +7,7 @@ import {
   logoAccountIdSchema,
   logoRightsReferenceSchema,
 } from "./merchant-logo-grant-metadata";
-import { importSuppliedLocalLogos } from "./merchant-local-logos";
+import { importSuppliedLocalLogos, retireRemovedLocalLogos } from "./merchant-local-logos";
 import { readBoundedLogoFile } from "./merchant-logo-raster";
 
 export const LIVE_LOGO_USAGE_FILE = ".private-usage.json";
@@ -70,9 +70,13 @@ async function directorySignature(directory: string) {
     if (isMissing(error)) return undefined;
     throw error;
   }
+  let complete = true;
   for await (const entry of handle) {
     if (!IMAGE_FILE.test(entry.name) || !entry.isFile()) continue;
-    if (files.length >= MAX_SIGNATURE_FILES) break;
+    if (files.length >= MAX_SIGNATURE_FILES) {
+      complete = false;
+      break;
+    }
     const stats = await lstat(join(directory, entry.name));
     files.push({
       name: entry.name,
@@ -81,6 +85,7 @@ async function directorySignature(directory: string) {
   }
   files.sort((a, b) => a.name.localeCompare(b.name));
   return {
+    complete,
     names: files.map((file) => file.name),
     files: new Map(files.map((file) => [file.name, file.signature])),
     hash: createHash("sha256")
@@ -141,6 +146,8 @@ async function synchronize(
   if (!rightsReference) return;
   const current = await directorySignature(directory);
   if (!current || current.hash === state.signature) return;
+  // Only a complete listing can tell that a file is gone.
+  if (current.complete) retireRemovedLocalLogos(store, userId, rightsReference, new Set(current.names));
   // Only new or changed files are imported again; the importer never removes
   // grants, so this matches a full import without re-reading every logo.
   const previous = state.files;

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -8,7 +8,10 @@ import { AccountDatabase } from "@/lib/server/database";
 import { createSeed } from "@/lib/seed";
 import { appStateSchema, type AppState, type Transaction } from "@/lib/types";
 import { clearIndustryCache } from "./industry";
-import { LOGO_MISSES_FILE, logoQueries, missingLogoTargets, shortenedQuery, sweepMissingLogos } from "./logo-sweep";
+import { LOGO_OVERRIDES_FILE } from "./logo-brands";
+import {
+  bookingWebsite, LOGO_MISSES_FILE, logoQueries, logoTarget, missingLogoTargets, readMisses, shortenedQuery, sweepMissingLogos,
+} from "./logo-sweep";
 
 const userId = "logo-sweep-account";
 const card = (text: string) => `Verwendungszweck: ${text} Zahlungsreferenz: POS 1,00 AT D3 03.09. 10:15 K1 001`;
@@ -54,6 +57,13 @@ const state = () => stateWith([
   booking("rent", { description: "Max Mustermann Miete Oktober", amount: -700, category: "Transfer" }),
 ]);
 
+const badge = async (color: string) => sharp({ create: { width: 180, height: 180, channels: 4, background: color } })
+  .composite([
+    { input: await sharp({ create: { width: 90, height: 40, channels: 4, background: "#ffffff" } }).png().toBuffer(), left: 45, top: 70 },
+    { input: await sharp({ create: { width: 20, height: 10, channels: 4, background: "#202020" } }).png().toBuffer(), left: 80, top: 85 },
+  ])
+  .png().toBuffer();
+
 function fetcher(wikidataStatus = 200) {
   const calls: string[] = [];
   const run = (async (input: RequestInfo | URL) => {
@@ -67,7 +77,7 @@ function fetcher(wikidataStatus = 200) {
         headers: { "content-type": "text/html" },
       });
     if (url.href === "https://www.kukowitsch.at/t.png") {
-      const png = await sharp({ create: { width: 180, height: 180, channels: 4, background: "#204080" } }).png().toBuffer();
+      const png = await badge("#204080");
       return new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } });
     }
     throw new Error("getaddrinfo ENOTFOUND");
@@ -90,6 +100,31 @@ describe("logoQueries", () => {
     expect(logoQueries("Baeckerei")).toEqual([]);
     expect(logoQueries("Europa Park")).toEqual(["Europa Park"]);
     expect(logoQueries("Sonstiges")).toEqual([]);
+    expect(logoQueries("E-CENTER KOHLER")).toEqual(["E Center Kohler"]);
+  });
+
+  it("never searches the town of the card payment, a person or a trade word alone", () => {
+    expect(logoTarget(cardBooking("town", "SALZBURG SALZBURG 5020"))).toBeUndefined();
+    expect(logoTarget(cardBooking("pharmacy", "FARMACIA SEVILLA 41001"))).toBeUndefined();
+    expect(logoTarget(cardBooking("shop", "FARMACIA NORTE SEVILLA 41001"))?.key).toBe("farmacia norte");
+    // Plain card texts without a postcode: the last word may be the shop's own, and short brands count.
+    expect(logoTarget(booking("plain", { bank: "Revolut", description: "dm drogerie" }))?.queries).toEqual(["DM Drogerie", "DM"]);
+    expect(logoTarget(booking("last", { bank: "Revolut", description: "Pizzeria Nordlicht" }))?.key).toBe("pizzeria nordlicht");
+    expect(logoTarget(booking("gift", {
+      description: "Auftraggeber: Max Muster", rawDescription: "Auftraggeber: Max Muster IBAN Auftraggeber: AT00", merchantAlias: "Max Muster",
+      category: "Geschenke & Spenden", amount: 50,
+    }))).toBeUndefined();
+  });
+
+  it("asks the web address of the booking text and lets company payees guess a website, never people", () => {
+    expect(bookingWebsite("PAYPAL *BEISPIEL GG 12345678 BEISPIEL.GG")).toBe("https://beispiel.gg/");
+    expect(bookingWebsite("WWW.OEBB.AT TICKET FOR WIEN")).toBe("https://www.oebb.at/");
+    expect(bookingWebsite("Zahlung an PAYPAL.COM")).toBeUndefined();
+    expect(bookingWebsite("max@example.com")).toBeUndefined();
+    expect(logoTarget(booking("company", { description: "1052270339870/PAYPAL", merchantAlias: "Beispielband24 GmbH" })))
+      .toMatchObject({ queries: ["Beispielband24 GmbH", "Beispielband24"], guessWebsite: true });
+    expect(logoTarget(booking("person", { description: "1052270339870/PAYPAL", merchantAlias: "Anna Beispiel" })))
+      .toMatchObject({ queries: ["Anna Beispiel"], guessWebsite: false });
   });
 
   it("makes shortened single words ask for confirmation", () => {
@@ -116,9 +151,10 @@ describe("sweepMissingLogos", () => {
     const stopped = await sweepMissingLogos(store, userId, state(), {
       directory: join(directory, "Limited"), fetcher: limited, ai: false, throttleMs: 0,
     });
-    // The website still answers; the payee only Wikidata could identify waits for the next run.
-    expect(stopped).toMatchObject({ rateLimited: true, checked: 1, remaining: 1 });
-    expect(Object.keys(JSON.parse(await readFile(join(directory, "Limited", LOGO_MISSES_FILE), "utf8")))).toEqual(["kukowitsch"]);
+    // Without Wikidata nobody knows whether a name is a shop or a town, so nothing is guessed or remembered.
+    expect(stopped).toMatchObject({ rateLimited: true, checked: 0, remaining: 2 });
+    expect(limited.calls.some((call) => call.includes("kukowitsch.at"))).toBe(false);
+    expect(await readMisses(join(directory, "Limited"))).toEqual({});
 
     clearIndustryCache();
     const now = Date.UTC(2026, 10, 1);
@@ -137,5 +173,39 @@ describe("sweepMissingLogos", () => {
       directory: logos, fetcher: fetcher(), ai: false, throttleMs: 0, now: now + 31 * 86_400_000,
     });
     expect(later.checked).toBe(2);
+  });
+
+  it("forgets the misses of an older search, so an improved one tries every merchant again", async () => {
+    const logos = join(directory, "Logo");
+    await mkdir(logos, { recursive: true });
+    await writeFile(join(logos, LOGO_MISSES_FILE), JSON.stringify({ kukowitsch: Date.now() }));
+    expect(await readMisses(logos)).toEqual({});
+    const result = await sweepMissingLogos(store, userId, state(), { directory: logos, fetcher: fetcher(), ai: false, throttleMs: 0 });
+    expect(result.checked).toBe(2);
+    expect(Object.keys(await readMisses(logos))).toContain("apple services");
+  });
+
+  it("looks up curated brands and the user's own overrides at their official website", async () => {
+    const logos = join(directory, "Logo");
+    await mkdir(logos, { recursive: true });
+    await writeFile(join(logos, LOGO_OVERRIDES_FILE), JSON.stringify({ Nordlicht: "https://nordlicht.example.at", Bad: "ftp://x" }));
+    const icon = await badge("#a01010");
+    const calls: string[] = [];
+    const site = (async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      calls.push(url.href);
+      if (url.href === "https://www.dm.at/" || url.href === "https://nordlicht.example.at/")
+        return new Response('<link rel="apple-touch-icon" href="/t.png">', { headers: { "content-type": "text/html" } });
+      if (url.pathname === "/t.png") return new Response(new Uint8Array(icon), { headers: { "content-type": "image/png" } });
+      throw new Error("getaddrinfo ENOTFOUND");
+    }) as typeof fetch;
+    const result = await sweepMissingLogos(store, userId, stateWith([
+      cardBooking("dm", "DM-FIL. A001 GRAZ 8010"), cardBooking("shop", "NORDLICHT VILLACH 9500"),
+    ]), { directory: logos, fetcher: site, ai: false, throttleMs: 0 });
+    expect(result.saved.map((entry) => [entry.name, entry.source])).toEqual([
+      ["DM", "https://www.dm.at/t.png"], ["Nordlicht", "https://nordlicht.example.at/t.png"],
+    ]);
+    // The curated brand's own Wikidata item may be asked, but never a name search or the map.
+    expect(calls.some((call) => call.includes("wbsearchentities") || call.includes("nominatim"))).toBe(false);
   });
 });

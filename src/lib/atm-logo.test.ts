@@ -26,6 +26,16 @@ describe("display-only ATM artwork", () => {
     },
   );
 
+  it("recognizes self-service and foreign withdrawals, but lends the domestic artwork only to Austrian machines", () => {
+    expect(atmLogoBank({ description: "SB-BEHEBUNG 00092293" })).toMatchObject({ name: "Raiffeisen", explicit: false });
+    for (const description of ["Bargeldbehebung Flughafen Terminal 1", "ATM S1234 GRAZ 8010", "XYZ ATM563 HAFEN 12345", "Cash withdrawal LONDON"]) {
+      expect(isAtmBooking({ description })).toBe(true);
+      expect(atmLogoBank({ description })).toBeNull();
+    }
+    expect(isAtmBooking({ description: "ATMOSPHERE BAR WIEN" })).toBe(false);
+    expect(isAtmBooking({ description: "Pro-Cashback" })).toBe(false);
+  });
+
   it("uses historic descriptions and details without consulting the account's bank or stored merchant", () => {
     const row = transactionSchema.parse({
       id: "historic",

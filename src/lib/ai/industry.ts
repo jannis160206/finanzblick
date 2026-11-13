@@ -281,6 +281,16 @@ export async function politeSlot(host: string, signal: AbortSignal | undefined, 
   });
 }
 
+/** Hosts that asked for a pause, with the time it ends (for diagnostics such as the logo test run). */
+export function pausedHosts(now = Date.now()): Map<string, number> {
+  return new Map([...blockedUntil].filter(([, until]) => until > now));
+}
+
+/** A service that said "too busy" inside a normal answer gets a short break as well. */
+export function pauseHost(host: string, ms: number) {
+  blockedUntil.set(host, Math.max(blockedUntil.get(host) ?? 0, Date.now() + ms));
+}
+
 export function checkLimit(host: string, response: Response) {
   if (response.status !== 429 && response.status !== 503) return;
   const seconds = Number(response.headers.get("retry-after"));

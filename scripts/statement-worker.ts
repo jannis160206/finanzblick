@@ -9,6 +9,7 @@ import { assertParserRuntimeAvailable } from "../src/lib/automation/parser-runti
 import { startBankAutoSync } from "../src/lib/banking/auto-sync";
 import { startMailAutoSync } from "../src/lib/mail/sync";
 import { startDriveAutoSync } from "../src/lib/drive/auto-sync";
+import { ImportLogoSweep } from "../src/lib/ai/logo-import";
 
 const config = readAccountConfig();
 const accounts = new AccountDatabase(config.databasePath);
@@ -29,7 +30,9 @@ try {
   startMailAutoSync(accounts, stop.signal);
   startDriveAutoSync(accounts, stop.signal);
   console.info("Statement worker ready (concurrency=1, isolated local parser, budget=120s).");
-  await new AutomationWorker(store, randomUUID(), index, {}, (signal, owner) => catalogue.maintain(signal, owner)).run(stop.signal);
+  await new AutomationWorker(
+    store, randomUUID(), index, {}, (signal, owner) => catalogue.maintain(signal, owner), new ImportLogoSweep(store),
+  ).run(stop.signal);
 } finally {
   accounts.close();
 }

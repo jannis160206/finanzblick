@@ -31,6 +31,8 @@ export class AutomationWorker {
     public index: MerchantIndex,
     readonly parserOptions: Omit<ParserRuntimeOptions, "signal"> = {},
     private readonly maintainCatalogue?: (signal: AbortSignal, owner: string) => Promise<MerchantIndex | undefined>,
+    /** Looks up logos for new merchants beside the queue, never holding up the next statement. */
+    private readonly logos?: { imported(userId: string, signal: AbortSignal): void; readonly running?: Promise<void> },
   ) {}
 
   async process(job: ClaimedJob, signal?: AbortSignal): Promise<void> {
@@ -203,6 +205,7 @@ export class AutomationWorker {
         }
         try {
           await this.process(job, running.signal);
+          if (job.kind !== "backfill") this.logos?.imported(job.userId, signal);
         } catch (error) {
           if (leaseError) throw leaseError;
           if (!this.store.holds(this.owner, job)) continue;
@@ -234,6 +237,7 @@ export class AutomationWorker {
       signal.removeEventListener("abort", abort);
       this.store.release(this.owner, signal.aborted && !leaseError);
       await this.cleanup();
+      await this.logos?.running;
     }
   }
 }

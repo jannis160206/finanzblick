@@ -1165,3 +1165,39 @@ it("prefers the supplied file of the main brand name and falls back to the brand
   expect(byId.get("brand-uber-trip")?.merchantId).toBe(grants.get("uber")!.merchantId);
   expect(byId.get("brand-ub") ?? null).toBeNull();
 });
+
+it("shows the supplied file the booking text starts with, beside catalogue near-misses, town files and spelled-out umlauts", async () => {
+  for (const file of ["OBI.png", "OBI SAGT DANKE.png", "Dunkin.png", "Wien.png", "Lift Cafe.png", "Nordwagen Auto.png",
+    "ÖBB.png", "LINDEN AP 1234.png", "Nordlicht.png", "H&M.png"]) await supplied(file);
+  store.upsertMerchants([
+    publicMerchant("cafe-1", "Cafe Eins", ["Cafe"]), publicMerchant("cafe-2", "Café Zwei", ["Cafe"]),
+    publicMerchant("near-1", "Nordlichz"), publicMerchant("near-2", "Nordlichz Bar", ["Nordlichz"]),
+  ]);
+  const rows = [
+    cardBooking("refund", "OBI SAGT DANKE VILLACH"),
+    cardBooking("donut", "DUNKIN HAUPTBAHNHOF WIEN"),
+    cardBooking("cafe", "SUMUP *LIFT CAFE WIEN 1040"),
+    cardBooking("transfer", "To Nordwagen Auto GmbH & Co KG"),
+    cardBooking("rail", "OEBB TICKET"),
+    cardBooking("terminal", "LINDEN AP 8010"),
+    cardBooking("airline", "NORDLICHT AIR LINES OSLO"),
+    cardBooking("fashion", "HM GRAZ AT0001 GRAZ"),
+  ];
+  accounts.putFinance(userId, { ...blankTestState(), transactions: rows }, 0);
+  await importLogos();
+  const grants = localLogoGrants(store, userId);
+  const marks = await accountMerchantBookingPresentations(store, rows.map((row) => row.id), userId);
+  expect(marks.map((mark) => mark.logo?.merchantId ?? null)).toEqual(
+    ["obi sagt danke", "dunkin", "lift cafe", "nordwagen auto", "öbb", "linden ap 1234", "nordlicht", "h m"]
+      .map((name) => grants.get(name)!.merchantId),
+  );
+});
+
+it("lets a web address alias show its brand file, but never a longer company name", async () => {
+  await supplied("ÖBB.png");
+  await supplied("A1.png");
+  await importLogos();
+  const marks = await accountMerchantNamePresentations(store, ["OEBB.AT", "www.oebb.at", "A1 Telekom Shop"], userId);
+  const grant = localLogoGrants(store, userId).get("öbb")!;
+  expect(marks.map((mark) => mark.logo?.merchantId ?? null)).toEqual([grant.merchantId, grant.merchantId, null]);
+});

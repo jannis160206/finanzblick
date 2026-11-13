@@ -93,6 +93,8 @@ export async function accountMerchantPresentations(
   }));
 }
 
+const WEB_ADDRESS = /^(?:https?:\/\/)?(?:www\.)?([\p{L}\p{N}-]+)\.(?:at|de|ch|com|eu|net|org|io|me|gg|co\.uk|it|es|fr|nl)\/?$/iu;
+
 export async function accountMerchantNamePresentations(
   store: AutomationStore,
   names: string[],
@@ -157,13 +159,21 @@ export async function accountMerchantNamePresentations(
     request,
   );
   const byId = new Map(marks.map((mark) => [mark.merchantId, mark.logo]));
+  // A web address names exactly one brand: "OEBB.AT" shows "ÖBB", "Booking.com" shows "Booking".
+  const domainBrand = (name: string) => {
+    const brand = WEB_ADDRESS.exec(name.trim())?.[1];
+    return brand && (brand.match(/\p{L}/gu)?.length ?? 0) >= 3
+      ? supplied.get(normalizeLocalLogoName(brand))
+      : undefined;
+  };
   return unique.map((merchantName) => {
-    const grant = local.get(merchantName);
+    const catalogue = byId.get(identities.get(merchantName) ?? "") ?? null;
+    const grant = local.get(merchantName) ?? (catalogue ? undefined : domainBrand(merchantName));
     return {
       merchantName,
       logo: grant
         ? { merchantId: grant.merchantId, version: grant.version }
-        : (byId.get(identities.get(merchantName) ?? "") ?? null),
+        : catalogue,
     };
   });
 }

@@ -102,8 +102,28 @@ export async function availableLocalLogoGrants(
   for (const [name, grant] of names) {
     if (await files.get(grant.logo.file)) available.set(name, grant);
   }
+  // Bank texts spell umlauts out ("OEBB", "MOEMAX"); the file "ÖBB.png" still fits. A file named after a
+  // card terminal ("LINDEN AP 1234") also fits the shop's name without the number.
+  const withoutNumber = (name: string) => name.replace(/(?: \d+)+$/, "");
+  const numbered = new Map<string, number>();
+  for (const name of available.keys())
+    numbered.set(withoutNumber(name), (numbered.get(withoutNumber(name)) ?? 0) + 1);
+  for (const [name, grant] of [...available]) {
+    // "Brand 1" and "Brand 2" are two brands; only a single numbered file stands for its shop.
+    const terminal = numbered.get(withoutNumber(name)) === 1 ? withoutNumber(name) : name;
+    // "H&M" is "HM" in bank texts.
+    const initials = name.replace(/(^|\s)(\p{L}) (\p{L})(?=\s|$)/gu, "$1$2$3");
+    for (const variant of [spellOutUmlauts(name), terminal, spellOutUmlauts(terminal), initials]) {
+      const letters = variant.match(/\p{L}/gu)?.length ?? 0;
+      if (variant !== name && (letters >= 3 || (variant === initials && letters >= 2)) && !available.has(variant))
+        available.set(variant, grant);
+    }
+  }
   return available;
 }
+
+export const spellOutUmlauts = (name: string) =>
+  name.replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
 
 function localLogoId(name: string) {
   return `private-${createHash("sha256").update(name).digest("hex")}`;
@@ -139,6 +159,35 @@ function checkNameBindings(
   );
   if (count + newNames > MAX_NAMES)
     throw new RangeError("Private logo name quota reached");
+}
+
+/**
+ * Takes back the logos of files that were removed from the live folder: a wrong logo disappears from the
+ * app once its file is deleted. Only grants of folder files under the same usage declaration are touched;
+ * the file's return makes its logo current again.
+ */
+export function retireRemovedLocalLogos(
+  store: AutomationStore,
+  userId: string,
+  rightsReference: string,
+  present: ReadonlySet<string>,
+) {
+  const account = requireLogoAccount(store.accounts, userId);
+  let retired = 0;
+  store.accounts.transaction((db) => {
+    const rows = db
+      .prepare("SELECT merchant_id, logo_json FROM merchant_authorized_logos WHERE user_id = ? AND is_current = 1")
+      .all(account);
+    for (const row of rows) {
+      const logo = authorizedMerchantLogoSchema.safeParse(JSON.parse(String(row.logo_json))).data;
+      if (logo?.provenance.kind !== "local-file" || logo.rightsReference !== rightsReference) continue;
+      if (present.has(logo.provenance.sourceLabel)) continue;
+      db.prepare("UPDATE merchant_authorized_logos SET is_current = 0 WHERE user_id = ? AND merchant_id = ?")
+        .run(account, String(row.merchant_id));
+      retired++;
+    }
+  });
+  return retired;
 }
 
 export async function importSuppliedLocalLogos(

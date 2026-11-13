@@ -72,10 +72,12 @@ function bookingTexts(row: AtmBooking) {
   );
 }
 
+// Austrian machines ("BANKOMAT 00092293", "SB-BEHEBUNG") and withdrawals abroad ("Bargeldbehebung Flughafen", "ATM 1142").
+const DOMESTIC_ATM = /(?:^| )(?:bankomat(?:en)?|bank ?automat(?:en)?|sb behebung)(?= |$|\d)/u;
+const ANY_ATM = /(?:^| )(?:bankomat(?:en)?|bank ?automat(?:en)?|sb behebung|bargeldbehebung|geldautomat(?:en)?|cash withdrawal|atm)(?= |$|\d)/u;
+
 export function isAtmBooking(row: AtmBooking) {
-  return bookingTexts(row).some((text) =>
-    /(?:^| )(?:bankomat(?:en)?|bank ?automat(?:en)?)(?= |$|\d)/u.test(text),
-  );
+  return bookingTexts(row).some((text) => ANY_ATM.test(text));
 }
 
 export function isBankLogoName(name: string) {
@@ -181,7 +183,9 @@ export function atmLogoBank(
   const selected =
     [...otherBanks][0] ??
     specific.find((match) => normalize(match.bank.name) === "raiffeisen")?.bank;
-  return selected
-    ? { ...selected, explicit: true }
-    : { ...raiffeisen, explicit: false };
+  if (selected) return { ...selected, explicit: true };
+  // An unnamed machine abroad belongs to some local bank, not to the household's own.
+  return bookingTexts(row).some((text) => DOMESTIC_ATM.test(text))
+    ? { ...raiffeisen, explicit: false }
+    : null;
 }

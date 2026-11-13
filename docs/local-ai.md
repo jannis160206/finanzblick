@@ -338,22 +338,65 @@ Der Browser-Assistent schlägt unbekannte Geschäfte offener Kartenzahlungen sel
 
 ## Händler-Logos
 
-Der Browser-Assistent sucht nach dem Laden im Hintergrund Logos für alle Zahlungsempfänger, deren Buchungen ein Händlerzeichen zeigen würden, aber noch keines haben (`/api/ai/logos`, je 5 Händler, bis zu 40 Runden, meiste Buchungen zuerst). Neue Logos erscheinen sofort.
+Logos werden an zwei Stellen gesucht, jeweils für alle Zahlungsempfänger, deren Buchungen ein Händlerzeichen zeigen würden, aber noch keines haben (meiste Buchungen zuerst). Neue Logos erscheinen sofort.
 
-- **Wer ein Logo bekommt:** Händlernamen (Alias) und Geschäfte aus Kartenzahlungen. Überweisungen an Personen, Umbuchungen, Gebühren und reine Branchenwörter („Tankstelle“, „Hotel“) nicht.
+- **Im Browser** nach dem Laden und erneut nach jedem Import (`/api/ai/logos`, je 5 Händler, bis zu 40 Runden).
+- **Im Hintergrund-Worker** nach jedem Kontoauszug-Import (Upload, Google Drive, E-Mail): nebenher, in Fünferpaketen, ohne den nächsten Import aufzuhalten (`src/lib/ai/logo-import.ts`). Ein fehlendes Logo blockiert keinen Import.
+
+Die Abdeckung misst `npm run eval:logos` auf den echten Händlern, siehe [Logo-Testlauf](LOGO-EVAL.md).
+
+- **Wer ein Logo bekommt:** Händlernamen (Alias) und Geschäfte aus Kartenzahlungen, auch schlichte Kartentexte ohne Bankdetails („dm drogerie“, „BP“).
+  - Kein Logo bekommen Überweisungen an Personen („Auftraggeber: Max Muster“, „To Max Muster“), Umbuchungen, Gebühren und reine Branchenwörter („Tankstelle“, „Farmacia“, „Pizzeria“).
+  - Bankomaten zeigen das Logo ihrer Bank. Österreichische Automaten („BANKOMAT“, „SB-BEHEBUNG“) ohne Betreiber zeigen Raiffeisen. Bargeldbehebungen im Ausland („Bargeldbehebung Flughafen“, „ATM …“) ohne bekannten Betreiber bekommen kein geratenes Bank-Logo und werden auch nicht als Händler gesucht.
 - **Suchnamen:** Aus „SPAR Fil. 6423 Spar Fil Finkenstein“ werden der Reihe nach „Spar Finkenstein“ und „Spar“ gesucht. Der Dateiname besteht so nur aus Wörtern der Buchung und passt später sicher.
+  - Rechtsformen fallen weg („Beispiel GmbH“ → „Beispiel“, „Spotify AB“ → „Spotify“).
+  - Der Ort der Kartenzahlung ist nie ein Suchname („1234 SALZBURG“). Ohne Postleitzahl bleibt das letzte Wort Teil des Namens („Pizzeria Nordlicht“, nicht „Pizzeria“ in „Nordlicht“).
 - **Quellen der Reihe nach:**
+  0. Eine bekannte Identität. Dann wird direkt deren Webseite gefragt, ohne Namenssuche:
+     - eine kuratierte Marke aus `src/lib/ai/logo-brands.ts` (etwa dm, Interspar, Post, Booking.com, ÖBB, Eurowings, BP). Mit Wikidata-ID kommt das Logo von Commons, sonst von der Webseite; viele große Seiten blockieren automatische Zugriffe;
+     - ein eigener Eintrag in `Logo/.logo-overrides.json` (siehe unten);
+     - die Webadresse im Buchungstext („BEISPIEL.GG“, „WWW.OEBB.AT“), außer Adressen von Zahlungsdiensten.
   1. Wikidata-Logo (P154) von Wikimedia Commons.
   2. Icon der offiziellen Webseite aus Wikidata (P856).
   3. Bei Kartenzahlungen mit Ort: das Geschäft dieses Namens an diesem Ort in OpenStreetMap. Dessen Marke (`brand:wikidata`) liefert das Wikidata-Logo, sonst dessen eingetragene Webseite (`website`). Nur wenn alle Treffer dieselbe Marke bzw. Webseite haben.
-  4. Bei Geschäften aus Kartenzahlungen: `www.<name>.at`, `.de` oder `.com`, aber nur, wenn Titel oder Seitenname der Seite die Marke tragen und die Domain nicht geparkt ist.
-- **Vorsicht bei Suchnamen:** Füllwörter („TO“, „ON“, „GmbH“), Regionen und Branchenwörter („Europa“, „Bäckerei“) und Kategorienamen gelten nicht als Marke. Personen und PayPal-Empfänger werden nur mit vollem Namen gesucht. Ein verkürztes einzelnes Wort („Swiss“ aus „Swiss Intl Air Lines“) braucht die Bestätigung der lokalen KI und rät keine Webseite.
-- **Drosselung:** Wikidata wird höchstens alle 1,5 s, OpenStreetMap höchstens einmal pro Sekunde gefragt. Meldet ein Dienst 429, wartet der Browser 60 s und macht dann weiter.
-- **Icon-Auswahl auf einer Webseite:** `apple-touch-icon`, SVG-Icon, große Icons ab 96 px, `<img>` mit „logo“, `og:image` mit „logo“. Raster unter 64 px werden verworfen. SVGs mit Skripten, eingebetteten Bildern oder externen Verweisen werden abgelehnt.
+  4. Bei Geschäften und Firmen-Empfängern (Name mit Rechtsform oder Webadresse): `www.<name>.at`, `.de` oder `.com`.
+     - Das gilt nur, wenn Titel oder Seitenname der Seite die Marke tragen und die Domain nicht geparkt ist.
+     - Hat die erste passende Seite nur Bilder, die nichts zeigen (ein weißes Logo), werden andere Endungen nicht mehr probiert; dort steht meist eine gleichnamige fremde Firma.
+     - Ohne Antwort von Wikidata wird nichts geraten.
+- **Wikidata-Auswahl:** Der Name muss exakt passen; Groß- und Kleinschreibung sowie Akzente zählen nicht („ΚΑΦΕΝΕΙΟ“ = „Καφενείο“).
+  - Einträge für Orte, Personen oder Werke („Stadt in Österreich“, „Familienname“, „Album“) zählen nie. Dann wird auch keine Webseite dieses Namens geraten; so entstand früher ein Tourismus-Logo für eine Ortsangabe.
+  - Einträge für Bezirke, Schulen und Universitäten zählen ebenfalls nie.
+  - Bei mehreren Einträgen gleichen Namens entscheidet ein gemeinsames Logo, sonst der einzige Eintrag, der als Unternehmen beschrieben ist, sonst die lokale KI.
+  - Die KI wählt nur zwischen Marken mit eigenem Commons-Logo und nie bei Namen unter 3 Buchstaben. Mit Webseiten als Kandidaten hatte sie für kurze Namen Fremdes gewählt (eine Pistole, einen Londoner Bezirk, ein Gymnasium).
+- **Vorsicht bei Suchnamen:** Füllwörter („TO“, „ON“, „GmbH“), Regionen und Branchenwörter („Europa“, „Bäckerei“) und Kategorienamen gelten nicht als Marke. Personen und PayPal-Empfänger ohne Rechtsform werden nur mit vollem Namen gesucht und raten keine Webseite. Ein verkürztes einzelnes Wort („Swiss“ aus „Swiss Intl Air Lines“) braucht die Bestätigung der lokalen KI und rät keine Webseite.
+- **Drosselung:** Wikidata wird höchstens alle 1,5 s gefragt, OpenStreetMap höchstens einmal pro Sekunde.
+  - Bei 429/503 pausiert der Dienst bis `Retry-After`, sonst 10 Minuten. Meldet Wikidata im Antworttext „too busy“ oder „maxlag“, pausiert er 2 Minuten.
+  - Der Browser wartet nach einer Drosselung 60 s und macht dann weiter.
+  - Eine Händlerseite, die nicht lädt (DNS, TLS, Fehler), ist keine Pause, sondern einfach keine Quelle. Früher hielt so ein Händler die Suche für alle folgenden an.
+- **Icon-Auswahl auf einer Webseite:**
+  - Der Reihe nach: das beste Icon der Seite (`apple-touch-icon`, SVG-Icon, große Icons ab 96 px), die App-Icons aus dem Web-App-Manifest (192–512 px, nicht „monochrome“), das Organisations-Logo aus strukturierten Daten (`"logo"` in JSON-LD), `<img>` mit „logo“, `og:image` mit „logo“.
+  - Ein `<img>` mit „logo“ zählt nur, wenn es den Markennamen oder den Domainnamen trägt; Seitenfüße zeigen auch Partner- und Agentur-Logos.
+  - Verworfen werden Bilder, die auf dem hellen Hintergrund nichts zeigen (weißes Logo, einfarbige Fläche), Icons sozialer Netzwerke, Icons, die auf eine andere Website umleiten, und Seiten oder Bilder von Domain-Parkdiensten.
+  - Raster unter 64 px werden verworfen. SVGs mit Skripten, eingebetteten Bildern oder externen Verweisen werden abgelehnt.
 - **Sicherheit:** Nur HTTPS, keine IP-Adressen oder `localhost`, begrenzte Dateigröße. Alles wird als PNG neu gerendert.
-- **Gedächtnis:** Nicht gefundene Händler stehen in `Logo/.logo-misses.json` und werden erst nach 30 Tagen erneut gesucht. Drosselungen merkt er sich nicht, der nächste Lauf macht dort weiter.
-- **Erkennung vorhandener Logos:** Gleichnamige Filialen aus dem öffentlichen Katalog (z. B. mehrere „Spar“) blockieren das eigene Logo nicht mehr. Bei mehreren Dateien derselben Marke gewinnt der Markenname (`amazon.png` vor `AMZNPRIME.png`). „Uber Trip“ findet `uber.png` über den Wortanfang.
+- **Gedächtnis:** Nicht gefundene Händler stehen in `Logo/.logo-misses.json`, zusammen mit der Version der Suche.
+  - Sie werden erst nach 30 Tagen erneut gesucht. Fehlte nur die lokale KI für mehrdeutige Namen, geschieht das nach 3 Tagen.
+  - Wird die Suche verbessert (neue Version), kommt jeder Händler einmal sofort wieder dran.
+  - Drosselungen merkt sie sich nicht; der nächste Lauf macht dort weiter.
+- **Eigene Overrides:** In `Logo/.logo-overrides.json` lässt sich für Geschäfte, die keine Quelle kennt, die Webseite oder der Wikidata-Eintrag hinterlegen, etwa `{ "Bäckerei Beispiel": "https://www.baeckerei-beispiel.at", "Nordlicht": "Q123456" }`.
+  - Der Name ist der Händlername aus dem Testlauf.
+  - Die Datei ist privat wie der ganze Ordner. Ungültige Einträge werden ignoriert.
+  - Alternativ legt man das Logo selbst als Datei mit dem Händlernamen in `Logo/` ab.
+- **Erkennung vorhandener Logos:**
+  - Gleichnamige Filialen aus dem öffentlichen Katalog (z. B. mehrere „Spar“) blockieren das eigene Logo nicht.
+  - Bei mehreren Dateien derselben Marke gewinnt der Markenname (`amazon.png` vor `AMZNPRIME.png`). „Uber Trip“ findet `uber.png` über den Wortanfang.
+  - Passen mehrere Dateien auf einen Buchungstext, gewinnt die, mit der der Text beginnt, unter diesen die längste („OBI SAGT DANKE“ vor „OBI“, „Dunkin“ vor einer Ortsdatei „Wien“). Revolut-Richtungswörter („To …“) zählen nicht.
+  - Ein unscharfer Katalog-Fast-Treffer oder ein Katalogwort innerhalb des eigenen Dateinamens („Cafe“ in „Lift Cafe“) blockiert eine Datei am Textanfang nicht.
+  - Dateien passen auch mit ausgeschriebenen Umlauten („ÖBB.png“ → „OEBB“), ohne Terminalnummer („LINDEN AP 1234.png“ → „LINDEN AP“, nur wenn eindeutig) und mit zusammengezogenen Initialen („H&M.png“ → „HM“).
+  - Ein Händlername, der eine Webadresse ist („OEBB.AT“), zeigt die Datei seiner Marke. Ein längerer Firmenname („A1 Telekom Shop“) zeigt dagegen nie die Datei eines kürzeren.
 - **Ordner:** bis zu 1000 Logos. Der Live-Sync liest nur neue oder geänderte Dateien ein.
+  - Eine gelöschte Datei nimmt ihr Logo zurück, etwa wenn ein falsches entfernt wird. Das geschieht nur bei vollständiger Ordnerliste und nur für Dateien unter der Nutzungsfreigabe dieses Ordners.
+  - Kehrt die Datei zurück, gilt sie wieder.
 
 ## MCP-Server
 

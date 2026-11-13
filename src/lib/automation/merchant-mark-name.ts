@@ -53,3 +53,25 @@ export function merchantLogoBookingId(
 export function merchantBookingMarkKey(id: string) {
   return `booking:${id}`;
 }
+
+/**
+ * The mark a booking shows, given the loaded marks by key: an ATM's operator, a private booking logo,
+ * the stored merchant's logo, the merchant name's logo, else the booking's own.
+ */
+export function merchantMarkFor<T extends { merchantId: string }>(
+  booking: Pick<
+    Transaction,
+    "id" | "merchantId" | "merchantAlias" | "merchantNameConfirmed"
+  > &
+    Partial<Pick<Transaction, "description" | "rawDescription" | "rawDetails">>,
+  mark: (key: string) => T | null | undefined,
+): T | null | undefined {
+  const bookingId = merchantLogoBookingId(booking);
+  const bookingLogo = bookingId ? mark(merchantBookingMarkKey(bookingId)) : null;
+  if (isAtmBooking(booking)) return bookingLogo;
+  if (bookingLogo?.merchantId.startsWith("private-")) return bookingLogo;
+  if (booking.merchantId) return mark(booking.merchantId);
+  const name = merchantLogoName(booking);
+  if (name) return mark(merchantNameMarkKey(name));
+  return bookingLogo;
+}

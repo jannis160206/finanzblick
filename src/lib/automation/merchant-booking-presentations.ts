@@ -140,23 +140,30 @@ export async function accountMerchantBookingPresentations(
       const matches = localDescriptors.filter(({ name }) =>
         ` ${normalized} `.includes(` ${name} `),
       );
-      const identities = new Set(matches.map(({ grant }) => grant.merchantId));
-      if (identities.size !== 1) return null;
+      // Revolut's direction word is no part of the name ("To Nordwagen Auto GmbH").
+      const subject = normalized.replace(/^(?:to|from) /, "");
+      const leading = matches.filter(
+        ({ name }) => subject === name || subject.startsWith(`${name} `),
+      );
+      // Several supplied files fit ("OBI" and "OBI SAGT DANKE", "Dunkin" and the
+      // town "Wien"): the text's first words name the merchant, the longest wins.
+      const candidates = new Set(
+        (leading.length ? leading : matches).map(({ grant }) => grant.merchantId),
+      );
+      if (candidates.size !== 1 && !leading.length) return null;
       // A supplied word anywhere in the booking text selects its logo, except a
       // payment provider, which only names the merchant at the start of the text.
       const local = (
-        matches.find(
-          ({ name }) =>
-            normalized === name || normalized.startsWith(`${name} `),
-        ) ?? matches.find(({ name }) => !isPaymentProviderText(name))
+        [...leading].sort((a, b) => b.name.length - a.name.length)[0] ??
+        matches.find(({ name }) => !isPaymentProviderText(name))
       )?.grant;
       if (!local || qualifiedCompany(text, local.canonicalName)) return null;
       const publicMatch = index.match(text);
       const showsLocal = (merchant: Merchant) =>
-        [merchant.canonicalName, ...merchant.aliases].some(
-          (name) =>
-            supplied.get(normalizeLocalLogoName(name))?.merchantId ===
-            local.merchantId,
+        [merchant.canonicalName, ...merchant.aliases].some((name) =>
+          candidates.has(
+            supplied.get(normalizeLocalLogoName(name))?.merchantId ?? "",
+          ),
         );
       // Public map copies of one brand (many "Spar" outlets) are ambiguous
       // for an identity, not for its artwork.
@@ -164,25 +171,31 @@ export async function accountMerchantBookingPresentations(
       const sameBrand =
         ambiguous.length > 0 &&
         ambiguous.every((merchants) => merchants.every(showsLocal));
+      // An unresolved catalogue lookup blocks a file only when it competes for
+      // the merchant: a named rival, or a supplied word later in the text. A
+      // fuzzy near-miss or a place later in the text does not ("SWISS Intl Air
+      // Lines ZUERICH" keeps "Swiss").
+      // A catalogue word inside the file's own name ("Cafe" in "Lift Cafe") is no rival either.
+      const localName = ` ${normalizeMerchantDescriptor(local.canonicalName)} `;
+      const insideLocal = (merchant: Merchant) =>
+        [merchant.canonicalName, ...merchant.aliases].some((name) => {
+          const phrase = normalizeMerchantDescriptor(name);
+          return !!phrase && localName.includes(` ${phrase} `);
+        });
+      const rival =
+        ambiguous.some(
+          (merchants) =>
+            !merchants.every(showsLocal) && !merchants.every(insideLocal),
+        ) || !leading.length;
       if (
         publicMatch.requiresManualReview &&
         publicMatch.method !== "none" &&
         !publicMatch.merchant &&
-        !sameBrand
+        !sameBrand &&
+        rival
       )
         return null;
-      if (
-        publicMatch.merchant &&
-        ![
-          publicMatch.merchant.canonicalName,
-          ...publicMatch.merchant.aliases,
-        ].some(
-          (name) =>
-            supplied.get(normalizeLocalLogoName(name))?.merchantId ===
-            local.merchantId,
-        )
-      )
-        return null;
+      if (publicMatch.merchant && !showsLocal(publicMatch.merchant)) return null;
       return local.merchantId;
     }
     const resolveAccount = lookup.resolveAccount;
