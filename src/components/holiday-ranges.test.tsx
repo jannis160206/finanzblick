@@ -10,6 +10,35 @@ import type { AppState } from "@/lib/types";
 vi.mock("./finance-provider", () => ({ useFinance: vi.fn() }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
+it("picks a range in the calendar, shows its length and edits a saved range in place", () => {
+  const initial: AppState = { ...createSeed(), holidayRanges: [{ from: "2026-07-03", to: "2026-07-11" }] };
+  initial.settings = { ...initial.settings, asOf: "2026-11-13" };
+  let current = initial;
+  function Harness() {
+    const [state, update] = useState(initial);
+    current = state;
+    vi.mocked(useFinance).mockReturnValue({ state, update, storageError: null } as ReturnType<typeof useFinance>);
+    return <HolidayRanges />;
+  }
+  render(<Harness />);
+  fireEvent.click(screen.getByRole("button", { name: "Urlaub" }));
+  const dialog = within(screen.getByRole("dialog"));
+  expect(dialog.getByText("9 Tage · vorbei")).toBeTruthy();
+  fireEvent.click(dialog.getByRole("button", { name: "Urlaub bearbeiten: 2026-07-03 bis 2026-07-11" }));
+  expect((dialog.getByLabelText("Von") as HTMLInputElement).value).toBe("2026-07-03");
+  const calendar = within(dialog.getByRole("group", { name: "Urlaub im Kalender wählen" }));
+  fireEvent.click(calendar.getByRole("button", { name: /^Montag, 6\. Juli 2026/ }));
+  expect((dialog.getByLabelText("Bis") as HTMLInputElement).value).toBe("");
+  fireEvent.click(calendar.getByRole("button", { name: /^Donnerstag, 9\. Juli 2026/ }));
+  expect((dialog.getByLabelText("Von") as HTMLInputElement).value).toBe("2026-07-06");
+  expect((dialog.getByLabelText("Bis") as HTMLInputElement).value).toBe("2026-07-09");
+  expect(dialog.getByText("4 Tage")).toBeTruthy();
+  fireEvent.click(dialog.getByRole("button", { name: "Änderung speichern" }));
+  expect(current.holidayRanges).toEqual([{ from: "2026-07-06", to: "2026-07-09" }]);
+  fireEvent.click(dialog.getByRole("button", { name: "Nächster Monat" }));
+  expect(dialog.getByText("Neuer Zeitraum")).toBeTruthy();
+});
+
 it("shows saved dates only inside the holiday popup without changing their storage or controls", () => {
   const initial: AppState = { ...createSeed(), holidayRanges: [
     { from: "2026-09-24", to: "2026-10-01" },

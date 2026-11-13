@@ -320,15 +320,32 @@ it("uses the same alias-and-bank search in the existing shared-cost dialog", () 
   expect(view.update).not.toHaveBeenCalled();
 });
 
+it("sets a period with one tap, shows all months for it and clears it again", () => {
+  mount();
+  fireEvent.click(screen.getByRole("button", { name: "Weitere Filter" }));
+  const periods = within(screen.getByRole("group", { name: "Zeitraum-Schnellwahl" }));
+  fireEvent.click(periods.getByRole("button", { name: "Letzte 7 Tage" }));
+  expect((screen.getByLabelText("Datum von") as HTMLInputElement).value).toBe("2026-10-01");
+  expect((screen.getByLabelText("Datum bis") as HTMLInputElement).value).toBe("2026-10-07");
+  expect(periods.getByRole("button", { name: "Letzte 7 Tage" }).getAttribute("aria-pressed")).toBe("true");
+  expect((screen.getByLabelText("Monat filtern") as HTMLSelectElement).value).toBe("");
+  const plan = within(screen.getByRole("group", { name: "Planrelevanz filtern" }));
+  fireEvent.click(plan.getByRole("button", { name: "Nicht im Plan" }));
+  expect(plan.getByRole("button", { name: "Nicht im Plan" }).getAttribute("aria-pressed")).toBe("true");
+  fireEvent.click(periods.getByRole("button", { name: "Letzte 7 Tage" }));
+  expect((screen.getByLabelText("Datum von") as HTMLInputElement).value).toBe("");
+  expect(screen.getByRole("button", { name: /Treffer anzeigen$/ })).toBeTruthy();
+});
+
 it("exposes advanced filters as removable chips without clearing unrelated values", () => {
   const view = mount();
   fireEvent.change(screen.getByLabelText("Umsätze durchsuchen"), {
     target: { value: "Amex" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Weitere Filter" }));
-  fireEvent.change(screen.getByLabelText("Planrelevanz filtern"), {
-    target: { value: "yes" },
-  });
+  fireEvent.click(
+    within(screen.getByRole("group", { name: "Planrelevanz filtern" })).getByRole("button", { name: "Im Plan" }),
+  );
   fireEvent.change(screen.getByLabelText("Datum von"), {
     target: { value: "2026-10-01" },
   });

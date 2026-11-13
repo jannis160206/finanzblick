@@ -222,6 +222,10 @@ describe("Geteilt UI", () => {
     expect(JSON.stringify(view.read())).toBe(before);
     fireEvent.change(screen.getByLabelText("Geteilt Gesamtbetrag"), { target: { value: "" } });
     fireEvent.click(within(dialog).getByRole("checkbox", { name: `Teilen: ${second.description} ${second.date}` }));
+    const preview = within(dialog).getByLabelText("Vorschau der Aufteilung");
+    expect(preview.textContent).toContain("2 Buchungen · Gesamt");
+    expect(preview.textContent).toContain(currency(260));
+    expect(preview.textContent).toMatch(new RegExp(`Meine Hälfte${currency(130)}.*Raphael${currency(130)}`));
     switchTab("Offen");
     expect(within(dialog).getByText("2 ausgewählt")).toBeTruthy();
     switchTab("Suchen");

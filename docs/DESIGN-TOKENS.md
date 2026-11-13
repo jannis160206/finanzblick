@@ -190,6 +190,8 @@ Button: neue Variante `soft` (Akzentfläche), Hover-Schatten `shadow-raised`, Ou
 | `Field`, `MoneyField`, `ChoiceCards`, `ToggleRow` | Label/Hinweis/Fehler mit ARIA verknüpft, Fehler animiert; Beträge im de-AT-Format; Auswahlkarten als Radiogruppe mit Pfeiltasten; Schalter mit `role="switch"`. |
 | `DialogSkeleton`, `DialogEmpty` | Ladezustand und Leerzustand innerhalb eines Dialogs. |
 | `PremiumDialogHeader` | Titel, Beschreibung und optionales Icon-Kachel (`tone` `primary` oder `destructive` für Löschbestätigungen); im Sheet zugleich Ziehbereich. |
+| `RangeCalendar` (`ui/range-calendar.tsx`) | Monatskalender für Zeiträume: erst Anfang, dann Ende antippen; Pfeiltasten (Tag/Woche), Monatswechsel, markierte Bereiche mit Punkt; 40 px Tippfläche, `active:scale-90`. |
+| `DrawnCheckbox` (`ui/drawn-checkbox.tsx`) | Native Checkbox, deren Haken sich per `stroke-dashoffset` zeichnet; bei reduzierter Bewegung ohne Übergang. |
 
 Auf der Umsatzseite nutzen alle Pop-ups diese Bausteine: Buchungsdetails mit Aktionen (**⋯**), Vertrag zuordnen bzw. als Vertrag anlegen, Zuordnungsdetails, Weitere Filter, Zuordnung ändern, Auswahl zuordnen, Tag vergeben, Name nachschlagen, Kassenbon aufteilen, Geteilt, Urlaub, Löschen und Kontoauszüge prüfen. Aktionslisten stehen als gruppierte Zeilen (Icon-Kachel, Titel, Hinweis, Pfeil) in einer Karte; Händler ohne Logo zeigen Initialen statt „?“ (`MerchantMark` mit `fallbackName`).
 

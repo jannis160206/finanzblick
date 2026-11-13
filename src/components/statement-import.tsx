@@ -3,7 +3,7 @@
 import { merchantAliasAssignment } from "@/lib/merchant-identity";
 
 import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
-import { ClipboardCheck, FileUp, LoaderCircle, Pencil } from "lucide-react";
+import { ArrowRight, ChevronRight, CircleHelp, ClipboardCheck, FilePlus2, FileUp, Layers, LoaderCircle, Pencil, Repeat, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,13 @@ import {
   PremiumDialogContent,
   PremiumDialogFooter,
   PremiumDialogHeader,
+  PremiumDialogItem,
+  usePremiumDialog,
 } from "@/components/ui/premium-dialog";
+import { MotionBox } from "@/components/ui/premium-dialog/motion";
+import { MerchantMark } from "@/components/merchant-mark";
+import { BookingContractDialogs, type BookingContractMode } from "@/components/booking-contract-dialogs";
+import { canHoldContract } from "@/lib/contract-booking";
 import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
@@ -74,6 +80,8 @@ type ImportUI = {
   drafts: Record<string, StatementDraft>;
 };
 
+const ghostField = "h-auto w-auto min-w-0 border-transparent bg-transparent px-0 py-0 shadow-none read-only:cursor-default [field-sizing:content] focus-visible:ring-[3px]";
+
 const BookingReview = memo(function BookingReview({
   item,
   draft,
@@ -83,6 +91,7 @@ const BookingReview = memo(function BookingReview({
   save,
   skip,
   suggestion,
+  onContract,
 }: {
   item: Extract<ReviewItem, { kind: "booking" }>;
   draft: StatementDraft;
@@ -92,6 +101,8 @@ const BookingReview = memo(function BookingReview({
   save: (row: Transaction, id: string) => void;
   skip: () => void;
   suggestion?: AiSuggestion;
+  /** Offered for bookings already in the ledger: opens the contract assistant for this booking. */
+  onContract?: (id: string) => void;
 }) {
   const repairOcr = isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:");
   const repairSource = item.sourceRepair === true;
@@ -118,112 +129,136 @@ const BookingReview = memo(function BookingReview({
     fixedCost: canMarkFixed && fixedCost,
   };
   const parsed = transactionSchema.safeParse(candidate);
+  const name = repairFacts ? draft.description : editingName ? draft.merchantAlias ?? bookingDescription(draft) : bookingDescription(draft);
+  const nameField = (
+    <Input
+      ref={nameInput}
+      aria-label="Text"
+      maxLength={repairFacts ? 1000 : 200}
+      value={name}
+      readOnly={reuploadOnly || (!repairFacts && !editingName)}
+      disabled={disabled}
+      className={repairFacts || editingName ? undefined : cn(ghostField, "w-full truncate text-base font-medium")}
+      aria-invalid={nameMissing}
+      onChange={(event) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft,
+        ...(repairFacts ? { description: event.target.value,
+          ...(repairSource && item.draft.description ? { rawDescription: draft.rawDescription ?? item.draft.description } : {}) }
+          : merchantAliasAssignment(draft, event.target.value)) }); }}
+    />
+  );
+  const dateText = draft.date ? dateLabel(draft.date) : "ohne Datum";
+  const amountText = draft.amount === null ? "" : currency(draft.amount);
+  const account = accountLabel(draft);
   return (
     <section
-      className="panel space-y-3 p-4"
+      className="@container space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-xs"
       aria-label={`Buchung prüfen: ${bookingDescription(item.draft)}`}
     >
-      <p id={feedbackId} className="text-xs text-muted-foreground break-words">
-        {repairOcr ? screenshotReviewMessage(draft) : item.message}
-        {repairFacts && item.draft.amount === null && " Ausgaben −, Gutschriften +."}
-        {repairSource && " Quellwerte bleiben bis zur ausdrücklichen Bestätigung unverbucht."}
+      {repairFacts ? (
+        <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
+          <label className="space-y-1.5 text-xs font-medium">
+            Datum
+            <Input aria-label="Datum" type="date" value={draft.date} readOnly={reuploadOnly}
+              aria-invalid={!transactionSchema.shape.date.safeParse(draft.date).success}
+              aria-describedby={feedbackId}
+              onChange={!reuploadOnly ? (event) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft, date: event.target.value }); } : undefined} />
+          </label>
+          <label className="space-y-1.5 text-xs font-medium">Text{nameField}</label>
+          <label className="space-y-1.5 text-xs font-medium">
+            Betrag (€)
+            <Input
+              aria-label="Betrag"
+              {...(!reuploadOnly ? {
+                defaultValue: draft.amount === null ? "" : String(draft.amount).replace(".", ","),
+                inputMode: "decimal" as const,
+                onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft, amount: parseStatementAmount(event.target.value) }); },
+              } : { value: amountText, readOnly: true })}
+            />
+          </label>
+          <label className="space-y-1.5 text-xs font-medium sm:col-span-3">
+            Konto/Pocket
+            <Input aria-label="Konto/Pocket" value={account} readOnly />
+          </label>
+        </div>
+      ) : (
+        <div className="grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-0.5">
+          <MerchantMark booking={{ ...draft, amount: draft.amount ?? 0 }} classification={classification} fallbackName={bookingDescription(draft)}
+            className="col-start-1 row-span-2 row-start-1 size-10 self-start rounded-xl" />
+            <div className="col-span-2 col-start-2 row-start-1 flex min-w-0 items-center gap-1 @md:col-span-1">
+              {nameField}
+              {!editingName && (
+                <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground"
+                  aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
+                  onClick={() => {
+                    setEditingName(true);
+                    nameInput.current?.focus();
+                    nameInput.current?.select();
+                  }}>
+                  <Pencil className="size-3" aria-hidden="true" />
+                </Button>
+              )}
+            </div>
+            <div className="col-start-2 row-start-2 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+              <Input aria-label="Datum" value={dateText} readOnly size={dateText.length} className={cn(ghostField, "text-xs text-muted-foreground")} />
+              <span aria-hidden="true">·</span>
+              <Input aria-label="Konto/Pocket" value={account} readOnly size={account.length} className={cn(ghostField, "text-xs text-muted-foreground")} />
+            </div>
+          <Input aria-label="Betrag" value={amountText} readOnly size={Math.max(amountText.length, 4)}
+            className={cn(ghostField, "col-start-3 row-start-2 justify-self-end text-right text-base font-semibold tracking-tight tabular-nums @md:row-start-1 @md:text-lg",
+              (draft.amount ?? 0) > 0 && "text-money-in")} />
+        </div>
+      )}
+      <p id={feedbackId} className="flex gap-2 rounded-xl bg-surface-sunken/70 px-3 py-2 text-xs leading-relaxed text-muted-foreground break-words">
+        <CircleHelp aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+        <span className="min-w-0">
+          {repairOcr ? screenshotReviewMessage(draft) : item.message}
+          {repairFacts && item.draft.amount === null && " Ausgaben −, Gutschriften +."}
+          {repairSource && " Quellwerte bleiben bis zur ausdrücklichen Bestätigung unverbucht."}
+        </span>
       </p>
       {suggestion && item.draft.category === "Prüfen" && draft.category === suggestion.category && (
-        <p className="text-xs text-primary break-words">
-          {suggestionLabel(suggestion)} – bitte prüfen ({suggestion.reason}).
+        <p className="flex gap-2 rounded-xl bg-accent-muted px-3 py-2 text-xs leading-relaxed text-primary break-words">
+          <Sparkles aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+          <span className="min-w-0">{suggestionLabel(suggestion)} – bitte prüfen ({suggestion.reason}).</span>
         </p>
       )}
-      <div className="grid gap-3 sm:grid-cols-[10rem_1fr_8rem]">
-        <label className="space-y-1 text-xs">
-          Datum
-          <Input aria-label="Datum" type="date" value={draft.date} readOnly={!repairFacts || reuploadOnly}
-            aria-invalid={repairFacts && !transactionSchema.shape.date.safeParse(draft.date).success}
-            aria-describedby={repairFacts ? feedbackId : undefined}
-            onChange={repairFacts && !reuploadOnly ? (event) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft, date: event.target.value }); } : undefined} />
-        </label>
-        <div className="space-y-1 text-xs">
-          <p>Text</p>
-          <div className="relative">
-            <Input
-              ref={nameInput}
-              aria-label="Text"
-              maxLength={repairFacts ? 1000 : 200}
-              value={repairFacts ? draft.description : editingName ? draft.merchantAlias ?? bookingDescription(draft) : bookingDescription(draft)}
-              readOnly={reuploadOnly || (!repairFacts && !editingName)}
-              disabled={disabled}
-              className={!repairFacts ? "pr-10" : undefined}
-              aria-invalid={nameMissing}
-              onChange={(event) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft,
-                ...(repairFacts ? { description: event.target.value,
-                  ...(repairSource && item.draft.description ? { rawDescription: draft.rawDescription ?? item.draft.description } : {}) }
-                  : merchantAliasAssignment(draft, event.target.value)) }); }}
-            />
-            {!repairFacts && (
-              <Button type="button" variant="ghost" size="icon-xs" className="absolute right-2 top-2"
-                aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
-                onClick={() => {
-                  setEditingName(true);
-                  nameInput.current?.focus();
-                  nameInput.current?.select();
-                }}>
-                <Pencil className="size-3" aria-hidden="true" />
-              </Button>
-            )}
-          </div>
-          {editingName && <p className="text-muted-foreground">
-            {nameMissing ? "Bitte einen Händlernamen eingeben." : canRememberName
-              ? "Ändert den Namen aller passenden bisherigen und künftigen Buchungen."
-              : "Unklarer Händlertext: Name gilt nur für diese Buchung."}
-          </p>}
-        </div>
-        <label className="space-y-1 text-xs">
-          Betrag (€)
-          <Input
-            aria-label="Betrag"
-            {...(repairFacts && !reuploadOnly ? {
-              defaultValue: draft.amount === null ? "" : String(draft.amount).replace(".", ","),
-              inputMode: "decimal" as const,
-              onChange: (event: React.ChangeEvent<HTMLInputElement>) => { setSourceConfirmed(false); changeDraft(item.id, { ...draft, amount: parseStatementAmount(event.target.value) }); },
-            } : { value: draft.amount === null ? "" : currency(draft.amount), readOnly: true })}
-          />
-        </label>
+      {editingName && <p className={cn("text-xs", nameMissing ? "font-medium text-destructive" : "text-muted-foreground")}>
+        {nameMissing ? "Bitte einen Händlernamen eingeben." : canRememberName
+          ? "Ändert den Namen aller passenden bisherigen und künftigen Buchungen."
+          : "Unklarer Händlertext: Name gilt nur für diese Buchung."}
+      </p>}
+      <div className="grid items-center gap-x-4 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <CategorySelect
+          label="Kategorie"
+          value={draft.category}
+          disabled={disabled}
+          onValueChange={(category) =>
+            changeDraft(item.id, { ...draft, category })
+          }
+          excludeReview
+        />
+        <FixedCostChoice
+          checked={fixedCost}
+          onChange={(fixedCost) => changeDraft(item.id, { ...draft, fixedCost })}
+          disabled={disabled}
+          eligible={canMarkFixed}
+        />
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="space-y-1 text-xs">
-          Konto/Pocket
-          <Input
-            aria-label="Konto/Pocket"
-            value={accountLabel(draft)}
-            readOnly
-          />
-        </label>
-      </div>
-      <div className="space-y-2">
-          <p className="text-sm font-medium">Kategorie</p>
-          <CategorySelect
-            label="Kategorie"
-            value={draft.category}
-            disabled={disabled}
-            onValueChange={(category) =>
-              changeDraft(item.id, { ...draft, category })
-            }
-            excludeReview
-          />
-      </div>
-      <FixedCostChoice
-        checked={fixedCost}
-        onChange={(fixedCost) => changeDraft(item.id, { ...draft, fixedCost })}
-        disabled={disabled}
-        eligible={canMarkFixed}
-      />
       {repairSource && (reuploadOnly ? <p className="text-xs text-muted-foreground">
         Bitte einen belegten EUR-Kontoauszug erneut auswählen. Diese Quellwerte können nicht als EUR-Buchung bestätigt werden.
-      </p> : <label className="flex items-start gap-2 text-xs">
-        <input type="checkbox" checked={sourceConfirmed} disabled={disabled}
+      </p> : <label className="flex items-start gap-2 rounded-xl border border-border/70 px-3 py-2.5 text-xs">
+        <input type="checkbox" className="mt-0.5 size-4 shrink-0 accent-primary" checked={sourceConfirmed} disabled={disabled}
           onChange={(event) => setSourceConfirmed(event.target.checked)} />
         Datum, Text und EUR-Betrag anhand des Originalbelegs geprüft
       </label>)}
-      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+        {onContract && (
+          <Button type="button" variant="ghost" size="sm" className="-ml-2 text-muted-foreground" disabled={disabled}
+            onClick={() => onContract(item.draft.id)}>
+            <FilePlus2 aria-hidden="true" />Als Vertrag anlegen
+          </Button>
+        )}
+        <span className="flex-1" />
         <Button variant="ghost" size="sm" disabled={disabled} onClick={skip}>
           Später prüfen
         </Button>
@@ -271,30 +306,48 @@ const MerchantGroupReview = memo(function MerchantGroupReview({
 }) {
   const [category, setCategory] = useState<Category>(group.suggestion?.category ?? "Prüfen");
   const [expanded, setExpanded] = useState(false);
+  const { mode } = usePremiumDialog();
+  const listId = useId();
   const income = group.total > 0;
   return (
-    <section className="panel space-y-3 p-4" aria-label={`Händlergruppe prüfen: ${group.name}`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="font-medium break-words">{group.name}</p>
-        <p className="text-sm tabular-nums text-muted-foreground">
-          {group.items.length} {income ? "Gutschriften" : "Buchungen"} · {currency(group.total)}
+    <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-xs" aria-label={`Händlergruppe prüfen: ${group.name}`}>
+      <div className="flex items-start gap-3">
+        <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-muted text-primary"><Layers className="size-4.5" /></span>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium break-words">{group.name}</p>
+          <p className="text-xs text-muted-foreground">Gleicher Händler · gemeinsam zuordnen</p>
+        </div>
+        <p className="shrink-0 text-right">
+          <span className={cn("block text-lg font-semibold tracking-tight tabular-nums", income && "text-money-in")}>{currency(group.total)}</span>
+          <span className="block text-xs text-muted-foreground">{group.items.length} {income ? "Gutschriften" : "Buchungen"}</span>
         </p>
       </div>
       {group.suggestion && category === group.suggestion.category && (
-        <p className="text-xs text-primary">{suggestionLabel(group.suggestion)} – bitte prüfen.</p>
+        <p className="flex gap-2 rounded-xl bg-accent-muted px-3 py-2 text-xs text-primary">
+          <Sparkles aria-hidden="true" className="mt-px size-3.5 shrink-0" />{suggestionLabel(group.suggestion)} – bitte prüfen.
+        </p>
       )}
-      <CategorySelect label={`Kategorie für ${group.name}`} value={category} disabled={disabled}
-        onValueChange={setCategory} excludeReview />
-      <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
-        <Button variant="ghost" size="sm" disabled={disabled} aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}>
-          {expanded ? "Einzelbuchungen ausblenden" : "Einzeln prüfen"}
-        </Button>
-        <Button size="sm" disabled={disabled || category === "Prüfen"} onClick={() => save(group, category)}>
+      <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <CategorySelect label={`Kategorie für ${group.name}`} value={category} disabled={disabled}
+          onValueChange={setCategory} excludeReview />
+        <Button size="sm" className="min-h-10" disabled={disabled || category === "Prüfen"} onClick={() => save(group, category)}>
           Alle {group.items.length} übernehmen
         </Button>
       </div>
-      {expanded && <div className="space-y-3">{children}</div>}
+      <div className="border-t border-border/60 pt-2">
+        <button type="button" disabled={disabled} aria-expanded={expanded} aria-controls={listId}
+          onClick={() => setExpanded((value) => !value)}
+          className="-mx-2 flex min-h-10 items-center gap-2 rounded-xl px-2 text-left text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50 motion-reduce:transition-none">
+          <ChevronRight aria-hidden="true" className={cn("size-4 transition-transform duration-200 ease-soft motion-reduce:transition-none", expanded && "rotate-90")} />
+          {expanded ? "Einzelbuchungen ausblenden" : "Einzeln prüfen"}
+        </button>
+      </div>
+      {expanded && (
+        <MotionBox mode={mode} id={listId} className="space-y-3"
+          initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0, transition: { type: "spring", stiffness: 380, damping: 32 } }}>
+          {children}
+        </MotionBox>
+      )}
     </section>
   );
 });
@@ -320,49 +373,75 @@ function FixedReview({
     if (invalid) return;
     save({ accept, change: { ...item.change, bookings: bookings.flatMap((booking) => booking.success ? [booking.data] : []) } });
   };
+  const delta = Math.round((Math.abs(item.change.amount) - Math.abs(item.change.previous)) * 100) / 100;
   return (
-    <section className="panel space-y-3 p-4" aria-label={`${item.change.category} prüfen`}>
-      <p className="text-xs text-muted-foreground">{monthLabel(item.change.month)}</p>
-      {item.change.bookings.map((booking, index) => (
-        <div key={booking.id} className="rounded-lg border p-3 text-sm" aria-label={`Erkannte Buchung: ${bookingDescription(booking)}`}>
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 flex-1 items-start gap-1">
-              {names[booking.id] !== undefined ? (
-                <Input
-                  autoFocus
-                  aria-label="Händlername"
-                  maxLength={200}
-                  value={names[booking.id]}
-                  disabled={disabled}
-                  aria-invalid={!bookings[index].success}
-                  onChange={(event) => setNames((previous) => ({ ...previous, [booking.id]: event.target.value }))}
-                />
-              ) : (
-                <>
-                  <p className="min-w-0 break-words font-medium">{bookingDescription(booking)}</p>
-                  <Button type="button" variant="ghost" size="icon-xs" className="shrink-0"
-                    aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
-                    onClick={() => setNames((previous) => ({ ...previous, [booking.id]: bookingDescription(booking) }))}>
-                    <Pencil className="size-3" aria-hidden="true" />
-                  </Button>
-                </>
-              )}
-            </div>
-            <span className="shrink-0 font-mono">{currency(booking.amount)}</span>
-          </div>
-          {!bookings[index].success && <p className="mt-1 text-xs text-destructive">Bitte einen Händlernamen mit 1–200 Zeichen eingeben.</p>}
-          <p className="mt-1 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>
+    <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-xs" aria-label={`${item.change.category} prüfen`}>
+      <div className="flex items-start gap-3">
+        <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-muted text-primary"><Repeat className="size-4.5" /></span>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">{item.change.category}</p>
+          <p className="text-xs text-muted-foreground">Fixkosten · {monthLabel(item.change.month)}</p>
         </div>
-      ))}
+        {delta !== 0 && (
+          <span className={cn("shrink-0 rounded-full px-2.5 py-1 text-xs font-medium tabular-nums",
+            delta > 0 ? "bg-warning-soft text-warning" : "bg-success-soft text-success")}>
+            {delta > 0 ? "+" : "−"}{currency(Math.abs(delta)).replace("-", "")}
+          </span>
+        )}
+      </div>
+      <div aria-hidden="true" className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 text-center">
+        <div className="rounded-xl bg-surface-sunken/70 px-3 py-2">
+          <p className="text-2xs text-muted-foreground">Bisher</p>
+          <p className="text-sm font-semibold tabular-nums text-muted-foreground line-through decoration-muted-foreground/50">{currency(item.change.previous)}</p>
+        </div>
+        <ArrowRight className="size-4 text-muted-foreground" />
+        <div className="rounded-xl bg-accent-muted px-3 py-2">
+          <p className="text-2xs text-primary">Laut Auszug</p>
+          <p className="text-sm font-semibold tabular-nums">{currency(item.change.amount)}</p>
+        </div>
+      </div>
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70">
+        {item.change.bookings.map((booking, index) => (
+          <div key={booking.id} className="px-3 py-2.5 text-sm" aria-label={`Erkannte Buchung: ${bookingDescription(booking)}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-start gap-1">
+                {names[booking.id] !== undefined ? (
+                  <Input
+                    autoFocus
+                    aria-label="Händlername"
+                    maxLength={200}
+                    value={names[booking.id]}
+                    disabled={disabled}
+                    aria-invalid={!bookings[index].success}
+                    onChange={(event) => setNames((previous) => ({ ...previous, [booking.id]: event.target.value }))}
+                  />
+                ) : (
+                  <>
+                    <p className="min-w-0 break-words font-medium">{bookingDescription(booking)}</p>
+                    <Button type="button" variant="ghost" size="icon-xs" className="shrink-0 text-muted-foreground"
+                      aria-label="Händlername bearbeiten" title="Händlername bearbeiten" disabled={disabled}
+                      onClick={() => setNames((previous) => ({ ...previous, [booking.id]: bookingDescription(booking) }))}>
+                      <Pencil className="size-3" aria-hidden="true" />
+                    </Button>
+                  </>
+                )}
+              </div>
+              <span className="shrink-0 font-medium tabular-nums">{currency(booking.amount)}</span>
+            </div>
+            {!bookings[index].success && <p className="mt-1 text-xs font-medium text-destructive">Bitte einen Händlernamen mit 1–200 Zeichen eingeben.</p>}
+            <p className="mt-0.5 text-xs text-muted-foreground">{dateLabel(booking.date)} · {accountLabel(booking)}</p>
+          </div>
+        ))}
+      </div>
       <p className="text-sm">
         {item.change.category} bisher {currency(item.change.previous)}, Auszug {currency(item.change.amount)} — neuen Monatsbetrag übernehmen?
       </p>
       <p className="text-xs text-muted-foreground">Gilt ab {monthLabel(item.change.month)}.</p>
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2 border-t border-border/60 pt-3">
         <Button variant="ghost" size="sm" disabled={disabled || invalid} onClick={() => confirm(false)}>
           Bisherigen Dauerbetrag behalten
         </Button>
-        <Button variant="outline" size="sm" disabled={disabled || invalid} onClick={() => confirm(true)}>
+        <Button size="sm" disabled={disabled || invalid} onClick={() => confirm(true)}>
           Neuen Dauerbetrag übernehmen
         </Button>
       </div>
@@ -533,6 +612,14 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
   }, [commit, localUI.drafts]);
   const skip = useCallback(() => {
     setUI({ open: false, drafts: {} });
+  }, []);
+  const [contractFlow, setContractFlow] = useState<{
+    booking: Transaction; mode: BookingContractMode; open: boolean; session: number;
+  } | null>(null);
+  const ledgerRows = useMemo(() => new Map(state.transactions.map((row) => [row.id, row])), [state.transactions]);
+  const openContract = useCallback((id: string) => {
+    const booking = latestState.current.transactions.find((row) => row.id === id);
+    if (booking) setContractFlow((current) => ({ booking, mode: "create", open: true, session: (current?.session ?? 0) + 1 }));
   }, []);
 
   async function selectFiles(files: File[]) {
@@ -790,7 +877,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           <PaypalActivityImport review={ui.review} disabled={!!ui.pending} />
           </PremiumDialogHeader>
           <PremiumDialogBody>
-          <fieldset disabled={!!ui.pending} className="min-w-0 space-y-4">
+          <fieldset disabled={!!ui.pending} className="min-w-0 space-y-3">
             {(() => {
               const reuploadOnly = (item: ReviewItem) => (state.importResults ?? []).some((result) =>
                 result.issues.some((issue) => issue.reviewId === item.id && issue.action === "reupload"));
@@ -808,6 +895,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
                   save={saveBooking}
                   skip={skip}
                   suggestion={suggestionOf(item.id)}
+                  onContract={ledgerRows.has(item.draft.id) && canHoldContract(ledgerRows.get(item.draft.id)!) ? openContract : undefined}
                 />
               ) : (
                 <FixedReview
@@ -826,7 +914,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
                 ...singles.map(renderItem),
               ];
               return <>
-                {units.slice(0, 20)}
+                {units.slice(0, 20).map((unit) => <PremiumDialogItem key={unit.key}>{unit}</PremiumDialogItem>)}
                 {units.length > 20 && (
                   <p className="text-xs text-muted-foreground">
                     Weitere Einträge folgen nach der Prüfung.
@@ -842,6 +930,16 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           </PremiumDialogFooter>
         </PremiumDialogContent>
       </PremiumDialog>
+      {contractFlow && (
+        <BookingContractDialogs
+          key={contractFlow.session}
+          booking={contractFlow.booking}
+          mode={contractFlow.mode}
+          open={contractFlow.open}
+          onModeChange={(mode) => setContractFlow((current) => current && { ...current, mode })}
+          onClose={() => setContractFlow((current) => current && { ...current, open: false })}
+        />
+      )}
     </>
   );
 }

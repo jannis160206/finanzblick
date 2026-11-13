@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Users, X } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import { Search, Users, X } from "lucide-react";
 import { Tabs } from "radix-ui";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -12,25 +12,55 @@ import {
 import { cn } from "@/lib/utils";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
-import { classify } from "@/lib/calc";
+import { MerchantMark } from "@/components/merchant-mark";
+import { DrawnCheckbox } from "@/components/ui/drawn-checkbox";
+import { classify, round } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { parseStatementAmount } from "@/lib/import/statements";
 import { bookingDescription } from "@/lib/import/merchant-description";
 import { decideSharedSettlement, isRaphaelPayment, isSharedHoliday, personalAmount, selectSharedBookings, type AccountedTransaction, type HolidayReceivable } from "@/lib/shared-holiday";
 import { matchesTransactionSearch } from "@/lib/transaction-tools";
 
-const tabClass = "min-h-10 rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 ease-soft focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm motion-reduce:transition-none";
+const tabClass = "min-h-10 rounded-lg px-2 py-2 text-sm sm:px-3 font-medium text-muted-foreground outline-none transition-[background-color,color,box-shadow] duration-150 ease-soft focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-card data-[state=active]:text-foreground data-[state=active]:shadow-sm motion-reduce:transition-none";
+
+/** Total, my half and Raphael's half as one bar – the live preview of a split. */
+function SplitPreview({ total, own, label, className }: { total: number; own: number; label?: ReactNode; className?: string }) {
+  const partner = round(total - own);
+  return (
+    <FinancialData aria-label="Vorschau der Aufteilung" className={cn("space-y-2.5 rounded-2xl bg-surface-sunken/70 p-3 sm:space-y-3 sm:p-4", className)}>
+      <div className="flex items-baseline justify-between gap-3 text-sm">
+        <span className="min-w-0 truncate text-muted-foreground">{label ?? "Gesamt"}</span>
+        <span className="amount shrink-0">{currency(total)}</span>
+      </div>
+      <div aria-hidden="true" className="flex h-2 gap-0.5 overflow-hidden rounded-full">
+        <span className="h-full rounded-l-full bg-primary" style={{ flexGrow: Math.max(own, 0.01) }} />
+        <span className="h-full rounded-r-full bg-chart-3" style={{ flexGrow: Math.max(partner, 0.01) }} />
+      </div>
+      <dl className="grid grid-cols-2 gap-3 text-xs">
+        <div>
+          <dt className="flex items-center gap-1.5 text-muted-foreground"><span aria-hidden="true" className="size-2 rounded-full bg-primary" />Meine Hälfte</dt>
+          <dd className="amount text-sm">{currency(own)}</dd>
+        </div>
+        <div className="text-right">
+          <dt className="flex items-center justify-end gap-1.5 text-muted-foreground"><span aria-hidden="true" className="size-2 rounded-full bg-chart-3" />Raphael</dt>
+          <dd className="amount text-sm">{currency(partner)}</dd>
+        </div>
+      </dl>
+    </FinancialData>
+  );
+}
 
 function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; onPaid: (id: string) => void; disabled: boolean }) {
-  return <ul className="divide-y">
-    {items.map((item) => <li key={item.bookingId} className="flex flex-wrap items-center justify-between gap-2 py-2 text-xs">
-      <div className="min-w-0 w-full">
-        <p className="truncate font-medium" title={bookingDescription(item)}>{bookingDescription(item)}</p>
+  if (!items.length) return null;
+  return <ul className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70 bg-card">
+    {items.map((item) => <li key={item.bookingId} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 text-xs">
+      <div className="min-w-0 flex-1 basis-56">
+        <p className="truncate text-sm font-medium" title={bookingDescription(item)}>{bookingDescription(item)}</p>
         <p className="text-muted-foreground">{dateLabel(item.date)} · Gesamt {currency(item.fullAmount)} · Meine Hälfte {currency(item.ownSpend)}</p>
+        {item.refundedAmount > 0 && <p className="text-muted-foreground">Händlererstattung {currency(item.refundedAmount)}</p>}
       </div>
-      <span className="text-primary">Offen {currency(item.outstanding)}</span>
-      {item.refundedAmount > 0 && <span className="text-muted-foreground">Händlererstattung {currency(item.refundedAmount)}</span>}
-      <Button size="sm" variant="ghost" disabled={disabled}
+      <span className="rounded-full bg-accent-muted px-2.5 py-1 font-medium text-primary tabular-nums">Offen {currency(item.outstanding)}</span>
+      <Button size="sm" variant="soft" disabled={disabled}
         aria-label={`Als bezahlt markieren: ${item.description}`}
         onClick={() => onPaid(item.bookingId)}>Als bezahlt markieren</Button>
     </li>)}
@@ -40,7 +70,8 @@ function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; on
 export function SharedRowAction({ booking }: { booking: AccountedTransaction }) {
   const { update, storageError } = useFinance();
   const [open, setOpen] = useState(false);
-  if (booking.amount >= 0 || classify(booking).isTransfer) return null;
+  const classification = booking.amount < 0 ? classify(booking) : null;
+  if (!classification || classification.isTransfer) return null;
   const shared = isSharedHoliday(booking);
   return <PremiumDialog open={open} onOpenChange={setOpen}>
     <FinancialData as="span" className="inline-flex">
@@ -57,14 +88,14 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
     <PremiumDialogContent size="sm" variant="confirmation">
       <PremiumDialogHeader icon={Users} title="Diese Buchung als geteilt markieren?" description="Es zählt nur noch die Hälfte." />
       <PremiumDialogBody className="min-w-0 space-y-3 text-sm">
-        <div className="rounded-2xl bg-surface-sunken/70 p-4">
-          <p className="truncate font-medium" title={bookingDescription(booking)}>{bookingDescription(booking)}</p>
-          <p className="text-xs text-muted-foreground">{dateLabel(booking.date)} · Gesamt {currency(Math.abs(booking.amount))}</p>
-          <p className="mt-3 flex items-baseline justify-between gap-3 border-t border-border/60 pt-3">
-            <span className="text-muted-foreground">Meine Hälfte:</span>
-            <span className="amount text-base">{currency(Math.abs(personalAmount({ ...booking, sharedWithRaphael: true })))}</span>
-          </p>
+        <div className="flex items-center gap-3">
+          <MerchantMark booking={booking} classification={classification} fallbackName={bookingDescription(booking)} className="size-10 rounded-xl" />
+          <span className="min-w-0">
+            <span className="block truncate font-medium" title={bookingDescription(booking)}>{bookingDescription(booking)}</span>
+            <span className="block text-xs text-muted-foreground">{dateLabel(booking.date)}</span>
+          </span>
         </div>
+        <SplitPreview total={Math.abs(booking.amount)} own={Math.abs(personalAmount({ ...booking, sharedWithRaphael: true }))} />
         {storageError && <p role="alert" className="text-sm font-medium text-destructive">{storageError}</p>}
       </PremiumDialogBody>
       <PremiumDialogFooter>
@@ -99,17 +130,19 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
         items.some((item) => !item.bookingId.startsWith("planned:") && item.date <= row.date && item.fullAmount >= row.amount)))) : [];
   const overpaidItems = items.filter((item) => item.overpaid > 0);
   // Classify once per opened booking list; searching reuses the stored merchant name.
-  const { candidates, merchants } = useMemo(() => {
+  const { candidates, merchants, classes } = useMemo(() => {
     const rows: AccountedTransaction[] = [];
     const names = new Map<string, string>();
+    const results = new Map<string, ReturnType<typeof classify>>();
     if (open) for (const row of bookings) {
       if (row.amount >= 0 || isSharedHoliday(row)) continue;
       const result = classify(row);
       if (result.isTransfer) continue;
       rows.push(row);
       names.set(row.id, result.merchant);
+      results.set(row.id, result);
     }
-    return { candidates: rows, merchants: names };
+    return { candidates: rows, merchants: names, classes: results };
   }, [bookings, open]);
   const filtered = useMemo(() => {
     const total = Math.abs(parseStatementAmount(amount) ?? NaN);
@@ -118,6 +151,9 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
       .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id));
   }, [candidates, merchants, query, month, amount]);
   const invalidAmount = !!amount && parseStatementAmount(amount) === null;
+  const chosen = candidates.filter((row) => selected.includes(row.id));
+  const chosenTotal = round(chosen.reduce((total, row) => total + Math.abs(row.amount), 0));
+  const chosenOwn = round(chosen.reduce((total, row) => total + Math.abs(personalAmount({ ...row, sharedWithRaphael: true })), 0));
   const changeOpen = (value: boolean) => { setOpen(value); setTab("search"); setSelected([]); setPaid([]); setSettlements({}); setLimit(50); };
   return <>
     <PremiumDialog open={open} onOpenChange={changeOpen}>
@@ -140,40 +176,59 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
         </Tabs.List>
         </PremiumDialogHeader>
         <PremiumDialogBody aria-label="Buchungslisten">
-        <Tabs.Content value="search" className="space-y-5">
-        <div className="grid gap-4 bg-card pb-4 sm:grid-cols-2 md:[@media(min-height:600px)]:sticky md:[@media(min-height:600px)]:top-0 md:[@media(min-height:600px)]:z-10">
-          <Field label="Händler / Text" className="sm:col-span-2">
-            <Input aria-label="Geteilte Buchungen suchen" placeholder="Buchungen durchsuchen" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(50); }} />
-          </Field>
-          <Field label="Monat">
-            <Input aria-label="Geteilt Monat" type="month" value={month} onChange={(e) => { setMonth(e.target.value); setLimit(50); }} />
-          </Field>
-          <Field label="Gesamtbetrag (€)" error={invalidAmount ? "Bitte einen gültigen Gesamtbetrag eingeben, z. B. 100,00." : null}>
-            <Input aria-label="Geteilt Gesamtbetrag" inputMode="decimal" placeholder="z. B. 100,00" value={amount} onChange={(e) => { setAmount(e.target.value); setLimit(50); }} />
-          </Field>
+        <Tabs.Content value="search" className="space-y-4">
+        <div className="space-y-3">
+          <div className="relative">
+            <Search aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input aria-label="Geteilte Buchungen suchen" className="h-11 pl-9" placeholder="Händler oder Text suchen …" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(50); }} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Monat">
+              <Input aria-label="Geteilt Monat" type="month" className="h-11" value={month} onChange={(e) => { setMonth(e.target.value); setLimit(50); }} />
+            </Field>
+            <Field label="Gesamtbetrag (€)" error={invalidAmount ? "Bitte einen gültigen Gesamtbetrag eingeben, z. B. 100,00." : null}>
+              <Input aria-label="Geteilt Gesamtbetrag" inputMode="decimal" className="h-11" placeholder="z. B. 100,00" value={amount} onChange={(e) => { setAmount(e.target.value); setLimit(50); }} />
+            </Field>
+          </div>
         </div>
-        <p className="text-xs text-muted-foreground">Auswahl erst mit „Speichern“ übernehmen.</p>
-        <div className="overflow-hidden rounded-2xl border border-border/70">
-          {filtered.slice(0, limit).map((row) => <label key={row.id} className="flex cursor-pointer items-center gap-3 border-b border-border/60 p-3 text-sm transition-colors last:border-b-0 hover:bg-muted/40 motion-reduce:transition-none">
-            <input type="checkbox" className="size-4 shrink-0 accent-primary" aria-label={`Teilen: ${row.description} ${row.date}`}
-              checked={selected.includes(row.id)} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, row.id] : ids.filter((id) => id !== row.id))} />
-            <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={bookingDescription(row)}>{bookingDescription(row)}</span><span className="text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
-            <span className="shrink-0 text-right">
-              <span className="block text-2xs text-muted-foreground">Gesamt {currency(Math.abs(row.amount))}</span>
-              {selected.includes(row.id) && <span className="block font-mono text-primary">Meine Hälfte (50 %)<br />{currency(Math.abs(personalAmount({ ...row, sharedWithRaphael: true })))}</span>}
-            </span>
-          </label>)}
-          {!filtered.length && <p className="p-3 text-xs text-muted-foreground">Keine Buchungen gefunden.</p>}
-          {filtered.length > limit && <Button variant="ghost" size="sm" onClick={() => setLimit((n) => n + 50)}>Mehr anzeigen</Button>}
+        <div role="group" aria-label="Buchungen zum Teilen" className="overflow-hidden rounded-2xl border border-border/70 bg-card">
+          {filtered.slice(0, limit).map((row) => {
+            const on = selected.includes(row.id);
+            return <label key={row.id} className={cn("flex min-h-14 cursor-pointer items-center gap-3 border-b border-border/60 px-3 py-2.5 text-sm transition-colors duration-150 last:border-b-0 hover:bg-muted/40 motion-reduce:transition-none", on && "bg-accent-muted/60 hover:bg-accent-muted/80")}>
+              <DrawnCheckbox checked={on} disabled={false} label={`Teilen: ${row.description} ${row.date}`}
+                onChange={(checked) => setSelected((ids) => checked ? [...ids, row.id] : ids.filter((id) => id !== row.id))} />
+              <MerchantMark booking={row} classification={classes.get(row.id)!} fallbackName={bookingDescription(row)} className="size-9 rounded-xl" />
+              <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={bookingDescription(row)}>{bookingDescription(row)}</span><span className="block text-xs text-muted-foreground">{dateLabel(row.date)} · {row.bank}</span></span>
+              <span className="shrink-0 text-right">
+                <span className="block text-sm font-medium tabular-nums">{currency(Math.abs(row.amount))}</span>
+                {on ? <span className="block text-2xs font-medium text-primary">Meine Hälfte (50 %) {currency(Math.abs(personalAmount({ ...row, sharedWithRaphael: true })))}</span>
+                  : <span className="block text-2xs text-muted-foreground">Gesamt</span>}
+              </span>
+            </label>;
+          })}
+          {!filtered.length && <p className="p-4 text-center text-xs text-muted-foreground">Keine Buchungen gefunden.</p>}
+          {filtered.length > limit && <div className="border-t border-border/60 p-2 text-center"><Button variant="ghost" size="sm" onClick={() => setLimit((n) => n + 50)}>Mehr anzeigen</Button></div>}
         </div>
+        {chosen.length > 0
+          ? <SplitPreview className="sticky bottom-0 border border-primary/20 bg-card/95 shadow-raised backdrop-blur-md"
+              label={`${chosen.length} ${chosen.length === 1 ? "Buchung" : "Buchungen"} · Gesamt`} total={chosenTotal} own={chosenOwn} />
+          : <p className="text-center text-xs text-muted-foreground">Buchungen antippen – die Aufteilung erscheint hier. Übernommen wird erst mit „Speichern“.</p>}
         </Tabs.Content>
-        <Tabs.Content value="open" className="space-y-3">
-          <h3 className="text-sm font-medium">Offen · Raphael Piber</h3>
-          <p className="text-xs text-muted-foreground">Bezahlmarkierungen erst mit „Speichern“ übernehmen.</p>
+        <Tabs.Content value="open" className="space-y-4">
+          <div className="flex items-end justify-between gap-3 px-1">
+            <div>
+              <h3 className="text-sm font-semibold">Offen · Raphael Piber</h3>
+              <p className="text-xs text-muted-foreground">Bezahlmarkierungen erst mit „Speichern“ übernehmen.</p>
+            </div>
+            {openItems.length > 0 && <FinancialData as="p" className="shrink-0 text-right">
+              <span className="block text-2xs text-muted-foreground">Offen gesamt</span>
+              <span className="amount text-base text-primary">{currency(round(openItems.reduce((total, item) => total + item.outstanding, 0)))}</span>
+            </FinancialData>}
+          </div>
           <ShareRows items={openItems} disabled={!!storageError} onPaid={(id) => setPaid((ids) => [...ids, id])} />
-          {!openItems.length && <p className="mt-2 text-xs text-muted-foreground">Keine offenen Teilungen.</p>}
-          {overpaidItems.length > 0 && <section className="space-y-2">
-            <h3 className="text-sm font-medium">An Raphael zurückzuzahlen</h3>
+          {!openItems.length && <p className="rounded-2xl border border-dashed border-border bg-surface-sunken/60 p-6 text-center text-xs text-muted-foreground">Keine offenen Teilungen.</p>}
+          {overpaidItems.length > 0 && <section className="space-y-2 rounded-2xl bg-warning-soft p-4">
+            <h3 className="text-sm font-semibold">An Raphael zurückzuzahlen</h3>
             <p className="text-xs text-muted-foreground">Partnerzahlungen bleiben erhalten, auch wenn der Händler den Kauf erstattet. Keine automatische Verrechnung mit anderen Käufen.</p>
             {overpaidItems.map((item) => <p key={item.bookingId} className="text-sm">{item.description} · {currency(item.overpaid)}</p>)}
           </section>}

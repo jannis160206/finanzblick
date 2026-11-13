@@ -181,9 +181,6 @@ for (const viewport of viewports) {
     for (const label of ["Monat filtern", "Konto/Pocket filtern", "Kategorie filtern"]) {
       await checkSelect(page, cdp, page.getByLabel(label, { exact: true }), testInfo, label);
     }
-    await page.getByRole("button", { name: "Weitere Filter", exact: true }).click();
-    await checkSelect(page, cdp, page.getByLabel("Planrelevanz filtern", { exact: true }), testInfo, "plan-filter");
-    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Zuordnung ändern: Dropdown Beispiel", exact: true }).click();
     let dialog = page.getByRole("dialog", { name: "Zuordnung ändern", exact: true });
     await checkSelect(page, cdp, dialog.getByLabel("Kategorie", { exact: true }), testInfo, "edit-category");

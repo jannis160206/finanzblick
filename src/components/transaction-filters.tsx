@@ -1,6 +1,6 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, ReactNode, SetStateAction } from "react";
 import {
   Download,
   ListChecks,
@@ -11,6 +11,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip } from "@/components/ui/tooltip";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { addDaysIso } from "@/components/ui/range-calendar";
 import {
   Field,
   PremiumDialog,
@@ -19,6 +21,7 @@ import {
   PremiumDialogContent,
   PremiumDialogFooter,
   PremiumDialogHeader,
+  PremiumDialogItem,
   PremiumDialogTrigger,
 } from "@/components/ui/premium-dialog";
 import { CategorySelect } from "@/components/category-select";
@@ -39,6 +42,7 @@ import type {
 } from "@/lib/shared-holiday";
 import type { Category } from "@/lib/types";
 import { budgetGroupLabel } from "@/lib/ledger-link";
+import { cn } from "@/lib/utils";
 import type { VariableBudgetId } from "@/lib/variable-budgets";
 
 export type LedgerFilters = {
@@ -69,6 +73,7 @@ export function TransactionFilters({
   filters,
   setFilters,
   currentMonth,
+  today,
   ledger,
   receivables,
   reviewCount,
@@ -81,6 +86,8 @@ export function TransactionFilters({
   filters: LedgerFilters;
   setFilters: Dispatch<SetStateAction<LedgerFilters>>;
   currentMonth: string;
+  /** The app's "today" (settings.asOf) for the period shortcuts. */
+  today?: string;
   ledger: AccountedTransaction[];
   receivables: HolidayReceivable[];
   reviewCount: number;
@@ -153,6 +160,14 @@ export function TransactionFilters({
       label: "Transfers sichtbar",
       remove: () => change("showTransfers", false),
     });
+  const year = (today ?? `${currentMonth}-01`).slice(0, 4);
+  const end = today ?? `${currentMonth}-28`;
+  const periods = [
+    { id: "7", label: "Letzte 7 Tage", from: addDaysIso(end, -6), to: end },
+    { id: "30", label: "Letzte 30 Tage", from: addDaysIso(end, -29), to: end },
+    { id: "year", label: "Dieses Jahr", from: `${year}-01-01`, to: `${year}-12-31` },
+    { id: "last", label: "Letztes Jahr", from: `${Number(year) - 1}-01-01`, to: `${Number(year) - 1}-12-31` },
+  ];
   const advanced = !!(
     filters.plan ||
     filters.from ||
@@ -209,67 +224,90 @@ export function TransactionFilters({
                 )}
               </Button>
             </PremiumDialogTrigger>
-            <PremiumDialogContent size="sm">
+            <PremiumDialogContent size="sm" snapPoints={[0.55, 0.9]}>
               <PremiumDialogHeader
                 icon={SlidersHorizontal}
                 title="Weitere Filter"
-                description="Umsätze nach Plan, Zeitraum und Transfers eingrenzen. Änderungen gelten sofort."
+                description="Zeitraum, Plan und Anzeige – Änderungen gelten sofort."
               />
-              <PremiumDialogBody className="space-y-5">
-                <Field label="Planrelevanz">
-                  <select
-                    aria-label="Planrelevanz filtern"
-                    className="select-input w-full"
+              <PremiumDialogBody className="space-y-6">
+                <FilterGroup title="Zeitraum">
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label="Zeitraum-Schnellwahl">
+                    {periods.map((period) => {
+                      const active = filters.from === period.from && filters.to === period.to;
+                      return (
+                        <button key={period.id} type="button" aria-pressed={active}
+                          onClick={() => setFilters((previous) => active
+                            ? { ...previous, from: "", to: "" }
+                            : { ...previous, month: "", from: period.from, to: period.to })}
+                          className={cn("min-h-9 rounded-full border px-3.5 text-xs font-medium transition-[background-color,border-color,color,scale] duration-150 ease-soft active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none pointer-coarse:min-h-11",
+                            active ? "border-primary/50 bg-accent-muted text-primary" : "border-border/70 bg-card hover:border-primary/40 hover:text-primary")}>
+                          {period.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Von">
+                      <Input
+                        type="date"
+                        aria-label="Datum von"
+                        className="h-11"
+                        value={filters.from}
+                        onChange={(event) => change("from", event.target.value)}
+                      />
+                    </Field>
+                    <Field label="Bis" error={filters.from && filters.to && filters.to < filters.from ? "Liegt vor dem Startdatum." : null}>
+                      <Input
+                        type="date"
+                        aria-label="Datum bis"
+                        className="h-11"
+                        value={filters.to}
+                        onChange={(event) => change("to", event.target.value)}
+                      />
+                    </Field>
+                  </div>
+                  {(filters.from || filters.to) && month && (
+                    <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+                      Gilt zusätzlich zum Monat {monthLabel(month, true)}.
+                      <button type="button" className="font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-ring"
+                        onClick={() => change("month", "")}>Alle Monate</button>
+                    </p>
+                  )}
+                </FilterGroup>
+                <FilterGroup title="Planrelevanz">
+                  <SegmentedControl
+                    label="Planrelevanz filtern"
                     value={filters.plan}
-                    onChange={(event) =>
-                      change(
-                        "plan",
-                        event.target.value === "yes"
-                          ? "yes"
-                          : event.target.value === "no"
-                            ? "no"
-                            : "",
-                      )
-                    }
-                  >
-                    <option value="">Plan: alle</option>
-                    <option value="yes">Im Plan</option>
-                    <option value="no">Nicht im Plan</option>
-                  </select>
-                </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Von">
-                    <Input
-                      type="date"
-                      aria-label="Datum von"
-                      value={filters.from}
-                      onChange={(event) => change("from", event.target.value)}
-                    />
-                  </Field>
-                  <Field label="Bis" error={filters.from && filters.to && filters.to < filters.from ? "Liegt vor dem Startdatum." : null}>
-                    <Input
-                      type="date"
-                      aria-label="Datum bis"
-                      value={filters.to}
-                      onChange={(event) => change("to", event.target.value)}
-                    />
-                  </Field>
-                </div>
-                <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-2xl border border-border/70 px-4 py-3 text-sm transition-colors hover:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none">
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-medium">Transfers anzeigen</span>
-                    <span className="block text-xs text-muted-foreground">Umbuchungen zwischen eigenen Konten einblenden</span>
-                  </span>
-                  <input
-                    type="checkbox"
-                    aria-label="Transfers anzeigen"
-                    className="size-5 shrink-0 accent-primary"
-                    checked={filters.showTransfers}
-                    onChange={(event) =>
-                      change("showTransfers", event.target.checked)
-                    }
+                    onChange={(plan) => change("plan", plan)}
+                    options={[
+                      { value: "", label: "Alle" },
+                      { value: "yes", label: "Im Plan" },
+                      { value: "no", label: "Nicht im Plan" },
+                    ]}
+                    className="grid w-full grid-cols-3"
                   />
-                </label>
+                </FilterGroup>
+                <FilterGroup title="Anzeige">
+                  <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3 text-sm transition-colors hover:bg-muted/40 motion-reduce:transition-none">
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium">Transfers anzeigen</span>
+                      <span className="block text-xs text-muted-foreground">Umbuchungen zwischen eigenen Konten einblenden</span>
+                    </span>
+                    <span className="relative inline-flex shrink-0">
+                      <input
+                        type="checkbox"
+                        aria-label="Transfers anzeigen"
+                        className="peer h-6 w-11 cursor-pointer appearance-none rounded-full bg-muted-foreground/30 transition-colors duration-200 checked:bg-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
+                        checked={filters.showTransfers}
+                        onChange={(event) =>
+                          change("showTransfers", event.target.checked)
+                        }
+                      />
+                      <span aria-hidden="true" className="pointer-events-none absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform duration-200 ease-soft peer-checked:translate-x-5 motion-reduce:transition-none" />
+                    </span>
+                  </label>
+                </FilterGroup>
               </PremiumDialogBody>
               <PremiumDialogFooter>
                 <Button
@@ -285,7 +323,9 @@ export function TransactionFilters({
                 </Button>
                 <PremiumDialogClose asChild>
                   <Button type="button">
-                    {resultCount === undefined ? "Fertig" : `${resultCount.toLocaleString("de-AT")} Treffer anzeigen`}
+                    <span aria-live="polite" className="tabular-nums">
+                      {resultCount === undefined ? "Fertig" : `${resultCount.toLocaleString("de-AT")} Treffer anzeigen`}
+                    </span>
                   </Button>
                 </PremiumDialogClose>
               </PremiumDialogFooter>
@@ -384,5 +424,16 @@ export function TransactionFilters({
         </>
       }
     />
+  );
+}
+
+function FilterGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <PremiumDialogItem>
+      <section aria-label={title} className="space-y-3">
+        <h3 className="eyebrow px-1">{title}</h3>
+        {children}
+      </section>
+    </PremiumDialogItem>
   );
 }

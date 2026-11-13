@@ -84,6 +84,16 @@ it.each([false, true])("saves a pencil-edited name and learns future imports via
   });
 });
 
+it("offers a contract only for reviews of booked expenses and opens the contract assistant", async () => {
+  const booked = mount(true).open();
+  fireEvent.click(booked.getByRole("button", { name: "Als Vertrag anlegen" }));
+  expect(await screen.findByRole("dialog", { name: "Als Vertrag anlegen" }, { timeout: 5000 })).toBeTruthy();
+  cleanup();
+  localStorage.clear();
+  const imported = mount(false).open();
+  expect(imported.queryByRole("button", { name: "Als Vertrag anlegen" })).toBeNull();
+});
+
 it("rejects blank names and discards an unconfirmed rename on skip", () => {
   const view = mount();
   const section = view.open();

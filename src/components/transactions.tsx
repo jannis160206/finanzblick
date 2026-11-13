@@ -576,6 +576,7 @@ const TransactionLedger = memo(function TransactionLedger({
             setFilters(updater);
           }}
           currentMonth={currentMonth}
+          today={state.settings.asOf}
           ledger={ledger}
           receivables={holiday.receivables}
           reviewCount={openReviewCount}
