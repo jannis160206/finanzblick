@@ -320,3 +320,28 @@ describe("Amex screenshot validation and final PDF reconciliation", () => {
     expect(saved.financeRows).toEqual(state.financeRows);
   });
 });
+
+describe("Amex total balance period", () => {
+  const amexDebit = (date: string): Transaction => ({
+    id: `debit-${date}`, date, bank: "Raiffeisen", pocket: "Raiffeisen Giro", amount: -1446.65,
+    description: "Zahlungsempfänger: AMERICAN EXPRESS EUROPE S.A", rawDetails: ["GB03ZZZSDDDEUT0000000165752"],
+    category: "Transfer intern", includeInPlan: false,
+  });
+  const capture = (capturedAt: string): StatementResult => ({ source: "Amex", file: `Amex ${capturedAt}.jpeg`, issues: [], skipped: 0,
+    rows: [booking("shot", { date: capturedAt, amexSource: "screenshot", amexStatus: "posted", amexCapturedAt: capturedAt })],
+    amexScreenshot: { layout: "grouped", capturedAt, balance: 900, balanceIncludesPending: false } });
+  const snapshotOf = (transactions: Transaction[], capturedAt: string) => {
+    const state = { ...fixture(transactions), amexBalanceSnapshots: [], settings: { ...fixture().settings, asOf: capturedAt } };
+    return upload(state, [capture(capturedAt)]).amexBalanceSnapshots?.at(-1);
+  };
+
+  it("starts on the 11th after the last debited statement when the screenshot shows no period", () => {
+    expect(snapshotOf([amexDebit("2026-10-19")], "2026-11-05")).toMatchObject({ periodStart: "2026-10-11", date: "2026-11-05", balance: 900 });
+  });
+
+  it("includes the closed statement up to the 10th while its debit is still outstanding", () => {
+    expect(snapshotOf([amexDebit("2026-09-17")], "2026-10-15")).toMatchObject({ periodStart: "2026-09-11", date: "2026-10-15" });
+    expect(snapshotOf([amexDebit("2026-09-17"), amexDebit("2026-10-14")], "2026-10-15")).toMatchObject({ periodStart: "2026-10-11" });
+  });
+});
+

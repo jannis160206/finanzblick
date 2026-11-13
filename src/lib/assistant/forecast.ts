@@ -1,3 +1,4 @@
+import { AMEX_CLOSING_DAY, amexDebitSchedule } from "@/lib/amex-statement";
 import { actualBookings, addMonths, classify, daysInMonth, round, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { pocketKey } from "@/lib/goals";
@@ -96,7 +97,10 @@ export function buildForecastInput(state: AppState, dashboard: Dashboard, today:
   const bookings = actualBookings(state).filter((row) => row.date <= today);
   const repayments = bookings.filter((row) => isAmexBank(row.bank) && row.amount > 0 && amexRepayment([row.description, row.rawDescription].join(" ")))
     .sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6);
-  const amexDay = median(repayments.map((row) => Number(row.date.slice(8)))) ?? 15;
+  const debitSchedule = amexDebitSchedule(bookings, today);
+  // Card-side repayments first, then the giro debits after the statement on the 10th.
+  const amexDay = median(repayments.map((row) => Number(row.date.slice(8)))) ??
+    (debitSchedule.basedOn ? AMEX_CLOSING_DAY + debitSchedule.offsetDays : 15);
   const amexMonths = [1, 2, 3].map((offset) => addMonths(current, -offset));
   const amexSpent = bookings.filter((row) => isAmexBank(row.bank) && row.amount < 0 && amexMonths.includes(row.date.slice(0, 7)) &&
     !classify(row).isTransfer && !classify(row).isFixedCost).reduce((sum, row) => sum - personalAmount(row), 0);

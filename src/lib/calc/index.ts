@@ -31,6 +31,7 @@ import { categoryParts } from "@/lib/splits";
 import { matchPlannedOneOffs, type PlannedOccurrence } from "@/lib/planned-one-offs";
 import { amexMerchantCategory } from "@/lib/import/amex-merchants";
 import { amexFunding } from "@/lib/amex-balance";
+import { amexStatement } from "@/lib/amex-statement";
 import { isDutyFreePurchase } from "@/lib/booking-purpose";
 import { applyNamedTransfer, isNamedTransfer, revolutSavingsTransferAmount } from "@/lib/transfers";
 import { bankOperation, bankTransferPurpose } from "@/lib/bank-operation";
@@ -1114,7 +1115,7 @@ export function calculateDashboard(state: AppState) {
   });
   return { plan: { ...plan, rows: plan.rows.map((row) => ({ ...row, actual: round(budgetSpending.get(row.id) ?? 0) })) }, goals, actualGoals, goalStatuses, physical,
     monthlyFunding,
-    currentMonth, current, amex, plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
+    currentMonth, current, amex, amexStatement: amexStatement(state, bookings), plannedOneOffs, missingFixed: missingFixedCosts(state), timeline, actual,
     totalAssets: physicalAssetTotal(physical),
     countdown, nextTransfer, allocationMonth, ninetyDays,
     currentRoundUp: roundUpTotal(state.transactions.filter((t) => t.date <= state.settings.asOf), currentMonth),

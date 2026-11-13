@@ -21,12 +21,25 @@ const bankPayment = (row: Transaction) => !isCard(row) && row.amount < 0 &&
   (amexDirectDebit(row) || /american express|AT\s*20\s*1910\s*0000\s*1019\s*5000/i.test(source(row)) ||
     /amex.*(?:abrechnung|sammel|ausgleich|rückzahlung|ruckzahlung|lastschrift)/i.test(source(row)));
 
-function reservedBalance(state: AppState) {
+export const isAmexCard = isCard;
+export const isAmexReservePocket = reservePocket;
+export const isAmexPartnerCard = partner;
+export const isAmexCardPayment = cardPayment;
+export const isAmexDirectDebit = amexDirectDebit;
+/** Giro or Revolut payment of an Amex statement (direct debit or manual transfer). */
+export const isAmexSettlement = bankPayment;
+
+/** Current balance of the Revolut "Amex Rückzahlung" pocket: last snapshot plus later movements. */
+export function amexReserveBalance(state: AppState, asOf = state.settings.asOf) {
+  return reservedBalance(state, asOf) / 100;
+}
+
+function reservedBalance(state: AppState, asOf = state.settings.asOf) {
   const snapshot = (state.accountSnapshots ?? [])
-    .filter((item) => item.bank === "Revolut" && reservePocket(item.name) && item.date <= state.settings.asOf)
+    .filter((item) => item.bank === "Revolut" && reservePocket(item.name) && item.date <= asOf)
     .sort((a, b) => b.date.localeCompare(a.date))[0];
   const movements = state.transactions.filter((row) => /^revolut$/i.test(row.bank) &&
-    reservePocket(row.pocket) && row.date <= state.settings.asOf && (!snapshot || row.date > snapshot.date));
+    reservePocket(row.pocket) && row.date <= asOf && (!snapshot || row.date > snapshot.date));
   return Math.max(0, cents(snapshot?.balance ?? 0) + movements.reduce((total, row) => total + cents(row.amount), 0));
 }
 

@@ -49,6 +49,7 @@ import { mergeDuplicateBookings } from "./booking-dedup";
 import { bankOperationReviewMessage } from "@/lib/bank-operation";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews, repairScreenshotReviewDrafts } from "./screenshot-review";
+import { amexBalancePeriodStart } from "@/lib/amex-statement";
 import { reconcileAmexImports, screenshotPendingBalance, type AmexReconciliation } from "./amex-reconciliation";
 import { groupedScreenshotIssueKey, resolveGroupedScreenshotIssues } from "./amex-screenshot-reconciliation";
 import {
@@ -554,9 +555,9 @@ export function prepareStatementImport(
     .sort((a, b) => b.date.localeCompare(a.date))[0] : undefined;
   const currentRows = capture ? deduplicateStatements(grouped.filter((result) =>
     result.amexScreenshot?.capturedAt === capture.capturedAt).flatMap((result) => result.rows), []).rows : [];
-  const earliest = currentRows.map((row) => row.date).filter(Boolean).sort()[0];
-  const periodStart = capture?.periodStart ??
-    (previousSnapshot && (!earliest || previousSnapshot.date >= earliest) ? previousSnapshot.periodStart : earliest);
+  // Without a readable period the Gesamtsaldo covers the open statement (from the 11th), plus the closed
+  // one before it while its debit is still outstanding.
+  const periodStart = capture?.periodStart ?? (capture ? amexBalancePeriodStart([...state.transactions, ...candidates], capture.capturedAt) : undefined);
   const groupedSnapshot = capture && periodStart ? [{
     periodStart, date: capture.capturedAt, balance: capture.balance!,
     ...(capture.balanceIncludesPending ? {} : { pendingBalance: round(currentRows

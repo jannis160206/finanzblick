@@ -32,6 +32,7 @@ import { NetWorthCard } from "@/components/dashboard/net-worth-card";
 import { GoalsCard } from "@/components/dashboard/goals-card";
 import { ContractsCard } from "@/components/dashboard/contracts-card";
 import { FreeToSpendCard } from "@/components/dashboard/free-to-spend-card";
+import { AmexStatementCard } from "@/components/dashboard/amex-statement-card";
 import { CopilotInsightsPanel } from "@/components/dashboard/copilot-insights-panel";
 
 const CategoryDonut = dynamic(() => import("@/components/category-donut").then((module) => module.CategoryDonut), {
@@ -146,6 +147,7 @@ export function Overview() {
         </div>
       </div>
       <FreeToSpendCard className="mb-4" />
+      <AmexStatementCard className="mb-4" />
       <CopilotInsightsPanel className="mb-4" />
       <div className="mb-4 empty:hidden"><PlannedOneOffLines /></div>
       <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-12">
