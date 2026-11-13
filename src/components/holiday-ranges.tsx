@@ -55,7 +55,7 @@ export function HolidayRanges({ iconOnly = false }: { iconOnly?: boolean }) {
     <PremiumDialog open={open} onOpenChange={changeOpen}>
       <Tooltip label="Urlaubszeiträume verwalten">
         <PremiumDialogTrigger asChild>
-          <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "size-11" : undefined}
+          <Button size={iconOnly ? "icon" : "sm"} variant={iconOnly ? "ghost" : "outline"} className={iconOnly ? "size-10 rounded-xl" : undefined}
             disabled={!!storageError} aria-label="Urlaub" title="Urlaub"><CalendarDays className="size-3.5" />{!iconOnly && "Urlaub"}</Button>
         </PremiumDialogTrigger>
       </Tooltip>

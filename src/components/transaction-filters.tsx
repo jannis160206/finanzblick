@@ -177,12 +177,25 @@ export function TransactionFilters({
   return (
     <TransactionToolbar
       chips={chips}
+      reset={
+        <Tooltip label="Alle Filter zurücksetzen">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 rounded-full text-muted-foreground hover:text-foreground"
+            aria-label="Zurücksetzen"
+            onClick={() => setFilters(emptyLedgerFilters)}
+          >
+            <X className="size-3.5" />
+          </Button>
+        </Tooltip>
+      }
       search={
         <FinancialData className="relative min-w-0">
-          <Search className="pointer-events-none absolute top-3.5 left-3 size-4 text-muted-foreground" />
+          <Search className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             aria-label="Umsätze durchsuchen"
-            className="h-11 w-full pl-9"
+            className="h-11 w-full rounded-xl border-transparent bg-surface-sunken/80 pl-10 shadow-none hover:border-border focus-visible:bg-card"
             placeholder="Händler, Bank oder Pocket suchen …"
             value={filters.query}
             onChange={(event) => change("query", event.target.value)}
@@ -193,8 +206,8 @@ export function TransactionFilters({
         <>
           <Tooltip label="Gesamte Prüfliste öffnen">
             <Button
-              variant={reviewCount ? "outline" : "ghost"}
-              className="h-11 gap-2"
+              variant="ghost"
+              className={cn("h-10 gap-2 rounded-xl px-3", reviewCount > 0 && "text-foreground")}
               aria-label="Zuordnung prüfen"
               disabled={disabled}
               onClick={onReview}
@@ -209,9 +222,9 @@ export function TransactionFilters({
           <PremiumDialog>
             <PremiumDialogTrigger asChild>
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                className="relative size-11"
+                className="relative size-10 rounded-xl"
                 aria-label="Weitere Filter"
                 title="Weitere Filter"
               >
@@ -335,7 +348,7 @@ export function TransactionFilters({
             <Button
               variant="ghost"
               size="icon"
-              className="size-11"
+              className="size-10 rounded-xl"
               disabled={exportDisabled}
               aria-label="Ansicht exportieren"
               onClick={onExport}
@@ -343,19 +356,6 @@ export function TransactionFilters({
               <Download className="size-4" />
             </Button>
           </Tooltip>
-          {chips.length > 0 && (
-            <Tooltip label="Alle Filter zurücksetzen">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-11"
-                aria-label="Zurücksetzen"
-                onClick={() => setFilters(emptyLedgerFilters)}
-              >
-                <X className="size-4" />
-              </Button>
-            </Tooltip>
-          )}
         </>
       }
       filters={
@@ -366,7 +366,7 @@ export function TransactionFilters({
             </span>
             <select
               aria-label="Monat filtern"
-              className="select-input h-11 w-full min-w-0"
+              className="select-input h-11 w-full min-w-0 rounded-xl @5xl:w-44"
               value={month}
               onChange={(event) => change("month", event.target.value)}
             >
@@ -398,19 +398,19 @@ export function TransactionFilters({
               id="ledger-category"
               label="Kategorie filtern"
               allowAll
-              className="[&_select]:h-11"
+              className="[&_select]:h-11 [&_select]:rounded-xl @5xl:[&_select]:w-48"
               value={filters.category}
               onValueChange={(value) => change("category", value)}
             />
           </div>
-          <label className="min-w-0 sm:col-span-2 xl:col-span-1">
+          <label className="min-w-0">
             <span className="sr-only">
               Konto / Pocket
             </span>
             <FinancialData>
             <select
               aria-label="Konto/Pocket filtern"
-              className="select-input h-11 w-full min-w-0"
+              className="select-input h-11 w-full min-w-0 rounded-xl @5xl:w-52"
               value={filters.account}
               onChange={(event) => change("account", event.target.value)}
             >

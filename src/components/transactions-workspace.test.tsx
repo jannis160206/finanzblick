@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Transactions } from "@/components/transactions";
+import { pageWindow } from "@/components/transaction-workspace";
 import { useFinance } from "@/components/finance-provider";
 import { actualBookings, calculateDashboard } from "@/lib/calc";
 import { createEmptyAccountState } from "@/lib/account-state";
@@ -196,13 +197,13 @@ it.each([false, true])(
     const description = within(rows[0] as HTMLElement).getByText("Möbel Müller");
     expect(description.getAttribute("title")).toBe("Möbel Müller");
     const merchantMark = description.parentElement!.previousElementSibling!;
-    expect(merchantMark.className).toContain("size-8");
+    expect(merchantMark.className).toContain("size-9");
     expect(merchantMark.textContent).toBe("MM");
     expect(description.className).toContain("md:truncate");
     expect(description.className).toContain("break-words");
     const unknown = within(rows[1] as HTMLElement).getByTitle("BILLA");
     expect(unknown.textContent).toBe("Billa");
-    expect(unknown.parentElement!.previousElementSibling?.textContent).toBe("?");
+    expect(unknown.parentElement!.previousElementSibling?.textContent).toBe("B");
     const refund = within(rows[2] as HTMLElement).getByText("Martin Auer");
     expect(refund.parentElement!.previousElementSibling?.textContent).toBe("MA");
     expect(
@@ -622,4 +623,45 @@ it("disables all modifying actions when persistence is blocked but allows read-o
       name: "Ansicht exportieren",
     }).disabled,
   ).toBe(false);
+});
+
+it("keeps at most seven page slots around the current page", () => {
+  expect(pageWindow(1, 3)).toEqual([1, 2, 3]);
+  expect(pageWindow(2, 12)).toEqual([1, 2, 3, 4, 5, null, 12]);
+  expect(pageWindow(6, 12)).toEqual([1, null, 5, 6, 7, null, 12]);
+  expect(pageWindow(11, 12)).toEqual([1, null, 8, 9, 10, 11, 12]);
+});
+
+it("jumps to numbered pages and marks the current one", () => {
+  const state = fixture();
+  state.transactions = Array.from({ length: 60 }, (_, index) => ({
+    ...state.transactions[1],
+    id: `page-${index}`,
+    date: "2026-10-05",
+  }));
+  mount(state);
+  const pages = screen.getByRole("navigation", { name: "Seiten" });
+  expect(within(pages).getByRole("button", { name: "Seite 1" }).getAttribute("aria-current")).toBe("page");
+  fireEvent.click(within(pages).getByRole("button", { name: "Seite 3" }));
+  expect(screen.getByRole("table").querySelectorAll("tbody tr")).toHaveLength(10);
+  expect(within(pages).getByRole("button", { name: "Seite 3" }).getAttribute("aria-current")).toBe("page");
+  expect(within(pages).getByRole<HTMLButtonElement>("button", { name: "Nächste Seite" }).disabled).toBe(true);
+  expect(screen.getByText("60 Treffer")).toBeTruthy();
+});
+
+it("moves sharing into the booking sheet on phones and confirms it there", () => {
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+  const view = mount();
+  const list = screen.getByRole("list", { name: "Mobile Buchungen" });
+  expect(within(list).queryByRole("button", { name: "Teilen: BILLA" })).toBeNull();
+  expect(within(list).getByRole("button", { name: "Zuordnung ändern: BILLA" })).toBeTruthy();
+  fireEvent.click(within(list).getByRole("button", { name: "Weitere Aktionen: BILLA" }));
+  fireEvent.click(screen.getByRole("button", { name: "Mit Raphael teilen: BILLA" }));
+  const confirm = screen.getByRole("dialog", { name: "Diese Buchung als geteilt markieren?" });
+  fireEvent.click(within(confirm).getByRole("button", { name: "Teilen" }));
+  expect(view.read().transactions.find((row) => row.id === "other")?.sharedWithRaphael).toBe(true);
 });

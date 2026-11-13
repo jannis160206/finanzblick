@@ -67,13 +67,17 @@ function ShareRows({ items, onPaid, disabled }: { items: HolidayReceivable[]; on
   </ul>;
 }
 
+/** Only outgoing, non-transfer bookings can be split with Raphael. */
+export function canShareBooking(booking: AccountedTransaction) {
+  return booking.amount < 0 && !classify(booking).isTransfer;
+}
+
 export function SharedRowAction({ booking }: { booking: AccountedTransaction }) {
-  const { update, storageError } = useFinance();
+  const { storageError } = useFinance();
   const [open, setOpen] = useState(false);
-  const classification = booking.amount < 0 ? classify(booking) : null;
-  if (!classification || classification.isTransfer) return null;
+  if (!canShareBooking(booking)) return null;
   const shared = isSharedHoliday(booking);
-  return <PremiumDialog open={open} onOpenChange={setOpen}>
+  return <ShareConfirmDialog booking={booking} open={open} onOpenChange={setOpen}>
     <FinancialData as="span" className="inline-flex">
     <Tooltip label={shared ? "Bereits mit Raphael geteilt" : "Mit Raphael teilen"}>
     <PremiumDialogTrigger asChild>
@@ -85,7 +89,22 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
     </PremiumDialogTrigger>
     </Tooltip>
     </FinancialData>
-    <PremiumDialogContent size="sm" variant="confirmation">
+  </ShareConfirmDialog>;
+}
+
+/** "Diese Buchung als geteilt markieren?" – with an optional trigger as children. */
+export function ShareConfirmDialog({ booking, open, onOpenChange, onCloseAutoFocus, children }: {
+  booking: AccountedTransaction;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCloseAutoFocus?: (event: Event) => void;
+  children?: ReactNode;
+}) {
+  const { update, storageError } = useFinance();
+  const classification = classify(booking);
+  return <PremiumDialog open={open} onOpenChange={onOpenChange}>
+    {children}
+    <PremiumDialogContent size="sm" variant="confirmation" onCloseAutoFocus={onCloseAutoFocus}>
       <PremiumDialogHeader icon={Users} title="Diese Buchung als geteilt markieren?" description="Es zählt nur noch die Hälfte." />
       <PremiumDialogBody className="min-w-0 space-y-3 text-sm">
         <div className="flex items-center gap-3">
@@ -99,10 +118,10 @@ export function SharedRowAction({ booking }: { booking: AccountedTransaction }) 
         {storageError && <p role="alert" className="text-sm font-medium text-destructive">{storageError}</p>}
       </PremiumDialogBody>
       <PremiumDialogFooter>
-        <Button variant="outline" onClick={() => setOpen(false)}>Abbrechen</Button>
+        <Button variant="outline" onClick={() => onOpenChange(false)}>Abbrechen</Button>
         <Button disabled={!!storageError} onClick={() => {
           update((state) => selectSharedBookings(state, [booking.id]));
-          setOpen(false);
+          onOpenChange(false);
         }}>Teilen</Button>
       </PremiumDialogFooter>
     </PremiumDialogContent>
@@ -159,9 +178,9 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
     <PremiumDialog open={open} onOpenChange={changeOpen}>
     <Tooltip label="Geteilte Buchungen und offene Beträge">
     <PremiumDialogTrigger asChild>
-    <Button size={iconOnly ? "icon" : "sm"} variant="outline" className={iconOnly ? "relative size-11" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
+    <Button size={iconOnly ? "icon" : "sm"} variant={iconOnly ? "ghost" : "outline"} className={iconOnly ? "relative size-10 rounded-xl" : undefined} disabled={!!storageError} aria-label="Geteilt" title="Geteilt">
       <Users className="size-3.5" />{!iconOnly && "Geteilt"}
-      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} data-count={count} className={`after:content-[attr(data-count)] inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-2xs font-semibold text-primary-foreground${iconOnly ? " absolute -top-2 -right-2" : ""}`} />}
+      {count > 0 && <FinancialData as="span" aria-label={`${count} offene Teilungen`} data-count={count} className={`after:content-[attr(data-count)] inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-2xs font-semibold text-primary-foreground${iconOnly ? " absolute -top-1 -right-1" : ""}`} />}
     </Button>
     </PremiumDialogTrigger>
     </Tooltip>

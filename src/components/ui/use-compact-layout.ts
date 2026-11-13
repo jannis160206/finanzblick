@@ -1,20 +1,21 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
-function subscribe(onChange: () => void) {
-  if (typeof window.matchMedia !== "function") return () => {};
-  const media = window.matchMedia("(max-width: 767px)");
-  media.addEventListener("change", onChange);
-  return () => media.removeEventListener("change", onChange);
+export function useMediaQuery(query: string) {
+  const subscribe = useCallback((onChange: () => void) => {
+    if (typeof window.matchMedia !== "function") return () => {};
+    const media = window.matchMedia(query);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [query]);
+  return useSyncExternalStore(
+    subscribe,
+    () => typeof window.matchMedia === "function" && window.matchMedia(query).matches,
+    () => false,
+  );
 }
 
 export function useCompactLayout() {
-  return useSyncExternalStore(
-    subscribe,
-    () =>
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(max-width: 767px)").matches,
-    () => false,
-  );
+  return useMediaQuery("(max-width: 767px)");
 }

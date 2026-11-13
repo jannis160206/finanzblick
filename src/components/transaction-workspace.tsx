@@ -3,14 +3,19 @@
 import { useId, useState, type ReactNode } from "react";
 import { flexRender, type Row, type Table } from "@tanstack/react-table";
 import {
+  ArrowDownLeft,
+  ArrowUpRight,
   Check,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
   CircleHelp,
   EyeOff,
   ListFilter,
   Repeat,
+  Scale,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MerchantMark } from "@/components/merchant-mark";
@@ -41,18 +46,31 @@ import { categoryTone } from "@/components/category-tone";
 
 export type FilterChip = { id: string; label: string; remove: () => void };
 
-export { useCompactLayout as useMobileLedger } from "@/components/ui/use-compact-layout";
+import { useMediaQuery } from "@/components/ui/use-compact-layout";
+
+/** Phones, tablets and narrow windows get booking cards; the table starts at 1280px. */
+export function useMobileLedger() {
+  return useMediaQuery("(max-width: 1279px)");
+}
+
+/** Below 1440px the table keeps only edit and "⋯" inline, so the merchant column keeps its room. */
+export function useCompactLedgerActions() {
+  return useMediaQuery("(max-width: 1439px)");
+}
 
 export function TransactionToolbar({
   search,
   filters,
   actions,
   chips,
+  reset,
 }: {
   search: ReactNode;
   filters: ReactNode;
   actions: ReactNode;
   chips: FilterChip[];
+  /** Clears every filter; shown next to the active filter chips. */
+  reset?: ReactNode;
 }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const filtersId = useId();
@@ -60,54 +78,86 @@ export function TransactionToolbar({
     <div
       role="group"
       aria-label="Umsatz-Werkzeugleiste"
-      className="space-y-3 border-b border-border/70 p-4 sm:p-5"
+      className="@container space-y-3 p-3 sm:p-4"
     >
-      <div className="grid items-center gap-3 xl:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="min-w-0">{search}</div>
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 @5xl:flex-row @5xl:items-center">
+        <div className="flex min-w-0 gap-2 @5xl:flex-1">
+          <div className="min-w-0 flex-1">{search}</div>
           <Button
             type="button"
             variant={filtersOpen ? "secondary" : "outline"}
-            className="h-11 gap-2 md:hidden"
+            size="icon"
+            className="relative size-11 shrink-0 rounded-xl md:hidden"
+            aria-label={chips.length ? `Filter (${chips.length} aktiv)` : "Filter"}
             aria-expanded={filtersOpen}
             aria-controls={filtersId}
             onClick={() => setFiltersOpen((open) => !open)}
           >
             <ListFilter className="size-4" aria-hidden="true" />
-            Filter
             {chips.length > 0 && (
-              <span className="inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-2xs leading-5 font-semibold text-primary-foreground tabular-nums">
+              <span aria-hidden="true" className="absolute -top-1 -right-1 inline-flex min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-2xs leading-5 font-semibold text-primary-foreground tabular-nums">
                 {chips.length}
               </span>
             )}
           </Button>
-          {actions}
         </div>
+        <div id={filtersId} className={cn("grid gap-2 sm:grid-cols-3 @5xl:flex @5xl:shrink-0 @5xl:items-center",
+          !filtersOpen && "max-md:hidden", filtersOpen && "max-md:animate-in max-md:fade-in-0 max-md:slide-in-from-top-1 motion-reduce:animate-none")}>{filters}</div>
       </div>
-      <div id={filtersId} className={cn("grid gap-3 sm:grid-cols-2 xl:grid-cols-3", !filtersOpen && "max-md:hidden")}>{filters}</div>
-      {chips.length > 0 && (
-        <FinancialData
-          role="group"
-          aria-label="Aktive Filter"
-          className="flex flex-wrap gap-2"
-        >
-          {chips.map((chip) => (
-            <Button
-              key={chip.id}
-              type="button"
-              size="sm"
-              variant="soft"
-              className="h-auto min-h-8 max-w-full rounded-full py-1 pr-2 pl-3 text-xs hover:translate-y-0 hover:shadow-none"
-              aria-label={`Filter entfernen: ${chip.label}`}
-              onClick={chip.remove}
+      <div className="flex flex-wrap items-center gap-2">
+        {chips.length > 0 && (
+          <div className="flex min-w-0 items-center gap-1 max-md:order-last max-md:basis-full">
+            <FinancialData
+              role="group"
+              aria-label="Aktive Filter"
+              className="flex min-w-0 flex-wrap items-center gap-1.5"
             >
-              <span className="min-w-0 truncate">{chip.label}</span>
-              <X className="size-3.5 opacity-70" aria-hidden="true" />
-            </Button>
-          ))}
-        </FinancialData>
-      )}
+              {chips.map((chip) => (
+                <Button
+                  key={chip.id}
+                  type="button"
+                  size="sm"
+                  variant="soft"
+                  className="h-auto min-h-8 max-w-full rounded-full py-1 pr-2 pl-3 text-xs hover:translate-y-0 hover:shadow-none active:scale-95"
+                  aria-label={`Filter entfernen: ${chip.label}`}
+                  onClick={chip.remove}
+                >
+                  <span className="min-w-0 truncate">{chip.label}</span>
+                  <X className="size-3.5 opacity-70" aria-hidden="true" />
+                </Button>
+              ))}
+            </FinancialData>
+            {reset}
+          </div>
+        )}
+        <div className="ml-auto flex items-center gap-1 max-md:w-full max-md:[&>:first-child]:mr-auto">{actions}</div>
+      </div>
     </div>
+  );
+}
+
+/** Income, spending and balance of the filtered view as three calm cards. */
+export function LedgerSummary({ income, spending }: { income: number; spending: number }) {
+  const balance = Math.round((income + spending) * 100) / 100;
+  const items: { label: string; value: number; tone: string; tile: string; icon: LucideIcon }[] = [
+    { label: "Einnahmen", value: income, tone: "text-money-in", tile: "bg-success-soft text-success", icon: ArrowDownLeft },
+    { label: "Ausgaben", value: spending, tone: "text-money-out", tile: "bg-destructive/10 text-destructive", icon: ArrowUpRight },
+    { label: "Saldo", value: balance, tone: balance < 0 ? "text-money-out" : "text-money-in", tile: "bg-accent-muted text-primary", icon: Scale },
+  ];
+  return (
+    <FinancialData as="dl" aria-label="Summe der gefilterten Umsätze" className="grid grid-cols-3 gap-2 sm:gap-3">
+      {items.map(({ label, value, tone, tile, icon: Icon }) => (
+        <div key={label} className="min-w-0 rounded-2xl border border-border/70 bg-card px-3 py-2.5 shadow-xs sm:px-4 sm:py-3">
+          <dt className="flex items-center gap-2 text-2xs text-muted-foreground sm:text-xs">
+            <span aria-hidden="true" className={cn("hidden size-6 shrink-0 items-center justify-center rounded-lg sm:flex", tile)}>
+              <Icon className="size-3.5" />
+            </span>
+            {label}
+          </dt>
+          <dd className={cn("amount mt-1 truncate text-sm sm:text-lg", tone)}>{currency(value)}</dd>
+        </div>
+      ))}
+    </FinancialData>
   );
 }
 
@@ -125,18 +175,30 @@ export function SelectionCheckbox({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center">
-      <input
-        type="checkbox"
-        className="size-4 accent-primary"
-        aria-label={label}
-        checked={checked}
-        disabled={disabled}
-        ref={(input) => {
-          if (input) input.indeterminate = mixed;
-        }}
-        onChange={(event) => onChange(event.target.checked)}
-      />
+    <label className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center has-disabled:cursor-not-allowed">
+      <span className="grid size-[18px] place-items-center">
+        <input
+          type="checkbox"
+          className="col-start-1 row-start-1 size-[18px] cursor-pointer appearance-none rounded-md border border-input bg-card transition-[background-color,border-color,scale] duration-150 ease-soft checked:border-primary checked:bg-primary indeterminate:border-primary indeterminate:bg-primary hover:border-primary/60 active:scale-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none motion-reduce:active:scale-100"
+          aria-label={label}
+          checked={checked}
+          disabled={disabled}
+          ref={(input) => {
+            if (input) input.indeterminate = mixed;
+          }}
+          onChange={(event) => onChange(event.target.checked)}
+        />
+        <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"
+          className="pointer-events-none col-start-1 row-start-1 size-3 text-primary-foreground">
+          {mixed ? (
+            <path d="M4 8h8" />
+          ) : (
+            <path d="M3.5 8.5 6.5 11.5 12.5 4.5" pathLength={1}
+              className={cn("[stroke-dasharray:1] transition-[stroke-dashoffset] ease-soft motion-reduce:transition-none",
+                checked ? "[stroke-dashoffset:0] delay-75 duration-200" : "[stroke-dashoffset:1] duration-100")} />
+          )}
+        </svg>
+      </span>
     </label>
   );
 }
@@ -152,11 +214,11 @@ export function TransactionDescriptionCell({
   // Raw bank texts ("AMZNPRIME DE*BT15Q46J4") get a readable name; a user alias always wins.
   const shown = booking.merchantAlias ? description : cleanMerchantName(description);
   return (
-    <div className="flex min-w-0 items-center gap-2">
-      <MerchantMark booking={booking} classification={classification} />
+    <div className="flex min-w-0 items-center gap-3">
+      <MerchantMark booking={booking} classification={classification} fallbackName={shown} className="size-9 rounded-xl" />
       <span className="min-w-0">
         <span
-          className="block min-w-0 text-sm font-medium break-words md:max-w-[300px] md:truncate"
+          className="block min-w-0 text-sm font-medium break-words md:max-w-[320px] md:truncate"
           title={description}
         >
           {shown}
@@ -195,9 +257,8 @@ export function TransactionCategoryCell({
     booking.automaticCategoryEvidence?.category === category
       ? booking.automaticCategoryEvidence : undefined;
   return (
-    <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-foreground/85">
+    <div className="flex flex-wrap items-center gap-1.5">
+        <span className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-full bg-muted/70 px-2.5 py-1 text-xs font-medium text-foreground/85">
           <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", categoryTone(category))} />
           <span className="min-w-0 truncate">{category}</span>
         </span>
@@ -208,38 +269,40 @@ export function TransactionCategoryCell({
             title="Fixkosten · wiederkehrend"
             className="inline-flex shrink-0 text-blue-600 dark:text-blue-400"
           >
-            <Repeat className="size-4" aria-hidden="true" />
+            <Repeat className="size-3.5" aria-hidden="true" />
           </span>
         )}
         {booking.ignored && (
           <span
             title="Zählt in keiner Statistik, keinem Budget und keiner Auswertung"
-            className="inline-flex items-center gap-1 rounded-md border border-border/70 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
+            className="inline-flex items-center gap-1 rounded-full border border-border/70 px-2 py-0.5 text-2xs font-medium text-muted-foreground"
           >
             <EyeOff className="size-3" aria-hidden="true" />
             Ignoriert
           </span>
         )}
-      </div>
       <PremiumDialog>
         <PremiumDialogTrigger asChild>
           <button
             type="button"
             aria-label={`Zuordnungsdetails: ${booking.description}`}
+            title={reason ? "Prüfung offen" : reviewed ? "Geprüft" : "Zugeordnet"}
             className={cn(
-              "inline-flex min-h-7 items-center gap-1.5 rounded-md px-1 text-2xs transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none",
-              reason ? "font-medium text-primary" : "text-muted-foreground",
+              "inline-flex items-center justify-center transition-[background-color,color,scale] duration-150 ease-soft active:scale-90 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none",
+              reason
+                ? "min-h-7 gap-1 rounded-full bg-warning-soft px-2 text-2xs font-medium text-warning hover:brightness-95"
+                : "size-7 rounded-full text-muted-foreground/80 hover:bg-muted hover:text-foreground",
             )}
           >
             {reason ? (
               <>
-                <CircleHelp className="size-3.5" />
+                <CircleHelp className="size-3.5" aria-hidden="true" />
                 Prüfung offen
               </>
             ) : (
               <>
-                <Check className="size-3" />
-                {reviewed ? "Geprüft" : "Zugeordnet"}
+                {reviewed ? <CheckCheck className="size-3.5 text-primary" aria-hidden="true" /> : <Check className="size-3.5" aria-hidden="true" />}
+                <span className="sr-only">{reviewed ? "Geprüft" : "Zugeordnet"}</span>
               </>
             )}
           </button>
@@ -318,7 +381,7 @@ export function TransactionAmountCell({
       <span
         className={cn(
           "amount block text-sm whitespace-nowrap",
-          amount > 0 && "text-money-in",
+          amount > 0 ? "text-money-in" : amount < 0 ? "text-money-out" : undefined,
         )}
       >
         {currency(amount)}
@@ -366,48 +429,43 @@ export function MobileTransactionList({
       aria-hidden={locked || undefined}
       inert={locked || undefined}
       aria-label="Mobile Buchungen"
-      className="md:hidden"
+      className="space-y-2 xl:hidden"
     >
       {rows.map((row, index) => {
         const showDay = groupByDay && rows[index - 1]?.original.date !== row.original.date;
-        const daySum = daySums.get(row.original.date) ?? 0;
+        const daySum = Math.round((daySums.get(row.original.date) ?? 0) * 100) / 100;
         return [
           showDay && (
-            <li key={`day-${row.original.date}-${index}`} role="presentation" className="sticky top-[var(--shell-header)] z-[1] flex items-center justify-between gap-3 border-y border-border/60 bg-surface-sunken/95 px-4 py-2 text-xs backdrop-blur-sm first:border-t-0">
+            <li key={`day-${row.original.date}-${index}`} role="presentation"
+              className="flex items-baseline justify-between gap-3 px-1 pt-3 pb-0.5 text-xs first:pt-0">
               <span className="font-medium text-muted-foreground">{dayHeading(row.original.date)}</span>
-              <span className={cn("font-medium tabular-nums", daySum > 0 ? "text-money-in" : "text-muted-foreground")}>{currency(Math.round(daySum * 100) / 100)}</span>
+              <span className={cn("tabular-nums", daySum > 0 ? "text-money-in" : "text-muted-foreground")}>{currency(daySum)}</span>
             </li>
           ),
           <li
             key={row.id}
             aria-label={`Buchung: ${row.original.merchantAlias ?? row.original.description}`}
             className={cn(
-              "space-y-2 border-b border-border/60 px-4 py-3 transition-colors last:border-b-0",
-              row.getIsSelected() && "bg-accent-muted",
+              "group/card grid grid-cols-[auto_minmax(0,1fr)] rounded-2xl border border-border/60 bg-card py-2 pr-3 shadow-xs transition-[background-color,border-color] duration-150 ease-soft motion-reduce:transition-none",
+              row.getIsSelected() && "border-primary/40 bg-accent-muted",
               row.original.ignored && "opacity-55",
             )}
           >
-            <div className="flex items-start gap-2">
-              <div className="-mt-2 -ml-2 shrink-0">
-                {mobileCell(row, "selection")}
+            <div className="self-start">{mobileCell(row, "selection")}</div>
+            <div className="min-w-0 pt-1">
+              <div className="flex items-start gap-2">
+                <div className="min-w-0 flex-1">{mobileCell(row, "description")}</div>
+                <div className="min-w-0 max-w-[46%] pt-2">{mobileCell(row, "amount")}</div>
               </div>
-              <div className="min-w-0 flex-1">
-                {mobileCell(row, "description")}
-                {!groupByDay && <p className="mt-1 text-xs text-muted-foreground">
-                  {dateLabel(row.original.date)}
-                </p>}
-              </div>
-              <div className="min-w-0 max-w-[48%]">
-                {mobileCell(row, "amount")}
-              </div>
-            </div>
-            <div className="flex items-end justify-between gap-3 pl-9">
-              <div className="min-w-0">{mobileCell(row, "category")}</div>
-              <div className="flex min-w-0 flex-col items-end gap-1">
-                <div className="max-w-full text-right text-xs text-muted-foreground">
-                  {mobileCell(row, "account")}
+              <div className="mt-1 flex items-end gap-2 group-has-[[data-merchant-mark]]/card:pl-12">
+                <div className="min-w-0 flex-1 space-y-1">
+                  {mobileCell(row, "category")}
+                  <p className="flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                    <span className="min-w-0 truncate">{mobileCell(row, "account")}</span>
+                    {!groupByDay && <span className="shrink-0">· {dateLabel(row.original.date)}</span>}
+                  </p>
                 </div>
-                {mobileCell(row, "actions")}
+                <div className="-mr-1 shrink-0">{mobileCell(row, "actions")}</div>
               </div>
             </div>
           </li>,
@@ -459,8 +517,8 @@ export function MobileLedgerControls({
       (order) => order.id === sorting?.id && order.desc === sorting.desc,
     )?.value ?? "";
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b px-4 py-2 md:hidden">
-      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+    <div className="flex items-center justify-between gap-2 pr-1 xl:hidden">
+      <div className="-ml-1 flex items-center text-xs text-muted-foreground">
         <SelectionCheckbox
           label="Buchungen dieser Seite auswählen"
           checked={table.getIsAllPageRowsSelected()}
@@ -472,7 +530,7 @@ export function MobileLedgerControls({
       </div>
       <select
         aria-label="Buchungen sortieren"
-        className="select-input min-w-0 max-w-full text-xs"
+        className="select-input h-9 min-w-0 max-w-[60%] rounded-xl text-xs"
         value={value}
         onChange={(event) => {
           const order = orders.find(
@@ -492,6 +550,16 @@ export function MobileLedgerControls({
   );
 }
 
+/** Up to seven page slots around the current page; `null` marks a gap (1 … 4 5 6 … 12). */
+export function pageWindow(current: number, count: number): (number | null)[] {
+  if (count <= 7) return Array.from({ length: count }, (_, index) => index + 1);
+  if (current <= 4) return [1, 2, 3, 4, 5, null, count];
+  if (current >= count - 3) return [1, null, count - 4, count - 3, count - 2, count - 1, count];
+  return [1, null, current - 1, current, current + 1, null, count];
+}
+
+const pageSizes = [25, 50, 100];
+
 export function LedgerFooter({
   table,
   count,
@@ -501,43 +569,81 @@ export function LedgerFooter({
   count: number;
   total: number;
 }) {
+  const { pageIndex, pageSize } = table.getState().pagination;
+  const pages = Math.max(1, table.getPageCount());
+  const current = Math.min(pageIndex + 1, pages);
+  const first = count ? pageIndex * pageSize + 1 : 0;
+  const last = Math.min(count, (pageIndex + 1) * pageSize);
   return (
-    <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 px-4 py-3 text-xs sm:px-5">
-      <FinancialData className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+    <footer className="flex flex-col gap-3 pt-3 text-xs sm:flex-row sm:items-center sm:justify-between xl:border-t xl:border-border/60 xl:px-5 xl:py-3">
+      <FinancialData className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-1 text-muted-foreground sm:justify-start xl:px-0">
         <span>{count.toLocaleString("de-AT")} Treffer</span>
         <span>
           Summe{" "}
-          <strong className="ml-1 font-semibold text-foreground tabular-nums">
+          <strong className={cn("amount ml-1 text-sm", total > 0 ? "text-money-in" : total < 0 ? "text-money-out" : "text-foreground")}>
             {currency(total)}
           </strong>
         </span>
       </FinancialData>
-      <div className="flex items-center gap-2">
-        <FinancialData as="span" className="mr-1 text-muted-foreground">
-          Seite {table.getState().pagination.pageIndex + 1} /{" "}
-          {Math.max(1, table.getPageCount())}
-        </FinancialData>
-        <Button
-          variant="outline"
-          size="icon"
-          className="size-9"
-          disabled={!table.getCanPreviousPage()}
-          onClick={() => table.previousPage()}
-          aria-label="Vorherige Seite"
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          className="size-9"
-          disabled={!table.getCanNextPage()}
-          onClick={() => table.nextPage()}
-          aria-label="Nächste Seite"
-        >
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
+      <nav aria-label="Seiten" className="flex items-center justify-between gap-2 sm:justify-end">
+        {count > pageSizes[0] && (
+          <label className="hidden items-center gap-2 text-muted-foreground lg:flex">
+            <FinancialData as="span" className="tabular-nums">{first}–{last}</FinancialData>
+            <select
+              aria-label="Buchungen pro Seite"
+              className="select-input h-9 rounded-xl text-xs"
+              value={pageSize}
+              onChange={(event) => table.setPageSize(Number(event.target.value))}
+            >
+              {pageSizes.map((size) => <option key={size} value={size}>{size} pro Seite</option>)}
+            </select>
+          </label>
+        )}
+        <div className="flex w-full items-center justify-between gap-1 sm:w-auto sm:justify-end">
+          <PageButton label="Vorherige Seite" disabled={!table.getCanPreviousPage()} onClick={() => table.previousPage()}>
+            <ChevronLeft className="size-4" />
+          </PageButton>
+          <FinancialData className="hidden items-center gap-1 sm:flex">
+            {pageWindow(current, pages).map((page, index) => page === null ? (
+              <span key={`gap-${index}`} aria-hidden="true" className="w-6 text-center text-muted-foreground">…</span>
+            ) : (
+              <PageButton key={page} label={`Seite ${page}`} current={page === current} onClick={() => table.setPageIndex(page - 1)}>
+                {page}
+              </PageButton>
+            ))}
+          </FinancialData>
+          <FinancialData as="span" className="text-center text-muted-foreground tabular-nums sm:hidden">
+            Seite {current} von {pages}
+          </FinancialData>
+          <PageButton label="Nächste Seite" disabled={!table.getCanNextPage()} onClick={() => table.nextPage()}>
+            <ChevronRight className="size-4" />
+          </PageButton>
+        </div>
+      </nav>
     </footer>
+  );
+}
+
+function PageButton({ label, current = false, disabled, onClick, children }: {
+  label: string;
+  current?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-current={current ? "page" : undefined}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-9 items-center justify-center rounded-xl text-xs font-medium tabular-nums transition-[background-color,color,scale] duration-150 ease-soft active:scale-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-35 motion-reduce:transition-none motion-reduce:active:scale-100 pointer-coarse:size-11",
+        current ? "bg-primary text-primary-foreground shadow-xs" : "text-muted-foreground hover:bg-muted hover:text-foreground max-sm:border max-sm:border-border/70 max-sm:bg-card",
+      )}
+    >
+      {children}
+    </button>
   );
 }

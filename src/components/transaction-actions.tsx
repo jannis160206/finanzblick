@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ChevronRight, CircleHelp, Eye, EyeOff, FilePlus2, FileSignature, MoreHorizontal, Pencil, Receipt, Trash2, type LucideIcon,
+  ChevronRight, CircleHelp, Eye, EyeOff, FilePlus2, FileSignature, MoreHorizontal, Pencil, Receipt, Trash2, Users, type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -11,7 +11,7 @@ import type { BookingContractMode } from "@/components/booking-contract-dialogs"
 import { ContractMark } from "@/components/contracts/contract-visuals";
 import { useFinance } from "@/components/finance-provider";
 import { MerchantMark } from "@/components/merchant-mark";
-import { SharedRowAction } from "@/components/shared-costs";
+import { ShareConfirmDialog, SharedRowAction } from "@/components/shared-costs";
 import { ReceiptSplitDialog } from "@/components/receipt-split-dialog";
 import { accountLabel } from "@/lib/accounts";
 import { classify } from "@/lib/calc";
@@ -20,7 +20,7 @@ import { detectContracts, intervalLabel } from "@/lib/contracts";
 import { currency, dateLabel } from "@/lib/format";
 import { needsMerchantLookup } from "@/lib/merchant-lookup";
 import { bookingDescription } from "@/lib/import/merchant-description";
-import type { AccountedTransaction } from "@/lib/shared-holiday";
+import { isSharedHoliday, type AccountedTransaction } from "@/lib/shared-holiday";
 import { cn } from "@/lib/utils";
 
 export type LedgerAction = "edit" | "menu" | "lookup";
@@ -36,6 +36,7 @@ export function TransactionActions({
   onDelete,
   onToggleIgnored,
   onContract,
+  compact = false,
 }: {
   booking: AccountedTransaction;
   disabled: boolean;
@@ -47,9 +48,14 @@ export function TransactionActions({
   onDelete: () => void;
   onToggleIgnored: () => void;
   onContract?: (mode: BookingContractMode) => void;
+  /** Cards and narrower tables: only edit and "⋯" stay inline, sharing and lookup move into the sheet. */
+  compact?: boolean;
 }) {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  // null until first requested, so the confirm dialog only mounts for bookings that need it.
+  const [share, setShare] = useState<boolean | null>(null);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   const name = bookingDescription(booking);
   // Closes the sheet first, so the follow-up dialog never opens on top of it.
   const then = (action: () => void) => () => {
@@ -76,8 +82,8 @@ export function TransactionActions({
           <Pencil className="size-4" />
         </Button>
       </Tooltip>
-      <SharedRowAction booking={booking} />
-      {needsMerchantLookup(booking) && (
+      {!compact && <SharedRowAction booking={booking} />}
+      {!compact && needsMerchantLookup(booking) && (
         <Tooltip label="Händlername nachschlagen">
           <Button
             size="icon"
@@ -99,6 +105,7 @@ export function TransactionActions({
       <PremiumDialog open={sheetOpen} onOpenChange={setSheetOpen}>
         <PremiumDialogTrigger asChild>
           <Button
+            ref={menuTrigger}
             size="icon"
             variant="ghost"
             className="size-9"
@@ -111,9 +118,12 @@ export function TransactionActions({
             <MoreHorizontal className="size-4" />
           </Button>
         </PremiumDialogTrigger>
-        <PremiumDialogContent size="sm" onCloseAutoFocus={(event) => { if (dialogOpen || receiptOpen) event.preventDefault(); }}>
+        <PremiumDialogContent size="sm" onCloseAutoFocus={(event) => { if (dialogOpen || receiptOpen || share) event.preventDefault(); }}>
           <BookingSheet booking={booking} name={name} actions={{
             edit: then(onEdit),
+            share: compact ? then(() => setShare(true)) : undefined,
+            lookup: compact && needsMerchantLookup(booking) ? then(onLookup) : undefined,
+            lookupPending,
             contract: onContract && canHoldContract(booking) ? (mode) => then(() => onContract(mode))() : undefined,
             receipt: booking.amount < 0 ? then(() => setReceiptOpen(true)) : undefined,
             ignore: then(onToggleIgnored),
@@ -122,12 +132,20 @@ export function TransactionActions({
         </PremiumDialogContent>
       </PremiumDialog>
       {receiptOpen && <ReceiptSplitDialog booking={booking} onClose={() => setReceiptOpen(false)} />}
+      {share !== null && <ShareConfirmDialog booking={booking} open={share} onOpenChange={setShare}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          menuTrigger.current?.focus();
+        }} />}
     </div>
   );
 }
 
 type SheetActions = {
   edit: () => void;
+  share?: () => void;
+  lookup?: () => void;
+  lookupPending?: boolean;
   contract?: (mode: BookingContractMode) => void;
   receipt?: () => void;
   ignore: () => void;
@@ -153,7 +171,7 @@ function BookingSheet({ booking, name, actions }: { booking: AccountedTransactio
             <span className="block truncate text-sm font-medium">{classification.category}</span>
             <span className="block truncate text-xs text-muted-foreground">{booking.note || (booking.ignored ? "Ignoriert – zählt in keiner Statistik" : classification.reason || "Im Alltagsbudget berücksichtigt")}</span>
           </span>
-          <span className={cn("amount shrink-0 text-lg", booking.amount > 0 && "text-money-in")}>{currency(booking.amount)}</span>
+          <span className={cn("amount shrink-0 text-lg", booking.amount > 0 ? "text-money-in" : booking.amount < 0 && "text-money-out")}>{currency(booking.amount)}</span>
         </PremiumDialogItem>
         {actions.contract && (
           <ActionGroup label="Vertrag">
@@ -181,6 +199,14 @@ function BookingSheet({ booking, name, actions }: { booking: AccountedTransactio
         )}
         <ActionGroup label="Buchung">
           <ActionRow icon={Pencil} label="Zuordnung ändern" hint="Kategorie, Name, Fixkosten und Notiz" ariaLabel={`Zuordnung ändern: ${name}`} onClick={actions.edit} />
+          {actions.share && booking.amount < 0 && !classification.isTransfer && (
+            <ActionRow icon={Users} label={isSharedHoliday(booking) ? "Bereits mit Raphael geteilt" : "Mit Raphael teilen"} hint="Es zählt nur noch die Hälfte"
+              ariaLabel={`Mit Raphael teilen: ${name}`} disabled={isSharedHoliday(booking)} onClick={actions.share} />
+          )}
+          {actions.lookup && (
+            <ActionRow icon={CircleHelp} label="Händlernamen nachschlagen" hint="Lesbaren Namen für den Buchungstext finden"
+              ariaLabel={`Händlernamen nachschlagen: ${name}`} disabled={actions.lookupPending} onClick={actions.lookup} />
+          )}
           {actions.receipt && (
             <ActionRow icon={Receipt} label={booking.splits?.length ? "Aufteilung ansehen" : "Kassenbon aufteilen"} hint="Artikel auf mehrere Kategorien verteilen"
               ariaLabel={`Kassenbon aufteilen: ${name}`} onClick={actions.receipt} />
@@ -204,13 +230,13 @@ function ActionGroup({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-function ActionRow({ icon: Icon, label, hint, ariaLabel, tone, onClick }: {
-  icon: LucideIcon; label: string; hint: string; ariaLabel: string; tone?: "destructive"; onClick: () => void;
+function ActionRow({ icon: Icon, label, hint, ariaLabel, tone, disabled, onClick }: {
+  icon: LucideIcon; label: string; hint: string; ariaLabel: string; tone?: "destructive"; disabled?: boolean; onClick: () => void;
 }) {
   return (
     <li>
-      <button type="button" aria-label={ariaLabel} onClick={onClick}
-        className="group grid min-h-14 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none">
+      <button type="button" aria-label={ariaLabel} onClick={onClick} disabled={disabled}
+        className="group grid min-h-14 w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-muted/60 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50 motion-reduce:transition-none">
         <span aria-hidden="true" className={cn("flex size-9 items-center justify-center rounded-xl transition-transform duration-150 ease-soft group-active:scale-90 motion-reduce:transition-none",
           tone === "destructive" ? "bg-destructive/10 text-destructive" : "bg-accent-muted text-primary")}>
           <Icon className="size-4" />

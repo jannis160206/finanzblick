@@ -60,7 +60,7 @@ Direkt verwendete Tailwind-Palettenfarben (außerhalb der Tokens, Zählung in `s
 
 - Tailwind-Standardraster (0,25 rem). Häufige Muster: Karten `p-5 sm:p-6`, Grids `gap-3`/`gap-4`/`gap-5`, Seitenabschnitte `mb-5`/`mt-5`.
 - Shell: Sidebar `224px` (`lg:pl-[224px]`), Header `76px`, Hauptbereich `max-w-[1600px] px-4 py-6 sm:px-7 sm:py-8 xl:px-9`.
-- Breakpoints: Tailwind-Standard (`sm` 640, `md` 768, `lg` 1024, `xl` 1280, `2xl` 1536). Sidebar ab `lg`; darunter Hamburger-Menü als linker Drawer. `useCompactLayout()` und die mobile Umsatzliste schalten bei `max-width: 767px` um.
+- Breakpoints: Tailwind-Standard (`sm` 640, `md` 768, `lg` 1024, `xl` 1280, `2xl` 1536). Sidebar ab `lg`; darunter Hamburger-Menü als linker Drawer. `useCompactLayout()` schaltet bei `max-width: 767px` um (`useMediaQuery()` für eigene Grenzen). Die Umsatzliste zeigt Karten bis 1279 px (`useMobileLedger()`), die Tabelle ab 1280 px; unter 1440 px bleiben in der Tabelle nur ✎ und ⋯ inline (`useCompactLedgerActions()`).
 - Touch: bei `pointer: coarse` erhalten Buttons, Inputs, Menüeinträge, Tabs und Optionen mindestens 44 px Höhe.
 
 ### 2.4 Radien
@@ -92,7 +92,7 @@ Direkt verwendete Tailwind-Palettenfarben (außerhalb der Tokens, Zählung in `s
 | `Input`, `Label` | `ui/*` | Fokusring 3 px `ring/20` |
 | `Skeleton`, `EmptyState` | `ui/*` | Pulse nur bei `motion-safe` |
 | `PageHeading`, `SectionHeading`, `EmptyState`, `MoneyInput` | `finance-ui.tsx` | fachliche Bausteine |
-| `.panel`, `.status-pill`, `.select-input`, `.data-table`, `.month-grid`, `.editable` | `globals.css` | Komponentenklassen |
+| `.panel`, `.status-pill`, `.select-input`, `.data-table`, `.ledger-table`, `.month-grid`, `.editable` | `globals.css` | Komponentenklassen (`.ledger-table`: Umsatztabelle mit weichen Trennlinien, Hover/Fokus-Zeile, `table-fixed` mit festen Spaltenbreiten) |
 | `FinancialData` | `financial-data.tsx` | markiert sensible Bereiche für den Sichtschutz |
 | `MerchantMark` | `merchant-mark.tsx` | Händlerlogo oder Initialen-Fallback |
 | `StackedBar`, `CategoryDonut`, Recharts-Flächen | diverse | Charts mit `var(--chart-*)` |
@@ -126,7 +126,7 @@ Grundsätze: bestehende Token-Namen bleiben erhalten (shadcn-Konvention; `global
 | `--info` (+ `-foreground`, `-soft`) | `#0369a1` | `#4cc2f5` | `text-info`, `bg-info-soft` | Information |
 | `--destructive-soft` | 9 % Destructive auf Karte | 9 % | `bg-destructive-soft` | Fehlerflächen |
 | `--money-in` | `= --success` | `= --success` | `text-money-in` | Einnahmen, positive Salden |
-| `--money-out` | `= --foreground` | `= --foreground` | `text-money-out` | Ausgaben (neutral) |
+| `--money-out` | `--destructive` 82 % + `--foreground` | `--destructive` 82 % + `--foreground` | `text-money-out` | Ausgaben (ruhiges Rot) |
 
 Unverändert: `--primary`/`--accent-ink` (Benutzer-Akzent), `--chart-1/2/4/6/7`, `--editable-*`, saisonale Overrides, `--background` (`#f5f7f6` / `#101313`, passend zu `accentTokens()` und PWA-Theme-Farbe).
 
@@ -194,5 +194,7 @@ Button: neue Variante `soft` (Akzentfläche), Hover-Schatten `shadow-raised`, Ou
 | `DrawnCheckbox` (`ui/drawn-checkbox.tsx`) | Native Checkbox, deren Haken sich per `stroke-dashoffset` zeichnet; bei reduzierter Bewegung ohne Übergang. |
 
 Auf der Umsatzseite nutzen alle Pop-ups diese Bausteine: Buchungsdetails mit Aktionen (**⋯**), Vertrag zuordnen bzw. als Vertrag anlegen, Zuordnungsdetails, Weitere Filter, Zuordnung ändern, Auswahl zuordnen, Tag vergeben, Name nachschlagen, Kassenbon aufteilen, Geteilt, Urlaub, Löschen und Kontoauszüge prüfen. Aktionslisten stehen als gruppierte Zeilen (Icon-Kachel, Titel, Hinweis, Pfeil) in einer Karte; Händler ohne Logo zeigen Initialen statt „?“ (`MerchantMark` mit `fallbackName`).
+
+Umsatzseite: Auszugsablage mit Icon-Kachel (`data-dragging` → Rahmen in Primärfarbe, `scale-[1.01]`, Kachel hebt sich), `LedgerSummary` (drei Karten Einnahmen/Ausgaben/Saldo), `SelectionCheckbox` mit gezeichnetem Haken bzw. Strich für „teilweise“, Kartenliste (`rounded-2xl`, `shadow-xs`, Tageskopf ohne Balken), Tabellenaktionen mit `pointer-fine:opacity-0` bis Hover/Fokus, Seitenwechsel blendet den Tabellenkörper ein (`fade-in`, bei reduzierter Bewegung aus) und `LedgerFooter` mit `pageWindow()` (max. 7 Seitenfelder, Lücken als „…“).
 
 Bewegung: `full` (Federn, gestaffelte Inhalte 35 ms), `reduced` (nur Opacity 120 ms; System- **und** App-Einstellung), `none` (Tests: sofortiges Ein-/Aushängen).

@@ -790,7 +790,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
   }  const fileButton = <Button
     size="sm"
     variant="outline"
-    className="h-11 min-w-0 flex-1 sm:flex-none"
+    className="h-10 min-w-0 flex-1 rounded-xl sm:flex-none"
     aria-label="Dateien auswählen"
     disabled={!ready || !!storageError || ui.busy || !!ui.pending}
     onClick={() => fileInput.current?.click()}
@@ -802,10 +802,8 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
     <>
       <section
         aria-label="Kontoauszüge importieren"
-        className={cn(
-          "mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-dashed border-border/70 px-4 py-2 transition-colors motion-reduce:transition-none sm:px-5",
-          ui.dragging && "border-primary bg-primary/5",
-        )}
+        data-dragging={ui.dragging || undefined}
+        className="group/drop mb-4 flex flex-wrap items-center gap-x-3 gap-y-2.5 rounded-2xl border border-dashed border-border/80 bg-card/50 px-3 py-2.5 transition-[background-color,border-color,scale] duration-200 ease-soft hover:border-primary/40 motion-reduce:transition-none sm:px-4 data-dragging:scale-[1.01] data-dragging:border-primary data-dragging:bg-accent-muted motion-reduce:data-dragging:scale-100"
         onDragEnter={(event) => {
           event.preventDefault();
           dragDepth.current++;
@@ -823,13 +821,16 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
         onDrop={(event) => {
           event.preventDefault();
           dragDepth.current = 0;
+          setUI({ dragging: false });
           void selectFiles(Array.from(event.dataTransfer.files));
         }}
       >
-        <p className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-          <FileUp aria-hidden="true" className="size-4 shrink-0" />
-          <span>Auszüge hierher ziehen</span>
-          <span className="hidden text-2xs lg:inline">CSV, Excel, PDF oder Amex-Screenshot · max. 20 MB</span>
+        <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-accent-muted text-primary transition-[translate,scale,background-color,color] duration-200 ease-soft group-data-dragging/drop:-translate-y-0.5 group-data-dragging/drop:scale-110 group-data-dragging/drop:bg-primary group-data-dragging/drop:text-primary-foreground motion-reduce:transition-none motion-reduce:group-data-dragging/drop:translate-y-0 motion-reduce:group-data-dragging/drop:scale-100">
+          <FileUp className="size-[18px]" />
+        </span>
+        <p className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{ui.dragging ? "Loslassen zum Importieren" : "Kontoauszüge hierher ziehen"}</span>
+          <span className="block truncate text-xs text-muted-foreground">CSV, Excel, PDF oder Amex-Screenshot · max. 20 MB</span>
         </p>
         <input
           ref={fileInput}
@@ -844,7 +845,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
             void selectFiles(files);
           }}
         />
-        <div className="ml-auto flex w-full items-center gap-2 sm:w-auto">
+        <div className="flex w-full items-center gap-2 sm:ml-auto sm:w-auto">
           <UploadStatus activities={activities} jobs={workspace ? automation.jobs : []}
             error={workspace ? automation.error : null} summary={state.importStatus}
             reviewCount={openReviewCount} results={state.importResults}

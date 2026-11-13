@@ -1365,7 +1365,7 @@ it.each([false, true])(
       );
       expect(image.width).toBe(32);
       expect(image.height).toBe(32);
-      expect(image.closest("a")!.className).toContain("size-8");
+      expect(image.closest("a")!.className).toContain("size-9");
       expect(image.closest("a")!.getAttribute("href")).toBe(
         `/api/merchants/${asset}/attribution?v=${version}`,
       );

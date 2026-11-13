@@ -45,7 +45,7 @@ function LocalMerchantLogo({
   const reportFailure = useMerchantLogoFailure();
   if (failedVersion === refreshVersion)
     return (
-      <span aria-hidden="true" className={className}>
+      <span aria-hidden="true" data-merchant-mark="" className={className}>
         {fallback}
       </span>
     );
@@ -58,6 +58,7 @@ function LocalMerchantLogo({
       rel="noopener noreferrer"
       title={`Lizenz/Herkunft${alias ? `: ${alias}` : ""}`}
       aria-label={`Logo-Lizenz und Quellenangabe${alias ? `: ${alias}` : ""}`}
+      data-merchant-mark=""
       className={cn(
         className,
         "bg-white focus-visible:outline-2 focus-visible:outline-ring",
@@ -132,7 +133,7 @@ export function MerchantMark({
       className={markClassName}
     />
   ) : (
-    <span aria-hidden="true" className={markClassName}>
+    <span aria-hidden="true" data-merchant-mark="" className={markClassName}>
       {fallback}
     </span>
   );

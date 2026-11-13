@@ -52,12 +52,14 @@ import {
 } from "@/components/transaction-filters";
 import {
   LedgerFooter,
+  LedgerSummary,
   MobileLedgerControls,
   MobileTransactionList,
   SelectionCheckbox,
   TransactionAmountCell,
   TransactionCategoryCell,
   TransactionDescriptionCell,
+  useCompactLedgerActions,
   useMobileLedger,
 } from "@/components/transaction-workspace";
 import {
@@ -132,6 +134,7 @@ const TransactionLedger = memo(function TransactionLedger({
     return () => window.clearTimeout(timer);
   }, []);
   const mobile = useMobileLedger();
+  const compactActions = useCompactLedgerActions();
   const ledger = useMemo(() => actualBookings(state), [state]);
   // Preserve cached classifications when only other rows receive an approval.
   const classifyBooking = useMemo(() => {
@@ -386,7 +389,7 @@ const TransactionLedger = memo(function TransactionLedger({
       accessorKey: "date",
       header: "Datum",
       cell: ({ row }) => (
-        <span className="whitespace-nowrap text-muted-foreground">
+        <span className="text-xs whitespace-nowrap text-muted-foreground">
           {dateLabel(row.original.date)}
         </span>
       ),
@@ -446,18 +449,19 @@ const TransactionLedger = memo(function TransactionLedger({
       accessorFn: accountLabel,
       header: "Konto/Pocket",
       cell: ({ row }) => (
-        <span className="text-xs break-words text-muted-foreground">
+        <span className="block max-w-44 truncate text-xs text-muted-foreground" title={accountLabel(row.original)}>
           {accountLabel(row.original)}
         </span>
       ),
     },
     {
       id: "actions",
-      header: "Aktionen",
+      header: () => <span className="sr-only">Aktionen</span>,
       enableSorting: false,
       cell: ({ row }) => (
         <TransactionActions
           booking={row.original}
+          compact={mobile || compactActions}
           disabled={!!storageError}
           lookupPending={lookupPending}
           dialogOpen={!!editor || !!deleting || !!contractFlow?.open}
@@ -565,51 +569,40 @@ const TransactionLedger = memo(function TransactionLedger({
         setSelection({ scope: "", rows: {} });
         setFilters((previous) => ({ ...previous, query, month: query ? "" : previous.month }));
       }} />
-      <section
-        aria-label="Umsatzliste"
-        className="min-w-0 overflow-clip rounded-2xl border border-border/80 bg-card shadow-card"
-      >
-        <TransactionFilters
-          filters={filters}
-          setFilters={(updater) => {
-            setSelection({ scope: "", rows: {} });
-            setFilters(updater);
-          }}
-          currentMonth={currentMonth}
-          today={state.settings.asOf}
-          ledger={ledger}
-          receivables={holiday.receivables}
-          reviewCount={openReviewCount}
-          disabled={locked || !!storageError}
-          exportDisabled={locked || !data.length}
-          resultCount={data.length}
-          onReview={() => setReviewRequest((request) => request + 1)}
-          onExport={exportView}
-        />
+      <section aria-label="Umsatzliste" className="min-w-0 space-y-3 sm:space-y-4">
+        <div className="rounded-2xl border border-border/80 bg-card shadow-card">
+          <TransactionFilters
+            filters={filters}
+            setFilters={(updater) => {
+              setSelection({ scope: "", rows: {} });
+              setFilters(updater);
+            }}
+            currentMonth={currentMonth}
+            today={state.settings.asOf}
+            ledger={ledger}
+            receivables={holiday.receivables}
+            reviewCount={openReviewCount}
+            disabled={locked || !!storageError}
+            exportDisabled={locked || !data.length}
+            resultCount={data.length}
+            onReview={() => setReviewRequest((request) => request + 1)}
+            onExport={exportView}
+          />
+        </div>
         {data.length > 0 && (() => {
           const counted = data.filter((row) => !row.ignored && !classifications.get(row)?.isTransfer);
-          const income = sum(counted.map(personalAmount).filter((value) => value > 0));
-          const spending = sum(counted.map(personalAmount).filter((value) => value < 0));
           return (
-            <FinancialData as="dl" aria-label="Summe der gefilterten Umsätze" className="grid grid-cols-3 divide-x divide-border/60 border-b border-border/60 bg-surface-sunken">
-              {[
-                { label: "Einnahmen", value: income, tone: "text-money-in" },
-                { label: "Ausgaben", value: spending, tone: "" },
-                { label: "Saldo", value: income + spending, tone: income + spending < 0 ? "text-destructive" : "text-money-in" },
-              ].map((item) => (
-                <div key={item.label} className="min-w-0 px-4 py-3 sm:px-5">
-                  <dt className="text-2xs text-muted-foreground">{item.label}</dt>
-                  <dd className={cn("amount truncate text-sm sm:text-base", item.tone)}>{currency(item.value)}</dd>
-                </div>
-              ))}
-            </FinancialData>
+            <LedgerSummary
+              income={sum(counted.map(personalAmount).filter((value) => value > 0))}
+              spending={sum(counted.map(personalAmount).filter((value) => value < 0))}
+            />
           );
         })()}
         {selected.length > 0 && (
           <FinancialData
             role="group"
             aria-label="Ausgewählte Buchungen"
-            className="sticky top-[calc(var(--shell-header)+0.5rem)] z-10 mx-3 my-3 flex flex-wrap items-center gap-2 rounded-2xl border border-primary/20 bg-card/95 px-3 py-2.5 shadow-raised backdrop-blur-md animate-in fade-in-0 slide-in-from-top-2 duration-200 motion-reduce:animate-none sm:mx-4 sm:px-4"
+            className="sticky top-[calc(var(--shell-header)+0.5rem)] z-10 flex flex-wrap items-center gap-2 rounded-2xl border border-primary/20 bg-card/95 px-3 py-2.5 shadow-raised backdrop-blur-md animate-in fade-in-0 slide-in-from-top-2 duration-200 motion-reduce:animate-none sm:px-4"
           >
             <span role="status" className="mr-auto pl-1 text-sm font-medium tabular-nums">
               {selected.length} ausgewählt
@@ -650,19 +643,20 @@ const TransactionLedger = memo(function TransactionLedger({
             </Button>
           </FinancialData>
         )}
+        <div className="min-w-0 xl:overflow-clip xl:rounded-2xl xl:border xl:border-border/80 xl:bg-card xl:shadow-card">
         <MerchantMarksProvider
           merchantIds={merchantIds}
           merchantNames={merchantNames}
           bookingIds={bookingIds}
         >
           {mobile ? (
-            <>
+            <div className="space-y-2">
               <MobileLedgerControls table={table} disabled={!!storageError} />
               <MobileTransactionList rows={displayedRows} groupByDay={sorting[0]?.id === "date"} />
-            </>
+            </div>
           ) : (
-            <div className="hidden overflow-x-auto md:block">
-              <table className="data-table w-full" aria-label="Buchungen">
+            <div className="hidden overflow-x-auto xl:block">
+              <table className="ledger-table w-full table-fixed" aria-label="Buchungen">
                 <thead>
                   {table.getHeaderGroups().map((group) => (
                     <tr key={group.id}>
@@ -670,8 +664,13 @@ const TransactionLedger = memo(function TransactionLedger({
                         <th
                           key={header.id}
                           className={cn(
+                            header.column.id === "date" && "w-24",
+                            header.column.id === "category" && "w-48",
+                            header.column.id === "amount" && "w-[7.5rem]",
+                            header.column.id === "account" && "w-40",
+                            header.column.id === "actions" && (compactActions ? "w-[6.25rem]" : "w-[11.25rem]"),
                             header.column.id === "selection" &&
-                              "w-12 !px-1 !py-1",
+                              "w-12 !py-1 !pr-0 !pl-2",
                             (header.column.id === "amount" ||
                               header.column.id === "actions") &&
                               "text-right",
@@ -715,11 +714,17 @@ const TransactionLedger = memo(function TransactionLedger({
                     </tr>
                   ))}
                 </thead>
-                <FinancialData as="tbody">
+                <FinancialData
+                  as="tbody"
+                  key={table.getState().pagination.pageIndex}
+                  className="animate-in fade-in-0 duration-300 motion-reduce:animate-none"
+                >
                   {displayedRows.map((row) => (
                     <tr
                       key={row.id}
+                      data-selected={row.getIsSelected() || undefined}
                       className={cn(
+                        "group/row",
                         row.getIsSelected() && "[&>td]:bg-accent-muted",
                         row.original.ignored && "opacity-55",
                       )}
@@ -727,15 +732,17 @@ const TransactionLedger = memo(function TransactionLedger({
                       {row.getVisibleCells().map((cell) => (
                         <td
                           key={cell.id}
-                          className={
-                            cell.column.id === "selection"
-                              ? "!px-1 !py-1"
-                              : undefined
-                          }
+                          className={cn(
+                            cell.column.id === "selection" && "!py-1 !pr-0 !pl-2",
+                            cell.column.id === "actions" && "w-px !pl-2",
+                          )}
                         >
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext(),
+                          {cell.column.id === "actions" ? (
+                            <div className="transition-opacity duration-150 ease-soft motion-reduce:transition-none pointer-fine:opacity-0 pointer-fine:group-hover/row:opacity-100 pointer-fine:group-focus-within/row:opacity-100 pointer-fine:group-data-selected/row:opacity-100">
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </div>
+                          ) : (
+                            flexRender(cell.column.columnDef.cell, cell.getContext())
                           )}
                         </td>
                       ))}
@@ -747,6 +754,7 @@ const TransactionLedger = memo(function TransactionLedger({
           )}
         </MerchantMarksProvider>
         {!data.length && (
+          <div className="max-xl:rounded-2xl max-xl:border max-xl:border-border/80 max-xl:bg-card">
           <EmptyState
             icon={ledger.length ? SearchX : Inbox}
             title="Keine Umsätze gefunden"
@@ -756,12 +764,14 @@ const TransactionLedger = memo(function TransactionLedger({
                 : "Kontoauszüge oben ablegen."
             }
           />
+          </div>
         )}
         <LedgerFooter
           table={table}
           count={data.length}
           total={sum(data.filter((row) => !row.ignored).map(personalAmount))}
         />
+        </div>
       </section>
       {editor && (
         <TransactionForm
