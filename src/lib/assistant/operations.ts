@@ -6,6 +6,7 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { corePocket, pocketKey, preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { assignTransactions } from "@/lib/transaction-tools";
 import { contractPatch, detectContracts, intervalLabel, noticeLabel, upsertContractOverride, type Contract } from "@/lib/contracts";
+import { contractBookingsChange } from "@/lib/contract-booking";
 import { removeFixedPlanRow } from "@/lib/fixed-plan";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
 import { successBonusPercent } from "@/lib/payroll-analysis";
@@ -523,19 +524,11 @@ function applyOne(state: AppState, operation: AssistantOperation, undo: Assistan
       const contract = findContract(state, operation.contractId, context.asOf);
       const stored = (state.contracts ?? []).find((entry) => entry.id === contract.id);
       const rows = new Map(state.transactions.map((row) => [row.id, row]));
-      const charged = new Set(contract.charges.map((charge) => charge.id));
-      const add = [...new Set(operation.add ?? [])].filter((id) => rows.has(id) && !charged.has(id));
-      const remove = [...new Set(operation.remove ?? [])].filter((id) => charged.has(id) || stored?.bookingIds?.includes(id));
+      const { added: add, removed: remove, patch } = contractBookingsChange(contract, stored, (operation.add ?? []).filter((id) => rows.has(id)), operation.remove ?? []);
       if (!add.length && !remove.length) throw new OperationError((operation.add?.length ? `Diese Buchung gehört schon zu „${contract.name}“.` : `Diese Buchung gehört nicht zu „${contract.name}“.`));
       const describe = (id: string) => { const row = rows.get(id); return row ? `${dateLabel(row.date)} · ${currency(row.amount)}` : id; };
       for (const id of add) diffs.push({ label: `${contract.name}: Buchung ${describe(id)}`.slice(0, 200), before: "nicht zugeordnet", after: "zugeordnet" });
       for (const id of remove) diffs.push({ label: `${contract.name}: Buchung ${describe(id)}`.slice(0, 200), before: "zugeordnet", after: "nicht mehr zugeordnet" });
-      const removed = new Set(remove);
-      const picked = [...new Set([...(stored?.bookingIds ?? []).filter((id) => !removed.has(id)), ...add])].slice(-500);
-      const added = new Set(add);
-      const excluded = [...new Set([...(stored?.excludedBookingIds ?? []).filter((id) => !added.has(id)), ...remove])].slice(-500);
-      const patch: Partial<Omit<ContractOverride, "id" | "updatedAt">> = { bookingIds: picked.length ? picked : undefined, excludedBookingIds: excluded.length ? excluded : undefined };
-      if (contract.status === "review") patch.status = "confirmed";
       return saveContract(state, contract.id, patch, undo, context.now);
     }
     case "payslip_confirm": {

@@ -139,20 +139,21 @@ test("sharing uses the same bounded work surface with persistent actions and dis
   await close.click();
 });
 
-test("action menu separates deletion and filter popover does not move the table", async ({ page }) => {
+test("booking sheet separates deletion and the filter dialog does not move the table", async ({ page }) => {
   await seed(page);
   const trigger = page.getByRole("button", { name: "Weitere Aktionen: Beispielkauf", exact: true });
   await trigger.click();
-  await expect(page.getByRole("menu")).toBeVisible();
-  await expect(page.getByRole("separator")).toBeVisible();
-  await page.getByRole("menuitem", { name: "Löschen: Beispielkauf", exact: true }).click();
+  const sheet = page.getByRole("dialog", { name: "Beispielkauf", exact: true });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole("list", { name: "Buchung", exact: true })).toBeVisible();
+  await sheet.getByRole("button", { name: "Löschen: Beispielkauf", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Umsatz löschen?", exact: true });
   await expect(dialog).toHaveAttribute("data-variant", "confirmation");
-  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(sheet).toHaveCount(0);
   await dialog.getByRole("button", { name: "Abbrechen", exact: true }).click();
   await expect(trigger).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("menu")).toBeVisible();
+  await expect(sheet).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
   const before = (await page.getByRole("table").boundingBox())!.y;

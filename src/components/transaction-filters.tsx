@@ -12,10 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip } from "@/components/ui/tooltip";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Field,
+  PremiumDialog,
+  PremiumDialogBody,
+  PremiumDialogClose,
+  PremiumDialogContent,
+  PremiumDialogFooter,
+  PremiumDialogHeader,
+  PremiumDialogTrigger,
+} from "@/components/ui/premium-dialog";
 import { CategorySelect } from "@/components/category-select";
 import { SharedCosts } from "@/components/shared-costs";
 import { HolidayRanges } from "@/components/holiday-ranges";
@@ -69,6 +74,7 @@ export function TransactionFilters({
   reviewCount,
   disabled,
   exportDisabled,
+  resultCount,
   onReview,
   onExport,
 }: {
@@ -80,6 +86,8 @@ export function TransactionFilters({
   reviewCount: number;
   disabled: boolean;
   exportDisabled: boolean;
+  /** Bookings matching all filters, shown on the filter dialog's button. */
+  resultCount?: number;
   onReview: () => void;
   onExport: () => void;
 }) {
@@ -183,8 +191,8 @@ export function TransactionFilters({
           </Tooltip>
           <SharedCosts bookings={ledger} items={receivables} iconOnly />
           <HolidayRanges iconOnly />
-          <Popover>
-            <PopoverTrigger asChild>
+          <PremiumDialog>
+            <PremiumDialogTrigger asChild>
               <Button
                 variant="outline"
                 size="icon"
@@ -200,62 +208,89 @@ export function TransactionFilters({
                   />
                 )}
               </Button>
-            </PopoverTrigger>
-            <PopoverContent aria-label="Weitere Filter" className="space-y-4">
-              <p className="text-sm font-semibold">Umsätze eingrenzen</p>
-              <label className="block space-y-2 text-sm">
-                <span>Planrelevanz</span>
-                <select
-                  aria-label="Planrelevanz filtern"
-                  className="select-input w-full"
-                  value={filters.plan}
-                  onChange={(event) =>
-                    change(
-                      "plan",
-                      event.target.value === "yes"
-                        ? "yes"
-                        : event.target.value === "no"
-                          ? "no"
-                          : "",
-                    )
+            </PremiumDialogTrigger>
+            <PremiumDialogContent size="sm">
+              <PremiumDialogHeader
+                icon={SlidersHorizontal}
+                title="Weitere Filter"
+                description="Umsätze nach Plan, Zeitraum und Transfers eingrenzen. Änderungen gelten sofort."
+              />
+              <PremiumDialogBody className="space-y-5">
+                <Field label="Planrelevanz">
+                  <select
+                    aria-label="Planrelevanz filtern"
+                    className="select-input w-full"
+                    value={filters.plan}
+                    onChange={(event) =>
+                      change(
+                        "plan",
+                        event.target.value === "yes"
+                          ? "yes"
+                          : event.target.value === "no"
+                            ? "no"
+                            : "",
+                      )
+                    }
+                  >
+                    <option value="">Plan: alle</option>
+                    <option value="yes">Im Plan</option>
+                    <option value="no">Nicht im Plan</option>
+                  </select>
+                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Von">
+                    <Input
+                      type="date"
+                      aria-label="Datum von"
+                      value={filters.from}
+                      onChange={(event) => change("from", event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Bis" error={filters.from && filters.to && filters.to < filters.from ? "Liegt vor dem Startdatum." : null}>
+                    <Input
+                      type="date"
+                      aria-label="Datum bis"
+                      value={filters.to}
+                      onChange={(event) => change("to", event.target.value)}
+                    />
+                  </Field>
+                </div>
+                <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-2xl border border-border/70 px-4 py-3 text-sm transition-colors hover:bg-muted/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">Transfers anzeigen</span>
+                    <span className="block text-xs text-muted-foreground">Umbuchungen zwischen eigenen Konten einblenden</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    aria-label="Transfers anzeigen"
+                    className="size-5 shrink-0 accent-primary"
+                    checked={filters.showTransfers}
+                    onChange={(event) =>
+                      change("showTransfers", event.target.checked)
+                    }
+                  />
+                </label>
+              </PremiumDialogBody>
+              <PremiumDialogFooter>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="sm:mr-auto"
+                  disabled={!advanced}
+                  onClick={() =>
+                    setFilters((previous) => ({ ...previous, plan: "", from: "", to: "", showTransfers: false }))
                   }
                 >
-                  <option value="">Plan: alle</option>
-                  <option value="yes">Im Plan</option>
-                  <option value="no">Nicht im Plan</option>
-                </select>
-              </label>
-              <label className="block space-y-2 text-sm">
-                Von
-                <Input
-                  type="date"
-                  aria-label="Datum von"
-                  value={filters.from}
-                  onChange={(event) => change("from", event.target.value)}
-                />
-              </label>
-              <label className="block space-y-2 text-sm">
-                Bis
-                <Input
-                  type="date"
-                  aria-label="Datum bis"
-                  value={filters.to}
-                  onChange={(event) => change("to", event.target.value)}
-                />
-              </label>
-              <label className="flex min-h-11 items-center gap-3 border-t pt-3 text-sm">
-                <input
-                  type="checkbox"
-                  className="size-4 accent-primary"
-                  checked={filters.showTransfers}
-                  onChange={(event) =>
-                    change("showTransfers", event.target.checked)
-                  }
-                />
-                Transfers anzeigen
-              </label>
-            </PopoverContent>
-          </Popover>
+                  Filter zurücksetzen
+                </Button>
+                <PremiumDialogClose asChild>
+                  <Button type="button">
+                    {resultCount === undefined ? "Fertig" : `${resultCount.toLocaleString("de-AT")} Treffer anzeigen`}
+                  </Button>
+                </PremiumDialogClose>
+              </PremiumDialogFooter>
+            </PremiumDialogContent>
+          </PremiumDialog>
           <Tooltip label="Alle gefilterten Treffer als CSV exportieren">
             <Button
               variant="ghost"

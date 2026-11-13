@@ -15,11 +15,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { MerchantMark } from "@/components/merchant-mark";
 import {
-  Popover,
-  PopoverClose,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  PremiumDialog,
+  PremiumDialogBody,
+  PremiumDialogClose,
+  PremiumDialogContent,
+  PremiumDialogHeader,
+  PremiumDialogItem,
+  PremiumDialogTrigger,
+} from "@/components/ui/premium-dialog";
 import { currency, dateLabel } from "@/lib/format";
 import { bookingDescription } from "@/lib/import/merchant-description";
 import { cleanMerchantName } from "@/lib/merchant-display";
@@ -218,8 +221,8 @@ export function TransactionCategoryCell({
           </span>
         )}
       </div>
-      <Popover>
-        <PopoverTrigger asChild>
+      <PremiumDialog>
+        <PremiumDialogTrigger asChild>
           <button
             type="button"
             aria-label={`Zuordnungsdetails: ${booking.description}`}
@@ -240,26 +243,36 @@ export function TransactionCategoryCell({
               </>
             )}
           </button>
-        </PopoverTrigger>
-        <PopoverContent className="space-y-2 text-xs">
-          <p className="text-sm font-semibold">
-            {reason ? "Noch zu prüfen" : "Aktuelle Einordnung"}
-          </p>
-          <p className="leading-relaxed text-muted-foreground">
-            {reason ??
-              (reviewed
-                ? "Diese Buchung wurde manuell geprüft."
-                : "Für diese Buchung ist keine Prüfung offen.")}
-          </p>
-          <p>{explanation}</p>
-          {evidence && <p className="leading-relaxed text-muted-foreground">
-            Automatisch erkannt: {evidence.method === "mcc" ? "Händlerkategorie der Bank"
-              : evidence.method === "purpose" ? "eindeutiger Buchungszweck" : "öffentliche Händlerdaten"}
-            {evidence.mcc ? ` · MCC ${evidence.mcc}` : ""}.
-          </p>}
-          {why && <CategoryWhy why={why} onChangeCategory={onChangeCategory} />}
-        </PopoverContent>
-      </Popover>
+        </PremiumDialogTrigger>
+        <PremiumDialogContent size="sm">
+          <PremiumDialogHeader
+            icon={reason ? CircleHelp : Check}
+            title={reason ? "Noch zu prüfen" : "Aktuelle Einordnung"}
+            description={bookingDescription(booking)}
+          />
+          <PremiumDialogBody className="space-y-4 text-sm">
+            <PremiumDialogItem className="space-y-3 rounded-2xl bg-surface-sunken/70 p-4">
+              <span className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-card px-2.5 py-1 text-xs font-medium shadow-xs">
+                <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", categoryTone(category))} />
+                <span className="min-w-0 truncate">{category}</span>
+              </span>
+              <p className="leading-relaxed text-muted-foreground">
+                {reason ??
+                  (reviewed
+                    ? "Diese Buchung wurde manuell geprüft."
+                    : "Für diese Buchung ist keine Prüfung offen.")}
+              </p>
+              <p>{explanation}</p>
+              {evidence && <p className="leading-relaxed text-muted-foreground">
+                Automatisch erkannt: {evidence.method === "mcc" ? "Händlerkategorie der Bank"
+                  : evidence.method === "purpose" ? "eindeutiger Buchungszweck" : "öffentliche Händlerdaten"}
+                {evidence.mcc ? ` · MCC ${evidence.mcc}` : ""}.
+              </p>}
+            </PremiumDialogItem>
+            {why && <CategoryWhy why={why} onChangeCategory={onChangeCategory} />}
+          </PremiumDialogBody>
+        </PremiumDialogContent>
+      </PremiumDialog>
     </div>
   );
 }
@@ -267,9 +280,10 @@ export function TransactionCategoryCell({
 function CategoryWhy({ why, onChangeCategory }: { why: () => CategoryExplanation; onChangeCategory?: () => void }) {
   const explanation = why();
   return (
-    <section aria-label="Warum diese Kategorie?" className="space-y-1.5 border-t border-border/60 pt-2">
-      <p className="text-sm font-semibold">Warum diese Kategorie?</p>
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+    <PremiumDialogItem>
+    <section aria-label="Warum diese Kategorie?" className="space-y-2">
+      <h3 className="text-sm font-semibold">Warum diese Kategorie?</h3>
+      <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
         <dt className="text-muted-foreground">Kategorie</dt>
         <dd>{explanation.category}</dd>
         <dt className="text-muted-foreground">Quelle</dt>
@@ -279,13 +293,14 @@ function CategoryWhy({ why, onChangeCategory }: { why: () => CategoryExplanation
       </dl>
       <p className="leading-relaxed text-muted-foreground">{explanation.detail}</p>
       {onChangeCategory && (
-        <PopoverClose asChild>
-          <Button type="button" size="sm" variant="link" className="h-auto min-h-7 px-0 text-xs" onClick={onChangeCategory}>
+        <PremiumDialogClose asChild>
+          <Button type="button" size="sm" variant="soft" className="mt-1" onClick={onChangeCategory}>
             Falsch? Kategorie ändern
           </Button>
-        </PopoverClose>
+        </PremiumDialogClose>
       )}
     </section>
+    </PremiumDialogItem>
   );
 }
 

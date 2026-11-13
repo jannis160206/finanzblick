@@ -3,19 +3,17 @@
 import { merchantAliasAssignment } from "@/lib/merchant-identity";
 
 import { memo, useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
-import { FileUp, LoaderCircle, Pencil } from "lucide-react";
+import { ClipboardCheck, FileUp, LoaderCircle, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  PremiumDialog,
+  PremiumDialogBody,
+  PremiumDialogContent,
+  PremiumDialogFooter,
+  PremiumDialogHeader,
+} from "@/components/ui/premium-dialog";
 import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
@@ -769,7 +767,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           {fileButton}
         </div>
       </section>
-      <Dialog
+      <PremiumDialog
         open={ui.open && ui.review.length > 0}
         onOpenChange={(open) => {
           if (!ui.pending) {
@@ -777,22 +775,21 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
           }
         }}
       >
-        <DialogContent
+        <PremiumDialogContent
+          size="lg"
           variant="work"
-          className="max-h-[min(80dvh,720px)] max-w-[720px]"
+          snapPoints={[0.92]}
+          className="max-h-[min(80dvh,720px)]"
+          sheetClassName=""
           showCloseButton={!ui.pending}
         >
-          <DialogHeader>
-            <DialogTitle>Kontoauszüge prüfen</DialogTitle>
-            <DialogDescription>
-              {ui.review.length} offene Zuordnungen
-            </DialogDescription>
+          <PremiumDialogHeader icon={ClipboardCheck} title="Kontoauszüge prüfen" description={`${ui.review.length} offene Zuordnungen`}>
           {ui.pending && <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-            <LoaderCircle className="size-4 animate-spin" />Zuordnung wird übernommen …
+            <LoaderCircle className="size-4 animate-spin motion-reduce:animate-none" />Zuordnung wird übernommen …
           </p>}
           <PaypalActivityImport review={ui.review} disabled={!!ui.pending} />
-          </DialogHeader>
-          <DialogBody>
+          </PremiumDialogHeader>
+          <PremiumDialogBody>
           <fieldset disabled={!!ui.pending} className="min-w-0 space-y-4">
             {(() => {
               const reuploadOnly = (item: ReviewItem) => (state.importResults ?? []).some((result) =>
@@ -838,13 +835,13 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
               </>;
             })()}
           </fieldset>
-          </DialogBody>
-          <DialogFooter>
-            <p className="mr-auto text-xs text-muted-foreground">Offene Buchungen bleiben in der Prüfliste.</p>
+          </PremiumDialogBody>
+          <PremiumDialogFooter>
+            <p className="text-xs text-muted-foreground sm:mr-auto">Offene Buchungen bleiben in der Prüfliste.</p>
             <Button variant="outline" disabled={!!ui.pending} onClick={skip}>Prüfung schließen</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </PremiumDialogFooter>
+        </PremiumDialogContent>
+      </PremiumDialog>
     </>
   );
 }

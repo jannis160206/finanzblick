@@ -84,8 +84,9 @@ test("September footer includes August payroll, half travel spend and no repayme
   await page.getByLabel("Monat filtern").selectOption("2026-08");
   await expect(page.getByText("0 Treffer", { exact: true })).toBeVisible();
   await page.getByLabel("Monat filtern").selectOption("2026-09");
-  await page.getByText("Weitere Filter", { exact: true }).click();
+  await page.getByRole("button", { name: "Weitere Filter", exact: true }).click();
   await page.getByLabel("Transfers anzeigen").check();
+  await page.keyboard.press("Escape");
   await expect(page.getByText("5 Treffer", { exact: true })).toBeVisible();
   await expect(page.locator("strong").filter({ hasText: "2.692,00" })).toBeVisible();
 });

@@ -26,6 +26,7 @@ import {
 import { currency, dateLabel } from "@/lib/format";
 import { contractIntervals, contractOverrideSchema, type AppState, type ContractInterval, type ContractMatch, type ContractNotice, type Transaction } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import type { ContractSeed } from "@/lib/contract-booking";
 import type { ContractPatch } from "./contract-dialogs";
 
 type Form = {
@@ -65,6 +66,8 @@ export type ContractWizardProps = {
   open: boolean;
   /** null creates a manual contract. */
   contract: Contract | null;
+  /** Prefills a new contract, e.g. from a booking. */
+  seed?: ContractSeed;
   contracts: Contract[];
   state: AppState;
   today: string;
@@ -72,6 +75,8 @@ export type ContractWizardProps = {
   storageError: string | null;
   onClose: () => void;
   onSave: (patch: ContractPatch) => void;
+  /** Where focus goes after closing when the dialog was not opened by a trigger. */
+  returnFocus?: () => void;
 };
 
 const unitLabel: Record<ContractNotice["unit"], string> = { days: "Tage", weeks: "Wochen", months: "Monate" };
@@ -84,20 +89,21 @@ const fold = (text: string) => text.toLocaleLowerCase("de-AT").normalize("NFKD")
 const PAGE = 40;
 const MAX_SELECTED = 500;
 
-function initialForm(contract: Contract | null, match: ContractMatch | undefined, today: string): Form {
+function initialForm(contract: Contract | null, match: ContractMatch | undefined, today: string, seed?: ContractSeed): Form {
+  if (!contract && seed) match = seed.rule;
   return {
-    name: contract?.name ?? "",
-    amount: contract ? moneyText(contract.amount) : "",
-    category: selectableCategory(contract?.category ?? "Abonnements"),
+    name: contract?.name ?? seed?.name ?? "",
+    amount: contract ? moneyText(contract.amount) : seed ? moneyText(seed.amount) : "",
+    category: selectableCategory(contract?.category ?? seed?.category ?? "Abonnements"),
     noticeValue: contract?.notice ? String(contract.notice.value) : "",
     noticeUnit: contract?.notice?.unit ?? "months",
     termEnd: contract?.termEnd ?? "",
     autoRenew: contract?.autoRenew ?? true,
     renewalMonths: contract?.termEnd ? String(contract.renewalMonths) : "12",
     note: contract?.note ?? "",
-    interval: contract?.interval ?? "monthly",
-    nextDate: contract?.nextDate ?? today,
-    selected: contract?.charges.map((charge) => charge.id) ?? [],
+    interval: contract?.interval ?? seed?.interval ?? "monthly",
+    nextDate: contract?.nextDate ?? seed?.nextDate ?? today,
+    selected: contract?.charges.map((charge) => charge.id) ?? seed?.selected ?? [],
     rule: !!match,
     ruleText: match?.text ?? "",
     ruleMin: moneyText(match?.amountMin),
@@ -159,9 +165,9 @@ export default function ContractWizard(props: ContractWizardProps) {
   );
 }
 
-function WizardSurface({ contract, contracts, state, today, disabled, storageError, onSave }: ContractWizardProps) {
+function WizardSurface({ contract, seed, contracts, state, today, disabled, storageError, onSave, returnFocus }: ContractWizardProps) {
   const override = state.contracts?.find((entry) => entry.id === contract?.id);
-  const [initial] = useState(() => initialForm(contract, override?.match, today));
+  const [initial] = useState(() => initialForm(contract, override?.match, today, seed));
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState<Errors>({});
   // New contracts take their rule from the picked bookings until the user edits it.
@@ -170,7 +176,7 @@ function WizardSurface({ contract, contracts, state, today, disabled, storageErr
   const candidates = useMemo<Candidate[]>(() => {
     const rows = contractCandidates(state, today);
     const listed = new Set(rows.map((row) => row.id));
-    const own = new Set(contract?.charges.map((charge) => charge.id) ?? []);
+    const own = new Set([...contract?.charges.map((charge) => charge.id) ?? [], ...initial.selected]);
     const older = state.transactions.filter((row) => own.has(row.id) && !listed.has(row.id));
     return [...rows, ...older].map((row) => {
       const classification = classify(row);
@@ -178,7 +184,7 @@ function WizardSurface({ contract, contracts, state, today, disabled, storageErr
       const account = contractAccount(row);
       return { row, classification, label, merchant: classification.merchant ?? "", account, amount: Math.abs(row.amount), search: fold(`${label} ${row.description} ${account}`) };
     });
-  }, [state, today, contract]);
+  }, [state, today, contract, initial.selected]);
   const byId = useMemo(() => new Map(candidates.map((candidate) => [candidate.row.id, candidate])), [candidates]);
   const owners = useMemo(() => {
     const map = new Map<string, string>();
@@ -309,12 +315,14 @@ function WizardSurface({ contract, contracts, state, today, disabled, storageErr
   const suggestedNext = latest ? nextAfter(stepDate(latest.row.date, rhythm, 1), rhythm, today) : null;
 
   return (
-    <PremiumDialogContent size="xl" dirty={dirty} preview={<ContractPreview data={preview} />}>
+    <PremiumDialogContent size="xl" dirty={dirty} preview={<ContractPreview data={preview} />}
+      onCloseAutoFocus={returnFocus ? (event) => { event.preventDefault(); returnFocus(); } : undefined}>
       <PremiumDialogHeader
-        title={contract ? `${contract.name} bearbeiten` : "Vertrag hinzufügen"}
+        title={contract ? `${contract.name} bearbeiten` : seed ? "Als Vertrag anlegen" : "Vertrag hinzufügen"}
         description={contract
           ? "Korrekturen bleiben erhalten, auch wenn neue Buchungen dazukommen."
-          : "Für Abos, Versicherungen und alles, was regelmäßig abgebucht wird."} />
+          : seed ? "Aus deiner Buchung vorausgefüllt – Rhythmus, Kündigungsfrist und Erkennung kannst du anpassen."
+            : "Für Abos, Versicherungen und alles, was regelmäßig abgebucht wird."} />
       <DialogSteps mode="always" editing={contract !== null} disabled={disabled} onComplete={complete}
         submitLabel={contract ? "Speichern" : "Vertrag anlegen"}
         message={storageError && <p role="alert" className="text-sm text-destructive">{storageError}</p>}>

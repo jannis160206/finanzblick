@@ -1202,13 +1202,16 @@ it.each([false, true])(
   "shares one current mark batch on table/mobile surfaces and excludes transfers (mobile: %s)",
   async (mobile) => {
     let compact = mobile;
-    let layoutChanged: (() => void) | undefined;
+    const listeners = new Set<() => void>();
+    const layoutChanged = () => { for (const listener of [...listeners]) listener(); };
     vi.stubGlobal("matchMedia", () => ({
       matches: compact,
       addEventListener: vi.fn((_event: string, listener: () => void) => {
-        layoutChanged = listener;
+        listeners.add(listener);
       }),
-      removeEventListener: vi.fn(),
+      removeEventListener: vi.fn((_event: string, listener: () => void) => {
+        listeners.delete(listener);
+      }),
     }));
     const fetch = vi.fn().mockImplementation(async () =>
       Response.json({
@@ -1390,7 +1393,7 @@ it.each([false, true])(
     expect(update).not.toHaveBeenCalled();
     act(() => {
       compact = !mobile;
-      layoutChanged?.();
+      layoutChanged();
     });
     const switchedLedger = mobile
       ? screen.getByRole("table", { name: "Buchungen" })

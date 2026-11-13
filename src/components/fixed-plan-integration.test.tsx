@@ -140,8 +140,8 @@ it("removes a generated fixed row when its booking is deleted and restores it th
   expect(fixedRows(view.read().state)).toHaveLength(1);
   const originalFixed = fixedRows(view.read().state)[0];
   const actions = screen.getByRole("button", { name: `Weitere Aktionen: ${booking.description}` });
-  fireEvent.keyDown(actions, { key: "Enter" });
-  fireEvent.click(await screen.findByRole("menuitem", { name: `Löschen: ${booking.description}` }));
+  fireEvent.click(actions);
+  fireEvent.click(await screen.findByRole("button", { name: `Löschen: ${booking.description}` }));
   const dialog = within(screen.getByRole("dialog", { name: "Umsatz löschen?" }));
   expect(view.read().state.transactions).toHaveLength(1);
   fireEvent.click(dialog.getByRole("button", { name: "Endgültig löschen" }));

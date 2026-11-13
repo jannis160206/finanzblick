@@ -5,8 +5,7 @@ import { Tag, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field } from "@/components/ui/premium-dialog";
+import { Field, PremiumDialog, PremiumDialogBody, PremiumDialogContent, PremiumDialogFooter, PremiumDialogHeader, PremiumDialogItem } from "@/components/ui/premium-dialog";
 import { useFinance } from "@/components/finance-provider";
 import { FinancialData } from "@/components/financial-data";
 import { allTags, setTag, tagSummaries } from "@/lib/tags";
@@ -28,35 +27,38 @@ export function TagDialog({ ids, onClose }: { ids: string[]; onClose: () => void
     if (!remove) onClose();
   }
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Tag vergeben</DialogTitle>
-          <DialogDescription>Fasst Buchungen über Kategorien hinweg zusammen, z. B. eine Reise „Malaga 2026“.</DialogDescription>
-        </DialogHeader>
+    <PremiumDialog open onOpenChange={(open) => !open && onClose()}>
+      <PremiumDialogContent size="sm">
+        <PremiumDialogHeader icon={Tag} title="Tag vergeben"
+          description={`${ids.length === 1 ? "1 Buchung" : `${ids.length} Buchungen`} über Kategorien hinweg zusammenfassen, z. B. eine Reise „Malaga 2026“.`} />
         <form id="tag-form" onSubmit={(event) => { event.preventDefault(); apply(value); }} className="flex min-h-0 flex-1 flex-col">
-          <DialogBody className="space-y-4">
-          <Field label="Tag">
+          <PremiumDialogBody className="space-y-5">
+          <Field label="Tag" hint="Neuen Namen eingeben oder einen vorhandenen Tag antippen.">
             <Input autoFocus list="known-tags" maxLength={40} value={value} onChange={(event) => setValue(event.target.value)} placeholder="z. B. Malaga 2026" />
           </Field>
           <datalist id="known-tags">{known.map((tag) => <option key={tag} value={tag} />)}</datalist>
-          {known.length > 0 && <div className="flex flex-wrap gap-1.5" aria-label="Vorhandene Tags">
-            {known.map((tag) => <button key={tag} type="button" onClick={() => apply(tag)}
-              className="min-h-8 rounded-full border border-border/70 px-3 text-xs hover:border-primary/40 hover:text-primary focus-visible:outline-2 focus-visible:outline-ring">#{tag}</button>)}
-          </div>}
-          {selectedTags.length > 0 && <div className="flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-3">
-            <span className="text-xs text-muted-foreground">Entfernen:</span>
-            {selectedTags.map((tag) => <button key={tag} type="button" onClick={() => apply(tag, true)} aria-label={`Tag ${tag} entfernen`}
-              className="inline-flex min-h-8 items-center gap-1 rounded-full bg-primary/10 px-3 text-xs text-primary hover:bg-destructive/10 hover:text-destructive focus-visible:outline-2 focus-visible:outline-ring">#{tag}<X aria-hidden="true" className="size-3" /></button>)}
-          </div>}
-          </DialogBody>
+          {known.length > 0 && <PremiumDialogItem className="space-y-2">
+            <h3 className="eyebrow">Vorhandene Tags</h3>
+            <div className="flex flex-wrap gap-1.5" aria-label="Vorhandene Tags">
+              {known.map((tag) => <button key={tag} type="button" onClick={() => apply(tag)}
+                className="min-h-9 rounded-full border border-border/70 bg-card px-3.5 text-xs font-medium transition-[border-color,color,scale] duration-150 ease-soft hover:border-primary/40 hover:text-primary active:scale-95 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none">#{tag}</button>)}
+            </div>
+          </PremiumDialogItem>}
+          {selectedTags.length > 0 && <PremiumDialogItem className="space-y-2 border-t border-border/60 pt-4">
+            <h3 className="eyebrow">Entfernen</h3>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {selectedTags.map((tag) => <button key={tag} type="button" onClick={() => apply(tag, true)} aria-label={`Tag ${tag} entfernen`}
+                className="inline-flex min-h-9 items-center gap-1 rounded-full bg-primary/10 px-3.5 text-xs font-medium text-primary transition-[background-color,color,scale] duration-150 ease-soft hover:bg-destructive/10 hover:text-destructive active:scale-95 focus-visible:outline-2 focus-visible:outline-ring motion-reduce:transition-none">#{tag}<X aria-hidden="true" className="size-3" /></button>)}
+            </div>
+          </PremiumDialogItem>}
+          </PremiumDialogBody>
         </form>
-        <DialogFooter>
+        <PremiumDialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>Abbrechen</Button>
           <Button type="submit" form="tag-form" disabled={!value.trim()}>Tag vergeben</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </PremiumDialogFooter>
+      </PremiumDialogContent>
+    </PremiumDialog>
   );
 }
 

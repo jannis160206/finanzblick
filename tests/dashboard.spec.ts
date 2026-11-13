@@ -192,7 +192,7 @@ test("transaction import, edit, persistence and delete", async ({ page }) => {
   ).toBeVisible();
   await page.getByLabel("Weitere Aktionen: Browserprüfung Einkauf").click();
   await page
-    .getByRole("menuitem", { name: "Löschen: Browserprüfung Einkauf" })
+    .getByRole("button", { name: "Löschen: Browserprüfung Einkauf" })
     .click();
   await page.getByRole("button", { name: "Endgültig löschen" }).click();
   await expect(
@@ -294,8 +294,9 @@ test("transactions default to this month with transfers hidden but retained", as
     await expect(
       page.getByRole("cell", { name: description, exact: true }),
     ).toHaveCount(0);
-  await page.getByText("Weitere Filter", { exact: true }).click();
+  await page.getByRole("button", { name: "Weitere Filter", exact: true }).click();
   await page.getByLabel("Transfers anzeigen").check();
+  await page.keyboard.press("Escape");
   await expect(
     page.getByRole("cell", { name: "Um EUR Sparen einzustecken", exact: true }),
   ).toBeVisible();

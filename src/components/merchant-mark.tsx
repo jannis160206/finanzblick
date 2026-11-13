@@ -86,15 +86,19 @@ export function MerchantMark({
   booking,
   classification,
   className,
+  fallbackName,
 }: {
   booking: Transaction;
   classification: MarkClassification;
   className?: string;
+  /** Readable name for the initials when the booking has no alias (e.g. in dialogs). */
+  fallbackName?: string;
 }) {
   const marks = useMerchantMarks();
   const alias = booking.merchantAlias?.trim();
+  const label = alias || fallbackName?.trim();
 
-  const fallback = alias ? initials(alias) : "?";
+  const fallback = label ? initials(label) : "?";
   const markClassName = cn(
     "inline-flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-xs font-semibold text-muted-foreground",
     className,

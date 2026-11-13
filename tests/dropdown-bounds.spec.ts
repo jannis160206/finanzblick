@@ -223,8 +223,8 @@ for (const viewport of viewports) {
     await seed(page);
     for (const [name, surface] of [
       ["Kategorien durchsuchen", '[data-slot="popover-content"]'],
-      ["Weitere Filter", '[data-slot="popover-content"]'],
-      ["Weitere Aktionen: Dropdown Beispiel", '[data-slot="dropdown-menu"]'],
+      ["Weitere Filter", '[data-slot="dialog-content"]'],
+      ["Weitere Aktionen: Dropdown Beispiel", '[data-slot="dialog-content"]'],
     ]) {
       const trigger = page.getByRole("button", { name, exact: true });
       for (const edge of ["top", "bottom"]) {

@@ -192,14 +192,15 @@ function DiscardBar({ mode, onKeep, onDiscard }: { mode: MotionMode; onKeep: () 
   );
 }
 
-export function PremiumDialogHeader({ title, description, icon: Icon, className, children }: {
-  title: ReactNode; description?: ReactNode; icon?: LucideIcon; className?: string; children?: ReactNode;
+export function PremiumDialogHeader({ title, description, icon: Icon, tone = "primary", className, children }: {
+  title: ReactNode; description?: ReactNode; icon?: LucideIcon; tone?: "primary" | "destructive"; className?: string; children?: ReactNode;
 }) {
   const { mode, presentation } = usePremiumDialog();
   return (
     <MotionBox mode={mode} variants={itemVariants(mode)} data-sheet-drag data-slot="dialog-header"
       className={cn("shrink-0 space-y-1.5 px-6 pr-16 pb-4 text-left sm:px-8 sm:pr-20", presentation === "sheet" ? "touch-none pt-1 select-none" : "pt-6 sm:pt-7", className)}>
-      {Icon && <span aria-hidden="true" className="mb-3 flex size-10 items-center justify-center rounded-xl bg-accent-muted text-primary"><Icon className="size-5" /></span>}
+      {Icon && <span aria-hidden="true" className={cn("mb-3 flex size-10 items-center justify-center rounded-xl",
+        tone === "destructive" ? "bg-destructive/10 text-destructive" : "bg-accent-muted text-primary")}><Icon className="size-5" /></span>}
       <DialogTitle>{title}</DialogTitle>
       {description && <DialogDescription>{description}</DialogDescription>}
       {children}

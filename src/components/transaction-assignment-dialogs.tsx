@@ -4,21 +4,21 @@ import { BankLogo } from "@/components/bank-logo";
 import { useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Pencil } from "lucide-react";
+import { ListChecks, Pencil, Tags } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogForm,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Field,
+  PremiumDialog,
+  PremiumDialogBody,
+  PremiumDialogContent,
+  PremiumDialogFooter,
+  PremiumDialogForm,
+  PremiumDialogHeader,
+  PremiumDialogItem,
+} from "@/components/ui/premium-dialog";
+import { MerchantMark } from "@/components/merchant-mark";
 import { CategorySelect } from "@/components/category-select";
 import { FixedCostChoice } from "@/components/fixed-cost-choice";
 import { useFinance } from "@/components/finance-provider";
@@ -153,108 +153,101 @@ export function TransactionForm({
     );
     onClose();
   }
-  const error = (name: keyof Transaction) =>
-    form.formState.errors[name]?.message && (
-      <p className="mt-1 text-xs text-destructive" role="alert">
-        {form.formState.errors[name]?.message}
-      </p>
-    );
+  const error = (name: keyof Transaction) => form.formState.errors[name]?.message;
   return (
-    <Dialog
+    <PremiumDialog
       open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
     >
-      <DialogContent
+      <PremiumDialogContent
+        size="md"
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocus();
         }}
       >
-        <DialogHeader>
-          <DialogTitle>Zuordnung ändern</DialogTitle>
-          <DialogDescription>
-            Name, Kategorie, Fixkosten und Notiz ändern. Namensänderungen
-            gelten für alle passenden bisherigen und künftigen Buchungen.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogForm onSubmit={form.handleSubmit(save)}>
-          <DialogBody className="space-y-6">
-            <section
-              aria-label="Originalbuchung"
-              className="rounded-xl bg-muted/50 p-4"
+        <PremiumDialogHeader
+          icon={Tags}
+          title="Zuordnung ändern"
+          description="Name, Kategorie, Fixkosten und Notiz ändern. Namensänderungen gelten für alle passenden bisherigen und künftigen Buchungen."
+        />
+        <PremiumDialogForm onSubmit={form.handleSubmit(save)}>
+          <PremiumDialogBody className="space-y-6">
+            <PremiumDialogItem>
+              <section
+                aria-label="Originalbuchung"
+                className="rounded-2xl bg-surface-sunken/70 p-4"
+              >
+                <div className="flex items-start gap-3">
+                  <MerchantMark booking={transaction} classification={preview} fallbackName={merchantName} className="size-11 rounded-xl" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-2xs font-medium text-muted-foreground">Originalbuchung</p>
+                    <div className="mt-0.5 flex items-start gap-2">
+                      {editingName ? (
+                        <Input
+                          autoFocus
+                          aria-label="Händlername"
+                          maxLength={200}
+                          value={merchantName}
+                          aria-invalid={nameMissing || !!form.formState.errors.merchantAlias}
+                          aria-describedby={nameMissing ? "tx-name-error" : undefined}
+                          onFocus={(event) => event.currentTarget.select()}
+                          onChange={(event) =>
+                            form.setValue("merchantAlias", event.target.value, {
+                              shouldDirty: true,
+                              shouldValidate: true,
+                            })
+                          }
+                        />
+                      ) : (
+                        <p className="min-w-0 break-words text-base font-medium">{merchantName}</p>
+                      )}
+                      {!editingName && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="shrink-0 text-muted-foreground"
+                          aria-label="Händlername bearbeiten"
+                          title="Händlername bearbeiten"
+                          onClick={() => setEditingName(true)}
+                        >
+                          <Pencil className="size-3.5" />
+                        </Button>
+                      )}
+                    </div>
+                    {nameMissing ? (
+                      <p id="tx-name-error" className="mt-1 text-xs font-medium text-destructive" role="alert">
+                        Bitte einen Händlernamen eingeben.
+                      </p>
+                    ) : (
+                      error("merchantAlias") && (
+                        <p className="mt-1 text-xs font-medium text-destructive" role="alert">{error("merchantAlias")}</p>
+                      )
+                    )}
+                  </div>
+                </div>
+                <p className="amount mt-4 text-3xl tracking-tight">{currency(transaction.amount)}</p>
+                <dl className="mt-3 space-y-1.5 text-sm">
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <dt className="text-muted-foreground">Datum</dt>
+                    <dd>{dateLabel(transaction.date)}</dd>
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2">
+                    <dt className="text-muted-foreground">Konto/Pocket</dt>
+                    <dd className="flex min-w-0 items-center gap-1.5"><BankLogo bank={transaction.bank} size="xs" />{accountLabel(transaction)}</dd>
+                  </div>
+                </dl>
+              </section>
+            </PremiumDialogItem>
+            <Field
+              label="Kategorie"
+              hint={<><span className="block">{preview.reason || "Im Alltagsbudget berücksichtigt"}</span><span className="block">„Prüfen“ lässt die Zuordnung offen.</span></>}
+              error={error("category")}
             >
-              <p className="text-xs font-medium text-muted-foreground">
-                Originalbuchung
-              </p>
-              <div className="mt-2 flex items-start gap-2">
-                {editingName ? (
-                  <Input
-                    autoFocus
-                    aria-label="Händlername"
-                    maxLength={200}
-                    value={merchantName}
-                    aria-invalid={
-                      nameMissing || !!form.formState.errors.merchantAlias
-                    }
-                    aria-describedby={nameMissing ? "tx-name-error" : undefined}
-                    onFocus={(event) => event.currentTarget.select()}
-                    onChange={(event) =>
-                      form.setValue("merchantAlias", event.target.value, {
-                        shouldDirty: true,
-                        shouldValidate: true,
-                      })
-                    }
-                  />
-                ) : (
-                  <p className="min-w-0 break-words text-base font-medium">
-                    {merchantName}
-                  </p>
-                )}
-                {!editingName && (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    className="shrink-0 text-muted-foreground"
-                    aria-label="Händlername bearbeiten"
-                    title="Händlername bearbeiten"
-                    onClick={() => setEditingName(true)}
-                  >
-                    <Pencil className="size-3.5" />
-                  </Button>
-                )}
-              </div>
-              {nameMissing ? (
-                <p
-                  id="tx-name-error"
-                  className="mt-1 text-xs text-destructive"
-                  role="alert"
-                >
-                  Bitte einen Händlernamen eingeben.
-                </p>
-              ) : (
-                error("merchantAlias")
-              )}
-              <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums">
-                {currency(transaction.amount)}
-              </p>
-              <dl className="mt-4 space-y-2 text-sm">
-                <div className="flex flex-wrap justify-between gap-2">
-                  <dt className="text-muted-foreground">Datum</dt>
-                  <dd>{dateLabel(transaction.date)}</dd>
-                </div>
-                <div className="flex flex-wrap justify-between gap-2">
-                  <dt className="text-muted-foreground">Konto/Pocket</dt>
-                  <dd className="flex min-w-0 items-center gap-1.5"><BankLogo bank={transaction.bank} size="xs" />{accountLabel(transaction)}</dd>
-                </div>
-              </dl>
-            </section>
-            <div className="space-y-2">
-              <Label htmlFor="tx-category">Kategorie</Label>
               <CategorySelect
-                id="tx-category"
                 label="Kategorie"
                 value={values.category ?? transaction.category}
                 onValueChange={(category) => {
@@ -267,53 +260,41 @@ export function TransactionForm({
                   });
                   form.setValue("manualCategory", true, { shouldDirty: true });
                 }}
-                aria-describedby="tx-category-help"
-                aria-invalid={!!form.formState.errors.category}
               />
-              <p
-                id="tx-category-help"
-                className="text-sm leading-relaxed text-muted-foreground"
-              >
-                {preview.reason || "Im Alltagsbudget berücksichtigt"}
-              </p>
-              {error("category")}
-            </div>
-            <FixedCostChoice
-              checked={values.fixedCost ?? preview.isFixedCost}
-              onChange={(checked) =>
-                form.setValue("fixedCost", checked, {
-                  shouldDirty: true,
-                  shouldValidate: true,
-                })
-              }
-              eligible={canMarkFixed}
-            />
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              „Prüfen“ lässt die Zuordnung offen.
-            </p>
-            <div className="space-y-2">
-              <Label htmlFor="tx-note">Notiz</Label>
+            </Field>
+            <PremiumDialogItem className="rounded-2xl border border-border/70 px-4 py-2">
+              <FixedCostChoice
+                checked={values.fixedCost ?? preview.isFixedCost}
+                onChange={(checked) =>
+                  form.setValue("fixedCost", checked, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
+                eligible={canMarkFixed}
+              />
+            </PremiumDialogItem>
+            <Field label="Notiz" hint="Nur für dich – erscheint in der Umsatzliste.">
               <Input
-                id="tx-note"
                 maxLength={300}
                 value={note}
                 placeholder="z. B. Fernseher fürs Wohnzimmer"
                 onChange={(event) => setNote(event.target.value)}
               />
-            </div>
+            </Field>
             {stale && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm font-medium text-destructive">
                 Die Buchung wurde inzwischen geändert oder gelöscht. Bitte
                 schließen und erneut öffnen.
               </p>
             )}
             {storageError && (
-              <p role="alert" className="text-sm text-destructive">
+              <p role="alert" className="text-sm font-medium text-destructive">
                 {storageError}
               </p>
             )}
-          </DialogBody>
-          <DialogFooter>
+          </PremiumDialogBody>
+          <PremiumDialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
               Abbrechen
             </Button>
@@ -323,10 +304,10 @@ export function TransactionForm({
             >
               Zuordnung übernehmen
             </Button>
-          </DialogFooter>
-        </DialogForm>
-      </DialogContent>
-    </Dialog>
+          </PremiumDialogFooter>
+        </PremiumDialogForm>
+      </PremiumDialogContent>
+    </PremiumDialog>
   );
 }
 
@@ -399,48 +380,49 @@ export function BatchAssignmentDialog({
     onClose(true);
   }
   return (
-    <Dialog
+    <PremiumDialog
       open
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
     >
-      <DialogContent
+      <PremiumDialogContent
+        size="xl"
         variant="work"
+        snapPoints={[0.92]}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           returnFocus();
         }}
       >
-        <DialogHeader>
-          <DialogTitle>Auswahl zuordnen</DialogTitle>
-          <DialogDescription>
-            {bookings.length} Buchungen · Vorschau vor dem Übernehmen
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-5">
-          <CategorySelect
-            label="Kategorie für Auswahl"
-            allowAll
-            allLabel="Kategorie wählen"
-            excludeReview
-            value={category}
-            onValueChange={setCategory}
-            disabled={!!storageError || stale}
-          />
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Bankdaten, Teilungen und Fixkostenmarkierungen bleiben erhalten. Die
-            Zuordnung wird wie bei einer Einzelbuchung für diesen Händler
-            gemerkt.
-          </p>
+        <PremiumDialogHeader
+          icon={ListChecks}
+          title="Auswahl zuordnen"
+          description={`${bookings.length} Buchungen · Vorschau vor dem Übernehmen`}
+        />
+        <PremiumDialogBody className="space-y-5">
+          <Field
+            label="Kategorie"
+            hint="Bankdaten, Teilungen und Fixkostenmarkierungen bleiben erhalten. Die Zuordnung wird wie bei einer Einzelbuchung für diesen Händler gemerkt."
+          >
+            <CategorySelect
+              label="Kategorie für Auswahl"
+              allowAll
+              allLabel="Kategorie wählen"
+              excludeReview
+              value={category}
+              onValueChange={setCategory}
+              disabled={!!storageError || stale}
+            />
+          </Field>
           {additional.length > 0 && (
-            <div className="space-y-2 rounded-xl bg-muted/50 p-3 text-sm">
+            <PremiumDialogItem className="space-y-2 rounded-2xl bg-accent-muted/60 p-4 text-sm">
               <p role="status">
                 Die Händlerregel ordnet außerdem {additional.length} offene
                 Buchungen ein – einschließlich passender Importzeilen.
               </p>
               <details>
-                <summary className="cursor-pointer text-xs font-medium">
+                <summary className="cursor-pointer text-xs font-medium text-primary">
                   Zusätzlich betroffene Buchungen
                 </summary>
                 <ul className="mt-2 space-y-2 text-xs">
@@ -458,55 +440,55 @@ export function BatchAssignmentDialog({
                   ))}
                 </ul>
               </details>
-            </div>
+            </PremiumDialogItem>
           )}
-          <ul
-            aria-label="Zuordnungsvorschau"
-            className="divide-y rounded-xl border px-4"
-          >
-            {bookings.map((booking) => {
-              const result = previewById.get(booking.id);
-              return (
-                <li key={booking.id} className="space-y-1 py-3 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="min-w-0 break-words font-medium">
-                      {bookingDescription(booking)}
+          <PremiumDialogItem>
+            <ul
+              aria-label="Zuordnungsvorschau"
+              className="divide-y divide-border/60 overflow-hidden rounded-2xl border border-border/70"
+            >
+              {bookings.map((booking) => {
+                const result = previewById.get(booking.id);
+                const before = classify(booking);
+                return (
+                  <li key={booking.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3 text-sm">
+                    <MerchantMark booking={booking} classification={before} fallbackName={bookingDescription(booking)} className="size-9 rounded-xl" />
+                    <span className="min-w-0">
+                      <span className="block break-words font-medium">{bookingDescription(booking)}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        {dateLabel(booking.date)} · {accountLabel(booking)}
+                      </span>
+                      <span className="mt-0.5 block text-xs">
+                        <span className="text-muted-foreground">{before.category}</span> →{" "}
+                        <span className={result ? "font-medium text-primary" : "text-muted-foreground"}>
+                          {result ? classify(result).category : "Kategorie wählen"}
+                        </span>
+                      </span>
                     </span>
-                    <span className="shrink-0 tabular-nums">
-                      {currency(booking.amount)}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {dateLabel(booking.date)} · {accountLabel(booking)}
-                  </p>
-                  <p className="text-xs">
-                    {classify(booking).category} →{" "}
-                    <span className="font-medium">
-                      {result ? classify(result).category : "Kategorie wählen"}
-                    </span>
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
+                    <span className="amount shrink-0 text-sm">{currency(booking.amount)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </PremiumDialogItem>
           {stale && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm font-medium text-destructive">
               Die Auswahl wurde inzwischen geändert. Bitte schließen und erneut
               auswählen.
             </p>
           )}
           {preparation.error && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm font-medium text-destructive">
               {preparation.error}
             </p>
           )}
           {storageError && (
-            <p role="alert" className="text-sm text-destructive">
+            <p role="alert" className="text-sm font-medium text-destructive">
               {storageError}
             </p>
           )}
-        </DialogBody>
-        <DialogFooter>
+        </PremiumDialogBody>
+        <PremiumDialogFooter>
           <Button variant="outline" onClick={() => onClose()}>
             Abbrechen
           </Button>
@@ -518,8 +500,8 @@ export function BatchAssignmentDialog({
           >
             Zuordnungen übernehmen
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </PremiumDialogFooter>
+      </PremiumDialogContent>
+    </PremiumDialog>
   );
 }

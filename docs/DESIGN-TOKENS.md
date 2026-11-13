@@ -189,5 +189,8 @@ Button: neue Variante `soft` (Akzentfläche), Hover-Schatten `shadow-raised`, Ou
 | `DialogSteps` / `DialogStep` | `mode` `auto` (Schritte, wenn das Formular nicht passt oder auf dem Handy), `always`, `never`; Validierung je Schritt, Fokus aufs erste fehlerhafte Feld, feste Dialoghöhe je Größe, `editing` = alle Schritte frei anwählbar. |
 | `Field`, `MoneyField`, `ChoiceCards`, `ToggleRow` | Label/Hinweis/Fehler mit ARIA verknüpft, Fehler animiert; Beträge im de-AT-Format; Auswahlkarten als Radiogruppe mit Pfeiltasten; Schalter mit `role="switch"`. |
 | `DialogSkeleton`, `DialogEmpty` | Ladezustand und Leerzustand innerhalb eines Dialogs. |
+| `PremiumDialogHeader` | Titel, Beschreibung und optionales Icon-Kachel (`tone` `primary` oder `destructive` für Löschbestätigungen); im Sheet zugleich Ziehbereich. |
+
+Auf der Umsatzseite nutzen alle Pop-ups diese Bausteine: Buchungsdetails mit Aktionen (**⋯**), Vertrag zuordnen bzw. als Vertrag anlegen, Zuordnungsdetails, Weitere Filter, Zuordnung ändern, Auswahl zuordnen, Tag vergeben, Name nachschlagen, Kassenbon aufteilen, Geteilt, Urlaub, Löschen und Kontoauszüge prüfen. Aktionslisten stehen als gruppierte Zeilen (Icon-Kachel, Titel, Hinweis, Pfeil) in einer Karte; Händler ohne Logo zeigen Initialen statt „?“ (`MerchantMark` mit `fallbackName`).
 
 Bewegung: `full` (Federn, gestaffelte Inhalte 35 ms), `reduced` (nur Opacity 120 ms; System- **und** App-Einstellung), `none` (Tests: sofortiges Ein-/Aushängen).

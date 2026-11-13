@@ -15,17 +15,18 @@ import {
   type RowSelectionState,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowDownUp, ArrowUp, Inbox, SearchX } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, Inbox, SearchX, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  PremiumDialog,
+  PremiumDialogBody,
+  PremiumDialogContent,
+  PremiumDialogFooter,
+  PremiumDialogHeader,
+} from "@/components/ui/premium-dialog";
+import { BookingContractDialogs, type BookingContractMode } from "@/components/booking-contract-dialogs";
+import { MerchantMark } from "@/components/merchant-mark";
 import { useFinance } from "@/components/finance-provider";
 import { EmptyState, PageHeading } from "@/components/finance-ui";
 import { StatementImport } from "@/components/statement-import";
@@ -75,6 +76,7 @@ import {
   type AccountedTransaction,
 } from "@/lib/shared-holiday";
 import { legacyFingerprint, statementFingerprint } from "@/lib/import/identity";
+import { bookingDescription } from "@/lib/import/merchant-description";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import type { Transaction } from "@/lib/types";
 import { accountLabel } from "@/lib/accounts";
@@ -184,6 +186,12 @@ const TransactionLedger = memo(function TransactionLedger({
   );
   const [editor, setEditor] = useState<Transaction | null>(null);
   const [deleting, setDeleting] = useState<Transaction | null>(null);
+  const [contractFlow, setContractFlow] = useState<{
+    booking: Transaction;
+    mode: BookingContractMode;
+    open: boolean;
+    session: number;
+  } | null>(null);
   const [batch, setBatch] = useState<AccountedTransaction[] | null>(null);
   const [tagging, setTagging] = useState<string[] | null>(null);
   const [lookup, setLookup] = useState<{
@@ -452,7 +460,7 @@ const TransactionLedger = memo(function TransactionLedger({
           booking={row.original}
           disabled={!!storageError}
           lookupPending={lookupPending}
-          dialogOpen={!!editor || !!deleting}
+          dialogOpen={!!editor || !!deleting || !!contractFlow?.open}
           onTrigger={(id, action) => {
             actionTrigger.current = { id, action };
           }}
@@ -462,6 +470,14 @@ const TransactionLedger = memo(function TransactionLedger({
           }}
           onDelete={() => setDeleting(row.original)}
           onToggleIgnored={() => toggleIgnored([row.original], !row.original.ignored)}
+          onContract={storageError ? undefined : (mode) =>
+            setContractFlow((current) => ({
+              booking: row.original,
+              mode,
+              open: true,
+              session: (current?.session ?? 0) + 1,
+            }))
+          }
         />
       ),
     },
@@ -565,6 +581,7 @@ const TransactionLedger = memo(function TransactionLedger({
           reviewCount={openReviewCount}
           disabled={locked || !!storageError}
           exportDisabled={locked || !data.length}
+          resultCount={data.length}
           onReview={() => setReviewRequest((request) => request + 1)}
           onExport={exportView}
         />
@@ -794,27 +811,50 @@ const TransactionLedger = memo(function TransactionLedger({
           }}
         />
       )}
-      <Dialog
+      {contractFlow && (
+        <BookingContractDialogs
+          key={contractFlow.session}
+          booking={contractFlow.booking}
+          mode={contractFlow.mode}
+          open={contractFlow.open}
+          returnFocus={returnActionFocus}
+          onModeChange={(mode) => setContractFlow((current) => current && { ...current, mode })}
+          onClose={() => setContractFlow((current) => current && { ...current, open: false })}
+        />
+      )}
+      <PremiumDialog
         open={!!deleting}
         onOpenChange={(open) => {
           if (!open) setDeleting(null);
         }}
       >
-        <DialogContent
+        <PremiumDialogContent
+          size="sm"
           variant="confirmation"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             returnActionFocus();
           }}
         >
-          <DialogHeader>
-            <DialogTitle>Umsatz löschen?</DialogTitle>
-            <DialogDescription>
-              {deleting?.description} · {deleting && currency(deleting.amount)}.
-              Diese Buchung wird aus allen Berechnungen entfernt.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
+          <PremiumDialogHeader
+            icon={Trash2}
+            tone="destructive"
+            title="Umsatz löschen?"
+            description="Diese Buchung wird aus allen Berechnungen entfernt. Du kannst es direkt danach rückgängig machen."
+          />
+          {deleting && (
+            <PremiumDialogBody>
+              <div className="flex items-center gap-3 rounded-2xl bg-surface-sunken/70 p-3">
+                <MerchantMark booking={deleting} classification={classify(deleting)} fallbackName={bookingDescription(deleting)} className="size-10 rounded-xl" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{bookingDescription(deleting)}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{dateLabel(deleting.date)} · {accountLabel(deleting)}</span>
+                </span>
+                <span className="amount shrink-0 text-sm">{currency(deleting.amount)}</span>
+              </div>
+            </PremiumDialogBody>
+          )}
+          <PremiumDialogFooter>
             <Button variant="outline" onClick={() => setDeleting(null)}>
               Abbrechen
             </Button>
@@ -873,9 +913,9 @@ const TransactionLedger = memo(function TransactionLedger({
             >
               Endgültig löschen
             </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </PremiumDialogFooter>
+        </PremiumDialogContent>
+      </PremiumDialog>
     </>
   );
 });

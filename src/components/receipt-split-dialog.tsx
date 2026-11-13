@@ -5,14 +5,13 @@ import { Receipt, Sparkles, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  PremiumDialog,
+  PremiumDialogBody,
+  PremiumDialogContent,
+  PremiumDialogFooter,
+  PremiumDialogHeader,
+  PremiumDialogItem,
+} from "@/components/ui/premium-dialog";
 import { CategorySelect } from "@/components/category-select";
 import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
@@ -127,19 +126,14 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
   }
 
   return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Kassenbon aufteilen</DialogTitle>
-          <DialogDescription>
-            {bookingDescription(booking)} · {dateLabel(booking.date)} · {currency(amount)}. Foto oder PDF des Bons wählen –
-            er wird nur auf diesem Gerät gelesen, die Artikel werden Kategorien zugeordnet.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogBody className="space-y-5">
+    <PremiumDialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <PremiumDialogContent size="lg">
+        <PremiumDialogHeader icon={Receipt} title="Kassenbon aufteilen"
+          description={`${bookingDescription(booking)} · ${dateLabel(booking.date)} · ${currency(amount)}. Foto oder PDF des Bons wählen – er wird nur auf diesem Gerät gelesen, die Artikel werden Kategorien zugeordnet.`} />
+        <PremiumDialogBody className="space-y-5">
           {!current && <p role="alert" className="text-sm text-destructive">Diese Buchung gibt es nicht mehr.</p>}
           {existing && !receipt && (
-            <section aria-label="Aktuelle Aufteilung" className="rounded-xl bg-muted/50 p-4 text-sm">
+            <section aria-label="Aktuelle Aufteilung" className="rounded-2xl bg-surface-sunken/70 p-4 text-sm">
               <p className="font-medium">Aktuell aufgeteilt</p>
               <ul className="mt-2 space-y-1">
                 {existing.map((part) => (
@@ -151,7 +145,7 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
               </ul>
             </section>
           )}
-          <div className="flex flex-wrap items-center gap-3">
+          <PremiumDialogItem className="flex flex-wrap items-center gap-3 rounded-2xl border border-dashed border-border p-4">
             <input
               ref={input}
               type="file"
@@ -173,8 +167,8 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
                 Kassenbon wird gelesen … {Math.round(progress * 100)} %
               </p>
             )}
-          </div>
-          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          </PremiumDialogItem>
+          {error && <p role="alert" className="text-sm font-medium text-destructive">{error}</p>}
           {receipt && preview && (
             <>
               <section aria-label="Erkannte Artikel">
@@ -209,7 +203,7 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
                   ))}
                 </ul>
               </section>
-              <section aria-label="Aufteilung" className="rounded-xl bg-muted/50 p-4 text-sm">
+              <section aria-label="Aufteilung" className="rounded-2xl bg-surface-sunken/70 p-4 text-sm">
                 <p className="font-medium">Aufteilung der Buchung</p>
                 <ul className="mt-2 space-y-1">
                   {preview.splits.map((part) => (
@@ -238,10 +232,10 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
               </section>
             </>
           )}
-        </DialogBody>
-        <DialogFooter>
+        </PremiumDialogBody>
+        <PremiumDialogFooter>
           {existing && (
-            <Button type="button" variant="ghost" className="mr-auto text-destructive" disabled={!!storageError} onClick={remove}>
+            <Button type="button" variant="ghost" className="text-destructive sm:mr-auto" disabled={!!storageError} onClick={remove}>
               <Trash2 />
               Aufteilung entfernen
             </Button>
@@ -251,8 +245,8 @@ export function ReceiptSplitDialog({ booking, onClose }: { booking: Transaction;
             <Receipt />
             Aufteilen
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </PremiumDialogFooter>
+      </PremiumDialogContent>
+    </PremiumDialog>
   );
 }

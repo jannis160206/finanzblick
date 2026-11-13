@@ -291,9 +291,12 @@ describe("Geteilt UI", () => {
     renderLedger(fixture([income, transfer, shared]));
     fireEvent.click(screen.getByRole("button", { name: "Weitere Filter" }));
     fireEvent.click(screen.getByLabelText("Transfers anzeigen"));
+    fireEvent.keyDown(document, { key: "Escape" });
     for (const row of [income, transfer, shared]) {
       fireEvent.click(screen.getByLabelText(`Weitere Aktionen: ${row.description}`));
+      expect(screen.getByRole("dialog", { name: row.description })).toBeTruthy();
       expect(screen.queryByRole("button", { name: `Teilen: ${row.description}` })).toBeNull();
+      fireEvent.keyDown(document, { key: "Escape" });
     }
     expect(screen.getByRole<HTMLButtonElement>("button", { name: `Bereits geteilt: ${shared.description}` }).disabled).toBe(true);
   });
