@@ -61,9 +61,11 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import {
-  appStateSchema, assistantDraftSchema, assistantMessageSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
-  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantOperation, type AssistantToolCall, type WebLinkEntry,
+  appStateSchema, assistantDraftSchema, assistantMessageSchema, assistantModelUseSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
+  type AppState, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantModelUse, type AssistantOperation, type AssistantToolCall,
+  type WebLinkEntry,
 } from "@/lib/types";
+import { modelLabel, modelTitle } from "@/lib/ai/models";
 import { cn } from "@/lib/utils";
 
 // Tools whose answer depends only on the message text; phrasings for these are learned when the model understood them.
@@ -270,6 +272,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const calls = own && !noted.some((call) => call.tool === own.tool) ? [...noted, own] : noted;
     return calls.length ? { calls: calls.slice(-8) } : {};
   };
+  // The models that worked on the running answer (routing, action, answer), including a fallback to the local model.
+  const runModels = useRef<AssistantModelUse[]>([]);
+  const noteModel = (value: unknown) => {
+    const parsed = assistantModelUseSchema.safeParse(value);
+    if (!parsed.success) return undefined;
+    if (running.current && runModels.current.length < 4) runModels.current.push(parsed.data);
+    return parsed.data;
+  };
+  const takeModels = () => {
+    const models = running.current ? runModels.current : [];
+    runModels.current = [];
+    return models.length ? { models } : {};
+  };
   // The answer whose feedback comment field is open.
   const [commentFor, setCommentFor] = useState<string>();
   // The question shows the moment it is sent; the stored message takes its place once routing has run.
@@ -373,9 +388,10 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     noteHandoff(id);
     const steps = takeSteps();
     const calls = takeCalls(toolCall(draft.action));
+    const models = takeModels();
     save((items) => [...items.map((item) => item.draft && (item.status === "question" || item.status === "preview") ? { ...item, status: "dismissed" as const } : item),
       { id, role: "assistant", text: question ?? previewText(draft), at: Date.now(), draft, status: question ? "question" : "preview", source, agent: toolOwner[draft.action],
-        ...(suggestions ? { suggestions } : {}), ...run, ...steps, ...calls }]);
+        ...(suggestions ? { suggestions } : {}), ...run, ...steps, ...calls, ...models }]);
   };
   const addResult = (result: AgentResult, source: AssistantMessage["source"],
     meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources" | "links" | "knowledgeId"> = {}) => {
@@ -394,6 +410,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...(meta.clarify && result.choices?.length ? { clarify: meta.clarify.slice(0, 1000) } : {}),
       ...takeSteps(),
       ...takeCalls(meta.tool ? toolCall(meta.tool, { ok: !failedAnswer(result.text), change: result.change }) : undefined),
+      ...takeModels(),
     };
     const parsed = assistantMessageSchema.safeParse(message);
     noteHandoff(message.id);
@@ -584,6 +601,16 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
       // The general chat keeps the conversation; a specialist only needs the last exchange.
       const context = agent === "general" ? history : history.slice(-2);
+      // The status names the model as soon as it took the question; the thinking model says it thinks first.
+      const onModel = (value: unknown) => {
+        const use = noteModel(value);
+        if (use) setStatus((current) => use.thinking ? { ...workStatus.think, agent: current?.agent ?? agent, model: modelTitle(use) }
+          : { ...(current ?? step), agent: current?.agent ?? agent, model: modelTitle(use) });
+      };
+      const showText = (text: string) => {
+        setStatus((current) => current?.text === workStatus.think.text ? { ...step, agent: current.agent, model: current.model } : current);
+        setStreaming(text);
+      };
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
@@ -591,12 +618,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         });
         if (!response.ok) return undefined;
         if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
-          const text = await readAnswerStream(response.body, setStreaming);
+          const text = await readAnswerStream(response.body, showText, onModel);
           // A rejected answer disappears again; the normal fallback takes over.
           if (!text) setStreaming(undefined);
           return text;
         }
-        const answer: { text?: unknown } = await response.json();
+        const answer: { text?: unknown; models?: unknown } = await response.json();
+        if (Array.isArray(answer.models)) answer.models.forEach(onModel);
         return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
       };
       const text = await ask(context);
@@ -776,6 +804,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     live.reset();
     runSteps.current = [];
     runCalls.current = [];
+    runModels.current = [];
     setCommentFor(undefined);
     setStatus(workStatus.read);
     await afterPaint();
@@ -966,7 +995,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setStatus(undefined);
       return true;
     };
-    let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel" };
+    let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel"; models?: unknown };
     // "und im September?" reuses the previous question instead of asking the model again.
     const follow = pending ? undefined : resolveFollowUp(work, thread.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
@@ -1027,6 +1056,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       });
       if (!response.ok) throw new Error();
       reply = await response.json();
+      if (Array.isArray(reply.models)) reply.models.forEach(noteModel);
     } catch {
       // Same orchestrator rules as the server, without the model; whatever stays unclear goes to the general chat.
       const decision = routeByRules(work, [...goals, ...planned]);
@@ -1347,7 +1377,7 @@ const MessageRow = memo(function MessageRow({ message, state, dashboard, last, l
   return <MessageEnter animate={enter} mine={message.role === "user"}
     className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
     data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
-    <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} sources={message.sources} links={message.links} faded={message.status === "dismissed"}
+    <Bubble role={message.role} text={message.text} source={message.source} agent={message.agent} models={message.models} sources={message.sources} links={message.links} faded={message.status === "dismissed"}
       live={live} handoff={handoff}>
       {message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
         onResult={locked ? undefined : (result) => act()?.addResult(result, "Regel")} />}
@@ -1414,8 +1444,9 @@ function QuickReplies({ items, disabled, onPick }: { items: string[]; disabled: 
   </div>;
 }
 
-function Bubble({ role, text, source, agent, sources, links, faded, live, handoff, children }: {
-  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; sources?: string[]; links?: WebLinkEntry[]; faded?: boolean; live?: boolean;
+function Bubble({ role, text, source, agent, models, sources, links, faded, live, handoff, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; agent?: AgentId; models?: AssistantModelUse[]; sources?: string[]; links?: WebLinkEntry[];
+  faded?: boolean; live?: boolean;
   handoff?: { activity: WorkActivity }; children?: React.ReactNode;
 }) {
   if (role === "user") return <div className={cn("flex justify-end", faded && "opacity-60")}>
@@ -1423,7 +1454,10 @@ function Bubble({ role, text, source, agent, sources, links, faded, live, handof
       <span className="sr-only">Du: </span><span className="whitespace-pre-line">{text}</span>
     </div>
   </div>;
-  const label = [agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? "KI" : ""].filter(Boolean).join(" · ");
+  // The model that wrote the answer replaces the plain "KI"; a fallback to the local model says why on hover.
+  const model = source === "KI" ? models?.at(-1) : undefined;
+  const label = [agent && agent !== "general" ? agentLabel[agent] : "", source === "KI" ? model ? modelLabel(model) : "KI" : ""].filter(Boolean).join(" · ");
+  const labelTitle = model?.fallback ? `DeepSeek nicht verfügbar${model.reason ? ` (${model.reason})` : ""} – das lokale Modell hat geantwortet` : undefined;
   // Only the newest answer's bot stays awake; older ones keep their pose, so a long chat costs no extra frames.
   return <div className={cn("flex items-start gap-3", faded && "opacity-60")}>
     {handoff ? <HandoffAvatar agent={agent ?? "general"} activity={handoff.activity} live={!!live} />
@@ -1431,7 +1465,7 @@ function Bubble({ role, text, source, agent, sources, links, faded, live, handof
     <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
       <span className="sr-only">Assistent: </span><span className="whitespace-pre-line">{text}</span>
       {(label || sources?.length || links?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
-        {label && <span>{label}</span>}
+        {label && <span title={labelTitle} data-model={model?.model}>{label}{model?.fallback && <>{" · Fallback"}<span className="sr-only">: {labelTitle}</span></>}</span>}
         {sources?.length ? <span>{links?.length ? sources.join(" · ") : `Wissen: ${sources.join(" · ")}`}</span> : null}
         {links?.length ? <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1"><span>Quellen:</span>
           {links.map((link, index) => <a key={link.url} href={link.url} target="_blank" rel="noreferrer noopener" title={link.title}

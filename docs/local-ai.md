@@ -1,6 +1,6 @@
-# Lokale KI (NPU)
+# KI: lokales Qwen (NPU) und DeepSeek
 
-Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledigen. Das Modell läuft auf der Intel-NPU (Core Ultra, „Intel AI Boost“). Es arbeitet vollständig offline: Finanzdaten verlassen den Rechner nicht.
+Finanzblick kann offene Buchungsprüfungen mit einem lokalen Sprachmodell erledigen. Das Modell läuft auf der Intel-NPU (Core Ultra, „Intel AI Boost“). Ohne DeepSeek-Key arbeitet es vollständig offline: Finanzdaten verlassen den Rechner nicht. Mit Key übernehmen DeepSeek-Modelle je nach Aufgabe, und das lokale Modell springt bei jedem Ausfall ein (siehe [DeepSeek je Aufgabe](#deepseek-je-aufgabe-qwen-als-rückfall)).
 
 ## Komponenten
 
@@ -51,6 +51,61 @@ Optionale Variablen in `.env.local`:
 | `FINANZBLICK_SEARXNG_URL` | – | eigene SearXNG-Instanz (JSON-Format aktiviert) statt Bing, z. B. `http://127.0.0.1:8888` |
 | `BRAVE_SEARCH_API_KEY` | – | Brave-Search-API statt Bing, wenn kein SearXNG gesetzt ist |
 | `FINANZBLICK_FEEDBACK_FILE` | `data/assistant-feedback.json`, in Produktion neben der Datenbank | Absoluter Pfad der Feedback-Datei des Finanz-Assistenten |
+
+## DeepSeek je Aufgabe, Qwen als Rückfall
+
+Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das lokale Qwen3-8B bleibt vollwertiger Rückfall. Ohne Key arbeitet alles wie bisher lokal. Die Wahl trifft `src/lib/ai/client.ts` pro Aufruf anhand der Aufgabe (`src/lib/ai/models.ts`):
+
+| Aufgabe | Modell | Beispiele |
+| --- | --- | --- |
+| Antwort (normaler Chat) | `deepseek-flash` | freie Antworten, Smalltalk, Monatszusammenfassung, Hintergrund-Agent |
+| Werkzeugwahl | `deepseek-flash` | Orchestrator und Spezialist entscheiden, welches Werkzeug passt |
+| Aktion (mehrere Schritte, Änderungen) | `deepseek-v4-pro` | offener Entwurf, ändernde Regel-Werkzeuge, mehrere Befehle in einer Nachricht, „anlegen/ändern/lösche…“, `npm run ai:agent` |
+| Analyse und Steuern | `deepseek-v4-pro` im Denkmodus | „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen an Gehalt & Steuern |
+| Kategorisierung | `deepseek-flash` | offene Prüfungen in Achterpaketen |
+| Websuche | `deepseek-flash` | Zusammenfassung der Suchtreffer |
+| Auslesen | `deepseek-flash` | Kassenbon-Artikel, Logo-Suche |
+| PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
+| Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |
+
+`deepseek-r1` gibt es bei DeepSeek nicht mehr; schlussfolgerndes Denken ist dort der Denkmodus (`thinking: enabled`, `reasoning_effort`). Analysen nutzen ihn deshalb mit `deepseek-v4-pro`. Werkzeugaufrufe laufen immer ohne Denkmodus, Kategorisierung und Werkzeugwahl ebenfalls, damit einfache Anfragen schnell bleiben.
+
+**Einrichtung:** Den Key nur in `.env.local` eintragen (`.env*` ist in `.gitignore`), danach den Server neu starten:
+
+```dotenv
+DEEPSEEK_API_KEY=sk-…
+```
+
+| Variable | Standard | Bedeutung |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | – | Schaltet DeepSeek ein |
+| `DEEPSEEK_BASE_URL` | `https://api.deepseek.com` | Nur `https://` ist erlaubt (auch für OpenAI-kompatible Anbieter) |
+| `DEEPSEEK_MODEL_FAST` | `deepseek-flash` | Chat, Werkzeugwahl, Kategorisierung, Websuche, Auslesen |
+| `DEEPSEEK_MODEL_PRO` | `deepseek-v4-pro` | Aktionen und Werkzeugaufrufe |
+| `DEEPSEEK_MODEL_REASONING` | `deepseek-v4-pro` | Analysen im Denkmodus |
+| `DEEPSEEK_REASONING_EFFORT` | `high` | `low`, `high` oder `max` |
+| `DEEPSEEK_TIMEOUT_MS` | `120000` | Zeitlimit pro Anfrage |
+| `DEEPSEEK_CONNECT_TIMEOUT_MS` | `20000` | Zeit bis zur ersten Antwort des Servers, danach Rückfall |
+| `DEEPSEEK_DOCUMENTS` | aus | `on` schickt auch PDF-Auszüge an DeepSeek |
+| `FINANZBLICK_CLOUD_AI` | an | `off` nutzt nur das lokale Modell, auch mit Key |
+| `FINANZBLICK_AI_LOG` | an | `off` schaltet die `[KI]`-Zeilen im Serverlog ab |
+
+**Rückfall:** Schlägt ein DeepSeek-Aufruf fehl, beantwortet Qwen dieselbe Anfrage sofort. Damit nicht jede Nachricht erst auf einen Fehler wartet, pausiert DeepSeek danach:
+
+- ungültiger Key (401/403), kein Guthaben (402) oder unbekanntes Modell (404): 10 Minuten;
+- Rate-Limit (429, oder so lange wie `Retry-After`), Serverfehler (5xx), Netzwerkfehler oder Zeitüberschreitung: 60 Sekunden;
+- eine einzelne fehlerhafte Anfrage (400) oder unlesbare Antwort: keine Pause.
+
+Beim Streamen wechselt der Rückfall nur vor dem ersten Wort. Bricht DeepSeek mitten in einer Antwort ab, gilt sie als fehlgeschlagen und der Chat fragt wie bisher nach. Ist auch das lokale Modell aus, meldet der Assistent den Fehler.
+
+**Sichtbarkeit:**
+
+- Serverlog: `[KI] Antwort → DeepSeek Flash (deepseek-flash) · 1840 ms · 512→64 Token`, beim Rückfall mit `· Fallback: DeepSeek Key ungültig (HTTP 401)`.
+- Chat: Die Statuszeile zeigt, welches Modell gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“). Jede fertige Antwort nennt das Modell statt „KI“, beim Rückfall mit „· Fallback“ und dem Grund als Tooltip.
+- Admin-Ansicht (Einstellungen → „Assistent-Orchestrator“): Status „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder die Warnung „Lokal (Qwen) aktiv · DeepSeek …“, der Bereich „Modelle“ mit dem Modell je Aufgabe und in „Letzte Läufe“ die Modelle jedes Laufs.
+- `/api/ai/status` meldet `cloud.available`, `cloud.error`, `local` und `routing` (Modell je Aufgabe). Den Key prüft es höchstens einmal pro Minute mit `GET /models`.
+
+**Datenschutz:** Vor dem Versand ersetzt derselbe Pseudonymisierer wie beim MCP-Server (siehe [Pseudonymisierung](#pseudonymisierung)) Personen, IBANs, E-Mails, Telefon-, Karten- und lange Kontonummern durch Platzhalter. In Antworten und Werkzeugargumenten setzt der Server die echten Werte wieder ein, auch wenn ein Platzhalter beim Streamen auf zwei Teile fällt. Händlernamen, Kategorien, Beträge und Datumsangaben gehen lesbar an DeepSeek. PDF-Auszüge, Einbettungen und das lokale Finanzwissen (RAG) bleiben auf dem Rechner. Wer gar nichts verschicken will, lässt den Key weg oder setzt `FINANZBLICK_CLOUD_AI=off`.
 
 ## Was automatisch passiert
 
@@ -430,7 +485,7 @@ Bevor Daten über `npm run mcp` an Claude, ChatGPT oder Copilot gehen, ersetzt `
 
 Händler- und Firmennamen, Kategorien, Beträge und Datumsangaben bleiben lesbar, damit Auswertungen sinnvoll bleiben. Vor- und Nachname derselben Person bekommen denselben Platzhalter. Innerhalb einer Sitzung sind die Platzhalter stabil: Nennt das externe Modell in einem Werkzeugaufruf `Person-1` oder `IBAN-2`, setzt der Server vor dem Ausführen wieder den echten Wert ein. Werkzeugbeschreibungen und Server-Hinweise sagen dem Modell, dass Namen pseudonymisiert sind. Neue Namen lernt der Server nach, sobald sich die Daten ändern.
 
-Ausschalten mit `MCP_PSEUDONYMIZE=0` (z. B. in `.env.local`). Der Finanz-Assistent im Browser und `npm run ai:agent` arbeiten mit dem lokalen Modell und sehen die echten Daten. Der Web-MCP-Server bekommt ohnehin keine persönlichen Daten.
+Ausschalten mit `MCP_PSEUDONYMIZE=0` (z. B. in `.env.local`). Das lokale Modell sieht die echten Daten. Alles, was an DeepSeek geht, pseudonymisiert `src/lib/ai/client.ts` unabhängig von dieser Einstellung. Der Web-MCP-Server bekommt ohnehin keine persönlichen Daten.
 
 ### Web-MCP-Server `finanzblick-web`
 
@@ -487,10 +542,22 @@ Buchungstexte, Händlernamen und Web-Inhalte (Wikipedia, Wikidata, OSM) gelten a
 ## Qualitätsprüfung
 
 ```powershell
-npm run eval:assistant              # goldene Fragen + Injection-Tests gegen das lokale Modell
-npm run eval:assistant -- --min=90  # Mindest-Trefferquote in Prozent
+npm run eval:assistant                        # Gold: 80 feste Fragen auf dem schnellen Modell (Standard)
+npm run eval:assistant -- --tier=smoke        # ~25 kurze Anfragen: Ping je Modell, Routing, kurze Antworten, Streaming
+npm run eval:assistant -- --tier=deep         # 12 komplexe Fälle mit echtem Routing: Aktionen auf V4 Pro, Analysen im Denkmodus
+npm run eval:assistant -- --tier=all --min=90 # alle Stufen, Mindest-Trefferquote in Prozent
+npm run eval:assistant -- --local             # nur das lokale Modell
+npm run eval:assistant -- --cloud             # abbrechen, wenn DeepSeek nicht bereit ist
+npm run eval:assistant -- --fresh             # Cache nicht lesen (echte Latenz)
 ```
+
+Die Stufen sind auf wenige Token ausgelegt:
+
+- **Ohne Modell zuerst:** Alles, was Regeln, Werkzeuge, Rückfall und Datenaufbereitung betrifft, prüft `npm test` ohne Modellaufruf (z. B. `src/lib/ai/cloud.test.ts` für Routing, Rückfall, Pausen, Pseudonymisierung und Streaming). Gold-Fragen, die die Regeln entscheiden, kosten auch in der Eval keinen Token.
+- **Kurz und fest:** Antwortfälle sind auf 150 Token begrenzt, Pings auf 5. Das Datum ist fest (14.11.2026), damit die Prompts zwischen zwei Läufen gleich bleiben.
+- **Cache:** Antworten liegen in `.local-data/ai-cache/assistant-eval` (ignoriert). Ein unveränderter Prompt kostet beim nächsten Lauf nichts. Zusätzlich nutzt DeepSeek seinen Präfix-Cache für die gleichbleibenden System-Prompts; die Ausgabe nennt Ein- und Ausgabetoken je Modell und wie viele davon aus dem DeepSeek-Cache kamen.
+- **Größen:** `eval-cases.test.ts` hält Gold bei höchstens 80 Fragen, Smoke bei 20–30 Anfragen und Deep bei 10–15 Fällen.
 
 Die Genauigkeit der Kategorisierung misst `npm run eval:categories` auf den echten Buchungen: Jeder Monat wird wie ein Import nachgespielt, mit `--model` inklusive KI-Prüfung. Details und Ergebnisse stehen in [CATEGORIZATION-EVAL.md](CATEGORIZATION-EVAL.md).
 
-Die Fälle stehen in `src/lib/assistant/eval-cases.ts`, die grenzwertigen Orchestrator-Fälle in `agentCases`. Die Ausgabe nennt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer. `eval-cases.test.ts` prüft in `npm test` zusätzlich, dass die Regeln allein nie ein falsches Werkzeug oder einen falschen Spezialisten wählen.
+Die Fälle stehen in `src/lib/assistant/eval-cases.ts` (`goldRouterCases`, `smokeRouterCases`, `smokeAnswerCases`, `deepActionCases`, `deepAnswerCases`), die grenzwertigen Orchestrator-Fälle in `agentCases`. Die Ausgabe nennt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), antwortendes Modell, Zahl der KI-Aufrufe und Dauer. `eval-cases.test.ts` prüft in `npm test` zusätzlich, dass die Regeln allein nie ein falsches Werkzeug oder einen falschen Spezialisten wählen.

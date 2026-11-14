@@ -1,4 +1,5 @@
 import type { AssistantChange, AssistantMessage, AssistantOperation, AssistantToolCall } from "@/lib/types";
+import { modelTitle, taskLabel, type ModelUse } from "@/lib/ai/models";
 import { changingTools } from "./conversation";
 import { agentIds, agentTools, specialistIds, type AgentId, type RouteVia } from "./orchestrator";
 import { isAssistantTool, type AssistantTool } from "./tools";
@@ -116,6 +117,8 @@ export const callStateLabel: Record<CallState, string> = {
   ok: "Erfolgreich", failed: "Fehlgeschlagen", pending: "Wartet auf Bestätigung", applied: "Übernommen", dismissed: "Verworfen", undone: "Rückgängig gemacht",
 };
 export type RunCall = { tool: string; label: string; summary: string; state: CallState };
+/** A model that worked on the run: its label, the task ("Werkzeugwahl", "Antwort" …) and whether it stepped in as fallback. */
+export type RunModel = { label: string; model: string; task: string; fallback: boolean; reason?: string };
 export type AssistantRun = {
   id: string;
   at: number;
@@ -127,6 +130,8 @@ export type AssistantRun = {
   ms?: number;
   /** The tools the run called, in order; older answers only know the one tool that answered. */
   calls: RunCall[];
+  /** The models of the run in order; empty for runs the rules answered alone and for older runs. */
+  models: RunModel[];
 };
 
 const isAgent = (value: unknown): value is AgentId => typeof value === "string" && (agentIds as readonly string[]).includes(value);
@@ -147,6 +152,9 @@ function runCalls(reply: AssistantMessage): RunCall[] {
     state: !call.ok ? "failed" : isAssistantTool(call.tool) && changesData(call.tool) && reply.status ? changeState[reply.status] : "ok" }));
 }
 
+const runModel = (use: ModelUse): RunModel => ({ label: modelTitle(use), model: use.model, task: taskLabel[use.task], fallback: !!use.fallback,
+  ...(use.reason ? { reason: use.reason } : {}) });
+
 /** The latest runs, newest first: each question with the first answer that followed it and the tools of all its answers. */
 export function assistantRuns(chat: readonly AssistantMessage[], limit = 50): AssistantRun[] {
   const runs: AssistantRun[] = [];
@@ -161,6 +169,7 @@ export function assistantRuns(chat: readonly AssistantMessage[], limit = 50): As
       id: message.id, at: message.at, question: message.text, status: statusOf(reply),
       ...(isAgent(reply.agent) ? { agent: reply.agent } : {}), ...(reply.via ? { via: reply.via } : {}),
       ...(ms !== undefined ? { ms } : {}), calls: replies.flatMap(runCalls).slice(0, 8),
+      models: replies.flatMap((item) => item.models ?? []).slice(0, 4).map(runModel),
     });
   });
   return runs.reverse().slice(0, limit);

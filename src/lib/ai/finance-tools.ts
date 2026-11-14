@@ -141,7 +141,7 @@ export type FinanceTool = {
 export const financeTools: FinanceTool[] = [
   {
     name: "ai_status",
-    description: "Prüft, ob das lokale Sprachmodell auf der NPU bereit ist.",
+    description: "Prüft, welches Sprachmodell bereit ist: DeepSeek je Aufgabe und das lokale Qwen als Rückfall.",
     input: {}, readOnly: true,
     run: async () => ok(await aiStatus()),
   },

@@ -47,7 +47,9 @@ export function interpretPdfExtraction(content: string): PdfExtractedRow[] {
 /** Model-backed extractor for unknown PDF layouts; every row is grounded again by generic-pdf.ts. */
 export function createPdfAiExtractor(options: ChatOptions = {}): PdfExtractor {
   return async (input) => {
+    // Whole statements stay on the device unless DEEPSEEK_DOCUMENTS allows the cloud.
     const reply = await chat(buildPdfExtractMessages(input), {
+      task: "document",
       ...options,
       temperature: 0,
       maxTokens: 2048,

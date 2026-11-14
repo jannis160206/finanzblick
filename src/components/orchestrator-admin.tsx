@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Ban, Check, CheckCheck, ChevronLeft, Clock, Download, Inbox, MessageSquareText, RefreshCw, ThumbsDown, ThumbsUp, Undo2, Workflow, X, type LucideIcon } from "lucide-react";
+import { Ban, Check, CheckCheck, ChevronLeft, Clock, Cpu, Download, Inbox, MessageSquareText, RefreshCw, ThumbsDown, ThumbsUp, Undo2, Workflow, X, type LucideIcon } from "lucide-react";
 import { FinancialData } from "@/components/financial-data";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
@@ -12,11 +12,20 @@ import { askAssistant } from "@/lib/assistant-bus";
 import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
 import {
   agentInfo, agentOrder, agentToolList, assistantRuns, callStateLabel, changesData, orchestratorSteps, runStatusLabel, toolLabel, viaLabel,
-  type AssistantRun, type CallState, type RunCall, type RunStatus,
+  type AssistantRun, type CallState, type RunCall, type RunModel, type RunStatus,
 } from "@/lib/assistant/orchestrator-info";
+import { taskLabel, type AiTask } from "@/lib/ai/models";
 import { cn } from "@/lib/utils";
 
-type AiStatus = { available: boolean; model: string; error?: string; router?: { model: string; available: boolean } };
+type AiStatus = {
+  available: boolean; model: string; label?: string; error?: string;
+  router?: { model: string; available: boolean };
+  local?: { available: boolean; model: string; error?: string };
+  cloud?: { provider: "deepseek"; available: boolean; models: Record<"fast" | "pro" | "reasoning", string>; error?: string };
+  /** Which model answers each task right now (with the local model as fallback). */
+  routing?: { task: AiTask; label: string; model: string; fallback?: boolean }[];
+};
+const routeLabel = (status: AiStatus | undefined, task: AiTask) => status?.routing?.find((item) => item.task === task)?.label;
 
 // One color per agent, used in the tree, the agent list, the runs and the tools.
 const agentDot: Record<AgentId, string> = {
@@ -51,7 +60,30 @@ function Section({ id, title, meta, children }: { id: string; title: string; met
 function ModelPill({ status, loading }: { status?: AiStatus; loading: boolean }) {
   if (loading && !status) return <Badge variant="secondary">Prüfe KI …</Badge>;
   if (!status?.available) return <Badge variant="warning" title={status?.error}>KI nicht erreichbar · nur Regeln</Badge>;
-  return <Badge variant="success" title={status.model}>KI bereit · {shortModel(status.model)}</Badge>;
+  if (status.cloud && !status.cloud.available)
+    return <Badge variant="warning" title={`DeepSeek: ${status.cloud.error ?? "nicht erreichbar"}`}>Lokal (Qwen) aktiv · DeepSeek {status.cloud.error ?? "nicht erreichbar"}</Badge>;
+  return <Badge variant="success" title={status.model}>KI bereit · {status.label ?? shortModel(status.model)}{status.cloud && status.local?.available ? " · Qwen als Rückfall" : ""}</Badge>;
+}
+
+/** Which model answers which task, and what happens when DeepSeek fails. */
+function Models({ status, loading }: { status?: AiStatus; loading: boolean }) {
+  if (loading && !status) return <p className="text-sm text-muted-foreground">Prüfe die Modelle …</p>;
+  const routing = status?.routing ?? [];
+  const local = status?.local;
+  return <div>
+    <ul aria-label="Modell je Aufgabe" className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
+      {routing.map((item) => <li key={item.task} className="flex min-w-0 items-baseline justify-between gap-3 border-b border-border/50 py-1.5 text-sm">
+        <span className="text-muted-foreground">{taskLabel[item.task]}</span>
+        <span className="min-w-0 truncate text-right font-medium" title={item.model}>{item.label}{item.fallback && status?.cloud ? <span className="font-normal text-muted-foreground"> · Rückfall</span> : null}</span>
+      </li>)}
+    </ul>
+    <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-muted-foreground">
+      <Cpu aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+      {status?.cloud
+        ? <span>Fällt DeepSeek aus (Netzwerk, Rate-Limit, Key), antwortet automatisch das lokale Modell{local ? ` (${local.available ? "bereit" : `gerade ${local.error ?? "nicht erreichbar"}`})` : ""}. Namen, IBANs und Nummern gehen nur pseudonymisiert in die Cloud; ganze Kontoauszüge bleiben lokal.</span>
+        : <span>Ohne DeepSeek-Key antwortet nur das lokale Modell (Qwen auf der NPU).</span>}
+    </p>
+  </div>;
 }
 
 // Branch lines of the tree: a vertical rail that ends at the last item, and a short tick to each node.
@@ -101,8 +133,11 @@ function Tree({ status, loading }: { status?: AiStatus; loading: boolean }) {
 }
 
 function Agents({ status, runs }: { status?: AiStatus; runs: AssistantRun[] }) {
-  const main = status?.model ? shortModel(status.model) : "Hauptmodell";
-  const router = status?.router?.model ? shortModel(status.router.model) : main;
+  const main = routeLabel(status, "chat") ?? (status?.model ? shortModel(status.model) : "Hauptmodell");
+  const router = routeLabel(status, "route") ?? (status?.router?.model ? shortModel(status.router.model) : main);
+  const action = routeLabel(status, "action") ?? router;
+  const reasoning = routeLabel(status, "reasoning") ?? main;
+  const web = routeLabel(status, "web") ?? main;
   return <ul className="divide-y divide-border/70">
     {agentOrder.map((agent) => {
       const count = runs.filter((run) => run.agent === agent).length;
@@ -118,8 +153,9 @@ function Agents({ status, runs }: { status?: AiStatus; runs: AssistantRun[] }) {
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{agentInfo[agent].scope}</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
           {agent === "general"
-            ? <>Antwort: <span className="text-foreground">{main}</span> · Smalltalk ohne Modell</>
-            : <>Werkzeugwahl: <span className="text-foreground">{router}</span> · Antwort: <span className="text-foreground">{main}</span></>}
+            ? <>Antwort: <span className="text-foreground">{main}</span> · Websuche: <span className="text-foreground">{web}</span> · Smalltalk ohne Modell</>
+            : <>Werkzeugwahl: <span className="text-foreground">{router}</span> · Aktion: <span className="text-foreground">{action}</span> · Antwort: <span className="text-foreground">{main}</span>
+              {" "}· Analyse: <span className="text-foreground">{reasoning}</span></>}
         </p>
       </li>;
     })}
@@ -143,6 +179,20 @@ function Calls({ calls }: { calls: RunCall[] }) {
   </ul>;
 }
 
+function RunModels({ models }: { models: RunModel[] }) {
+  // The same model for routing and answer is named once; a fallback is always shown with its reason.
+  const shown = models.filter((item, index) => item.fallback || models.findIndex((other) => other.label === item.label && !other.fallback) === index);
+  return <span role="group" className="inline-flex flex-wrap items-center gap-x-1.5" aria-label="Modelle">
+    {shown.map((item, index) => <span key={`${index}:${item.label}`} data-model={item.model}
+      title={`${item.task}${item.fallback ? ` · Rückfall${item.reason ? `, weil DeepSeek: ${item.reason}` : ""}` : ""}`}
+      className="inline-flex items-center gap-1">
+      {index > 0 && <span aria-hidden="true" className="text-muted-foreground">·</span>}
+      <Cpu aria-hidden="true" className={cn("size-3", item.fallback && "text-warning")} />{item.label}
+      {item.fallback && <span> (Rückfall{item.reason && <span className="sr-only">, weil DeepSeek: {item.reason}</span>})</span>}
+    </span>)}
+  </span>;
+}
+
 function Runs({ runs }: { runs: AssistantRun[] }) {
   if (!runs.length) return <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border/70 p-5">
     <Inbox aria-hidden="true" className="size-5 text-muted-foreground" />
@@ -161,6 +211,7 @@ function Runs({ runs }: { runs: AssistantRun[] }) {
           <span aria-hidden="true">·</span>
           <span className="inline-flex items-center gap-1.5"><Dot agent={run.agent} />{run.agent ? agentName(run.agent) : "unbekannt"}</span>
           {run.via && <><span aria-hidden="true">·</span><span>{viaLabel[run.via]}</span></>}
+          {run.models.length > 0 && <><span aria-hidden="true">·</span><RunModels models={run.models} /></>}
         </p>
       </div>
       <div className="flex flex-col items-end gap-1">
@@ -298,6 +349,7 @@ export function OrchestratorAdmin() {
     </PageHeading>
     <div className="space-y-6">
       <Section id="orchestrator-tree" title="Aufbau"><Tree status={status} loading={loading} /></Section>
+      <Section id="orchestrator-models" title="Modelle" meta="DeepSeek je Aufgabe, lokales Qwen als Rückfall"><Models status={status} loading={loading} /></Section>
       <Section id="orchestrator-agents" title="Agenten" meta="4 Spezialisten und der allgemeine Chat"><Agents status={status} runs={runs} /></Section>
       <Section id="orchestrator-runs" title="Letzte Läufe"
         meta={runs.length ? `${runs.length} ${runs.length === 1 ? "Lauf" : "Läufe"}${median !== undefined ? ` · Median ${duration(median)}` : ""}` : undefined}>

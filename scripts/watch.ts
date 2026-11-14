@@ -60,7 +60,7 @@ async function aiHeadline(alerts: WatchAlert[]): Promise<string | undefined> {
       { role: "system", content: "Du fasst nächtliche Finanz-Hinweise in genau einem kurzen Satz auf Deutsch (Du-Form) zusammen, höchstens 120 Zeichen, kein Markdown. " +
         "Nenne nur Beträge, die genau so in den Hinweisen stehen, und rechne nichts aus. " + DATA_RULE },
       { role: "user", content: `Hinweise (JSON):\n${JSON.stringify(facts)}` },
-    ], { maxTokens: 80, temperature: 0.2, signal: AbortSignal.timeout(20_000) });
+    ], { task: "chat", maxTokens: 80, temperature: 0.2, signal: AbortSignal.timeout(20_000) });
     const text = answer.content.replace(/\s+/g, " ").trim();
     const factNumbers = { values: alerts.flatMap((alert) => (`${alert.title} ${alert.detail}`.match(/\d+(?:\.\d{3})*(?:,\d+)?/g) ?? [])
       .map((raw) => Number(raw.replace(/\./g, "").replace(",", ".")))) };

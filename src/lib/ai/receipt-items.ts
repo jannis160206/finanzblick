@@ -45,6 +45,6 @@ export function interpretReceiptItems(content: string, count: number): (ReceiptA
 
 export async function classifyReceiptItemsWithAi(names: string[], options: ChatOptions = {}) {
   if (!names.length) return [];
-  const answer = await chat(buildReceiptItemMessages(names), { ...options, maxTokens: 40 + names.length * 16, temperature: 0 });
+  const answer = await chat(buildReceiptItemMessages(names), { task: "extract", ...options, maxTokens: 40 + names.length * 16, temperature: 0 });
   return interpretReceiptItems(answer.content, names.length);
 }

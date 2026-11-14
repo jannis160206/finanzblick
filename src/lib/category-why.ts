@@ -33,7 +33,7 @@ export function explainCategory(state: AppState, row: Transaction, shown?: Categ
   const suggestion = state.aiSuggestions?.find((entry) => entry.id === row.id);
 
   if (row.aiAssigned) {
-    return make("ai", suggestion?.reason ? `Das lokale KI-Modell hat entschieden: ${suggestion.reason}` : "Das lokale KI-Modell hat diese Buchung zugeordnet (nichts verlässt deinen Rechner).");
+    return make("ai", suggestion?.reason ? `Das KI-Modell hat entschieden: ${suggestion.reason}` : "Das KI-Modell hat diese Buchung zugeordnet.");
   }
   if (hasManualCategory(row) || hasCategoryChoice(row)) return make("manual", `Du hast „${category}“ für diese Buchung selbst gewählt.`);
   const key = merchantRuleKey(row);

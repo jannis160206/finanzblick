@@ -83,22 +83,38 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
   - Nicht bei leeren Ergebnissen: „keine Daten“ bleibt der ehrliche Werkzeugsatz statt eines erfundenen Absatzes.
   - Nicht bei Werkzeugen, deren Text schon die Antwort ist (Überblicke, Rückblicke, Hinweise, „Warum …?“-Erklärungen, Was-wäre-wenn, Gehalt), außer bei Rat- und Meinungsfragen oder wenn nur das Modell das Werkzeug geraten hat.
   - Floskeln am Anfang („Kurz gesagt:“, „Du willst wissen …?“) und doppelte Sätze werden entfernt.
-- **Kennzeichnung:** Jede Antwort trägt dezent den zuständigen Bereich (z. B. „Gehalt & Steuern · KI“). Er wird als optionales Feld `agent` im Chatverlauf gespeichert (JSON, keine Migration).
+- **Kennzeichnung:** Jede Antwort trägt dezent den zuständigen Bereich und das antwortende Modell (z. B. „Gehalt & Steuern · DeepSeek V4 Pro“, beim Rückfall „Lokal (Qwen) · Fallback“). Beides wird als optionale Felder `agent` und `models` im Chatverlauf gespeichert (JSON, keine Migration).
+
+## Modelle je Aufgabe
+
+Ist ein DeepSeek-Key hinterlegt, wählt `src/lib/ai/client.ts` das Modell nach der Aufgabe des Aufrufs; ohne Key oder bei jedem Ausfall antwortet das lokale Qwen3-8B. Einrichtung, Rückfallregeln und Datenschutz: [local-ai.md](local-ai.md#deepseek-je-aufgabe-qwen-als-rückfall).
+
+| Schritt | Aufgabe | Modell |
+| --- | --- | --- |
+| Agent wählen, Werkzeug wählen | Werkzeugwahl | DeepSeek Flash |
+| Offener Entwurf, ändernde Regel-Werkzeuge, mehrere Befehle, „anlegen/ändern/lösche…“ | Aktion | DeepSeek V4 Pro (ohne Denkmodus) |
+| Freie Antwort | Antwort | DeepSeek Flash |
+| „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen | Analyse | DeepSeek V4 Pro im Denkmodus |
+| Antwort aus der Websuche | Websuche | DeepSeek Flash |
+
+Mit DeepSeek gibt es für die Interpretation nur einen Aufruf: Das kleine lokale Router-Modell entfällt. Die Entscheidung liegt in `interpretTask` (`src/lib/ai/assistant.ts`) und `answerTask` (`src/lib/ai/answer.ts`); beide rechnen ohne Modell.
 
 ## Admin-Ansicht
 
 Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orchestrator“** (`/einstellungen/orchestrator`). Der Link steht dezent unter den Einstellungsbereichen, nicht in der Hauptnavigation.
 
 - **Aufbau:** Baum vom Orchestrator über die drei Entscheidungsschritte (Regeln, Signalwörter, Modell-Rückfall) zu den vier Spezialisten und dem allgemeinen Chat, mit KI-Status.
+- **KI-Status:** „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder, wenn DeepSeek nicht erreichbar ist oder den Key ablehnt, die Warnung „Lokal (Qwen) aktiv · DeepSeek Key ungültig (HTTP 401)“.
+- **Modelle:** Modell je Aufgabe (Antwort, Werkzeugwahl, Aktion, Analyse, Kategorisierung, Websuche, Auslesen, PDF-Auszüge) aus `/api/ai/status` mit dem Hinweis, dass Qwen bei Ausfällen übernimmt und Namen und Kontonummern pseudonymisiert werden.
 - **Agenten:** Zuständigkeit, Kurzbeschreibung, Modell (Router und Hauptmodell aus `/api/ai/status`) und Zahl der letzten Läufe.
-- **Letzte Läufe:** bis zu 50 Anfragen aus dem Chatverlauf mit Zeit, Agent, Weg, Status (beantwortet, Rückfrage, unklar, Fehler) und grober Dauer. Keine Token-Angaben.
+- **Letzte Läufe:** bis zu 50 Anfragen aus dem Chatverlauf mit Zeit, Agent, Weg, Status (beantwortet, Rückfrage, unklar, Fehler), grober Dauer und den Modellen des Laufs („DeepSeek Flash“, „Lokal (Qwen) (Rückfall)“ mit dem Grund als Tooltip). Keine Token-Angaben.
   - Darunter stehen dezent die Werkzeugaufrufe des Laufs als kleine Chips, in Reihenfolge: Kurzbeschreibung (z. B. „Kategorisiere Buchung“, „Lege Vertrag an“, „Websuche“, „Wissen nachschlagen“), technischer Werkzeugname und ein Symbol für den Ausgang – erfolgreich, fehlgeschlagen oder bei Änderungen wartet auf Bestätigung, übernommen, verworfen, rückgängig gemacht. Der Ausgang steht für Screenreader auch als Text da, nicht nur als Farbe.
   - Erfasst werden das antwortende Werkzeug (bei kombinierten Fragen jedes Teils), Suchen im lokalen Finanzwissen und im Lexikon, Marktdaten, die Websuche, die freie Antwort des Modells, automatisch Gemerktes und das getippte „Ja“, das eine Änderung übernimmt. Fehler („Dabei ist etwas schiefgegangen“, nicht erreichbare Suche, keine Modellantwort) zählen als fehlgeschlagen. Die Kurzbeschreibung kommt aus Werkzeug und Art der Änderung, nie aus Argumenten, Beträgen oder dem Text des Nutzers. Ältere Antworten ohne diese Liste zeigen ihr eines Werkzeug.
 - **Werkzeuge:** Tabelle je Agent; Werkzeuge, die Daten ändern, sind markiert und laufen nur nach Bestätigung.
 - **Feedback:** Ort der Feedback-Datei, Zahl der 👍/👎 und Kommentare, die neuesten fünf Einträge und **Herunterladen** (siehe [Feedback-Datei](#feedback-datei-für-copilot)).
 - **Aktualisieren** lädt den KI-Status und die Feedback-Übersicht neu. Bearbeiten lässt sich nichts.
 
-Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall), `ms` (Dauer) und `calls` (höchstens acht Werkzeugaufrufe mit `tool`, `ok` und `summary`; der Ausgang einer Änderung folgt ihrem `status`). Das ist JSON im bestehenden Verlauf, keine Migration.
+Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall), `ms` (Dauer), `calls` (höchstens acht Werkzeugaufrufe mit `tool`, `ok` und `summary`; der Ausgang einer Änderung folgt ihrem `status`) und `models` (höchstens vier: Anbieter, Modell, Aufgabe, Rückfall mit Grund, Denkmodus). Das ist JSON im bestehenden Verlauf, keine Migration.
 
 **Dateien:** `src/lib/assistant/orchestrator-info.ts` (Daten), `src/components/orchestrator-admin.tsx` (Ansicht), `src/app/(dashboard)/einstellungen/orchestrator/page.tsx` (Route).
 
@@ -341,7 +357,8 @@ Statt eines festen „Denkt nach“ und des früheren Stern-Symbols zeigt der Ch
 - **Status je Schritt** (`src/lib/assistant/status.ts`):
   - „Lese deine Nachricht…“, dann „Verstehe deine Frage…“, während der Orchestrator entscheidet. Kennen die Regeln den Spezialisten schon, erscheint sein Schritt sofort, auch während der Server noch Details liest;
   - danach je Werkzeug, z. B. „Analysiere deine Buchungen…“, „Prüfe deine Verträge…“, „Berechne dein freies Budget…“, „Lese deine Lohnabrechnungen…“, „Suche passendes Wissen…“, „Hole aktuelle Marktdaten…“;
-  - „Formuliere die Antwort…“ während des Streamings.
+  - „Formuliere die Antwort…“ während des Streamings, „Denke gründlich nach…“, solange der Denkmodus läuft.
+  - Neben dem Text steht dezent das Modell, das gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“). Der Server meldet es als erstes Ereignis des Streams (`{"model": …}`), sobald ein Modell die Anfrage angenommen hat.
   - Ein Test stellt sicher, dass jedes Werkzeug einen Status hat.
 - **Denk-Orb** (`ThinkingOrb`, 32 px an der Stelle des Bots): Jeder Schritt trägt eine Art von Arbeit, die die Animation wählt:
 
@@ -506,7 +523,8 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
   - `src/lib/web/search.test.ts`: Suchwörter ohne persönliche Daten, Bing-Ergebnisse, Passagen und Tabellen, DNS-Schutz, Vergleich und Abschaltung;
   - `search.test.ts`: bestätigte Antworten in der Hybrid-Suche.
 - Alle Aktionen im Chat (Chat-Test 4): `all-actions.test.ts` (197 Fälle: Routing, Vorschau, Anwenden mit Plan-Synchronisierung, Rückgängig, Grenzfälle, Sparziel-Entwurf, Hinweis des Modells), `app-actions.test.ts` (Positionen nur Einnahme oder Fixkosten), `transactions-why.test.tsx` (Notiz im Buchungsdialog und in der Liste), `tests/assistant-orchestrator.spec.ts` (neuer Befehl nach „Welches meinst du?“, „Nein“ und „Ja“ unter der Vertragsvorschau).
-- `npm run eval:assistant`: zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Zahl der KI-Aufrufe und Dauer.
+- Modelle und Rückfall: `src/lib/ai/cloud.test.ts` (Modell je Aufgabe, Denkmodus, Rückfall auf Qwen bei 401/402/429/5xx/Netzwerk mit Pausen, Streaming-Rückfall vor dem ersten Wort, Pseudonymisierung samt geteilter Platzhalter, Token-Zähler, Cache, Status), `orchestrator-admin.test.tsx` (Bereich „Modelle“, Warnung bei Rückfall, Modelle in den Läufen), `assistant-chat-parts.test.tsx` (Modell in der Statuszeile).
+- `npm run eval:assistant`: Stufen Smoke, Gold (höchstens 80 Fragen) und Deep (10–15 Fälle); zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Modell, Zahl der KI-Aufrufe und Dauer. Details: [local-ai.md](local-ai.md#qualitätsprüfung).
 
 ## Grenzen
 

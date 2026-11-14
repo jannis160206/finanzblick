@@ -35,7 +35,7 @@ Sechs Seiten plus Einstellungen:
 - an einen von vier Spezialisten: Umsätze, Verträge, Budget & Prognose sowie Gehalt & Steuern, z. B. „Wie viel netto bekomme ich?“ mit dem Anteil zu 6 % und dem voll versteuerten Anteil der nächsten Sonderzahlung;
 - im Zweifel an den allgemeinen Chat, der locker antwortet, aber nur bei Geld und der App hilft.
 
-Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufrufe. Zwei Fragen in einer Nachricht beantwortet er nacheinander. Fachfremde Themen (Filme, Bücher, Wetter, Rezepte, Allgemeinwissen, Witze) lehnt er freundlich ab und schlägt eine Finanzfrage vor.
+Klare Fragen kommen ohne KI aus; pro Nachricht gibt es höchstens zwei KI-Aufrufe. Welches Modell antwortet, steht in der Statuszeile und unter jeder Antwort (siehe [KI](#ki)). Zwei Fragen in einer Nachricht beantwortet er nacheinander. Fachfremde Themen (Filme, Bücher, Wetter, Rezepte, Allgemeinwissen, Witze) lehnt er freundlich ab und schlägt eine Finanzfrage vor.
 
 **Aktionen im Chat:** Was du in der App von Hand machst, geht auch per Chat, mit denselben Prüfungen:
 
@@ -408,7 +408,9 @@ Die Saison folgt dem lokalen Kalender (Fasching, Ostern, Sommer, Halloween, Weih
 
 Änderungen an Akzentfarbe und Bewegung erscheinen sofort als Vorschau. **Einstellungen speichern** behält sie lokal; **Verwerfen** oder das Verlassen der Seite stellt die gespeicherte Auswahl wieder her. Sparziele, Auszugsuhrzeiten und Erscheinungsbild bleiben auch in Excel-Sicherungen erhalten.
 
-## Lokale KI
+## KI
+
+Mit einem DeepSeek-Key in `.env.local` (`DEEPSEEK_API_KEY`) wählt Finanzblick das Modell je Aufgabe: DeepSeek Flash für Chat, Kategorisierung und Websuche, DeepSeek V4 Pro für Aktionen und – im Denkmodus – für Analysen und Steuerfragen. Namen, IBANs und Kontonummern werden vor dem Versand pseudonymisiert, PDF-Auszüge bleiben lokal. Fällt DeepSeek aus, übernimmt sofort das lokale Modell; Chat, Serverlog und Admin-Ansicht zeigen, welches Modell geantwortet hat.
 
 Ein lokales Sprachmodell (Qwen3-8B auf der Intel-NPU über OpenVINO Model Server) ordnet offene Prüfungen selbst zu und holt Händlerlogos in den privaten `Logo/`-Ordner. Nur Fälle, bei denen es nicht sicher ist, bleiben zur manuellen Prüfung. `npm run ai:server` startet das Modell, `npm run mcp` stellt die Finanzwerkzeuge als MCP-Server bereit, `npm run mcp:web` liefert öffentliche Marktdaten (Inflation, Sparzinsen, Wechselkurse) und Begriffserklärungen aus der Wikipedia für den Finanz-Assistenten, der sich Gelerntes merkt, und `npm run ai:agent` bietet einen lokalen Chat. Ein kleines Einbettungsmodell (Qwen3-Embedding-0.6B, CPU) im selben Modellserver durchsucht das lokale Finanzwissen; nach Änderungen daran `npm run knowledge:index` ausführen. Details: [docs/local-ai.md](docs/local-ai.md).
 

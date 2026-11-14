@@ -107,6 +107,10 @@ describe("streaming", () => {
     const withdrawn = ["{\"delta\":\"Dir bleiben 420 €. Spar\"}\n", "{\"replace\":\"Dir bleiben 420 €.\"}\n", "{\"done\":true,\"ok\":true,\"text\":\"Dir bleiben 420 €.\"}\n"];
     expect(await readAnswerStream(body(withdrawn), (text) => replaced.push(text))).toBe("Dir bleiben 420 €.");
     expect(replaced).toEqual(["Dir bleiben 420 €. Spar", "Dir bleiben 420 €."]);
+    const models: unknown[] = [];
+    const named = ["{\"model\":{\"provider\":\"deepseek\",\"model\":\"deepseek-flash\",\"task\":\"chat\"}}\n", ...lines];
+    expect(await readAnswerStream(body(named), () => undefined, (model) => models.push(model))).toBe("Dir bleiben 420 €.");
+    expect(models).toEqual([{ provider: "deepseek", model: "deepseek-flash", task: "chat" }]);
   });
 
   it("keeps the backed sentences, unwraps JSON and accepts amounts written in tool results", async () => {

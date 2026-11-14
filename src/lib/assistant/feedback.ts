@@ -60,7 +60,7 @@ export type StoredFeedback = FeedbackEntry & {
   recordedAt: string;
   updatedAt?: string;
   account?: string;
-  app?: { nodeEnv?: string; aiEnabled: boolean; model?: string; embeddingModel?: string; webSearch: boolean };
+  app?: { nodeEnv?: string; aiEnabled: boolean; model?: string; embeddingModel?: string; webSearch: boolean; cloudModels?: string[] };
 };
 
 export type FeedbackFile = {

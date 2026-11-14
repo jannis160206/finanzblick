@@ -113,13 +113,17 @@ export function OrbAvatar({ activity, className }: { activity: WorkActivity; cla
 export function StatusLine({ status, className }: { status: WorkStatus; className?: string }) {
   const mode = useMotionMode();
   const text = <span className="truncate">{status.text}</span>;
-  return <span className={cn("grid min-w-0 text-[0.8125rem] text-muted-foreground", className)} data-status-line="" data-activity={status.activity}>
-    {mode === "none" ? text : <AnimatePresence mode="popLayout" initial={false}>
-      <m.span key={status.text} className="col-start-1 row-start-1 inline-flex min-w-0"
-        initial={mode === "full" ? { opacity: 0, y: 6, filter: "blur(3px)" } : { opacity: 0 }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        exit={mode === "full" ? { opacity: 0, y: -6, filter: "blur(3px)", transition: exitTween } : { opacity: 0, transition: exitTween }}
-        transition={mode === "full" ? dialogSpring : { duration: 0.16 }}>{text}</m.span>
-    </AnimatePresence>}
+  return <span className={cn("flex min-w-0 items-center gap-2 text-[0.8125rem] text-muted-foreground", className)} data-status-line="" data-activity={status.activity}>
+    <span className="grid min-w-0">
+      {mode === "none" ? text : <AnimatePresence mode="popLayout" initial={false}>
+        <m.span key={status.text} className="col-start-1 row-start-1 inline-flex min-w-0"
+          initial={mode === "full" ? { opacity: 0, y: 6, filter: "blur(3px)" } : { opacity: 0 }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={mode === "full" ? { opacity: 0, y: -6, filter: "blur(3px)", transition: exitTween } : { opacity: 0, transition: exitTween }}
+          transition={mode === "full" ? dialogSpring : { duration: 0.16 }}>{text}</m.span>
+      </AnimatePresence>}
+    </span>
+    {status.model && <span data-status-model="" className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-2xs font-medium text-muted-foreground
+      animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none"><span className="sr-only">Modell: </span>{status.model}</span>}
   </span>;
 }
 
@@ -139,7 +143,7 @@ export function LiveAnswer({ live }: { live: LiveRunStore }) {
         {text ? <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
           <StatusLine status={status} className="mb-1.5" />
           <span className="sr-only">Assistent: </span><StreamingText text={text} />
-          {status.agent && status.agent !== "general" && <span className="mt-1.5 block text-2xs text-muted-foreground">{agentLabel[status.agent]} · KI</span>}
+          {status.agent && status.agent !== "general" && <span className="mt-1.5 block text-2xs text-muted-foreground">{agentLabel[status.agent]} · {status.model?.replace(" · Denkmodus", "") ?? "KI"}</span>}
         </div>
           : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status} /></div>}
       </GlowFrame>

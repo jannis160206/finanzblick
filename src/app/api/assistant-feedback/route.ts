@@ -43,6 +43,7 @@ export async function POST(request: Request): Promise<Response> {
       app: {
         ...(process.env.NODE_ENV ? { nodeEnv: process.env.NODE_ENV } : {}), aiEnabled: ai.enabled, ...(ai.enabled ? { model: ai.model } : {}),
         ...(ai.embeddingModel ? { embeddingModel: ai.embeddingModel } : {}),
+        ...(ai.cloud ? { cloudModels: [...new Set(Object.values(ai.cloud.models))] } : {}),
         webSearch: !/^(?:off|false|0|aus|nein)$/i.test(process.env.FINANZBLICK_WEB_SEARCH?.trim() ?? ""),
       },
     };

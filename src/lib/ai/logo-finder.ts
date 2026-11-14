@@ -201,7 +201,7 @@ async function chooseCandidate(
   const answer = await chat([
     { role: "system", content: "Du ordnest einen Händlernamen aus einer österreichischen Bankbuchung dem richtigen Wikidata-Unternehmen zu. Antworte nur mit JSON: [{\"id\":\"Q…\",\"confidence\":0-100}] oder [{\"id\":null,\"confidence\":0}] wenn keiner sicher passt. " + DATA_RULE },
     { role: "user", content: `Händler: ${cleanUntrusted(name, 120)}${context ? `\nBuchungstext: ${cleanUntrusted(context, 300)}` : ""}\nKandidaten:\n${options}` },
-  ], { ...ai, maxTokens: 40 }).catch(() => undefined);
+  ], { task: "extract", ...ai, maxTokens: 40 }).catch(() => undefined);
   if (!answer) return { needsModel: true };
   const parsed = z.array(z.object({ id: z.string().nullable(), confidence: z.coerce.number() }))
     .safeParse(extractJsonArray(answer.content));

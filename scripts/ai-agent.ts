@@ -43,7 +43,8 @@ async function runTask(task: string, access: ReturnType<typeof openFinanceAccess
   const messages: ChatMessage[] = [{ role: "system", content: system }, { role: "user", content: task }];
   for (let step = 0; step < MAX_STEPS; step += 1) {
     fitPrompt(messages);
-    const reply = await chat(messages, { tools, maxTokens: 800 });
+    // Several tool calls in a row: the stronger model plans them.
+    const reply = await chat(messages, { tools, maxTokens: 800, task: "action" });
     if (!reply.toolCalls.length) return reply.content;
     messages.push({ role: "assistant", content: reply.content || null, tool_calls: reply.toolCalls });
     for (const call of reply.toolCalls) {

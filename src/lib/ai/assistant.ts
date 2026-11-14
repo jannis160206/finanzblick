@@ -3,10 +3,12 @@ import { assistantDraftSchema, dateSchema, type AssistantDraft } from "@/lib/typ
 import { groundModelExtraction, mergeDraft, missingField, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
 import { normalizeMessage } from "@/lib/assistant/normalize";
 import { agentTools, chatRequest, parseAgent, routeByRules, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
-import { detectTool, isAssistantTool, isDraftTool, matchName, type AssistantTool } from "@/lib/assistant/tools";
+import { detectTool, isAssistantTool, isDraftTool, matchName, splitCommands, type AssistantTool } from "@/lib/assistant/tools";
+import { changingTools } from "@/lib/assistant/conversation";
 import { categories } from "@/lib/categories";
-import { chat, type ChatMessage, type ChatOptions } from "./client";
+import { chat, cloudPause, type ChatMessage, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
+import type { AiTask, ModelUse } from "./models";
 import { interpretPrompt, orchestratorPrompt, scopeNeeds } from "./specialists";
 import { cleanUntrusted } from "./untrusted";
 
@@ -26,6 +28,8 @@ export type AssistantHints = { goal?: string; planned?: string; category?: strin
 /** `agent` answers the message; `via` says how the orchestrator decided (rule, signal word, model or fallback). */
 export type AssistantReply = {
   agent: AgentId; via: RouteVia; tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel";
+  /** The models that worked on the message (cloud model or the local fallback). */
+  models?: ModelUse[];
 };
 
 const modelSchema = z.object({
@@ -83,10 +87,12 @@ function groundHints(model: z.infer<typeof modelSchema> | undefined, input: Assi
 const historyLines = (input: AssistantRequest, count: number) => (input.history ?? []).slice(-count)
   .map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`);
 
-// The small router model is tried first when configured; the main model steps in only if it fails.
-async function ask<T>(messages: ChatMessage[], options: ChatOptions, maxTokens: number, read: (content: string) => T | undefined): Promise<T | undefined> {
-  const run = async (name?: string) => read((await chat(messages, { ...options, ...(name ? { model: name } : {}), maxTokens, temperature: 0 })).content);
-  const routerModel = (options.config ?? readAiConfig()).routerModel;
+// With DeepSeek, one call answers (the local main model steps in on failure). Locally, the small router model is tried
+// first when configured; the main model steps in only if it fails.
+async function ask<T>(messages: ChatMessage[], options: ChatOptions, maxTokens: number, read: (content: string) => T | undefined, task: AiTask): Promise<T | undefined> {
+  const run = async (name?: string) => read((await chat(messages, { ...options, task, ...(name ? { model: name } : {}), maxTokens, temperature: 0 })).content);
+  const config = options.config ?? readAiConfig();
+  const routerModel = config.cloud && !options.localOnly && !cloudPause() ? undefined : config.routerModel;
   if (routerModel) {
     try {
       return await run(routerModel);
@@ -108,10 +114,25 @@ export async function classifyAgent(input: AssistantRequest, options: ChatOption
     { role: "system", content: orchestratorPrompt },
     { role: "user", content: [...historyLines(input, 1).map((line) => `Davor: ${line.slice(0, 240)}`), `Nachricht: ${input.message}`].join("\n") },
   ];
-  return ask(messages, options, 8, parseAgent);
+  return ask(messages, options, 8, parseAgent, "route");
+}
+
+// Changing data, a form in progress or several commands in one message: the stronger model plans the action.
+const actionWords = /(?<![\p{L}\d])(?:leg\p{L}*|anleg\p{L}*|erstell\p{L}*|lösch\p{L}*|loesch\p{L}*|änder\p{L}*|aender\p{L}*|setz\p{L}*|verschieb\p{L}*|trag\p{L}*|eintrag\p{L}*|kündig\p{L}*|buch\p{L}* um|teil\p{L}* auf)(?![\p{L}\d])/iu;
+export function interpretTask(message: string, ruleTool: AssistantTool | undefined, pending: boolean, names: string[] = []): AiTask {
+  if (pending || ruleTool && changingTools.includes(ruleTool)) return "action";
+  if ((splitCommands(message, names)?.length ?? 0) > 1) return "action";
+  return actionWords.test(message) ? "action" : "route";
 }
 
 export async function interpretAssistantMessage(request: AssistantRequest, options: ChatOptions = {}): Promise<AssistantReply> {
+  const models: ModelUse[] = [];
+  const reply = await interpret(request, { ...options, trace: models });
+  options.trace?.push(...models);
+  return models.length ? { ...reply, models } : reply;
+}
+
+async function interpret(request: AssistantRequest, options: ChatOptions): Promise<AssistantReply> {
   // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
   const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
   const parsed = parseAssistantMessage(input.message, input.asOf);
@@ -158,7 +179,7 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
   const model = await ask(messages, options, 300, (content) => {
     const candidate = modelSchema.safeParse(extractJsonObject(content));
     return candidate.success ? candidate.data : undefined;
-  });
+  }, interpretTask(input.message, ruleTool, !!input.pending, names));
   const source: AssistantReply["source"] = model ? "KI" : "Regel";
   // Only the specialist's own tools count; "ask" or anything else means: answer in words.
   const own = (value: unknown): AssistantTool | undefined => isAssistantTool(value) && value !== "ask" && agentTools(agent).includes(value) ? value : undefined;

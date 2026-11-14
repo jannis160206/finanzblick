@@ -108,7 +108,7 @@ const topics: Topic[] = [
   {
     id: "assistant", title: "Finanz-Assistent", page: "Finanz-Assistent", test: /assistent|chat|rückgängig|rueckgaengig|gedächtnis|gedaechtnis|\bki\b/,
     about: [
-      "Die KI läuft lokal auf der NPU und wählt nur aus, was zu tun ist. Alle Beträge rechnet der Code.",
+      "Die KI wählt nur aus, was zu tun ist – mit DeepSeek, falls eingerichtet, sonst lokal mit Qwen auf der NPU. Alle Beträge rechnet der Code.",
       "Änderungen zeige ich vorher als Karte mit Vorher und Nachher. Gespeichert wird erst nach deinem Klick, und jede Änderung lässt sich rückgängig machen.",
     ],
     say: ["Was hast du geändert?", "Mach das rückgängig", "Was hast du dir gemerkt?"],

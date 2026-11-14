@@ -32,7 +32,8 @@ test.describe("assistant orchestrator", () => {
         answers.push(route.request().postDataJSON());
         await route.fulfill({
           contentType: "application/x-ndjson; charset=utf-8",
-          body: [{ delta: "Spannend, aber ziemlich schwankend." }, { done: true, ok: true, text: "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst." }]
+          body: [{ model: { provider: "deepseek", model: "deepseek-flash", task: "chat" } }, { delta: "Spannend, aber ziemlich schwankend." },
+            { done: true, ok: true, text: "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst." }]
             .map((event) => JSON.stringify(event)).join("\n") + "\n",
         });
       });
@@ -49,6 +50,8 @@ test.describe("assistant orchestrator", () => {
       await expect(chat.getByText("Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.")).toBeVisible();
       expect(answers.at(-1)).toMatchObject({ agent: "general", facts: { today: expect.any(String) } });
       expect(Object.keys(answers.at(-1)?.facts ?? {})).toEqual(["today"]);
+      // The answer names the model that wrote it instead of a plain "KI".
+      await expect(chat.locator('[data-model="deepseek-flash"]').last()).toHaveText("DeepSeek Flash");
 
       // A payroll question goes to the Gehalt & Steuern specialist; its tool computes the numbers, no model needed.
       await ask(page, "Wie viel netto bekomme ich?");

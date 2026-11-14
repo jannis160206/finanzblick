@@ -6,6 +6,7 @@ import { payslipKey, payslipSchema, payrollEmployerKey, payrollForecastSchema } 
 import { allCategories, categories, canonicalCategory, type Category } from "@/lib/categories";
 import { sharedSettlementFields } from "@/lib/shared-refund-schema";
 import { importResultSchema, MAX_IMPORT_RESULTS } from "@/lib/import/result-schema";
+import { aiTasks } from "@/lib/ai/models";
 export { categories, type Category } from "@/lib/categories";
 
 z.config(z.locales.de());
@@ -718,6 +719,16 @@ export const assistantToolCallSchema = z.object({
   summary: z.string().max(80),
 }).strict();
 export type AssistantToolCall = z.infer<typeof assistantToolCallSchema>;
+// One model that worked on an answer: DeepSeek in the cloud or the local model, for which task, and whether it stepped in as fallback.
+export const assistantModelUseSchema = z.object({
+  provider: z.enum(["deepseek", "local"]),
+  model: z.string().trim().min(1).max(80),
+  task: z.enum(aiTasks),
+  fallback: z.boolean().optional(),
+  thinking: z.boolean().optional(),
+  reason: z.string().max(80).optional(),
+}).strict();
+export type AssistantModelUse = z.infer<typeof assistantModelUseSchema>;
 export const assistantMessageSchema = z.object({
   id: z.string().min(1).max(100),
   role: z.enum(["user", "assistant"]),
@@ -756,6 +767,8 @@ export const assistantMessageSchema = z.object({
   steps: z.array(z.string().max(80)).max(12).optional(),
   // The tools the run called for this answer, in order (lookups, web search, the answering tool), for "Letzte Läufe" in the admin view.
   calls: z.array(assistantToolCallSchema).max(8).optional(),
+  // The models of the run (routing, action, answer), in order; shown under the answer and in "Letzte Läufe".
+  models: z.array(assistantModelUseSchema).max(4).optional(),
   correcting: z.string().max(1000).optional(),
   clarify: z.string().max(1000).optional(),
 }).strict();

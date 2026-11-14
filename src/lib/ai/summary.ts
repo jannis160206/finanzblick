@@ -73,7 +73,7 @@ export async function writeMonthlySummary(facts: SummaryFacts, options: ChatOpti
         "Erfinde nichts und gib keine Anlageberatung. " + DATA_RULE,
     },
     { role: "user", content: `Fakten (JSON):\n${JSON.stringify(modelFacts)}` },
-  ], { ...options, maxTokens: 300, temperature: 0.2 });
+  ], { task: "chat", ...options, maxTokens: 300, temperature: 0.2 });
   const text = stripThinking(answer.content).replace(/\s+/g, " ").trim().slice(0, 900);
   return text.length >= 40 && numbersBacked(text, modelFacts) && contactsBacked(text, modelFacts) ? { text, source: "KI" as const } : { text: fallback, source: "Regel" as const };
 }

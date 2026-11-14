@@ -215,7 +215,7 @@ export async function categorizeBookings(
   if (!bookings.length) return [];
   const config = options.config ?? readAiConfig();
   const answer = await chat(buildCategorizationMessages(bookings, examples), {
-    ...options, config, maxTokens: 60 + bookings.length * 45,
+    task: "categorize", ...options, config, maxTokens: 60 + bookings.length * 45,
   });
   const results = interpretCategorization(answer.content, bookings, config.minConfidence);
   const missing = bookings.filter((_, index) => results[index].reason === "keine Antwort");

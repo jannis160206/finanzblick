@@ -110,6 +110,13 @@ it("shows only the thinking orb and the current step while an answer is worked o
   expect(await screen.findByText("frei")).toBeTruthy();
   expect(container.querySelector("[data-orb]")?.getAttribute("data-orb")).toBe("composing");
   expect(screen.getByText("Budget & Prognose · KI")).toBeTruthy();
+  // Once a model took the question, the status names it and the answer is signed with it.
+  act(() => live.setStatus((current) => current && { ...current, model: "DeepSeek Flash" }));
+  expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: DeepSeek Flash");
+  expect(screen.getByText("Budget & Prognose · DeepSeek Flash")).toBeTruthy();
+  act(() => live.setStatus({ ...workStatus.think, agent: "payroll", model: "Lokal (Qwen)" }));
+  expect(screen.getByText("Denke gründlich nach…")).toBeTruthy();
+  expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: Lokal (Qwen)");
 });
 
 it("draws streamed words at most once per frame and clears at once", async () => {

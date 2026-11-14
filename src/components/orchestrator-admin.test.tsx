@@ -32,8 +32,9 @@ it("shows the tree, the agents with their models, the runs and the tools read-on
   const agents = within(screen.getByRole("region", { name: "Agenten" }));
   expect(agents.getByRole("heading", { name: /Gehalt & Steuern/ })).toBeTruthy();
   const models = (text: string) => agents.getAllByText((_, element) => element?.tagName === "P" && element.textContent === text);
-  expect(models("Werkzeugwahl: Qwen3-8B-int4-cw-ov · Antwort: Qwen3-8B-int4-cw-ov")).toHaveLength(4);
-  expect(models("Antwort: Qwen3-8B-int4-cw-ov · Smalltalk ohne Modell")).toHaveLength(1);
+  const qwen = "Qwen3-8B-int4-cw-ov";
+  expect(models(`Werkzeugwahl: ${qwen} · Aktion: ${qwen} · Antwort: ${qwen} · Analyse: ${qwen}`)).toHaveLength(4);
+  expect(models(`Antwort: ${qwen} · Websuche: ${qwen} · Smalltalk ohne Modell`)).toHaveLength(1);
   expect(agents.getByText("4 Werkzeuge · 1 Lauf")).toBeTruthy();
 
   const runs = within(screen.getByRole("list", { name: "Letzte Läufe" }));
@@ -99,4 +100,38 @@ it("tells other users that only the admin sees the feedback file", async () => {
     : Response.json({ available: false, model: "" })));
   renderAdmin();
   expect(await screen.findByText("Die Feedback-Datei kann nur der Administrator ansehen und herunterladen.")).toBeTruthy();
+});
+
+it("shows DeepSeek per task, the local fallback and the models of each run", async () => {
+  const routing = [
+    ["chat", "DeepSeek Flash"], ["route", "DeepSeek Flash"], ["action", "DeepSeek V4 Pro"], ["reasoning", "DeepSeek V4 Pro · Denkmodus"],
+    ["categorize", "DeepSeek Flash"], ["web", "DeepSeek Flash"], ["extract", "DeepSeek Flash"], ["document", "Lokal (Qwen)"],
+  ].map(([task, label]) => ({ task, label, model: label.startsWith("Lokal") ? "OpenVINO/Qwen3-8B-int4-cw-ov" : "deepseek", ...(label.startsWith("Lokal") ? { fallback: true } : {}) }));
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ available: true, model: "deepseek-flash", label: "DeepSeek Flash", device: "Cloud",
+    local: { available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov" },
+    cloud: { provider: "deepseek", available: true, models: { fast: "deepseek-flash", pro: "deepseek-v4-pro", reasoning: "deepseek-v4-pro" } }, routing })));
+  renderAdmin([
+    { id: "u1", role: "user", text: "Lohnt sich die Arbeitnehmerveranlagung?", at: Date.UTC(2026, 10, 14, 9, 30) },
+    { id: "a1", role: "assistant", text: "Ja, meistens …", at: Date.UTC(2026, 10, 14, 9, 30, 6), agent: "payroll", via: "signal", source: "KI", models: [
+      { provider: "deepseek", model: "deepseek-flash", task: "route" },
+      { provider: "local", model: "OpenVINO/Qwen3-8B-int4-cw-ov", task: "reasoning", fallback: true, reason: "Rate-Limit (HTTP 429)" },
+    ] },
+  ]);
+  expect(await screen.findByText("KI bereit · DeepSeek Flash · Qwen als Rückfall")).toBeTruthy();
+  const perTask = within(screen.getByRole("list", { name: "Modell je Aufgabe" })).getAllByRole("listitem").map((item) => item.textContent);
+  expect(perTask).toContain("AnalyseDeepSeek V4 Pro · Denkmodus");
+  expect(perTask).toContain("DokumentLokal (Qwen) · Rückfall");
+  const run = within(screen.getByRole("list", { name: "Letzte Läufe" })).getAllByRole("listitem")[0];
+  const models = within(run).getByLabelText("Modelle");
+  expect(models.textContent).toBe("DeepSeek Flash·Lokal (Qwen) (Rückfall, weil DeepSeek: Rate-Limit (HTTP 429))");
+  expect(within(models).getByText("Lokal (Qwen)").closest("[title]")?.getAttribute("title")).toBe("Analyse · Rückfall, weil DeepSeek: Rate-Limit (HTTP 429)");
+});
+
+it("says when DeepSeek is unavailable and the local model answers", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({ available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov", label: "Lokal (Qwen)", device: "NPU",
+    local: { available: true, model: "OpenVINO/Qwen3-8B-int4-cw-ov" },
+    cloud: { provider: "deepseek", available: false, error: "Key ungültig (HTTP 401)", models: { fast: "deepseek-flash", pro: "deepseek-v4-pro", reasoning: "deepseek-v4-pro" } },
+    routing: [] })));
+  renderAdmin();
+  expect(await screen.findByText("Lokal (Qwen) aktiv · DeepSeek Key ungültig (HTTP 401)")).toBeTruthy();
 });

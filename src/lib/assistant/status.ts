@@ -6,7 +6,8 @@ import type { AssistantTool } from "./tools";
  * (it picks the animation of the thinking orb) and, once the orchestrator has decided, the agent doing it.
  */
 export type WorkActivity = "listening" | "connecting" | "searching" | "working" | "solving" | "shaping" | "weaving" | "composing";
-export type WorkStatus = { text: string; activity: WorkActivity; agent?: AgentId };
+/** `model` names the model that answers right now ("DeepSeek Flash", "Lokal (Qwen)"), once it took the question. */
+export type WorkStatus = { text: string; activity: WorkActivity; agent?: AgentId; model?: string };
 
 const step = (text: string, activity: WorkActivity): WorkStatus => ({ text, activity });
 
@@ -19,6 +20,7 @@ export const workStatus = {
   compare: step("Vergleiche Quellen…", "weaving"),
   recall: step("Prüfe mein gelerntes Wissen…", "searching"),
   answer: step("Formuliere die Antwort…", "composing"),
+  think: step("Denke gründlich nach…", "solving"),
 } satisfies Record<string, WorkStatus>;
 
 const analyse = (text: string) => step(text, "working");

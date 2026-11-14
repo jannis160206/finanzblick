@@ -71,3 +71,22 @@ describe("orchestrator admin data", () => {
     });
   });
 });
+
+describe("models in the runs", () => {
+  it("lists the models of a run with the local fallback and its reason", () => {
+    const runs = assistantRuns([
+      user("u1", 1, "Warum bleibt mir so wenig?"),
+      answer("a1", 2, { agent: "budget", source: "KI", models: [
+        { provider: "deepseek", model: "deepseek-flash", task: "route" },
+        { provider: "local", model: "OpenVINO/Qwen3-8B-int4-cw-ov", task: "reasoning", fallback: true, reason: "Rate-Limit (HTTP 429)" },
+      ] }),
+      user("u2", 3, "Wie viel ist am Sparkonto?"),
+      answer("a2", 4, { agent: "budget", tool: "accounts" }),
+    ]);
+    expect(runs[0].models).toEqual([]);
+    expect(runs[1].models).toEqual([
+      { label: "DeepSeek Flash", model: "deepseek-flash", task: "Werkzeugwahl", fallback: false },
+      { label: "Lokal (Qwen)", model: "OpenVINO/Qwen3-8B-int4-cw-ov", task: "Analyse", fallback: true, reason: "Rate-Limit (HTTP 429)" },
+    ]);
+  });
+});

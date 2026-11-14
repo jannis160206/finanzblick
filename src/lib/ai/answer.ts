@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { agentIds, type AgentId } from "@/lib/assistant/orchestrator";
 import { chat, chatStream, stripThinking, type ChatMessage, type ChatOptions } from "./client";
+import { needsReasoning, type AiTask, type ModelUse } from "./models";
 import { answerPrompt } from "./specialists";
 import { numbersBacked } from "./summary";
 import { cleanFacts, cleanUntrusted, contactsBacked } from "./untrusted";
@@ -43,6 +44,12 @@ function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, ev
 
 // Specialists keep it short; the general chat gets a little more room and a livelier temperature.
 const answerOptions = (agent: AgentId = "general") => agent === "general" ? { maxTokens: 320, temperature: 0.4 } : { maxTokens: 300, temperature: 0.3 };
+
+/** Web search summaries and ordinary questions take the fast model; analyses and tax questions the thinking one. */
+export function answerTask(input: Pick<AnswerRequest, "question" | "agent" | "evidence">): AiTask {
+  if (input.evidence?.startsWith("Websuche")) return "web";
+  return needsReasoning(input.question, input.agent) ? "reasoning" : "chat";
+}
 
 // Amounts written inside texts (tool results, health check) and the user's own numbers in the question count as backed, too.
 function backing(facts: Record<string, unknown>, evidence?: string, question?: string) {
@@ -109,14 +116,15 @@ function prepare(input: AnswerRequest) {
 }
 
 // A grounded free answer: every number, link and account number must come from the facts or the tool result.
-export async function answerFreeQuestion(input: AnswerRequest, options: ChatOptions = {}): Promise<{ text?: string; source: "KI" }> {
+export async function answerFreeQuestion(input: AnswerRequest, options: ChatOptions = {}): Promise<{ text?: string; source: "KI"; models: ModelUse[] }> {
   const { facts, evidence, source, check } = prepare(input);
-  const answer = await chat(answerMessages(input, facts, evidence), { ...options, ...answerOptions(input.agent) });
+  const answer = await chat(answerMessages(input, facts, evidence), { task: answerTask(input), ...answerOptions(input.agent), ...options });
   const text = groundedText(answer.content, source, check);
-  return text ? { text, source: "KI" } : { source: "KI" };
+  return text ? { text, source: "KI", models: [answer.use] } : { source: "KI", models: [answer.use] };
 }
 
-export type AnswerEvent = { delta: string } | { replace: string } | { done: true; ok: boolean; text?: string };
+/** `model` names the model as soon as it accepted the question, before the first word. */
+export type AnswerEvent = { model: ModelUse } | { delta: string } | { replace: string } | { done: true; ok: boolean; text?: string };
 
 // Text that may already be shown: finished sentences that are backed, plus the whole words of the sentence being written while it is backed.
 export function visiblePrefix(content: string, source: object, check: (sentence: string, source: object) => boolean = backed): string {
@@ -137,7 +145,10 @@ export async function* streamFreeAnswer(input: AnswerRequest, options: ChatOptio
   const { facts, evidence, source, check } = prepare(input);
   let content = "";
   let shown = "";
-  for await (const piece of chatStream(answerMessages(input, facts, evidence), { ...options, ...answerOptions(input.agent) })) {
+  const trace: ModelUse[] = [];
+  let named = 0;
+  for await (const piece of chatStream(answerMessages(input, facts, evidence), { task: answerTask(input), ...answerOptions(input.agent), ...options, trace })) {
+    while (named < trace.length) yield { model: trace[named++] };
     content += piece;
     const visible = visiblePrefix(content, source, check);
     if (visible === shown) continue;
