@@ -154,6 +154,30 @@ describe("fallback to the local model", () => {
   });
 });
 
+describe("cloud only", () => {
+  it("never asks the local model for extras: a failure or a missing key is an error, not a fallback", async () => {
+    const failing = stub(() => new Response("{}", { status: 503 }));
+    await expect(chat([{ role: "user", content: "x" }], { config, fetcher: failing.fetcher, task: "suggest", cloudOnly: true }))
+      .rejects.toThrow(new AiUnavailableError("DeepSeek: Dienst gestört (HTTP 503)."));
+    expect(failing.calls.every((call) => call.url.startsWith("https://"))).toBe(true);
+    // Paused after the outage: no second cloud call and still no local one.
+    await expect(chat([{ role: "user", content: "x" }], { config, fetcher: failing.fetcher, task: "suggest", cloudOnly: true })).rejects.toThrow(AiUnavailableError);
+    expect(failing.calls).toHaveLength(1);
+    const offline = stub(() => completion("cloud"));
+    await expect(chat([{ role: "user", content: "x" }], { config: local, fetcher: offline.fetcher, cloudOnly: true })).rejects.toThrow("DeepSeek: nicht eingerichtet.");
+    expect(offline.calls).toHaveLength(0);
+    const stream = chatStream([{ role: "user", content: "x" }], { config: local, fetcher: offline.fetcher, cloudOnly: true });
+    await expect(stream.next()).rejects.toThrow(AiUnavailableError);
+  });
+
+  it("routes follow-up questions to the fast model and rule proposals to the pro model", async () => {
+    const { calls, fetcher } = stub(() => completion("ok"));
+    await chat([{ role: "user", content: "x" }], { config, fetcher, task: "suggest", cloudOnly: true });
+    await chat([{ role: "user", content: "x" }], { config, fetcher, task: "rule", cloudOnly: true });
+    expect(calls.map((call) => call.body.model)).toEqual(["deepseek-flash", "deepseek-v4-pro"]);
+  });
+});
+
 describe("privacy and tokens", () => {
   it("pseudonymizes people and account numbers for the cloud and puts them back into the answer", async () => {
     const { calls, fetcher } = stub(() => completion("Die Überweisung an Person-1 ging auf IBAN-1."));
@@ -212,14 +236,17 @@ describe("status", () => {
     expect(ready).toMatchObject({ available: true, device: "Cloud", label: "DeepSeek Flash", cloud: { available: true }, local: { available: true } });
     expect(Object.fromEntries(ready.routing.map((item) => [item.task, item.label]))).toMatchObject({
       chat: "DeepSeek Flash", route: "DeepSeek Flash", action: "DeepSeek V4 Pro", reasoning: "DeepSeek V4 Pro · Denkmodus",
-      categorize: "DeepSeek Flash", web: "DeepSeek Flash", document: "Lokal (Qwen)",
+      categorize: "DeepSeek Flash", web: "DeepSeek Flash", document: "Lokal (Qwen)", suggest: "DeepSeek Flash", rule: "DeepSeek V4 Pro",
     });
   });
 
   it("reports a rejected key and routes everything to the local model", async () => {
     const rejected = await status(() => new Response("{}", { status: 401 }));
     expect(rejected).toMatchObject({ available: true, device: "NPU", label: "Lokal (Qwen)", cloud: { available: false, error: "Key ungültig (HTTP 401)" } });
-    expect(rejected.routing.every((item) => item.label === "Lokal (Qwen)" && item.fallback)).toBe(true);
+    const labels = Object.fromEntries(rejected.routing.map((item) => [item.task, item.label]));
+    expect(rejected.routing.every((item) => item.fallback)).toBe(true);
+    // Follow-up questions and rule checks never use the local model.
+    expect(labels).toMatchObject({ chat: "Lokal (Qwen)", reasoning: "Lokal (Qwen)", suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek" });
     expect(cloudPause()).toBe("Key ungültig (HTTP 401)");
   });
 });

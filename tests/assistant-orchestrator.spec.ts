@@ -2,12 +2,16 @@ import { expect, test, type Page } from "@playwright/test";
 import { SECURITY_ACTIVATION_KEY } from "../src/lib/security-mode";
 import { payrollFixture } from "./fixtures/payroll-state";
 
-// Nur synthetische Daten. Die freie Antwort der lokalen KI ist gemockt; Routing und Werkzeuge laufen echt.
+// Nur synthetische Daten. Die freie Antwort und die Folgefragen der KI sind gemockt; Routing und Werkzeuge laufen echt.
 const storageKey = "finanzdashboard.v1";
 
 async function prepare(page: Page, width: number, theme: "light" | "dark") {
   await page.clock.setFixedTime(new Date("2026-10-15T12:00:00Z"));
   await page.setViewportSize({ width, height: width < 768 ? 812 : 1000 });
+  // Follow-up questions from DeepSeek: two for the Bitcoin answer; otherwise unavailable, so the fixed suggestions stay.
+  await page.route("**/api/ai/follow-ups", (route) => /Bitcoin/.test(route.request().postData() ?? "")
+    ? route.fulfill({ json: { suggestions: ["Wie viel Bitcoin wäre vertretbar?", "Was ist ein ETF?"], models: [{ provider: "deepseek", model: "deepseek-flash", task: "suggest" }] } })
+    : route.fulfill({ status: 503, json: { error: "DeepSeek: nicht eingerichtet." } }));
   await page.addInitScript(({ key, json, theme, activation }) => {
     localStorage.setItem("theme", theme);
     localStorage.setItem(activation, "off");
@@ -52,6 +56,8 @@ test.describe("assistant orchestrator", () => {
       expect(Object.keys(answers.at(-1)?.facts ?? {})).toEqual(["today"]);
       // The answer names the model that wrote it instead of a plain "KI".
       await expect(chat.locator('[data-model="deepseek-flash"]').last()).toHaveText("DeepSeek Flash");
+      // DeepSeek's follow-up questions replace the fixed ones under the newest answer.
+      await expect(chat.getByRole("group", { name: "Vorschläge von DeepSeek" }).getByRole("button")).toHaveText(["Wie viel Bitcoin wäre vertretbar?", "Was ist ein ETF?"]);
 
       // A payroll question goes to the Gehalt & Steuern specialist; its tool computes the numbers, no model needed.
       await ask(page, "Wie viel netto bekomme ich?");

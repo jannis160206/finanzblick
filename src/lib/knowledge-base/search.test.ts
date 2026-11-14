@@ -1,7 +1,10 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { knowledgeCorpus } from "./corpus";
 import { chunkHash, confidentHit, fuseHits, keywordTerms, knowledgeEvidence, localKnowledgeAnswer, MAX_KNOWLEDGE_HITS, VECTOR_MATCH } from "./query";
-import { resetKnowledgeIndex, searchKnowledge } from "./search";
+import { learnedVectorPath, resetKnowledgeIndex, searchKnowledge } from "./search";
 import stored from "./vectors.json";
 import { vectorFromBase64, type StoredVectors } from "./vectors";
 
@@ -76,6 +79,38 @@ describe("confirmed answers in the knowledge search", () => {
     expect(result.hits.length).toBeLessThanOrEqual(MAX_KNOWLEDGE_HITS);
     await searchKnowledge("Wie groß sollte meine Reserve für Notfälle sein?", options);
     expect(embedded).toBe(2);
+  });
+
+  it("keeps the vectors of stored answers in a local file, so a restart embeds nothing again", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fb-knowledge-"));
+    try {
+      const file = join(dir, "assistant-knowledge.sqlite");
+      const vector = [...vectorFromBase64(vectors.entries.notgroschen.vector)];
+      let embedded = 0;
+      const learned = [{ id: "a1", question: "Wie viel Notgroschen brauche ich?", text: "Drei bis sechs Monatsausgaben.", votes: 0, uses: 0 }];
+      const options = { embed: like("notgroschen"), learned, embedDocuments: async (texts: string[]) => { embedded += texts.length; return texts.map(() => vector); } };
+      resetKnowledgeIndex(undefined, file);
+      expect((await searchKnowledge("Wie groß sollte meine Reserve sein?", options)).hits.find((hit) => hit.learned)).toMatchObject({ id: "learned:a1", distance: 0 });
+      resetKnowledgeIndex(undefined, file);
+      expect((await searchKnowledge("Wie groß sollte meine Reserve sein?", options)).hits.find((hit) => hit.learned)).toMatchObject({ id: "learned:a1" });
+      expect(embedded).toBe(1);
+      resetKnowledgeIndex();
+    } finally {
+      // node:sqlite releases the file only once its statements are collected; Windows then refuses to delete it.
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // A leftover file in the temp folder is harmless.
+      }
+    }
+  });
+
+  it("puts the vector file next to the database in production and nowhere in tests", () => {
+    expect(learnedVectorPath({ NODE_ENV: "test" })).toBeUndefined();
+    expect(learnedVectorPath({ NODE_ENV: "production", FINANZBLICK_DATABASE_PATH: "/var/lib/finanzblick/app.sqlite" }))
+      .toBe(join("/var/lib/finanzblick", "assistant-knowledge.sqlite"));
+    expect(learnedVectorPath({ FINANZBLICK_KNOWLEDGE_VECTORS: "off" })).toBeUndefined();
+    expect(learnedVectorPath({ FINANZBLICK_KNOWLEDGE_VECTORS: "relativ.sqlite" })).toBeUndefined();
   });
 });
 

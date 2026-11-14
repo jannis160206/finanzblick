@@ -53,6 +53,9 @@ next-env.d.ts
 *.sqlite-journal
 # assistant feedback with real questions and answers (see docs/ASSISTANT-ORCHESTRATOR.md)
 /data/assistant-feedback.json*
+# rules learned from 👎 comments and the response cache of their eval check
+/data/assistant-rules.json*
+/data/ai-cache/
 /test-results/
 /playwright-report/
 *.log

@@ -135,3 +135,40 @@ it("says when DeepSeek is unavailable and the local model answers", async () => 
   renderAdmin();
   expect(await screen.findByText("Lokal (Qwen) aktiv · DeepSeek Key ungültig (HTTP 401)")).toBeTruthy();
 });
+
+it("lists the rules learned from feedback with their eval and lets the admin switch them", async () => {
+  const at = "2026-11-14T12:00:00.000Z";
+  const base = { feedbackId: "fb-00000001", createdAt: at, updatedAt: at, question: "Welche Abos habe ich?", answer: "Netflix und Spotify." };
+  let rules = [
+    { ...base, id: "rule-0001", status: "active", comment: "Mir fehlt der Jahresbetrag.", rule: "Nenne bei Abos auch den Jahresbetrag.", scope: "contracts", target: "answer",
+      check: { at, model: "deepseek-flash", passed: true, baseline: { passed: 84, total: 86, hard: 0 }, candidate: { passed: 85, total: 86, hard: 0 } } },
+    { ...base, id: "rule-0002", status: "rejected", comment: "Immer duzen bitte.", rule: "Sprich den Nutzer immer per Du an.", scope: "all", target: "answer",
+      reason: "Gold-Eval mit Regel schlechter: 83/86 statt 84/86.",
+      check: { at, model: "deepseek-flash", passed: false, baseline: { passed: 84, total: 86, hard: 0 }, candidate: { passed: 83, total: 86, hard: 0 } } },
+    { ...base, id: "rule-0003", status: "vague", comment: "war schlecht", reason: "Zu vage – sag konkret, was falsch war oder gefehlt hat." },
+  ];
+  const patches: unknown[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url !== "/api/assistant-rules") return Response.json({ available: false, model: "" });
+    if (init?.method === "PATCH") {
+      patches.push(JSON.parse(String(init.body)));
+      rules = rules.map((rule) => rule.id === "rule-0001" ? { ...rule, status: "disabled" } : rule);
+      return Response.json({ rule: rules[0] });
+    }
+    return Response.json({ file: "data/assistant-rules.json", loop: "bereit", count: {}, rules });
+  }));
+  renderAdmin();
+  const list = within(await screen.findByRole("list", { name: "Regeln aus Feedback" }));
+  const [active, rejected, vague] = list.getAllByRole("listitem");
+  expect(active.textContent).toContain("AktivAntworten · Verträge");
+  expect(active.textContent).toContain("Gold-Eval ohne → mit Regel: 84/86 → 85/86");
+  expect(rejected.textContent).toContain("Gold-Eval mit Regel schlechter: 83/86 statt 84/86.");
+  expect(within(rejected).getByRole("button", { name: "Erneut prüfen" })).toBeTruthy();
+  expect(vague.textContent).toContain("Zu vage");
+  expect(within(vague).queryByRole("button")).toBeNull();
+  expect(screen.getByText("1 aktiv · Prüfung bereit")).toBeTruthy();
+  fireEvent.click(within(active).getByRole("button", { name: "Regel deaktivieren: Nenne bei Abos auch den Jahresbetrag." }));
+  await waitFor(() => expect(within(screen.getByRole("list", { name: "Regeln aus Feedback" })).getAllByRole("listitem")[0].textContent).toContain("Deaktiviert"));
+  expect(patches).toEqual([{ id: "rule-0001", action: "disable" }]);
+  expect(within(screen.getByRole("list", { name: "Regeln aus Feedback" })).getByRole("button", { name: "Regel aktivieren: Nenne bei Abos auch den Jahresbetrag." })).toBeTruthy();
+});

@@ -20,9 +20,13 @@ const factKeys: Record<AgentId, readonly (keyof AssistantFacts)[]> = {
   general: ["today", "healthCheck", "totalSavings", "yearToDate", "goals", "memory"],
 };
 
+/** Whether the answer draws on the user's own figures; only the general chat on a general question does not. */
+export const usesPersonalFacts = (agent: AgentId, question: string) =>
+  !(agent === "general" && (!aboutMoney(question) || generalQuestion(question.toLowerCase())));
+
 /** Only the facts the agent needs. The general chat gets none when the question is not about the user's money. */
 export function agentFacts(agent: AgentId, state: AppState, dashboard: Dashboard, today: string, question: string): Record<string, unknown> {
-  if (agent === "general" && (!aboutMoney(question) || generalQuestion(question.toLowerCase()))) return { today };
+  if (!usesPersonalFacts(agent, question)) return { today };
   const all = assistantFacts(state, dashboard, today);
   const facts: Record<string, unknown> = Object.fromEntries(factKeys[agent].map((key) => [key, all[key]]));
   if (agent === "payroll") facts.payroll = payrollFacts(state, today);

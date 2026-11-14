@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { readAiConfig, type AiConfig, type CloudConfig } from "./config";
-import { modelLabel, modelTitle, taskLabel, taskTier, type AiTask, type ModelTier, type ModelUse } from "./models";
+import { cloudOnlyTasks, modelLabel, modelTitle, taskLabel, taskTier, type AiTask, type ModelTier, type ModelUse } from "./models";
 import { createPseudonymizer, type Pseudonymizer } from "./pseudonymize";
 
 export type ChatMessage =
@@ -56,6 +56,8 @@ export type ChatOptions = {
   tier?: ModelTier;
   /** Skips the cloud model, e.g. for the local benchmark. */
   localOnly?: boolean;
+  /** Never falls back to the local model: optional extras (follow-up questions) and the rule check, which compares cloud with cloud. */
+  cloudOnly?: boolean;
   /** Every model that answered, including a fallback, is appended here. */
   trace?: ModelUse[];
   cache?: ResponseCache;
@@ -271,9 +273,11 @@ function localUse(config: AiConfig, options: ChatOptions, route: Plan, reason?: 
     ...(fallback ? { fallback: true, reason: reason ?? route.skipped } : {}) };
 }
 
-function unavailable(error: CloudError | string) {
-  return new AiUnavailableError(`DeepSeek: ${typeof error === "string" ? error : error.message}. Die lokale KI ist deaktiviert.`);
+function unavailable(error: CloudError | string, cloudOnly = false) {
+  const reason = typeof error === "string" ? error : error.message;
+  return new AiUnavailableError(cloudOnly ? `DeepSeek: ${reason}.` : `DeepSeek: ${reason}. Die lokale KI ist deaktiviert.`);
 }
+const cloudMissing = (route: Plan) => unavailable(route.skipped ?? "nicht eingerichtet", true);
 
 function finish(options: ChatOptions, use: ModelUse) {
   options.trace?.push(use);
@@ -310,10 +314,11 @@ export async function chat(messages: ChatMessage[], options: ChatOptions = {}): 
       const failure = error instanceof CloudError ? error : new CloudError("bad", "Antwort nicht lesbar");
       logFailure(route.task, target.model, failure);
       pauseCloud(failure);
-      if (!config.enabled) throw unavailable(failure);
+      if (!config.enabled || options.cloudOnly) throw unavailable(failure, options.cloudOnly);
       reason = failure.message;
     }
   }
+  if (options.cloudOnly) throw cloudMissing(route);
   if (route.skipped && !config.enabled) throw unavailable(route.skipped);
   const use = localUse(config, options, route, reason);
   const cached = options.cache?.get(cacheKey(use, messages, options, false));
@@ -408,7 +413,7 @@ export async function* chatStream(messages: ChatMessage[], options: ChatOptions 
       const failure = error instanceof CloudError ? error : new CloudError("bad", "Antwort nicht lesbar");
       logFailure(route.task, target.model, failure);
       pauseCloud(failure);
-      if (!config.enabled) throw unavailable(failure);
+      if (!config.enabled || options.cloudOnly) throw unavailable(failure, options.cloudOnly);
       reason = failure.message;
     }
     if (response) {
@@ -429,6 +434,7 @@ export async function* chatStream(messages: ChatMessage[], options: ChatOptions 
       return;
     }
   }
+  if (options.cloudOnly) throw cloudMissing(route);
   if (route.skipped && !config.enabled) throw unavailable(route.skipped);
   const use = localUse(config, options, route, reason);
   const cached = options.cache?.get(cacheKey(use, messages, options, true));
@@ -530,7 +536,9 @@ export async function aiStatus(config = readAiConfig(), fetcher: typeof fetch = 
   const cloudReady = !!cloud?.available;
   const routing = aiRouting(config).map(({ task, use }) => ({ task, label: modelTitle(use), model: use.model,
     ...(use.provider === "local" && config.cloud ? { fallback: true } : {}) }))
-    .map((item) => cloudReady || !config.cloud ? item : { ...item, label: modelTitle({ provider: "local", model: config.model }), model: config.model, fallback: true });
+    .map((item) => cloudReady || !config.cloud ? item : { ...item, label: modelTitle({ provider: "local", model: config.model }), model: config.model, fallback: true })
+    // Follow-up questions and rule checks never fall back to the local model.
+    .map((item) => cloudOnlyTasks[item.task] && (!cloudReady || item.model === config.model) ? { ...item, label: cloudOnlyTasks[item.task]!, model: "", fallback: true } : item);
   const primary = cloudReady && config.cloud ? { provider: "deepseek" as const, model: config.cloud.models.fast } : { provider: "local" as const, model: config.model };
   const error = !cloudReady && !local.available
     ? [cloud?.error ? `DeepSeek: ${cloud.error}` : "", local.error ? `Lokal: ${local.error}` : ""].filter(Boolean).join(" · ") || undefined

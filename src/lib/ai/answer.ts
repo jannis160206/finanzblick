@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { rulesFor, type RuleText } from "@/lib/assistant/feedback-rules";
 import { agentIds, type AgentId } from "@/lib/assistant/orchestrator";
 import { chat, chatStream, stripThinking, type ChatMessage, type ChatOptions } from "./client";
 import { needsReasoning, type AiTask, type ModelUse } from "./models";
@@ -30,9 +31,13 @@ function unwrapJson(content: string): string {
   }
 }
 
-function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, evidence?: string): ChatMessage[] {
+/** Model options plus the active rules learned from feedback (the server loads them; the eval passes its own). */
+export type AnswerOptions = ChatOptions & { rules?: readonly RuleText[] };
+
+function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, evidence?: string, rules?: readonly RuleText[]): ChatMessage[] {
+  const agent = input.agent ?? "general";
   return [
-    { role: "system", content: answerPrompt(input.agent ?? "general") },
+    { role: "system", content: answerPrompt(agent, rulesFor(rules, agent, "answer")) },
     { role: "user", content: [
       `Fakten (JSON):\n${JSON.stringify(facts)}`,
       evidence ? `Werkzeug-Ergebnis zu dieser Frage (verlässlich berechnet):\n${evidence}` : "",
@@ -116,9 +121,9 @@ function prepare(input: AnswerRequest) {
 }
 
 // A grounded free answer: every number, link and account number must come from the facts or the tool result.
-export async function answerFreeQuestion(input: AnswerRequest, options: ChatOptions = {}): Promise<{ text?: string; source: "KI"; models: ModelUse[] }> {
+export async function answerFreeQuestion(input: AnswerRequest, options: AnswerOptions = {}): Promise<{ text?: string; source: "KI"; models: ModelUse[] }> {
   const { facts, evidence, source, check } = prepare(input);
-  const answer = await chat(answerMessages(input, facts, evidence), { task: answerTask(input), ...answerOptions(input.agent), ...options });
+  const answer = await chat(answerMessages(input, facts, evidence, options.rules), { task: answerTask(input), ...answerOptions(input.agent), ...options });
   const text = groundedText(answer.content, source, check);
   return text ? { text, source: "KI", models: [answer.use] } : { source: "KI", models: [answer.use] };
 }
@@ -141,13 +146,13 @@ export function visiblePrefix(content: string, source: object, check: (sentence:
 }
 
 // Streams the free answer word by word; a sentence that turns out unbacked disappears again via a `replace` event.
-export async function* streamFreeAnswer(input: AnswerRequest, options: ChatOptions = {}): AsyncGenerator<AnswerEvent> {
+export async function* streamFreeAnswer(input: AnswerRequest, options: AnswerOptions = {}): AsyncGenerator<AnswerEvent> {
   const { facts, evidence, source, check } = prepare(input);
   let content = "";
   let shown = "";
   const trace: ModelUse[] = [];
   let named = 0;
-  for await (const piece of chatStream(answerMessages(input, facts, evidence), { task: answerTask(input), ...answerOptions(input.agent), ...options, trace })) {
+  for await (const piece of chatStream(answerMessages(input, facts, evidence, options.rules), { task: answerTask(input), ...answerOptions(input.agent), ...options, trace })) {
     while (named < trace.length) yield { model: trace[named++] };
     content += piece;
     const visible = visiblePrefix(content, source, check);

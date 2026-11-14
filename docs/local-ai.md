@@ -65,6 +65,8 @@ Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das l
 | Kategorisierung | `deepseek-flash` | offene Prüfungen in Achterpaketen |
 | Websuche | `deepseek-flash` | Zusammenfassung der Suchtreffer |
 | Auslesen | `deepseek-flash` | Kassenbon-Artikel, Logo-Suche |
+| Folgefragen | `deepseek-flash` | 2–3 Vorschläge unter jeder Antwort; ohne DeepSeek feste Vorschläge, nie Qwen |
+| Regel aus Feedback | `deepseek-v4-pro` | 👎-Kommentar → Regel, danach Gold-Eval auf Flash; ohne DeepSeek wartet sie |
 | PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
 | Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |
 
@@ -89,6 +91,8 @@ DEEPSEEK_API_KEY=sk-…
 | `DEEPSEEK_DOCUMENTS` | aus | `on` schickt auch PDF-Auszüge an DeepSeek |
 | `FINANZBLICK_CLOUD_AI` | an | `off` nutzt nur das lokale Modell, auch mit Key |
 | `FINANZBLICK_AI_LOG` | an | `off` schaltet die `[KI]`-Zeilen im Serverlog ab |
+| `FINANZBLICK_KNOWLEDGE_VECTORS` | `data/assistant-knowledge.sqlite`, in Produktion neben der Datenbank | sqlite-vec-Datei mit den Vektoren gespeicherter Antworten (absoluter Pfad, `off` = nur im Speicher) |
+| `FINANZBLICK_RULES_FILE` | neben der Feedback-Datei | Regeln aus 👎-Kommentaren (absoluter Pfad) |
 
 **Rückfall:** Schlägt ein DeepSeek-Aufruf fehl, beantwortet Qwen dieselbe Anfrage sofort. Damit nicht jede Nachricht erst auf einen Fehler wartet, pausiert DeepSeek danach:
 
@@ -105,7 +109,7 @@ Beim Streamen wechselt der Rückfall nur vor dem ersten Wort. Bricht DeepSeek mi
 - Admin-Ansicht (Einstellungen → „Assistent-Orchestrator“): Status „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder die Warnung „Lokal (Qwen) aktiv · DeepSeek …“, der Bereich „Modelle“ mit dem Modell je Aufgabe und in „Letzte Läufe“ die Modelle jedes Laufs.
 - `/api/ai/status` meldet `cloud.available`, `cloud.error`, `local` und `routing` (Modell je Aufgabe). Den Key prüft es höchstens einmal pro Minute mit `GET /models`.
 
-**Datenschutz:** Vor dem Versand ersetzt derselbe Pseudonymisierer wie beim MCP-Server (siehe [Pseudonymisierung](#pseudonymisierung)) Personen, IBANs, E-Mails, Telefon-, Karten- und lange Kontonummern durch Platzhalter. In Antworten und Werkzeugargumenten setzt der Server die echten Werte wieder ein, auch wenn ein Platzhalter beim Streamen auf zwei Teile fällt. Händlernamen, Kategorien, Beträge und Datumsangaben gehen lesbar an DeepSeek. PDF-Auszüge, Einbettungen und das lokale Finanzwissen (RAG) bleiben auf dem Rechner. Wer gar nichts verschicken will, lässt den Key weg oder setzt `FINANZBLICK_CLOUD_AI=off`.
+**Datenschutz:** Vor dem Versand ersetzt derselbe Pseudonymisierer wie beim MCP-Server (siehe [Pseudonymisierung](#pseudonymisierung)) Personen, IBANs, E-Mails, Telefon-, Karten- und lange Kontonummern durch Platzhalter. In Antworten und Werkzeugargumenten setzt der Server die echten Werte wieder ein, auch wenn ein Platzhalter beim Streamen auf zwei Teile fällt. Händlernamen, Kategorien, Beträge und Datumsangaben gehen lesbar an DeepSeek. PDF-Auszüge, Einbettungen, das lokale Finanzwissen (RAG) und die gespeicherten Antworten bleiben auf dem Rechner; gespeichert werden nur allgemeine Antworten ohne persönliche Daten (siehe [Lokales Wissen aus Antworten](ASSISTANT-ORCHESTRATOR.md#lokales-wissen-aus-antworten)). Wer gar nichts verschicken will, lässt den Key weg oder setzt `FINANZBLICK_CLOUD_AI=off`.
 
 ## Was automatisch passiert
 

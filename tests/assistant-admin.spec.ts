@@ -25,6 +25,12 @@ async function prepare(page: Page, width: number, theme: "light" | "dark") {
   await page.setViewportSize({ width, height: width < 768 ? 812 : 1000 });
   const routing = [["chat", "deepseek-flash", "DeepSeek Flash"], ["route", "deepseek-flash", "DeepSeek Flash"], ["action", "deepseek-v4-pro", "DeepSeek V4 Pro"],
     ["reasoning", "deepseek-v4-pro", "DeepSeek V4 Pro · Denkmodus"], ["document", local, "Lokal (Qwen)"]].map(([task, model, label]) => ({ task, model, label, fallback: model === local }));
+  const at = "2026-10-15T11:00:00.000Z";
+  await page.route("**/api/assistant-rules", (route) => route.fulfill({ json: { file: "data/assistant-rules.json", loop: "bereit", count: {}, rules: [
+    { id: "rule-0001", feedbackId: "fb-00000001", createdAt: at, updatedAt: at, status: "active", comment: "Die Antwort beginnt mit einer Floskel und wiederholt sich.",
+      question: "Was ist ein ETF?", answer: "Gute Frage! …", rule: "Beginne Antworten ohne Floskel und vermeide Wiederholungen.", scope: "all", target: "answer",
+      check: { at, model: "deepseek-flash", passed: true, baseline: { passed: 85, total: 86, hard: 0 }, candidate: { passed: 85, total: 86, hard: 0 } } },
+  ] } }));
   await page.route("**/api/ai/status", (route) => route.fulfill({ json: {
     available: true, model: "deepseek-flash", label: "DeepSeek Flash", device: "Cloud", local: { available: true, model: local },
     cloud: { provider: "deepseek", available: true, models: { fast: "deepseek-flash", pro: "deepseek-v4-pro", reasoning: "deepseek-v4-pro" } }, routing,
@@ -49,7 +55,8 @@ test.describe("assistant orchestrator admin", () => {
       await expect(page).toHaveURL(/\/einstellungen\/orchestrator$/);
 
       await expect(page.getByRole("heading", { level: 1, name: "Orchestrator" })).toBeVisible();
-      for (const name of ["Aufbau", "Modelle", "Agenten", "Letzte Läufe", "Werkzeuge", "Feedback"]) await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
+      for (const name of ["Aufbau", "Modelle", "Agenten", "Letzte Läufe", "Werkzeuge", "Feedback", "Regeln aus Feedback"])
+        await expect(page.getByRole("heading", { level: 2, name, exact: true })).toBeVisible();
       await expect(page.getByRole("group", { name: "Orchestrator-Baum" })).toBeVisible();
       await expect(page.getByText("KI bereit · DeepSeek Flash · Qwen als Rückfall")).toBeVisible();
       await expect(page.getByRole("list", { name: "Modell je Aufgabe" })).toContainText("DeepSeek V4 Pro · Denkmodus");
@@ -60,6 +67,10 @@ test.describe("assistant orchestrator admin", () => {
       await expect(runs.getByRole("list", { name: "Werkzeugaufrufe" }).first()).toContainText("Erfolgreich: Antwort formulieren");
       await expect(page.getByRole("list", { name: "Werkzeuge Gehalt & Steuern" })).toContainText("Gehalt");
       await expect(page.getByRole("button", { name: "Aktualisieren" })).toBeEnabled();
+      const rules = page.getByRole("list", { name: "Regeln aus Feedback" });
+      await expect(rules).toContainText("Beginne Antworten ohne Floskel und vermeide Wiederholungen.");
+      await expect(rules).toContainText("Gold-Eval ohne → mit Regel: 85/86 → 85/86");
+      await expect(rules.getByRole("button", { name: /^Regel deaktivieren/ })).toBeVisible();
 
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
       await page.screenshot({ path: testInfo.outputPath(`orchestrator-admin-${width}-${theme}.png`), fullPage: true });

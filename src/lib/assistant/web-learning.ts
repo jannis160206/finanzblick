@@ -1,6 +1,7 @@
 import { contentWords } from "@/lib/knowledge-base/query";
 import { MAX_ASSISTANT_KNOWLEDGE, type AssistantKnowledge, type AssistantMessage, type WebLinkEntry } from "@/lib/types";
 import { searchTopicWords } from "@/lib/web/web-answer";
+import { isExpired, reusable, storableAnswer, volatility } from "./answer-memory";
 import { explicitWeb, foldText, ownData } from "./public-facts";
 
 /** Tools on chat messages: an answer from the web search, an answer from confirmed knowledge, a question waiting for a correction. */
@@ -47,11 +48,13 @@ export const correctsAnswer = (text: string, question: string) => {
   return correctionWords.test(trimmed) || questionOverlap(trimmed, question) >= 0.5;
 };
 
-const sameQuestion = (entry: AssistantKnowledge, question: string) => entry.kind === "web" && !!entry.question && questionOverlap(entry.question, question) >= 0.75;
+const sameQuestion = (entry: AssistantKnowledge, question: string) =>
+  (entry.kind === "web" || entry.kind === "answer") && !!entry.question && questionOverlap(entry.question, question) >= 0.75;
 const sites = (links: WebLinkEntry[] = []) => [...new Set(links.map((link) => new URL(link.url).hostname.replace(/^www\./, "")))].slice(0, 3).join(", ");
 
 // `target`: the stored entry an answer came from (a recalled answer), so feedback reaches exactly that entry.
-type WebAnswer = { id: string; question: string; text: string; links?: WebLinkEntry[]; now?: number; target?: string };
+// `kind`: a web search answer (with sources) or a general chat answer.
+type WebAnswer = { id: string; question: string; text: string; links?: WebLinkEntry[]; now?: number; target?: string; kind?: "web" | "answer" };
 
 const entryFor = (entries: AssistantKnowledge[], answer: Pick<WebAnswer, "question" | "target">) =>
   (answer.target ? entries.find((entry) => entry.id === answer.target) : undefined) ?? entries.find((entry) => sameQuestion(entry, answer.question));
@@ -61,30 +64,64 @@ export const webEntryId = (entries: AssistantKnowledge[] = [], answer: Pick<WebA
 
 function fromAnswer(answer: WebAnswer, votes: number): AssistantKnowledge {
   const links = (answer.links ?? []).slice(0, 4);
+  const web = (answer.kind ?? "web") === "web";
   return {
-    id: answer.id, kind: "web", topic: answer.question.slice(0, 100), title: answer.question.slice(0, 200), question: answer.question.slice(0, 500),
-    text: answer.text.replace(/\s+/g, " ").trim().slice(0, 1500), url: links[0]?.url ?? "https://www.oesterreich.gv.at/",
-    source: `Websuche · ${sites(links) || "bestätigt"}`.slice(0, 100), at: answer.now ?? Date.now(), votes, ...(links.length ? { links } : {}),
+    id: answer.id, kind: web ? "web" : "answer", topic: answer.question.slice(0, 100), title: answer.question.slice(0, 200), question: answer.question.slice(0, 500),
+    text: answer.text.replace(/\s+/g, " ").trim().slice(0, 1500), ...(web ? { url: links[0]?.url ?? "https://www.oesterreich.gv.at/" } : {}),
+    source: (web ? `Websuche · ${sites(links) || "bestätigt"}` : "Chat-Antwort").slice(0, 100), at: answer.now ?? Date.now(), votes, ...(links.length ? { links } : {}),
   };
 }
 
-// Confirmed answers and often used entries stay longest when the list is full.
+// Confirmed answers and often used entries stay longest when the list is full; expired ones go first.
 const keepScore = (entry: AssistantKnowledge) => (entry.rejected ? -5 : 0) + (entry.votes ?? 0) * 3 + (entry.uses ?? 0);
-function prune(entries: AssistantKnowledge[]) {
-  if (entries.length <= MAX_ASSISTANT_KNOWLEDGE) return entries;
-  const keep = new Set([...entries].sort((a, b) => keepScore(b) - keepScore(a) || b.at - a.at).slice(0, MAX_ASSISTANT_KNOWLEDGE).map((entry) => entry.id));
-  return entries.filter((entry) => keep.has(entry.id));
+function prune(entries: AssistantKnowledge[], now = Date.now()) {
+  const current = entries.filter((entry) => !isExpired(entry, now));
+  if (current.length <= MAX_ASSISTANT_KNOWLEDGE) return current;
+  const keep = new Set([...current].sort((a, b) => keepScore(b) - keepScore(a) || b.at - a.at).slice(0, MAX_ASSISTANT_KNOWLEDGE).map((entry) => entry.id));
+  return current.filter((entry) => keep.has(entry.id));
+}
+
+/**
+ * Every general answer is kept as local knowledge right away (votes 0), so the next similar question is answered
+ * locally first. Answers about changing facts get an expiry, news and quotes are not kept, and nothing personal.
+ * Returns the id the answer is stored under, so 👍/👎 reach it.
+ */
+export function rememberAnswer(entries: AssistantKnowledge[] = [], answer: WebAnswer & { kind: "web" | "answer" }): { entries: AssistantKnowledge[]; id?: string } {
+  const now = answer.now ?? Date.now();
+  const verdict = volatility(answer.question, answer.text, now);
+  if (verdict.kind === "never" || !storableAnswer(answer.question, answer.text)) return { entries };
+  const expiry = verdict.kind === "expires" ? { expiresAt: verdict.expiresAt } : {};
+  const existing = entryFor(entries, answer);
+  if (!existing) return { entries: prune([...entries, { ...fromAnswer({ ...answer, now }, 0), ...expiry }], now), id: answer.id };
+  // A rejected answer keeps steering (skipped sources, the user's note) until a 👍 revives it; it is not overwritten silently.
+  if (existing.rejected) return { entries };
+  // A newer answer to the same question replaces the text; votes, uses and notes stay.
+  const { expiresAt: _old, ...rest } = existing;
+  const updated: AssistantKnowledge = { ...rest, ...fromAnswer({ ...answer, id: existing.id, question: existing.question ?? answer.question, now,
+    links: answer.links?.length ? answer.links : existing.links }, Math.max(0, existing.votes ?? 0)), ...expiry,
+    ...(existing.uses ? { uses: existing.uses } : {}), ...(existing.note ? { note: existing.note } : {}) };
+  return { entries: prune(entries.map((entry) => entry === existing ? updated : entry), now), id: existing.id };
+}
+
+/** 👍 moves a stored chat answer up; 👎 rejects it, so it is never suggested again. */
+export function rateStoredAnswer(entries: AssistantKnowledge[] = [], id: string, value: "up" | "down"): AssistantKnowledge[] {
+  return entries.map((entry) => {
+    if (entry.id !== id) return entry;
+    const { rejected: _rejected, ...rest } = entry;
+    return value === "up" ? { ...rest, votes: Math.max(1, (entry.votes ?? 0) + 1) } : { ...rest, rejected: true, votes: Math.min(-1, (entry.votes ?? 0) - 1) };
+  });
 }
 
 /** 👍 on a web answer: stored as local knowledge, or one more vote when the same question was confirmed before. */
 export function learnWebAnswer(entries: AssistantKnowledge[] = [], answer: WebAnswer): AssistantKnowledge[] {
   const existing = entryFor(entries, answer);
   if (!existing) return prune([...entries, fromAnswer(answer, 1)]);
-  // The first wording of the question stays; it is what later questions are compared with.
+  // The first wording of the question stays; it is what later questions are compared with. A stored chat answer stays one,
+  // and a fact that changes keeps its expiry.
   return entries.map((entry) => entry !== existing ? entry : {
-    ...fromAnswer({ ...answer, id: entry.id, question: entry.question ?? answer.question, links: answer.links?.length ? answer.links : entry.links },
-      Math.max(1, (entry.votes ?? 0) + 1)),
-    ...(entry.uses ? { uses: entry.uses } : {}), ...(entry.note ? { note: entry.note } : {}),
+    ...fromAnswer({ ...answer, id: entry.id, question: entry.question ?? answer.question, links: answer.links?.length ? answer.links : entry.links,
+      kind: entry.kind === "answer" ? "answer" : "web" }, Math.max(1, (entry.votes ?? 0) + 1)),
+    ...(entry.uses ? { uses: entry.uses } : {}), ...(entry.note ? { note: entry.note } : {}), ...(entry.expiresAt ? { expiresAt: entry.expiresAt } : {}),
   });
 }
 
@@ -106,9 +143,9 @@ export function noteWebAnswer(entries: AssistantKnowledge[] = [], answer: Pick<W
 
 export type LearnedCandidate = { id: string; question: string; text: string; votes: number; uses: number };
 
-/** Confirmed web answers for the local knowledge search, most confirmed and most used first. */
-export function learnedCandidates(entries: AssistantKnowledge[] = [], limit = 30): LearnedCandidate[] {
-  return entries.filter((entry) => entry.kind === "web" && !entry.rejected && (entry.votes ?? 0) > 0)
+/** Stored web and chat answers for the local knowledge search: confirmed and often used ones first, never expired or rejected ones. */
+export function learnedCandidates(entries: AssistantKnowledge[] = [], limit = 60, now = Date.now()): LearnedCandidate[] {
+  return entries.filter((entry) => reusable(entry, now) && (entry.votes ?? 0) >= 0)
     .sort((a, b) => keepScore(b) - keepScore(a) || b.at - a.at).slice(0, limit)
     .map((entry) => ({ id: entry.id, question: (entry.question ?? entry.title).slice(0, 300), text: entry.text.slice(0, 600), votes: entry.votes ?? 0, uses: entry.uses ?? 0 }));
 }
@@ -117,12 +154,14 @@ export function learnedCandidates(entries: AssistantKnowledge[] = [], limit = 30
  * The confirmed answer to the same question in other words ("Geringfügigkeitsgrenze 2026 – wie viel ist das?" after
  * "Wie hoch ist die Geringfügigkeitsgrenze 2026?"): answered at once, before any routing, search or model.
  */
-export function recallConfirmed(entries: AssistantKnowledge[] = [], question: string): AssistantKnowledge | undefined {
+export function recallConfirmed(entries: AssistantKnowledge[] = [], question: string, now = Date.now()): AssistantKnowledge | undefined {
   // Questions about the user's own figures ("meine KESt im Oktober") are never answered with general knowledge.
   if (words(question).size < 2 || ownData.test(foldText(question))) return undefined;
-  return entries.filter((entry) => entry.kind === "web" && !entry.rejected && (entry.votes ?? 0) > 0 && entry.question && words(entry.question).size >= 2)
-    .map((entry) => ({ entry, overlap: coverage(entry.question!, question) }))
-    .filter((item) => item.overlap >= 0.8)
+  // A confirmed answer covers rephrasings; an answer nobody rated yet only the same question, read both ways.
+  return entries.filter((entry) => reusable(entry, now) && (entry.votes ?? 0) >= 0 && words(entry.question!).size >= 2)
+    .map((entry) => ({ entry, overlap: (entry.votes ?? 0) > 0 ? coverage(entry.question!, question)
+      : Math.min(coverage(entry.question!, question), coverage(question, entry.question!)) }))
+    .filter((item) => item.overlap >= ((item.entry.votes ?? 0) > 0 ? 0.8 : 0.85))
     .sort((a, b) => b.overlap - a.overlap || keepScore(b.entry) - keepScore(a.entry))[0]?.entry;
 }
 

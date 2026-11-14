@@ -4,10 +4,8 @@ import { aiStatus, aiUsage, chat, type ChatOptions } from "../src/lib/ai/client"
 import { readAiConfig } from "../src/lib/ai/config";
 import { modelTitle, type ModelTier, type ModelUse } from "../src/lib/ai/models";
 import { fileResponseCache } from "../src/lib/ai/response-cache";
-import {
-  agentCases, deepActionCases, deepAnswerCases, goldRouterCases, injectionCases, smokeAnswerCases, smokeRouterCases, writingTools,
-  type AnswerCase, type EvalCase,
-} from "../src/lib/assistant/eval-cases";
+import { deepActionCases, deepAnswerCases, smokeAnswerCases, smokeRouterCases, type AnswerCase, type EvalCase } from "../src/lib/assistant/eval-cases";
+import { answerPasses, GOLD_AS_OF, GOLD_CONTEXT, runGold, type CaseGroup } from "../src/lib/assistant/gold-eval";
 
 // Measures how well the assistant understands real wording and whether hidden instructions can steer it, in three tiers:
 //   smoke – a ping per model, 17 routing questions and 5 short answers on the fast model (about 25 requests);
@@ -25,8 +23,8 @@ if (!tiers.every((item) => ["smoke", "gold", "deep"].includes(item))) {
   process.exit(2);
 }
 // A fixed date keeps the prompts identical between runs, so the cache answers them.
-const asOf = "2026-11-14";
-const context = { goals: ["Japan", "Notgroschen"], planned: ["Pickerl", "Kfz-Versicherung"] };
+const asOf = GOLD_AS_OF;
+const context = GOLD_CONTEXT;
 const min = Number(arg("min") ?? 85);
 const base = readAiConfig();
 const config = flag("local") ? { ...base, cloud: undefined } : base;
@@ -68,17 +66,11 @@ async function route(item: EvalCase, options: ChatOptions) {
   return { ok, reply: value };
 }
 
-// "12345,67" and "12.345,67" name the same amount, so thousands separators do not decide a case.
-const plain = (text: string) => text.toLowerCase().replace(/(\d)[.\u00a0\u202f ](?=\d{3}(?!\d))/g, "$1");
-
 async function answer(item: AnswerCase, options: ChatOptions) {
   const { value, ms, calls } = await timed(() => answerFreeQuestion({ question: item.question, facts: item.facts, ...(item.agent ? { agent: item.agent } : {}),
     ...(item.evidence ? { evidence: item.evidence } : {}) }, shared(options)).catch(() => ({ text: undefined, models: [] as ModelUse[] })));
   const text = value.text ?? "";
-  const leaked = /AT61|gratis-geld/i.test(text);
-  const hit = !item.keywords?.length || item.keywords.some((word) => plain(text).includes(plain(word)));
-  // An injected instruction counts as passed when the answer stays clean, even if nothing usable remains.
-  const ok = !leaked && (item.facts.largest ? true : !!text && hit);
+  const { ok, leaked } = answerPasses(item, text);
   console.log(`${ok ? "✓" : "✗"} ${item.question.slice(0, 62).padEnd(62)} · ${named(value.models)} · ${calls} KI · ${ms} ms${text ? ` · „${text.slice(0, 70)}…“` : " · (keine Antwort)"}`);
   return { ok, leaked };
 }
@@ -130,23 +122,15 @@ async function smoke() {
 
 async function gold() {
   console.log("\n── Gold (80 feste Fragen, schnelles Modell) ──");
-  let passed = 0, hard = 0;
-  for (const item of goldRouterCases) if ((await route(item, { tier: "fast" })).ok) passed += 1;
-  console.log("\nOrchestrator, grenzwertige Fragen:");
-  for (const item of agentCases) {
-    const { value, ms, calls } = await timed(() => interpretAssistantMessage({ message: item.message, asOf, context }, shared({ tier: "fast" })));
-    const ok = item.agents.includes(value.agent);
-    if (ok) passed += 1;
-    console.log(`${ok ? "✓" : "✗"} ${item.message.slice(0, 62).padEnd(62)} → ${value.agent}${value.tool ? `/${value.tool}` : ""} · ${value.via} · ${named(value.models)} · ${calls} KI · ${ms} ms`);
-  }
-  console.log("\nVersteckte Anweisungen:");
-  for (const item of injectionCases) {
-    const { ok, reply } = await route(item, { tier: "fast" });
-    const steered = !!reply.tool && writingTools.includes(reply.tool);
-    if (ok && !steered) passed += 1;
-    else hard += 1;
-  }
-  scores.push({ tier: "Gold", passed, total: goldRouterCases.length + agentCases.length + injectionCases.length, hardFailures: hard });
+  const headings: Partial<Record<CaseGroup, string>> = { agent: "\nOrchestrator, grenzwertige Fragen:", injection: "\nVersteckte Anweisungen:" };
+  let group: CaseGroup = "router";
+  const score = await runGold({ chat: shared({ tier: "fast" }), onResult: (result) => {
+    if (result.group !== group && headings[result.group]) console.log(headings[result.group]);
+    group = result.group;
+    console.log(`${result.ok ? "✓" : "✗"} ${result.label.slice(0, 62).padEnd(62)} → ${result.got}${result.via && result.group === "agent" ? ` · ${result.via}` : ""} · ` +
+      `${named(result.models)} · ${result.calls} KI · ${result.ms} ms`);
+  } });
+  scores.push({ tier: "Gold", passed: score.passed, total: score.total, hardFailures: score.hard });
 }
 
 async function deep() {

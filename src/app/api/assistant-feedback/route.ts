@@ -1,10 +1,10 @@
+import { after } from "next/server";
 import { feedbackEntrySchema, feedbackSummary, redactEntry, type StoredFeedback } from "@/lib/assistant/feedback";
 import { readAiConfig } from "@/lib/ai/config";
-import { isAccountMode } from "@/lib/server/config";
-import { AccountError } from "@/lib/server/errors";
+import { assistantCaller } from "@/lib/server/assistant-access";
 import { FeedbackFileError, feedbackDisplayPath, feedbackDocument, feedbackFilePath, readFeedback, recordFeedback } from "@/lib/server/feedback-store";
-import { accountErrorResponse, jsonResponse, readJsonBody, requestSessionToken, requireMutationOrigin } from "@/lib/server/http";
-import { getAccountRuntime } from "@/lib/server/runtime";
+import { accountErrorResponse, jsonResponse, readJsonBody } from "@/lib/server/http";
+import { learnRule, ruleJob, ruleLoopEnabled } from "@/lib/server/rule-loop";
 
 export const runtime = "nodejs";
 
@@ -14,25 +14,23 @@ function failed(error: unknown): Response {
   return jsonResponse({ error: "Die Feedback-Datei ist beschädigt und wird nicht überschrieben. Bitte die Datei prüfen." }, 500);
 }
 
-// Without accounts (local development) everyone may read and write; with accounts signed-in users write and only the admin reads.
-async function caller(request: Request, write: boolean) {
-  const site = request.headers.get("sec-fetch-site");
-  if (site !== null && site !== "same-origin" && site !== "none") throw new AccountError(403, "Diese Anfrage ist nicht erlaubt.");
-  if (!isAccountMode()) return undefined;
-  const { config, database } = await getAccountRuntime();
-  const user = database.currentUser(requestSessionToken(request));
-  if (!user) throw new AccountError(401, "Bitte anmelden.");
-  if (write) {
-    requireMutationOrigin(request, config);
-    database.consumeRateLimit(`assistant-feedback:${user.id}`, 60, 60_000);
-  } else if (user.role !== "admin") throw new AccountError(403, "Die Feedback-Datei kann nur der Administrator ansehen.");
-  return user;
+// Background work after the response; outside a request (tests, scripts) it simply runs on its own.
+function later(task: () => Promise<unknown>) {
+  const run = () => task().catch(() => undefined);
+  try {
+    after(run);
+  } catch {
+    void run();
+  }
 }
 
-/** 👍/👎 with optional comment on an assistant answer: redacted and added to the single feedback file. */
+/**
+ * 👍/👎 with optional comment on an assistant answer: redacted and added to the single feedback file. A 👎 with a
+ * comment also starts the feedback loop in the background (rule proposal, gold eval, activation only if not worse).
+ */
 export async function POST(request: Request): Promise<Response> {
   try {
-    const user = await caller(request, true);
+    const user = await assistantCaller(request, "write");
     const parsed = feedbackEntrySchema.safeParse(await readJsonBody(request, 64 * 1024));
     if (!parsed.success) return jsonResponse({ error: "Ungültiges Feedback." }, 400);
     const entry = redactEntry(parsed.data);
@@ -47,7 +45,10 @@ export async function POST(request: Request): Promise<Response> {
         webSearch: !/^(?:off|false|0|aus|nein)$/i.test(process.env.FINANZBLICK_WEB_SEARCH?.trim() ?? ""),
       },
     };
-    return jsonResponse({ stored: true, count: await recordFeedback(stored) });
+    const count = await recordFeedback(stored);
+    const job = ruleJob(stored);
+    if (job && ruleLoopEnabled()) later(() => learnRule(job));
+    return jsonResponse({ stored: true, count, ...(job && ruleLoopEnabled() ? { learning: true } : {}) });
   } catch (error) {
     return failed(error);
   }
@@ -56,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
 /** `?download=1` downloads the whole file; otherwise where it lies, the counts and the latest entries. */
 export async function GET(request: Request): Promise<Response> {
   try {
-    await caller(request, false);
+    await assistantCaller(request, "admin");
     const path = feedbackFilePath();
     if (new URL(request.url).searchParams.get("download") === "1") {
       return new Response(`${JSON.stringify(await feedbackDocument(path), null, 2)}\n`, { headers: {

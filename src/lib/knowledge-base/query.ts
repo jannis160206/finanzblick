@@ -139,12 +139,16 @@ export function mergeLearned(hits: LocalKnowledgeHit[], learned: LocalKnowledgeH
   return merged.filter((hit) => hit.distance === undefined || hit.distance <= best + SPREAD).slice(0, limit);
 }
 
+// A kept answer nobody confirmed yet must be clearly closer before it answers alone.
+const UNCONFIRMED_STRONG = 0.38;
+
 /** Whether the best hit answers the question by itself, so it can be shown without asking the model. */
 export function confidentHit(hits: LocalKnowledgeHit[], mode: "hybrid" | "keyword"): LocalKnowledgeHit | undefined {
   const [top] = hits;
   if (!top) return undefined;
   if (mode === "keyword") return top.keyword === 1 ? top : undefined;
-  return top.distance !== undefined && (top.distance <= VECTOR_STRONG || top.keyword === 1 && top.distance <= VECTOR_STRONG + 0.04) ? top : undefined;
+  const strong = top.learned && top.learned.votes <= 0 ? UNCONFIRMED_STRONG : VECTOR_STRONG;
+  return top.distance !== undefined && (top.distance <= strong || top.keyword === 1 && top.distance <= strong + 0.04) ? top : undefined;
 }
 
 /** Retrieved knowledge as evidence for a free answer: short, and clearly not the user's own data. */

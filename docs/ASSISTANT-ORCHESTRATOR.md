@@ -96,6 +96,8 @@ Ist ein DeepSeek-Key hinterlegt, wählt `src/lib/ai/client.ts` das Modell nach d
 | Freie Antwort | Antwort | DeepSeek Flash |
 | „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen | Analyse | DeepSeek V4 Pro im Denkmodus |
 | Antwort aus der Websuche | Websuche | DeepSeek Flash |
+| 2–3 Folgefragen unter jeder Antwort | Folgefragen | DeepSeek Flash (nur DeepSeek, sonst feste Vorschläge) |
+| Regel aus einem 👎-Kommentar | Regel aus Feedback | DeepSeek V4 Pro (nur DeepSeek) |
 
 Mit DeepSeek gibt es für die Interpretation nur einen Aufruf: Das kleine lokale Router-Modell entfällt. Die Entscheidung liegt in `interpretTask` (`src/lib/ai/assistant.ts`) und `answerTask` (`src/lib/ai/answer.ts`); beide rechnen ohne Modell.
 
@@ -111,8 +113,9 @@ Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orche
   - Darunter stehen dezent die Werkzeugaufrufe des Laufs als kleine Chips, in Reihenfolge: Kurzbeschreibung (z. B. „Kategorisiere Buchung“, „Lege Vertrag an“, „Websuche“, „Wissen nachschlagen“), technischer Werkzeugname und ein Symbol für den Ausgang – erfolgreich, fehlgeschlagen oder bei Änderungen wartet auf Bestätigung, übernommen, verworfen, rückgängig gemacht. Der Ausgang steht für Screenreader auch als Text da, nicht nur als Farbe.
   - Erfasst werden das antwortende Werkzeug (bei kombinierten Fragen jedes Teils), Suchen im lokalen Finanzwissen und im Lexikon, Marktdaten, die Websuche, die freie Antwort des Modells, automatisch Gemerktes und das getippte „Ja“, das eine Änderung übernimmt. Fehler („Dabei ist etwas schiefgegangen“, nicht erreichbare Suche, keine Modellantwort) zählen als fehlgeschlagen. Die Kurzbeschreibung kommt aus Werkzeug und Art der Änderung, nie aus Argumenten, Beträgen oder dem Text des Nutzers. Ältere Antworten ohne diese Liste zeigen ihr eines Werkzeug.
 - **Werkzeuge:** Tabelle je Agent; Werkzeuge, die Daten ändern, sind markiert und laufen nur nach Bestätigung.
+- **Regeln aus Feedback:** jede gelernte Regel mit Status, Geltungsbereich, Kommentar, Gold-Eval ohne → mit Regel und den Fällen, die schlechter wurden; **Deaktivieren**, **Aktivieren** (nur nach bestandener Eval) und **Erneut prüfen** (siehe [Regeln aus Feedback](#regeln-aus-feedback)).
 - **Feedback:** Ort der Feedback-Datei, Zahl der 👍/👎 und Kommentare, die neuesten fünf Einträge und **Herunterladen** (siehe [Feedback-Datei](#feedback-datei-für-copilot)).
-- **Aktualisieren** lädt den KI-Status und die Feedback-Übersicht neu. Bearbeiten lässt sich nichts.
+- **Aktualisieren** lädt den KI-Status, die Feedback-Übersicht und die Regeln neu. Außer den Regel-Schaltern lässt sich nichts bearbeiten.
 
 Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall), `ms` (Dauer), `calls` (höchstens acht Werkzeugaufrufe mit `tool`, `ok` und `summary`; der Ausgang einer Änderung folgt ihrem `status`) und `models` (höchstens vier: Anbieter, Modell, Aufgabe, Rückfall mit Grund, Denkmodus). Das ist JSON im bestehenden Verlauf, keine Migration.
 
@@ -471,16 +474,57 @@ Fragen und Aufträge funktionieren unabhängig von der genauen Formulierung. Bei
   - unter der Antwort „Quellen: [1] oesterreich.gv.at [2] …“ als Links (neuer Tab, nur https).
 - **Geschwindigkeit:** Suche 0,3–1,3 s, Seiten parallel; Ergebnisse 6 Stunden im Speicher. `FINANZBLICK_WEB_SEARCH=off` schaltet die Websuche ab.
 
-**Selbstlernen** (`src/lib/assistant/web-learning.ts`):
+**Selbstlernen** (`src/lib/assistant/web-learning.ts`, siehe auch [Lokales Wissen aus Antworten](#lokales-wissen-aus-antworten)):
 
-- **👍 oder „Das hat geholfen“** unter einer Web-Antwort speichert Frage, Antwort und Quellen im Gedächtnis (`assistantKnowledge`, Art `web`). Ab dann:
-  - Dieselbe Frage in anderen Worten beantwortet er sofort aus dem Gedächtnis, ohne Routing, Suche oder Modell („Von dir bestätigt“).
+- **Jede Web-Antwort** wird sofort als lokales Wissen gespeichert (`assistantKnowledge`, Art `web`, noch ohne 👍), mit Ablaufdatum, wenn sich der Inhalt ändern kann. **👍 oder „Das hat geholfen“** bestätigt sie. Ab dann:
+  - Dieselbe Frage in anderen Worten beantwortet er sofort aus dem Gedächtnis, ohne Routing, Suche oder Modell („Von dir bestätigt“; unbestätigt nur bei derselben Frage, „Lokal gemerkt“).
   - Ähnliche Fragen durchsuchen bestätigte Antworten zusammen mit dem lokalen Finanzwissen. Die Antworten werden einmal eingebettet, per Inhalts-Hash in `sqlite-vec` gehalten und nur mit den Einträgen der jeweiligen Anfrage verglichen; ohne Einbettungsmodell zählt die Wortüberschneidung.
   - Jede Bestätigung und jede Wiederverwendung rückt eine Antwort ein wenig nach vorne, höchstens um 0,06. Beim Aufräumen des Gedächtnisses bleiben bestätigte und oft genutzte Antworten am längsten.
 - **👎** markiert die Antwort als abgelehnt: Sie wird nie wieder vorgeschlagen, und ihre Quellen lässt die nächste Suche zu dieser Frage weg. Im Kommentarfeld unter der Antwort kann man sagen, was nicht stimmt. Diese Korrektur speichert er als Hinweis und gibt sie künftigen Antworten zu dieser Frage mit.
 - Alles liegt im bestehenden JSON-Finanzstand mit optionalen Feldern; die Datenbankstruktur bleibt unverändert. Unter „Gedächtnis“ ist jeder Eintrag sichtbar und löschbar.
 
 **Dateien:** `src/lib/assistant/intents.ts`, `src/lib/assistant/public-facts.ts`, `src/lib/assistant/web-learning.ts`, `src/lib/assistant/combined.ts`, `src/lib/web/search.ts`, `src/lib/web/web-answer.ts`, `src/app/api/ai/web-search/route.ts`, `src/lib/knowledge-base/` (gelernte Treffer), `src/components/finance-assistant.tsx`.
+
+## Lokales Wissen aus Antworten
+
+Was der Assistent allgemein beantwortet, merkt er sich lokal und fragt beim nächsten ähnlichen Fall zuerst sein Gedächtnis, bevor er DeepSeek oder das Internet fragt (`src/lib/assistant/answer-memory.ts`, `rememberAnswer` in `web-learning.ts`).
+
+- **Was gespeichert wird:** freie Antworten des allgemeinen Chats, die ohne persönliche Fakten entstanden sind (etwa „Worauf sollte man beim Goldkauf achten?“), und jede Antwort der Websuche. Sie landen sofort als Eintrag `answer` bzw. `web` mit 0 Stimmen in `assistantKnowledge` (höchstens 200 Einträge, JSON im Finanzstand, keine Migration) und sind unter „Gedächtnis“ sichtbar und löschbar.
+- **Was nie gespeichert wird:**
+  - Antworten mit den Zahlen oder der Lage des Nutzers (Spezialisten, persönliche Fakten im allgemeinen Chat) und Fragen mit „ich/mein/mir“;
+  - Texte mit IBAN, Karten-, Telefon- oder langen Kontonummern, E-Mail-Adressen, Schlüsseln oder Platzhaltern der Pseudonymisierung (`redactSensitive`);
+  - Antworten, die zugeben, es nicht zu wissen;
+  - Nachrichten und aktuelle Kurse (Aktien, Börsenindizes, Bitcoin, Gold).
+- **Ablaufdatum** (`volatility`): Zinsen, Inflation und Preise gelten 7 Tage; jährliche Grenzwerte, Pauschalen, Absetzbeträge und Steuersätze bis zum Jahresende (bei „2027“ bis Ende 2027). Abgelaufene Einträge werden nicht mehr gefunden und beim nächsten Speichern entfernt. Erklärungen („Was ist ein Wechselkurs?“) bleiben.
+- **Zuerst lokal:**
+  - Vor dem Routing: dieselbe Frage (beide Richtungen mindestens 85 % gleiche Wörter, bestätigte Antworten ab 80 %) wird sofort aus dem Gedächtnis beantwortet, ohne Modell („Lokal gemerkt“ bzw. „Von dir bestätigt“).
+  - Nach dem Routing: Für Fragen des allgemeinen Chats sucht er die gespeicherten Antworten zusammen mit dem Finanzwissen (Vektor und Stichwort). Ein unbestätigter Treffer antwortet allein nur bei Abstand ≤ 0,38, ein bestätigter wie bisher bei ≤ 0,45; sonst geht der Treffer als Evidenz in die Antwort.
+- **Priorität:** 👍 hebt eine Antwort an (Bonus bis 0,06 im Abstand, länger behalten beim Aufräumen), 👎 sperrt sie; ein Kommentar dazu wird als Hinweis gespeichert. Eine gesperrte Antwort wird nicht stillschweigend überschrieben, erst ein 👍 holt sie zurück.
+- **Vektordatenbank:** Die Einbettungen gespeicherter Antworten (Qwen3-Embedding, lokal) liegen dauerhaft in einer sqlite-vec-Datei (`data/assistant-knowledge.sqlite`, in Produktion neben der Datenbank, `FINANZBLICK_KNOWLEDGE_VECTORS`), nur Inhalts-Hash und Vektor, nie der Text. Neue Antworten werden in Paketen zu 16 eingebettet, höchstens 2,5 s pro Frage; ohne Einbettungsmodell zählt die Wortüberschneidung. Embeddings und Wissen gehen nie an DeepSeek.
+
+## Folgefragen von DeepSeek
+
+Unter jeder fertigen Antwort stehen 2–3 Folgefragen, die DeepSeek Flash passend zur Frage, zur Antwort und zu den letzten Fragen schreibt (`src/lib/ai/follow-ups.ts`, `POST /api/ai/follow-ups`).
+
+- **Ablauf:** Die Antwort zeigt zuerst die festen Vorschläge des Werkzeugs. Nach dem Lauf lädt der Chat die Folgefragen im Hintergrund (etwa 1 s, rund 300 Token) und ersetzt die festen, solange die Antwort die neueste ist. Eine neue Frage bricht das Laden ab. Die Gruppe heißt dann „Vorschläge von DeepSeek“; ein Klick stellt die Frage.
+- **Nicht bei** Formularen, Vorschauen, Rückfragen mit Optionen, gestoppten oder fehlgeschlagenen Antworten.
+- **Prüfung:** nur Fragen oder harmlose Bitten („Zeig mir …“, „Erklär …“), 8–90 Zeichen, nichts schon Gefragtes, keine Lösch-, Überweisungs- oder Passwort-Wörter, keine Links, Kontonummern, Platzhalter oder versteckten Anweisungen. Bleiben weniger als zwei, gelten die festen Vorschläge.
+- **Ohne DeepSeek** (kein Key, Pause, Fehler) bleiben die festen Vorschläge; das lokale Modell wird dafür nie gefragt. Das Modell steht in „Letzte Läufe“ (Aufgabe „Folgefragen“).
+
+## Regeln aus Feedback
+
+Ein 👎 mit Kommentar wird zum Lernanlass (`src/lib/server/rule-loop.ts`). Die Schleife aktiviert nie blind:
+
+1. **Vage Kommentare** („war schlecht“, „falsch“, „???“, unter 12 Zeichen oder weniger als zwei Inhaltswörter) werden als „Zu vage“ vermerkt, ohne Modellaufruf.
+2. **Vorschlag:** DeepSeek V4 Pro leitet aus Frage, Antwort, Agent und Kommentar genau eine allgemeine Regel ab (1–2 Sätze, höchstens 240 Zeichen) samt Bereich (Agent oder alle) und Wirkung (Antwort oder Werkzeugwahl). Betrifft der Kommentar nur Daten des Nutzers („Die Buchung war bei Spar“), antwortet es „keine Regel“. Regeln, die Sicherheitsregeln aufheben, Zahlen erfinden lassen oder Links und Kontonummern enthalten, werden verworfen; eine schon aktive gleiche Regel ebenfalls.
+3. **Eval-Pflicht:** Die Gold-Suite (80 Fragen, `src/lib/assistant/gold-eval.ts`) plus 6 Antwortfälle laufen einmal mit den aktiven Regeln und einmal zusätzlich mit der neuen Regel, auf DeepSeek Flash bei Temperatur 0, vier Fälle parallel. Unveränderte Prompts kommen aus dem Cache (`data/ai-cache/rule-eval`), deshalb kostet eine Antwortregel für einen Agenten nur wenige Aufrufe (live: 3–13 s, 7–40 Aufrufe).
+4. **Aktiv** wird die Regel nur, wenn die Eval mit ihr gleich gut oder besser ist und kein Sicherheitsfehler hinzukommt; sonst „Abgelehnt“ mit beiden Ergebnissen und den Fällen, die schlechter wurden. Höchstens 12 Regeln sind aktiv.
+5. **Im Kontext:** Aktive Regeln hängen am Ende des Antwort-Prompts des betroffenen Agenten (Wirkung Antwort) bzw. des Werkzeug- und Orchestrator-Prompts (Wirkung Werkzeugwahl), mit dem Zusatz, dass sie die Sicherheitsregeln nie aufheben. Der Server liest die Datei nur neu, wenn sie sich geändert hat.
+
+- **Datei:** `data/assistant-rules.json` neben der Feedback-Datei (in Produktion neben der Datenbank, `FINANZBLICK_RULES_FILE`), Rechte 0600, nie im Git. Kommentar, Frage und Antwort sind wie in der Feedback-Datei geschwärzt.
+- **Admin:** Einstellungen → „Assistent-Orchestrator“ → **Regeln aus Feedback**: Deaktivieren, wieder Aktivieren (nur nach bestandener Eval) und Erneut prüfen (wartende, fehlgeschlagene, abgelehnte oder unbrauchbare). `GET`/`PATCH /api/assistant-rules`, im Kontomodus nur für den Administrator.
+- **Ohne DeepSeek** läuft die Schleife nicht; ist DeepSeek gerade pausiert, wartet die Regel („Wartet auf Prüfung“).
+- **Stand 14.11.2026, live:** „Bitte ohne Floskel und ohne Wiederholung“ wurde zu „Beginne Antworten ohne Floskel und vermeide Wiederholungen.“ (85/86 → 85/86, aktiv). „Mir fehlt der Jahresbetrag der Abos“ war im ersten Lauf schlechter (85 → 84, abgelehnt, weil das Modell Jahressummen selbst rechnete und die Belegprüfung den Satz verwarf) und bestand die erneute Prüfung. „war schlecht“ wurde als zu vage erkannt, ein Kommentar zu einer einzelnen Buchung als keine Regel.
 
 ## Messung (Qwen3-8B, NPU, lokale Daten)
 
@@ -523,6 +567,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
   - `src/lib/web/search.test.ts`: Suchwörter ohne persönliche Daten, Bing-Ergebnisse, Passagen und Tabellen, DNS-Schutz, Vergleich und Abschaltung;
   - `search.test.ts`: bestätigte Antworten in der Hybrid-Suche.
 - Alle Aktionen im Chat (Chat-Test 4): `all-actions.test.ts` (197 Fälle: Routing, Vorschau, Anwenden mit Plan-Synchronisierung, Rückgängig, Grenzfälle, Sparziel-Entwurf, Hinweis des Modells), `app-actions.test.ts` (Positionen nur Einnahme oder Fixkosten), `transactions-why.test.tsx` (Notiz im Buchungsdialog und in der Liste), `tests/assistant-orchestrator.spec.ts` (neuer Befehl nach „Welches meinst du?“, „Nein“ und „Ja“ unter der Vertragsvorschau).
+- Lernen und Feedback-Schleife: `web-learning.test.ts` (gespeicherte Antworten, Ablaufdatum, nichts Persönliches oder Sensibles, 👍/👎), `search.test.ts` (Vektordatei überlebt einen Neustart), `follow-ups.test.ts` (Prüfung der Folgefragen, nur DeepSeek), `rule-loop.test.ts` (vage, keine Regel, Duplikat, Aktivierung nur bei gleicher oder besserer Eval, Sicherheitsfehler, Warten, Schalter, Regeln im Prompt), `orchestrator-admin.test.tsx` (Regeln mit Eval und Schalter), `tests/assistant-orchestrator.spec.ts` (Folgefragen von DeepSeek gemockt), `tests/assistant-admin.spec.ts` (Bereich „Regeln aus Feedback“ hell und dunkel).
 - Modelle und Rückfall: `src/lib/ai/cloud.test.ts` (Modell je Aufgabe, Denkmodus, Rückfall auf Qwen bei 401/402/429/5xx/Netzwerk mit Pausen, Streaming-Rückfall vor dem ersten Wort, Pseudonymisierung samt geteilter Platzhalter, Token-Zähler, Cache, Status), `orchestrator-admin.test.tsx` (Bereich „Modelle“, Warnung bei Rückfall, Modelle in den Läufen), `assistant-chat-parts.test.tsx` (Modell in der Statuszeile).
 - `npm run eval:assistant`: Stufen Smoke, Gold (höchstens 80 Fragen) und Deep (10–15 Fälle); zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Modell, Zahl der KI-Aufrufe und Dauer. Details: [local-ai.md](local-ai.md#qualitätsprüfung).
 

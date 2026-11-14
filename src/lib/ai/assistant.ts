@@ -6,6 +6,7 @@ import { agentTools, chatRequest, parseAgent, routeByRules, toolOwner, type Agen
 import { detectTool, isAssistantTool, isDraftTool, matchName, splitCommands, type AssistantTool } from "@/lib/assistant/tools";
 import { changingTools } from "@/lib/assistant/conversation";
 import { categories } from "@/lib/categories";
+import { rulesFor, rulesSection, type RuleText } from "@/lib/assistant/feedback-rules";
 import { chat, cloudPause, type ChatMessage, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
 import type { AiTask, ModelUse } from "./models";
@@ -25,6 +26,8 @@ export const assistantRequestSchema = z.object({
 }).strict();
 export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHints = { goal?: string; planned?: string; category?: string; merchant?: string };
+/** Model options plus the active rules learned from feedback (the server loads them; the eval passes its own). */
+export type AssistantOptions = ChatOptions & { rules?: readonly RuleText[] };
 /** `agent` answers the message; `via` says how the orchestrator decided (rule, signal word, model or fallback). */
 export type AssistantReply = {
   agent: AgentId; via: RouteVia; tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel";
@@ -109,9 +112,9 @@ async function ask<T>(messages: ChatMessage[], options: ChatOptions, maxTokens: 
 }
 
 /** The orchestrator's model fallback: one short call that names the agent; unsure or unreachable means general chat. */
-export async function classifyAgent(input: AssistantRequest, options: ChatOptions = {}): Promise<AgentId | undefined> {
+export async function classifyAgent(input: AssistantRequest, options: AssistantOptions = {}): Promise<AgentId | undefined> {
   const messages: ChatMessage[] = [
-    { role: "system", content: orchestratorPrompt },
+    { role: "system", content: orchestratorPrompt + rulesSection(rulesFor(options.rules, undefined, "routing")) },
     { role: "user", content: [...historyLines(input, 1).map((line) => `Davor: ${line.slice(0, 240)}`), `Nachricht: ${input.message}`].join("\n") },
   ];
   return ask(messages, options, 8, parseAgent, "route");
@@ -125,14 +128,14 @@ export function interpretTask(message: string, ruleTool: AssistantTool | undefin
   return actionWords.test(message) ? "action" : "route";
 }
 
-export async function interpretAssistantMessage(request: AssistantRequest, options: ChatOptions = {}): Promise<AssistantReply> {
+export async function interpretAssistantMessage(request: AssistantRequest, options: AssistantOptions = {}): Promise<AssistantReply> {
   const models: ModelUse[] = [];
   const reply = await interpret(request, { ...options, trace: models });
   options.trace?.push(...models);
   return models.length ? { ...reply, models } : reply;
 }
 
-async function interpret(request: AssistantRequest, options: ChatOptions): Promise<AssistantReply> {
+async function interpret(request: AssistantRequest, options: AssistantOptions): Promise<AssistantReply> {
   // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
   const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
   const parsed = parseAssistantMessage(input.message, input.asOf);
@@ -164,7 +167,7 @@ async function interpret(request: AssistantRequest, options: ChatOptions): Promi
   // The specialist interprets the message with its own tools only.
   const needs = scopeNeeds(agent);
   const messages: ChatMessage[] = [
-    { role: "system", content: interpretPrompt(agent) },
+    { role: "system", content: interpretPrompt(agent, rulesFor(options.rules, agent, "routing")) },
     { role: "user", content: [
       `Heute: ${input.asOf}`,
       needs.names ? (input.context?.goals.length ? `Sparziele: ${input.context.goals.join(", ")}` : "Sparziele: keine") : "",

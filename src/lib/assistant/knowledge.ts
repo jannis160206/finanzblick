@@ -67,7 +67,7 @@ export const knowledgeListQuestion = (lower: string) =>
 export function findKnowledge(all: AssistantKnowledge[] = [], topic: string): AssistantKnowledge | undefined {
   const wanted = fold(topic);
   if (!wanted) return undefined;
-  const entries = all.filter((entry) => entry.kind !== "web");
+  const entries = all.filter((entry) => !entry.kind);
   return entries.find((entry) => fold(entry.topic) === wanted || fold(entry.title) === wanted)
     ?? entries.find((entry) => wanted.length >= 4 && (fold(entry.title).split(" ").includes(wanted) || fold(entry.topic).includes(wanted)));
 }
@@ -161,7 +161,7 @@ export function knowledgeList(state: AppState): Result {
     suggestions: ["Was ist ein ETF?", "Was bedeutet KESt?"],
   };
   const lines: Line[] = entries.slice(0, 30).map((entry) => ({ label: entry.title.slice(0, 200), tone: entry.rejected ? "warn" as const : "info" as const,
-    detail: (entry.kind === "web" ? webDetail(entry) : `gefragt als „${entry.topic}“ · ${learnedDate(entry.at)}${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`).slice(0, 300) }));
+    detail: knowledgeDetail(entry).slice(0, 300) }));
   if (phrases.length) lines.push({ label: `${phrases.length} gelernte Formulierung${phrases.length === 1 ? "" : "en"}`, tone: "good",
     detail: "verstehe ich jetzt sofort, ohne die KI zu fragen" });
   for (const alias of aliases.slice(-8)) lines.push({ label: `„${alias.from}“ = „${alias.to}“`.slice(0, 200), tone: "good",
@@ -169,27 +169,34 @@ export function knowledgeList(state: AppState): Result {
   if (solved) lines.push({ label: `${solved} anfangs unklare Frage${solved === 1 ? "" : "n"} gelöst`, tone: "good", detail: "durch deine Korrektur oder später nachgelernt" });
   for (const gap of gaps.slice(0, 5)) lines.push({ label: `Noch offen: „${gap.text}“`.slice(0, 200), tone: "warn",
     detail: `${gap.count}× gefragt · schreib „Nein, ich meinte …“, dann lerne ich es` });
-  const confirmed = entries.filter((entry) => entry.kind === "web" && !entry.rejected).length;
-  const terms = entries.filter((entry) => entry.kind !== "web").length;
+  const answers = entries.filter((entry) => (entry.kind === "web" || entry.kind === "answer") && !entry.rejected).length;
+  const terms = entries.filter((entry) => !entry.kind).length;
   return {
     text: `Ich habe mir ${terms} Begriff${terms === 1 ? "" : "e"} aus dem Internet gemerkt` +
-      (confirmed ? ` und ${confirmed} von dir bestätigte Antwort${confirmed === 1 ? "" : "en"} aus der Websuche` : "") +
+      (answers ? ` und ${answers} allgemeine Antwort${answers === 1 ? "" : "en"} aus Chat und Websuche` : "") +
       (phrases.length ? `, ${phrases.length} deiner Formulierungen gelernt` : "") + (aliases.length ? `, ${aliases.length} deiner eigenen Bezeichnungen übernommen` : "") +
       "." + (gaps.length ? ` ${gaps.length} Frage${gaps.length === 1 ? " verstehe" : "n verstehe"} ich noch nicht; mit deiner Korrektur lerne ich sie.` : "") + " Alles liegt nur in deiner Datenbank; unter „Gedächtnis“ kannst du es einsehen und löschen.",
     card: { kind: "memory", title: "Was ich dazugelernt habe", lines: lines.slice(0, 40),
-      note: "Begriffe kommen aus der deutschsprachigen Wikipedia (CC BY-SA 4.0) und werden nach 90 Tagen aufgefrischt; Antworten aus der Websuche merke ich mir erst nach deinem 👍." },
+      note: "Begriffe kommen aus der deutschsprachigen Wikipedia (CC BY-SA 4.0) und werden nach 90 Tagen aufgefrischt. Allgemeine Antworten ohne persönliche Daten merke ich mir sofort; Zinsen, Preise und Grenzbeträge nur befristet, Kurse und Nachrichten gar nicht. 👍 rückt eine Antwort nach vorne." },
     suggestions: ["Was ist ein ETF?", "Was bedeutet KESt?"],
   };
 }
 
-const webDetail = (entry: AssistantKnowledge) => entry.rejected
-  ? `abgelehnt · wird nicht mehr vorgeschlagen${entry.note ? ` · dein Hinweis: „${entry.note.slice(0, 120)}“` : ""}`
-  : `bestätigte Websuche · ${learnedDate(entry.at)} · ${entry.votes ?? 1}× 👍${entry.uses ? ` · ${entry.uses}× wieder genutzt` : ""}`;
+/** One line about where a learned entry comes from, how it was rated and how long it is kept; for the chat and „Gedächtnis“. */
+export function knowledgeDetail(entry: AssistantKnowledge): string {
+  const uses = entry.uses ? ` · ${entry.uses}× wieder genutzt` : "";
+  if (!entry.kind) return `gefragt als „${entry.topic}“ · ${learnedDate(entry.at)}${uses}`;
+  if (entry.rejected) return `abgelehnt · wird nicht mehr vorgeschlagen${entry.note ? ` · dein Hinweis: „${entry.note.slice(0, 120)}“` : ""}`;
+  const votes = entry.votes ?? 0;
+  const origin = entry.kind === "web" ? votes > 0 ? "bestätigte Websuche" : "Websuche" : "aus dem Chat gemerkt";
+  const keep = entry.expiresAt ? ` · gültig bis ${learnedDate(entry.expiresAt)}` : "";
+  return `${origin} · ${learnedDate(entry.at)}${votes > 0 ? ` · ${votes}× 👍` : ""}${uses}${keep}`;
+}
 
-// Stored knowledge relevant to a free question, so grounded answers can use it everywhere; rejected answers never.
-export function relevantKnowledge(all: AssistantKnowledge[] = [], input: string, limit = 2): AssistantKnowledge[] {
+// Stored knowledge relevant to a free question, so grounded answers can use it everywhere; rejected and expired answers never.
+export function relevantKnowledge(all: AssistantKnowledge[] = [], input: string, limit = 2, now = Date.now()): AssistantKnowledge[] {
   const words = new Set(fold(input).split(" ").filter((word) => word.length >= 3));
-  const entries = all.filter((entry) => !entry.rejected);
+  const entries = all.filter((entry) => !entry.rejected && (entry.expiresAt ?? Number.POSITIVE_INFINITY) > now);
   return entries.map((entry) => ({ entry, score: fold(`${entry.topic} ${entry.title}`).split(" ").filter((word) => words.has(word)).length }))
     .filter((item) => item.score > 0).sort((a, b) => b.score - a.score).slice(0, limit).map((item) => item.entry);
 }

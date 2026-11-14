@@ -1,3 +1,4 @@
+import { rulesSection } from "@/lib/assistant/feedback-rules";
 import { agentTools, agentWords, type AgentId } from "@/lib/assistant/orchestrator";
 import { toolDescriptions } from "@/lib/assistant/tools";
 import { DATA_RULE } from "./untrusted";
@@ -86,8 +87,11 @@ const jsonFields = (agent: AgentId) => [
 ].join(", ");
 
 const cache = new Map<AgentId, string>();
-/** The tool prompt of one specialist: only its own tools, fields and examples. */
-export function interpretPrompt(agent: AgentId): string {
+/** The tool prompt of one specialist: only its own tools, fields and examples, plus the rules learned from feedback. */
+export function interpretPrompt(agent: AgentId, rules: readonly string[] = []): string {
+  return basePrompt(agent) + rulesSection(rules);
+}
+function basePrompt(agent: AgentId): string {
   const cached = cache.get(agent);
   if (cached) return cached;
   const tools = agentTools(agent).filter((tool) => tool !== "ask").map((tool) => `${tool} = ${toolDescriptions[tool]}`).join("; ");
@@ -135,7 +139,7 @@ const voices: Record<AgentId, string> = {
     "Meist reichen ein bis drei Sätze. ",
 };
 
-/** The system prompt an agent writes its answer with. */
-export function answerPrompt(agent: AgentId): string {
-  return voices[agent] + answerRules + grounding + DATA_RULE;
+/** The system prompt an agent writes its answer with, plus the rules learned from feedback. */
+export function answerPrompt(agent: AgentId, rules: readonly string[] = []): string {
+  return voices[agent] + answerRules + grounding + DATA_RULE + rulesSection(rules);
 }

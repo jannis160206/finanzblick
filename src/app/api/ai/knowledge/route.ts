@@ -6,11 +6,12 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   question: z.string().trim().min(2).max(500),
-  // Answers the user confirmed earlier; searched together with the curated knowledge, never stored on the server.
+  // Answers kept as local knowledge (chat and web answers); searched together with the curated knowledge. The server keeps
+  // only their vectors, by content hash, never the texts.
   learned: z.array(z.object({
     id: z.string().min(1).max(100), question: z.string().trim().min(1).max(300), text: z.string().trim().min(1).max(600),
     votes: z.number().int().min(-50).max(1000), uses: z.number().int().min(0).max(100_000),
-  }).strict()).max(30).optional(),
+  }).strict()).max(60).optional(),
 });
 
 // Local finance knowledge for the assistant: hybrid search over the curated chunks and the confirmed answers, at most three short hits.

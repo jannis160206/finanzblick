@@ -15,6 +15,7 @@ import {
   type AssistantRun, type CallState, type RunCall, type RunModel, type RunStatus,
 } from "@/lib/assistant/orchestrator-info";
 import { taskLabel, type AiTask } from "@/lib/ai/models";
+import { MAX_ACTIVE_RULES, statusLabel, type FeedbackRule, type RuleStatus } from "@/lib/assistant/feedback-rules";
 import { cn } from "@/lib/utils";
 
 type AiStatus = {
@@ -317,6 +318,64 @@ function Feedback({ load }: { load: FeedbackLoad }) {
   </div>;
 }
 
+type RulesOverview = { file: string; loop: string; count: Partial<Record<RuleStatus, number>>; rules: FeedbackRule[] };
+type RulesLoad = { state: "loading" } | { state: "ready"; data: RulesOverview } | { state: "admin" } | { state: "error" };
+
+async function readRulesOverview(): Promise<RulesLoad> {
+  try {
+    const response = await fetch("/api/assistant-rules", { cache: "no-store" });
+    if (response.status === 403) return { state: "admin" };
+    if (!response.ok) return { state: "error" };
+    const data = await response.json() as Partial<RulesOverview>;
+    return typeof data.file === "string" && Array.isArray(data.rules) ? { state: "ready", data: data as RulesOverview } : { state: "error" };
+  } catch {
+    return { state: "error" };
+  }
+}
+
+const ruleTone: Record<RuleStatus, "success" | "info" | "warning" | "secondary" | "destructive"> = {
+  active: "success", checking: "info", pending: "info", rejected: "warning", vague: "secondary", unusable: "secondary", disabled: "secondary", error: "destructive",
+};
+const scopeName = (rule: FeedbackRule) => !rule.scope || rule.scope === "all" ? "alle Bereiche" : rule.scope === "general" ? "Allgemeiner Chat" : agentLabel[rule.scope];
+const score = (value: { passed: number; total: number; hard: number }) => `${value.passed}/${value.total}${value.hard ? ` · ${value.hard} Sicherheitsfehler` : ""}`;
+
+/** Rules learned from 👎 comments: what each says, where it applies, how the gold eval went and a switch for the admin. */
+function Rules({ load, onAction, working }: { load: RulesLoad; onAction: (id: string, action: "enable" | "disable" | "recheck") => void; working?: string }) {
+  return <div className="space-y-4 text-sm">
+    <p className="text-muted-foreground">Ein 👎 mit konkretem Kommentar wird zu einem Regelvorschlag von DeepSeek. Aktiv wird er nur, wenn die Gold-Eval
+      (80 Fragen und 6 Antworten) mit der Regel gleich gut oder besser bleibt; vage Kommentare wie „war schlecht“ werden nicht verwendet.
+      Aktive Regeln ergänzen die Prompts der betroffenen Agenten, höchstens {MAX_ACTIVE_RULES}.</p>
+    {load.state === "loading" ? <p className="text-muted-foreground">Lade …</p>
+      : load.state === "admin" ? <p className="text-muted-foreground">Die Regeln kann nur der Administrator ansehen und schalten.</p>
+        : load.state === "error" ? <p className="text-muted-foreground">Die Regel-Datei ist gerade nicht lesbar.</p>
+          : !load.data.rules.length ? <p className="text-muted-foreground">Noch keine Regeln. Ein 👎 mit Kommentar unter einer Antwort startet die Prüfung.</p>
+            : <ul aria-label="Regeln aus Feedback" className="divide-y divide-border/70">
+              {load.data.rules.map((rule) => <li key={rule.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                    <Badge variant={ruleTone[rule.status]}>{statusLabel[rule.status]}</Badge>
+                    {rule.rule && <span>{rule.target === "routing" ? "Werkzeugwahl" : "Antworten"} · {scopeName(rule)}</span>}
+                    <time dateTime={rule.updatedAt} className="tabular-nums">{timeFormat.format(new Date(rule.updatedAt))}</time>
+                  </div>
+                  {rule.rule ? <p className="font-medium break-words">{rule.rule}</p> : <p className="text-muted-foreground">Kein Regelvorschlag</p>}
+                  <p className="break-words text-xs text-muted-foreground">Aus dem Kommentar: „{rule.comment}“</p>
+                  {rule.check && <p className="text-xs tabular-nums text-muted-foreground">Gold-Eval ohne → mit Regel: {score(rule.check.baseline)} → {score(rule.check.candidate)}</p>}
+                  {rule.check?.worse?.length ? <p className="break-words text-xs text-muted-foreground">Schlechter bei: {rule.check.worse.map((label) => `„${label}“`).join(", ")}</p> : null}
+                  {rule.reason && <p className={cn("text-xs", rule.status === "rejected" || rule.status === "error" ? "text-warning" : "text-muted-foreground")}>{rule.reason}</p>}
+                </div>
+                {rule.status === "active" ? <Button type="button" size="sm" variant="outline" className="shrink-0" disabled={working === rule.id}
+                  onClick={() => onAction(rule.id, "disable")} aria-label={`Regel deaktivieren: ${rule.rule}`}><Ban aria-hidden="true" />Deaktivieren</Button>
+                  : rule.status === "disabled" && rule.check?.passed ? <Button type="button" size="sm" variant="outline" className="shrink-0" disabled={working === rule.id}
+                    onClick={() => onAction(rule.id, "enable")} aria-label={`Regel aktivieren: ${rule.rule}`}><Check aria-hidden="true" />Aktivieren</Button>
+                    : rule.status === "pending" || rule.status === "error" || rule.status === "rejected" || rule.status === "unusable"
+                      ? <Button type="button" size="sm" variant="ghost" className="shrink-0" disabled={working === rule.id || load.data.loop.startsWith("aus")}
+                        onClick={() => onAction(rule.id, "recheck")}><RefreshCw aria-hidden="true" />Erneut prüfen</Button> : null}
+              </li>)}
+            </ul>}
+    {load.state === "ready" && <p className="text-xs text-muted-foreground">Datei: <code className="break-all rounded bg-muted px-1.5 py-0.5">{load.data.file}</code> · Prüfung: {load.data.loop}</p>}
+  </div>;
+}
+
 /** Read-only admin view of the assistant's orchestrator: tree, agents, recent runs, tools and the feedback file. */
 export function OrchestratorAdmin() {
   const { state } = useFinance();
@@ -324,17 +383,38 @@ export function OrchestratorAdmin() {
   const [status, setStatus] = useState<AiStatus>();
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState<FeedbackLoad>({ state: "loading" });
+  const [rules, setRules] = useState<RulesLoad>({ state: "loading" });
+  const [working, setWorking] = useState<string>();
   useEffect(() => {
     let alive = true;
     void readStatus().then((next) => { if (alive) { setStatus(next); setLoading(false); } });
     void readFeedbackOverview().then((next) => { if (alive) setFeedback(next); });
+    void readRulesOverview().then((next) => { if (alive) setRules(next); });
     return () => { alive = false; };
   }, []);
+  // While a rule is being checked in the background, the list refreshes itself every few seconds.
+  const checking = rules.state === "ready" && rules.data.rules.some((rule) => rule.status === "checking");
+  useEffect(() => {
+    if (!checking) return;
+    const timer = window.setInterval(() => void readRulesOverview().then(setRules), 5000);
+    return () => window.clearInterval(timer);
+  }, [checking]);
   const refresh = () => {
     setLoading(true);
     void readStatus().then((next) => { setStatus(next); setLoading(false); });
     void readFeedbackOverview().then(setFeedback);
+    void readRulesOverview().then(setRules);
   };
+  const ruleAction = async (id: string, action: "enable" | "disable" | "recheck") => {
+    setWorking(id);
+    try {
+      await fetch("/api/assistant-rules", { method: "PATCH", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ id, action }) });
+    } finally {
+      setRules(await readRulesOverview());
+      setWorking(undefined);
+    }
+  };
+  const activeCount = rules.state === "ready" ? rules.data.rules.filter((rule) => rule.status === "active").length : 0;
   const times = runs.flatMap((run) => run.ms === undefined ? [] : [run.ms]).sort((a, b) => a - b);
   const median = times.length ? times[Math.floor(times.length / 2)] : undefined;
 
@@ -357,6 +437,9 @@ export function OrchestratorAdmin() {
       </Section>
       <Section id="orchestrator-tools" title="Werkzeuge" meta="Jedes Werkzeug gehört genau einem Agenten"><Tools /></Section>
       <Section id="orchestrator-feedback" title="Feedback" meta="👍/👎 aus dem Chat, für die Fehlersuche mit Copilot"><Feedback load={feedback} /></Section>
+      <Section id="orchestrator-rules" title="Regeln aus Feedback" meta={rules.state === "ready" ? `${activeCount} aktiv · Prüfung ${rules.data.loop}` : undefined}>
+        <Rules load={rules} working={working} onAction={(id, action) => void ruleAction(id, action)} />
+      </Section>
     </div>
   </div>;
 }

@@ -794,27 +794,31 @@ export const accountRuleSchema = z.object({
 }).strict();
 export type AccountRule = z.infer<typeof accountRuleSchema>;
 export const MAX_ACCOUNT_RULES = 30;
-// General knowledge the assistant looked up on the internet (public encyclopedia text, never personal data).
+// General knowledge the assistant looked up on the internet (public encyclopedia text, never personal data),
+// and general answers it gave in the chat; neither holds personal data.
 export const assistantKnowledgeSchema = z.object({
   id: agentIdSchema,
   topic: z.string().trim().min(1).max(100),
   title: z.string().trim().min(1).max(200),
   text: z.string().trim().min(1).max(1500),
-  url: z.string().url().max(500),
+  // The source page; chat answers have none.
+  url: z.string().url().max(500).optional(),
   source: z.string().trim().min(1).max(100),
   at: z.number().nonnegative(),
   uses: z.number().int().nonnegative().optional(),
-  // Answers from the web search the user rated: 👍 keeps them for the local knowledge search, 👎 marks them rejected
-  // (their sources are skipped next time) and the user's correction becomes a note for later answers.
-  kind: z.literal("web").optional(),
+  // Answers from the web search (`web`) and general chat answers (`answer`), kept for the local knowledge search.
+  // 👍 moves them up, 👎 marks them rejected (their sources are skipped next time); a correction becomes a note.
+  kind: z.enum(["web", "answer"]).optional(),
   question: z.string().trim().min(1).max(500).optional(),
   links: z.array(webLinkSchema).max(4).optional(),
   votes: z.number().int().min(-50).max(1000).optional(),
   rejected: z.boolean().optional(),
   note: z.string().trim().min(1).max(500).optional(),
+  // Facts that change (rates, prices, yearly limits) are forgotten at this time.
+  expiresAt: z.number().nonnegative().optional(),
 }).strict();
 export type AssistantKnowledge = z.infer<typeof assistantKnowledgeSchema>;
-export const MAX_ASSISTANT_KNOWLEDGE = 100;
+export const MAX_ASSISTANT_KNOWLEDGE = 200;
 // What the internet says a shop is (OpenStreetMap shop type, Wikidata, the shop's website); public facts only.
 // No category means nothing usable was found; such entries are asked again after a while.
 export const webCategorySchema = z.object({
