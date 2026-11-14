@@ -108,7 +108,7 @@ export const scopeNeeds = (agent: AgentId) => scopes[agent].needs;
 const answerRules = "Antworte auf Deutsch per Du, wie in einem Chat. Beginne mit der direkten Antwort in einem Satz, ohne Floskel und ohne die Frage zu wiederholen; " +
   "danach höchstens zwei kurze Sätze, wenn sie wirklich helfen. Kein Markdown, keine Listen, keine Überschriften, keine Rohdaten: Details zeigt die Karte unter deiner Antwort. " +
   "Fasse zusammen: Anzahl, Summe, höchstens zwei, drei wichtige Posten mit kurzem Namen statt Buchungstext. Verstehe lockere Sprache, Tippfehler und Englisch. ";
-const grounding = "Zahlen über die Finanzen des Nutzers nimmst du nur aus den Fakten (JSON) und dem Werkzeug-Ergebnis, genau so geschrieben wie dort; rechne nichts selbst aus. " +
+const grounding = "Zahlen über die Finanzen des Nutzers nimmst du nur aus den Fakten (JSON) und dem Werkzeug-Ergebnis, genau so geschrieben wie dort; rechne nichts selbst aus (keine eigenen Summen, Differenzen oder Beträge pro Tag), sondern lass weg, was dort nicht steht. " +
   "Fehlt eine Zahl, sag es offen, statt zu schätzen. Empfiehl keine einzelnen Aktien, Fonds oder Anbieter. ";
 
 const voices: Record<AgentId, string> = {

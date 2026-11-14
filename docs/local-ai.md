@@ -100,7 +100,7 @@ Beim Streamen wechselt der Rückfall nur vor dem ersten Wort. Bricht DeepSeek mi
 
 **Sichtbarkeit:**
 
-- Serverlog: `[KI] Antwort → DeepSeek Flash (deepseek-flash) · 1840 ms · 512→64 Token`, beim Rückfall mit `· Fallback: DeepSeek Key ungültig (HTTP 401)`.
+- Serverlog: `[KI] Antwort → DeepSeek Flash (deepseek-flash) · 1840 ms · 512→64 Token`, beim Rückfall mit dem Grund, z. B. `· Fallback: DeepSeek Rate-Limit (HTTP 429)`.
 - Chat: Die Statuszeile zeigt, welches Modell gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“). Jede fertige Antwort nennt das Modell statt „KI“, beim Rückfall mit „· Fallback“ und dem Grund als Tooltip.
 - Admin-Ansicht (Einstellungen → „Assistent-Orchestrator“): Status „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder die Warnung „Lokal (Qwen) aktiv · DeepSeek …“, der Bereich „Modelle“ mit dem Modell je Aufgabe und in „Letzte Läufe“ die Modelle jedes Laufs.
 - `/api/ai/status` meldet `cloud.available`, `cloud.error`, `local` und `routing` (Modell je Aufgabe). Den Key prüft es höchstens einmal pro Minute mit `GET /models`.
@@ -557,6 +557,8 @@ Die Stufen sind auf wenige Token ausgelegt:
 - **Kurz und fest:** Antwortfälle sind auf 150 Token begrenzt, Pings auf 5. Das Datum ist fest (14.11.2026), damit die Prompts zwischen zwei Läufen gleich bleiben.
 - **Cache:** Antworten liegen in `.local-data/ai-cache/assistant-eval` (ignoriert). Ein unveränderter Prompt kostet beim nächsten Lauf nichts. Zusätzlich nutzt DeepSeek seinen Präfix-Cache für die gleichbleibenden System-Prompts; die Ausgabe nennt Ein- und Ausgabetoken je Modell und wie viele davon aus dem DeepSeek-Cache kamen.
 - **Größen:** `eval-cases.test.ts` hält Gold bei höchstens 80 Fragen, Smoke bei 20–30 Anfragen und Deep bei 10–15 Fällen.
+
+Messung mit DeepSeek (14.11.2026, `--tier=all --cloud --fresh`): Smoke 24/24, Gold 79/80, Deep 12/12 bei 60 Modellaufrufen. Werkzeugwahl und Aktionen brauchen etwa 1 s, Analysen im Denkmodus 3–16 s; 87 % der Eingabetoken von DeepSeek Flash kamen aus dem DeepSeek-Cache.
 
 Die Genauigkeit der Kategorisierung misst `npm run eval:categories` auf den echten Buchungen: Jeder Monat wird wie ein Import nachgespielt, mit `--model` inklusive KI-Prüfung. Details und Ergebnisse stehen in [CATEGORIZATION-EVAL.md](CATEGORIZATION-EVAL.md).
 

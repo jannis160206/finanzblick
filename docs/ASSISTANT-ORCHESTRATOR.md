@@ -104,7 +104,7 @@ Mit DeepSeek gibt es für die Interpretation nur einen Aufruf: Das kleine lokale
 Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orchestrator“** (`/einstellungen/orchestrator`). Der Link steht dezent unter den Einstellungsbereichen, nicht in der Hauptnavigation.
 
 - **Aufbau:** Baum vom Orchestrator über die drei Entscheidungsschritte (Regeln, Signalwörter, Modell-Rückfall) zu den vier Spezialisten und dem allgemeinen Chat, mit KI-Status.
-- **KI-Status:** „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder, wenn DeepSeek nicht erreichbar ist oder den Key ablehnt, die Warnung „Lokal (Qwen) aktiv · DeepSeek Key ungültig (HTTP 401)“.
+- **KI-Status:** „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder, wenn DeepSeek nicht erreichbar ist oder den Key ablehnt, die Warnung „Lokal (Qwen) aktiv · DeepSeek …“ mit dem Grund, z. B. „Rate-Limit (HTTP 429)“.
 - **Modelle:** Modell je Aufgabe (Antwort, Werkzeugwahl, Aktion, Analyse, Kategorisierung, Websuche, Auslesen, PDF-Auszüge) aus `/api/ai/status` mit dem Hinweis, dass Qwen bei Ausfällen übernimmt und Namen und Kontonummern pseudonymisiert werden.
 - **Agenten:** Zuständigkeit, Kurzbeschreibung, Modell (Router und Hauptmodell aus `/api/ai/status`) und Zahl der letzten Läufe.
 - **Letzte Läufe:** bis zu 50 Anfragen aus dem Chatverlauf mit Zeit, Agent, Weg, Status (beantwortet, Rückfrage, unklar, Fehler), grober Dauer und den Modellen des Laufs („DeepSeek Flash“, „Lokal (Qwen) (Rückfall)“ mit dem Grund als Tooltip). Keine Token-Angaben.
