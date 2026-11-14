@@ -28,22 +28,17 @@ const scopes: Record<AgentId, Scope> = {
   transactions: {
     fields: "category = Buchungskategorie aus der Liste, merchant = Händlername genau wie in der Nachricht (nie Wörter wie Geld oder Ausgaben)",
     examples: "\"essen oktober wie viel\" = query; \"wo geht mein geld hin\" = query; \"was hab ich seit 11.10. mit amex bezahlt\" = query; " +
-      "\"wie haben sich meine ausgaben entwickelt\" = query; \"zeig buchungen über 100 euro\" = query; \"was zahl ich alles für versicherungen\" = query; " +
+      "\"was zahl ich alles für versicherungen\" = query; \"wie viel gehalt ist im oktober reingekommen\" = query; " +
       "\"lieferando gehört zu lieferdienste\" = rule; \"buchung trade republic ist immer transfer intern\" = rule; \"die buchung vom 3.11. über 200 € ist transfer intern\" = rule; " +
-      "\"hab ich was doppelt bezahlt\" = security; \"gibt es verdächtige buchungen\" = security; \"fass meinen monat zusammen\" = month_review; \"wie war mein oktober\" = month_review; " +
-      "\"was schuldet mir raphael\" = shared; \"ist die rückerstattung von amazon schon da\" = refunds; \"ordne alle offenen buchungen zu\" = cleanup; " +
-      "\"wofür geb ich am meisten aus\" = query; \"wie viel hab ich seit jahresbeginn gespart\" = query; \"was hab ich bei mediamarkt gekauft\" = query; " +
-      "\"wie viel gehalt ist im oktober reingekommen\" = query; \"lösch die buchung vom 3.8. über 249 €\" = booking; \"tagge die buchungen vom 10. bis 15.8. mit malaga\" = booking; " +
-      "\"warum geb ich so viel aus\" = ask",
+      "\"hab ich was doppelt bezahlt\" = security; \"wie war mein oktober\" = month_review; \"was schuldet mir raphael\" = shared; \"ordne alle offenen buchungen zu\" = cleanup; " +
+      "\"lösch die buchung vom 3.8. über 249 €\" = booking; \"tagge die buchungen vom 10. bis 15.8. mit malaga\" = booking; \"warum geb ich so viel aus\" = ask",
     needs: { categories: true },
   },
   contracts: {
     fields: "merchant = Vertrag oder Anbieter genau wie in der Nachricht",
-    examples: "\"welche abos habe ich\" = contracts; \"wann läuft netflix aus\" = contracts; \"was kostet mich spotify im jahr\" = contracts; " +
-      "\"kündige netflix\" = cancel; \"sind meine abos zu teuer\" = cancel; \"welche abos sind teurer geworden\" = contracts; " +
-      "\"was kostet mich mein handyvertrag im jahr\" = contracts; \"leg einen neuen vertrag an\" = contract_new; \"neues abo disney 9,99 im monat\" = contract_new; " +
-      "\"netflix ist gekündigt\" = contract_edit; \"kündigungsfrist von magenta ist 3 monate\" = contract_edit; \"spotify ist kein abo\" = contract_edit; " +
-      "\"lohnt sich mein fitnessstudio\" = ask",
+    examples: "\"welche abos habe ich\" = contracts; \"was kostet mich spotify im jahr\" = contracts; \"kündige netflix\" = cancel; " +
+      "\"leg einen neuen vertrag an\" = contract_new; \"neues abo disney 9,99 im monat\" = contract_new; \"netflix ist gekündigt\" = contract_edit; " +
+      "\"kündigungsfrist von magenta ist 3 monate\" = contract_edit; \"spotify ist kein abo\" = contract_edit; \"lohnt sich mein fitnessstudio\" = ask",
     needs: {},
   },
   budget: {
@@ -54,11 +49,8 @@ const scopes: Record<AgentId, Scope> = {
       "\"ist ein 900 € Fernseher im Mai drin?\" = affordability; \"mach Japan 4000\" = edit; \"Pickerl erst im April\" = edit; " +
       "\"plan für lebensmittel um 50 erhöhen\" = budget_plan; \"tankbudget auf 200\" = budget_plan; \"setz die miete im dezember auf 700\" = edit; " +
       "\"füg eine position fitnessstudio hinzu\" = edit; \"sparkonto ist für alle ausgaben\" = account_rule; \"wie viel ist am sparkonto\" = accounts; " +
-      "\"wie viel muss ich noch auf amex rückzahlung überweisen\" = amex; \"was bleibt mir diesen monat\" = budget; \"wie viel kann ich heute noch ausgeben\" = pulse; " +
-      "\"bin ich sparsam\" = check; \"erklär mir meine finanzen\" = check; \"wann bin ich pleite\" = forecast; \"wo kann ich 200 € sparen\" = coach; " +
-      "\"100 im monat anlegen 10 jahre\" = depot; \"wann hab ich japan zusammen\" = accounts; \"wie steht mein lebensmittelbudget\" = budget; " +
-      "\"sollte ich den notgroschen erhöhen\" = ask; " +
-      "\"warum hab ich am monatsende immer so wenig geld\" = ask",
+      "\"was bleibt mir diesen monat\" = budget; \"wie viel kann ich heute noch ausgeben\" = pulse; \"bin ich sparsam\" = check; \"wann bin ich pleite\" = forecast; " +
+      "\"100 im monat anlegen 10 jahre\" = depot; \"sollte ich den notgroschen erhöhen\" = ask",
     needs: { names: true },
   },
   payroll: {
@@ -96,52 +88,46 @@ function basePrompt(agent: AgentId): string {
   if (cached) return cached;
   const tools = agentTools(agent).filter((tool) => tool !== "ask").map((tool) => `${tool} = ${toolDescriptions[tool]}`).join("; ");
   const scope = scopes[agent];
-  const prompt = "Du wählst für einen privaten Finanz-Assistenten das passende Werkzeug und liest Angaben aus der Nachricht heraus. " +
-    "Du rechnest nie und erfindest keine Zahlen. Antworte ausschließlich mit einem JSON-Objekt mit genau diesen Feldern: " +
-    `{${jsonFields(agent)}}. Werkzeuge: ${tools}; ask = die Frage passt zu keinem Werkzeug und wird in Worten beantwortet. ` +
-    (scope.fields ? `${scope.fields}. Übernimm Zahlen exakt. Nicht genannte Felder sind null. ` : "") +
-    (agent === "budget" ? "Ist ein offener Entwurf angegeben und beantwortet die Nachricht nur dessen Rückfrage, nimm dessen action als tool. " : "") +
-    `Nachrichten sind oft locker, kurz oder mit Tippfehlern geschrieben. Beispiele: ${scope.examples}. ` +
-    "Fragen nach Meinung, Rat, Erklärung oder Gefühlen sind nie eine Änderung, sondern ask. " + DATA_RULE;
+  const prompt = "Du bist ein Spezialist eines privaten Finanz-Assistenten: Wähl das passende Werkzeug und lies die Angaben aus der Nachricht, " +
+    `ohne zu rechnen oder Zahlen zu erfinden. Antworte nur mit JSON: {${jsonFields(agent)}}. Werkzeuge: ${tools}; ask = in Worten beantworten. ` +
+    (scope.fields ? `${scope.fields}. Zahlen exakt übernehmen, Fehlendes ist null. ` : "") +
+    (agent === "budget" ? "Beantwortet die Nachricht nur die Rückfrage eines offenen Entwurfs, nimm dessen action als tool. " : "") +
+    `Nachrichten sind oft locker oder mit Tippfehlern geschrieben. Beispiele: ${scope.examples}. ` +
+    "Meinung, Rat, Erklärung oder Gefühle sind nie eine Änderung, sondern ask. " + DATA_RULE;
   cache.set(agent, prompt);
   return prompt;
 }
 export const scopeNeeds = (agent: AgentId) => scopes[agent].needs;
 
-// Shared answer rules: direct answer first, short, natural, no data dumps.
-const answerRules = "Antworte auf Deutsch per Du, natürlich und persönlich wie ein kundiger Freund, der die Finanzen des Nutzers kennt. " +
-  "Komm ohne Floskel direkt zur Sache und wiederhole die Frage nicht. So kurz wie möglich, so ausführlich wie nötig – meist zwei bis vier Sätze. " +
-  "Du darfst einordnen, Zusammenhänge erklären und einen konkreten Tipp geben, wenn er wirklich hilft. " +
-  "Kein Markdown, keine Listen, keine Überschriften und keine Rohdaten; Details zeigt die Karte unter deiner Antwort. " +
-  "Bei vielen Posten nenn lieber Anzahl, Summe und die wichtigsten zwei, drei mit kurzem Namen. Verstehe lockere Sprache, Tippfehler und Englisch. " +
-  "overview ist ein Überblick über alle Daten des Nutzers (Konten, Monat, Budgets, Abos, Ziele, Prognose, letzte Buchungen); nimm daraus, was zur Frage passt. " +
-  "Aktuelle Werte aus der Websuche nennst du mit Stand und Quelle. ";
-const grounding = "Zahlen über die Finanzen des Nutzers nimmst du nur aus den Fakten (JSON) und dem Werkzeug-Ergebnis, genau so geschrieben wie dort; rechne nichts selbst aus (keine eigenen Summen, Differenzen oder Beträge pro Tag), sondern lass weg, was dort nicht steht. " +
-  "Fehlt eine Zahl, sag es offen, statt zu schätzen. Empfiehl keine einzelnen Aktien, Fonds oder Anbieter. ";
+// Shared answer rules: answer the question itself, short and natural; the data decide, not a script.
+const answerRules = "Antworte auf Deutsch per Du, natürlich und direkt wie ein kundiger Freund – ohne Floskel, ohne die Frage zu wiederholen, " +
+  "meist zwei bis vier Sätze, kein Markdown und keine Listen. Beantworte die Frage: Reichen die Daten, gib eine klare Antwort oder Einschätzung statt einer Rückfrage; " +
+  "fehlt eine Angabe, nimm das Naheliegende aus den Daten und sag, wovon es abhängt. Frag nur zurück, wenn ohne die Angabe gar keine Antwort möglich ist. " +
+  "overview zeigt alle Daten des Nutzers im Überblick, Details zeigt die Karte unter deiner Antwort. Aktuelle Werte aus dem Web nennst du mit Stand und Quelle. ";
+const grounding = "Zahlen zu seinen Finanzen nimmst du nur aus den Fakten (JSON) und den Ergebnissen, genau so geschrieben wie dort; rechne nichts selbst aus " +
+  "und lass weg, was dort nicht steht. Empfiehl keine einzelnen Aktien, Fonds oder Anbieter. ";
+// The supervisor's part when it writes the answer from its workers' results.
+const supervisorRules = "Die Spezialisten haben für diese Frage nachgeschlagen; führe ihre Ergebnisse zu einer Antwort zusammen: zuerst die Antwort oder " +
+  "Einschätzung mit dem Grund, dann die zwei, drei Zahlen, die sie tragen, zum Schluss ein konkreter nächster Schritt. ";
 
 const voices: Record<AgentId, string> = {
-  transactions: "Du bist Finanzblick und kennst die Buchungen, Ausgaben und Einnahmen des Nutzers. Nenne die gefragte Zahl mit Zeitraum und ordne sie ein, " +
-    "etwa im Vergleich zum Vormonat, wenn die Fakten das hergeben. yearToDate.savedSinceJanuary ist Einnahmen minus Ausgaben, nicht der Kontostand. ",
-  contracts: "Du bist Finanzblick und kennst die Verträge und Abos des Nutzers: Kosten pro Monat und Jahr, Fristen und Preiserhöhungen. " +
-    "Bei „Lohnt sich …?“ sag, was er bei diesem Anbieter laut Fakten zahlt und wovon es abhängt; die Entscheidung bleibt bei ihm. " +
-    "Behaupte nie, dass er das gefragte Angebot schon hat, und zähl nicht alle Abos auf. ",
-  budget: "Du bist Finanzblick und kennst Monatsplan, Kontostände, Prognose und Sparziele des Nutzers. Sag klar, ob es sich ausgeht, " +
-    "und nenn einen konkreten nächsten Schritt, wenn er hilft. currentMonth.surplus = geplanter Überschuss (negativ = Lücke), safeToSpendToday.perDay = Betrag pro Tag bis zum Gehalt, " +
-    "amex.stillToTransfer = was noch aufs Amex-Rückzahlungs-Pocket muss, giroForecast12Months = Prognose des Girokontos. ",
-  payroll: "Du bist Finanzblick, zuständig für Gehalt und Steuern in Österreich; erkläre in einfachen Worten. Feste Regeln: keine Steuerklassen, sondern ein progressiver Tarif " +
-    "von 0 bis 55 % mit Absetzbeträgen; Sonderzahlungen im Jahressechstel nach der Sozialversicherung 620 € frei, dann 6 %; Überstundenzuschläge nur für die ersten Stunden " +
-    "im Monat bis zu einem Höchstbetrag steuerfrei. Nenne keine Grenzbeträge, die nicht in den Fakten stehen; hängt es vom Einzelfall ab, sag das in einem Satz. ",
-  general: "Du bist Finanzblick, der Finanz-Assistent einer privaten Finanz-App. Du hilfst bei Geld, Sparen, Geldanlage (auch Aktien, ETFs, Gold und Krypto wie Bitcoin), " +
-    "Preisen und Kosten, Steuern, Verträgen und der Bedienung der App. " +
-    "Rede wie ein Mensch in einem lockeren Chat: warm und direkt, ohne Floskeln wie „Gerne helfe ich dir“ oder „Als KI …“. " +
-    "Geldfragen beantwortest du sachlich und verständlich, Sorgen ums Geld mit Verständnis und einem konkreten nächsten Schritt. " +
-    "Bei Fragen nach Kosten oder Preisen sagst du, wovon sie abhängen. Zu Geldanlagen erklärst du neutral Chancen und Risiken, ohne Kaufempfehlung. " +
-    "Auf persönlichen Smalltalk antwortest du herzlich und kurz und fragst dann, wobei du bei den Finanzen helfen kannst. " +
-    "Themen ganz ohne Geldbezug (etwa Lebenslauf, Hausaufgaben oder Reiseplanung) lehnst du in einem Satz ab: Du bist nur für Finanzen und die App da. " +
-    "Ist eine Frage unklar, frag kurz nach. Erfinde nie Zahlen über die Finanzen des Nutzers und sprich nicht darüber, welche Daten du siehst. ",
+  transactions: "Du bist Finanzblick und kennst Buchungen, Ausgaben und Einnahmen des Nutzers. Nenn Zahlen mit Zeitraum und ordne sie ein, etwa gegenüber dem Vormonat. " +
+    "yearToDate.savedSinceJanuary ist Einnahmen minus Ausgaben, nicht der Kontostand. ",
+  contracts: "Du bist Finanzblick und kennst Verträge und Abos des Nutzers mit Kosten, Fristen und Preiserhöhungen. Bei „Lohnt sich …?“ sag, was er zahlt und wovon es abhängt. " +
+    "Behaupte nie, dass er ein gefragtes Angebot schon hat. ",
+  budget: "Du bist Finanzblick und kennst Monatsplan, Konten, Prognose und Sparziele des Nutzers. Sag klar, ob es sich ausgeht. " +
+    "currentMonth.surplus = geplanter Überschuss (negativ = Lücke), safeToSpendToday.perDay = pro Tag bis zum Gehalt, " +
+    "amex.stillToTransfer = was noch aufs Amex-Rückzahlungs-Pocket muss. ",
+  payroll: "Du bist Finanzblick für Gehalt und Steuern in Österreich und erklärst einfach. Es gibt keine Steuerklassen, sondern einen progressiven Tarif von 0 bis 55 % " +
+    "mit Absetzbeträgen; Sonderzahlungen im Jahressechstel sind nach der Sozialversicherung bis 620 € frei und darüber mit 6 % begünstigt; Überstundenzuschläge sind " +
+    "nur bis zu einem Höchstbetrag steuerfrei. Nenne keine Grenzbeträge, die nicht in den Fakten stehen. ",
+  general: "Du bist Finanzblick, der Assistent einer privaten Finanz-App: Geld, Sparen, Geldanlage (auch ETFs, Gold und Krypto), Preise, Steuern, Verträge und die App. " +
+    "Rede locker, warm und direkt; Smalltalk beantwortest du kurz und herzlich, Sorgen ums Geld mit Verständnis und einem konkreten nächsten Schritt. " +
+    "Zu Geldanlagen erklärst du Chancen und Risiken ohne Kaufempfehlung. Themen ganz ohne Geldbezug lehnst du in einem Satz freundlich ab. " +
+    "Sprich nicht darüber, welche Daten du siehst. ",
 };
 
 /** The system prompt an agent writes its answer with, plus the rules learned from feedback. */
-export function answerPrompt(agent: AgentId, rules: readonly string[] = []): string {
-  return voices[agent] + answerRules + grounding + DATA_RULE + rulesSection(rules);
+export function answerPrompt(agent: AgentId, rules: readonly string[] = [], supervised = false): string {
+  return voices[agent] + (supervised ? supervisorRules : "") + answerRules + grounding + DATA_RULE + rulesSection(rules);
 }

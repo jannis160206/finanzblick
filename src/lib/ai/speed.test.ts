@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerFreeQuestion, streamFreeAnswer, tidyAnswer, visiblePrefix } from "./answer";
+import { answerFreeQuestion, answerTask, streamFreeAnswer, tidyAnswer, visiblePrefix } from "./answer";
 import { readAnswerStream } from "./answer-stream";
 import { interpretAssistantMessage } from "./assistant";
 import { chatStream, parseSse } from "./client";
@@ -135,7 +135,20 @@ describe("agent answers", () => {
     const { calls, fetcher } = stub(() => completion("**Der Mount Everest** ist 8.849 Meter hoch. Du hast übrigens 5.000 € gespart."));
     const reply = await answerFreeQuestion({ question: "Wie hoch ist der Mount Everest?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
     expect(reply.text).toBe("Der Mount Everest ist 8.849 Meter hoch.");
-    expect(system(calls)).toContain("lockeren Chat");
+    expect(system(calls)).toContain("Rede locker");
+  });
+
+  it("lets the supervisor write the answer from its workers' results on V4 Pro, still only with backed numbers", async () => {
+    const { calls, fetcher } = stub(() => completion("Eher nicht: Dir bleiben 120 € im Monat. Ein Sparplan mit 80 € wäre drin."));
+    const input = { question: "Passt ein Sparplan in mein Budget?", facts: { today: "2026-11-11" }, agent: "budget" as const, evidence: "Was bleibt mir? Frei: 120 €", supervised: true };
+    expect((await answerFreeQuestion(input, { config, fetcher })).text).toBe("Eher nicht: Dir bleiben 120 € im Monat.");
+    expect(system(calls)).toContain("führe ihre Ergebnisse zu einer Antwort zusammen");
+    expect(answerTask(input)).toBe("synthesize");
+    expect(answerTask({ ...input, supervised: undefined })).toBe("chat");
+    // Advice is written from computed results without the slow thinking mode; tax questions keep it.
+    expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?" })).toBe("synthesize");
+    expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?", supervised: undefined })).toBe("reasoning");
+    expect(answerTask({ ...input, agent: "payroll", question: "Warum zahle ich so viel Lohnsteuer?" })).toBe("reasoning");
   });
 
   it("never lets an invented small euro amount through", async () => {
@@ -155,7 +168,7 @@ describe("agent answers", () => {
     const reply = await answerFreeQuestion({ question: "Was bleibt?", facts: { budget: { left: 420 } }, agent: "budget" }, { config, fetcher });
     expect(reply.text).toBe("Dir bleiben 420 €.");
     expect(system(calls)).toContain("Monatsplan");
-    expect(system(calls)).toContain("ohne Floskel direkt zur Sache");
+    expect(system(calls)).toContain("statt einer Rückfrage");
   });
 
   it("turns Markdown and lists into plain chat text", () => {

@@ -1,6 +1,6 @@
-# Finanz-Assistent: Orchestrator und Spezialisten
+# Finanz-Assistent: Orchestrator, Supervisor und Spezialisten
 
-Stand: 11.11.2026
+Stand: 14.11.2026
 
 ## Ausgangslage (vorher)
 
@@ -13,7 +13,13 @@ Stand: 11.11.2026
 
 ## Architektur
 
-Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der Orchestrator entscheidet einmal und übergibt an genau einen Agenten. Es gibt keine verschachtelten Übergaben.
+Thin Orchestrator mit Supervisor-Worker-Muster, ohne Framework, im bestehenden TypeScript-Code:
+
+- **Thin Orchestrator** (`orchestrate` in `src/lib/assistant/orchestrator.ts`): macht keine Facharbeit, sondern entscheidet nur, wer übernimmt. Feste Regeln gibt es nur für eindeutige Fälle; alles andere bekommt der Supervisor, ein erkanntes Werkzeug nur als Hinweis.
+- **Supervisor** (`src/lib/ai/supervisor.ts`, DeepSeek V4 Pro): zerlegt die Aufgabe, wählt Spezialisten und ihre Lese-Werkzeuge, lässt sie arbeiten und schreibt die Antwort aus ihren Ergebnissen.
+- **Spezialisten (Worker):** führen ihre Werkzeuge aus (der Code rechnet im Browser auf den eigenen Daten) und geben das Ergebnis zurück. Änderungen füllt der zuständige Spezialist aus; sie laufen wie bisher nur über Vorschau und Bestätigung.
+
+Siehe [Supervisor](#supervisor-deepseek-v4-pro).
 
 | Agent | Zuständig für | Werkzeuge (je genau ein Eigentümer) |
 |---|---|---|
@@ -27,8 +33,9 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
 
 **Dateien**
 
-- `src/lib/assistant/orchestrator.ts`: Agenten, Werkzeug-Eigentümer, Signalwörter, `routeByRules`, `parseAgent`.
-- `src/lib/ai/specialists.ts`: Orchestrator-Prompt (ein Wort), Werkzeug-Prompt je Spezialist und Stimme je Agent.
+- `src/lib/assistant/orchestrator.ts`: Agenten, Werkzeug-Eigentümer, Thin Orchestrator (`orchestrate`, `needsSupervisor`), lokales Routing (Signalwörter, `routeByRules`, `parseAgent`).
+- `src/lib/ai/supervisor.ts`: Supervisor-Prompt (alle Spezialisten mit ihren Werkzeugen), Prüfung des Plans (`cleanSupervision`).
+- `src/lib/ai/specialists.ts`: Ein-Wort-Prompt für das lokale Routing, Werkzeug-Prompt je Spezialist, Stimme je Agent und Zusatz für die Supervisor-Antwort.
 - `src/lib/ai/assistant.ts`: Ablauf auf dem Server.
 - `src/lib/assistant/specialist-context.ts`: Fakten-Ausschnitt und Kontext-Werkzeug je Agent.
 - `src/lib/assistant/payroll.ts`: neues Werkzeug für Gehalt & Steuern.
@@ -39,41 +46,40 @@ Orchestrator-Worker-Muster ohne Framework, im bestehenden TypeScript-Code. Der O
 
 ## Ablauf und KI-Aufrufe
 
-1. **Regeln (0 Aufrufe):**
+1. **Regeln des Thin Orchestrators (0 Aufrufe)**, nur für eindeutige Fälle:
    - Begrüßung, Dank und „Wer bist du?“ beantwortet der Chat sofort.
+   - Kreative Bitten („Schreib mir ein Gedicht über Sparen“), allgemeine „man“-Fragen und Nachrichten ganz ohne Geldbezug und ohne „ich/mein“ gehen an den allgemeinen Chat.
+   - Fragen nach aktuellen Werten (Kurse, Preise, Nachrichten) gehen an die Websuche.
    - Fachfremde Themen bekommen ohne Modell ein freundliches Nein mit drei Finanzfragen als Vorschlag (siehe „Nur Finanzen und die App“).
    - Feste Antworten ohne Modell: Rechnen („15 % von 2400“), Navigation („Öffne die Verträge“), Farbschema, „Mein Konto ist leer“, „Lösche alle Buchungen“.
    - Kombinierte Fragen („Wie hoch ist mein Gehalt und wann kommt es?“) werden in Teile zerlegt; jeder Teil bekommt sein eigenes Werkzeug, höchstens ein Teil eine freie Antwort.
    - Finanzbegriffe („Was ist ein ETF?“) beantwortet `knowledge` zuerst aus dem lokalen Finanzwissen (siehe „Lokales Finanzwissen“); nur ohne sicheren Treffer schlägt er in der Wikipedia nach. Allgemeine Artikel sucht er nicht mehr.
-   - Klare Befehle bestimmen das Werkzeug und damit den Eigentümer.
+   - Klare Befehle und Abfragen, die alles mitbringen, bestimmen das Werkzeug und damit den Eigentümer („Welche Abos habe ich?“, „Kann ich mir im Mai einen Fernseher um 900 € leisten?“, „Lösche die Buchung MediaMarkt vom 24.10.“).
    - Folgefragen und gelernte Formulierungen werden wie bisher ohne Modell erkannt.
-2. **Signalwörter (0 Aufrufe):** Trifft die Nachricht die Wörter genau eines Spezialisten (z. B. „Sparkonto“, „Netto“, „Abo“), übernimmt dieser. Ohne jeden Geldbezug antwortet sofort der allgemeine Chat.
-3. **Modell-Rückfall (1 kurzer Aufruf):** Nur wenn dann noch unklar ist, wer zuständig ist.
-   - Das Modell antwortet mit einem Wort: `umsaetze`, `vertraege`, `budget`, `gehalt` oder `chat`.
-   - Höchstens 8 Token, mit kleinen Beispielen im statischen Prompt.
-   - Unsicher, mehrere Namen, Fehler oder keine KI: allgemeiner Chat.
-4. **Spezialist:**
-   - Mit Werkzeug rechnet der Code; das Modell ist nur nötig, wenn Werkzeug-Hinweise oder ein Entwurf gelesen werden müssen.
-   - Dieser Aufruf sieht nur die eigenen Werkzeuge, Felder und Beispiele.
-   - Nach einer Modell-Weiterleitung antwortet der Spezialist direkt in Worten, ohne zweite Interpretation.
-5. **Antwort (höchstens 1 Aufruf, gestreamt):** Nur für Fragen, die eine Erklärung brauchen, oder ohne passendes Werkzeug. Der Agent bekommt seine Stimme, nur seine Fakten und das Ergebnis seines Kontext-Werkzeugs:
-   - Umsätze: Monatsbericht;
-   - Verträge: Vertragsliste;
-   - Budget: Monats-Puls;
-   - Gehalt: Gehaltsübersicht.
+2. **Supervisor (1 Aufruf, DeepSeek V4 Pro):** alles andere – Rat, Meinung, Sorgen, Fragen mit mehreren Seiten, unklare Geldfragen, und Werkzeuge, die allein nur zurückfragen würden (Leistbarkeit, Sparplan oder Kredit ohne Betrag, ein Sparziel- oder Ausgaben-Formular aus einer Frage ohne Zahl). Er wählt eine Art:
+   - `werkzeug`: ein Lese-Werkzeug beantwortet die Nachricht allein; weiter wie bei einer Regel.
+   - `antwort`: bis zu drei Lese-Werkzeuge oder Websuchen mit je einer Teilfrage; danach schreibt er die Antwort.
+   - `aktion`: Der zuständige Spezialist liest die Details aus (Werkzeug-Prompt, V4 Pro); Vorschau und Bestätigung wie bisher.
+   - `rueckfrage`: nur, wenn eine Angabe fehlt, die weder in den Daten noch im Internet steht.
+3. **Spezialist (Worker):**
+   - Mit Werkzeug rechnet der Code; das Modell ist nur nötig, wenn Werkzeug-Hinweise oder ein Entwurf gelesen werden müssen. Dieser Aufruf sieht nur die eigenen Werkzeuge, Felder und Beispiele.
+   - Die Schritte des Supervisors laufen im Browser auf den eigenen Daten (`runWorkers`); ihre Ergebnisse gehen als Evidenz in die Antwort, die erste Karte erscheint darunter.
+4. **Antwort (höchstens 1 Aufruf, gestreamt):** bei Fragen, die eine Erklärung brauchen, ohne passendes Werkzeug oder nach den Schritten des Supervisors. Der Agent bekommt seine Stimme, seine Fakten samt Datenüberblick und das Ergebnis seines Kontext-Werkzeugs (Umsätze: Monatsbericht; Verträge: Vertragsliste; Budget: Monats-Puls; Gehalt: Gehaltsübersicht).
+5. **Lokaler Rückfall ohne DeepSeek:** Fällt der Supervisor aus (kein Key, Pause, Fehler, unlesbarer Plan), entscheidet das bisherige lokale Routing – Signalwörter genau eines Spezialisten, sonst ein Wort vom Modell (`umsaetze`, `vertraege`, `budget`, `gehalt`, `chat`, höchstens 8 Token; unsicher heißt Chat) –, und Qwen antwortet.
 
-**Damit:** höchstens ein Modellaufruf für die Interpretation und höchstens zwei pro Nachricht insgesamt. Klare Fragen kommen ganz ohne Modell aus.
+**Damit:** Eindeutiges kommt ohne Modell aus; alles andere braucht einen Supervisor-Aufruf und höchstens einen für die Antwort. Eine Änderung kostet einen weiteren Aufruf für den Spezialisten.
 
 ## Antwortverhalten
 
 - **Für alle:**
-  - Zuerst die direkte Antwort in einem Satz, danach höchstens zwei, drei Sätze.
+  - Die Frage wird beantwortet: Reichen die Daten, gibt es eine klare Antwort oder Einschätzung statt einer Rückfrage. Fehlt eine Angabe, nimmt der Assistent das Naheliegende aus den Daten und sagt, wovon es abhängt. Zurückgefragt wird nur, wenn ohne die Angabe gar keine Antwort möglich ist.
+  - Meist zwei bis vier Sätze, ohne Floskel und ohne die Frage zu wiederholen.
   - Kein Markdown, keine Listen, keine Datenaufzählungen. Zusammengefasst wird mit Anzahl, Summe und den wichtigsten Posten.
   - Markdown, das trotzdem kommt, wird entfernt (`tidyAnswer`).
   - Lange Karten zeigen nur die ersten sechs Zeilen, der Rest kommt mit „Alle n anzeigen“.
 - **Allgemeiner Chat:**
   - Locker, warm und direkt, ohne Floskeln.
-  - Hilft nur bei Geld, Finanzen, Verträgen, Steuern und der App; Kosten von Freizeit, Abos und Streaming zählen dazu. Bei Unklarem fragt er nach.
+  - Hilft nur bei Geld, Finanzen, Verträgen, Steuern und der App; Kosten von Freizeit, Abos und Streaming zählen dazu.
   - Sieht ohne Geldbezug keine persönlichen Daten. Dann darf er allgemeines Finanzwissen mit Zahlen nennen; Geldbeträge, Links und Kontonummern müssen trotzdem belegt sein.
   - Begrüßung und Dank beantwortet er sofort mit natürlichen Sätzen, ohne Modell.
 - **Spezialisten:**
@@ -91,7 +97,9 @@ Ist ein DeepSeek-Key hinterlegt, wählt `src/lib/ai/client.ts` das Modell nach d
 
 | Schritt | Aufgabe | Modell |
 | --- | --- | --- |
-| Agent wählen, Werkzeug wählen | Werkzeugwahl | DeepSeek Flash |
+| Aufgabe zerlegen: Spezialisten, Lese-Werkzeuge, Aktion oder Rückfrage | Supervisor | DeepSeek V4 Pro (nur DeepSeek, sonst lokales Routing) |
+| Antwort aus den Ergebnissen der Spezialisten | Supervisor-Antwort | DeepSeek V4 Pro ohne Denkmodus (Steuerfragen an Gehalt & Steuern im Denkmodus) |
+| Werkzeug-Hinweise und Entwürfe lesen, lokales Routing | Werkzeugwahl | DeepSeek Flash |
 | Offener Entwurf, ändernde Regel-Werkzeuge, mehrere Befehle, „anlegen/ändern/lösche…“ | Aktion | DeepSeek V4 Pro (ohne Denkmodus) |
 | Freie Antwort | Antwort | DeepSeek Flash |
 | „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen | Analyse | DeepSeek V4 Pro im Denkmodus |
@@ -99,13 +107,13 @@ Ist ein DeepSeek-Key hinterlegt, wählt `src/lib/ai/client.ts` das Modell nach d
 | 2–3 Folgefragen unter jeder Antwort | Folgefragen | DeepSeek Flash (nur DeepSeek, sonst feste Vorschläge) |
 | Regel aus einem 👎-Kommentar | Regel aus Feedback | DeepSeek V4 Pro (nur DeepSeek) |
 
-Mit DeepSeek gibt es für die Interpretation nur einen Aufruf: Das kleine lokale Router-Modell entfällt. Die Entscheidung liegt in `interpretTask` (`src/lib/ai/assistant.ts`) und `answerTask` (`src/lib/ai/answer.ts`); beide rechnen ohne Modell.
+Mit DeepSeek entfällt das kleine lokale Router-Modell. Die Entscheidung liegt in `interpretTask` (`src/lib/ai/assistant.ts`) und `answerTask` (`src/lib/ai/answer.ts`); beide rechnen ohne Modell.
 
 ## Admin-Ansicht
 
 Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orchestrator“** (`/einstellungen/orchestrator`). Der Link steht dezent unter den Einstellungsbereichen, nicht in der Hauptnavigation.
 
-- **Aufbau:** Baum vom Orchestrator über die drei Entscheidungsschritte (Regeln, Signalwörter, Modell-Rückfall) zu den vier Spezialisten und dem allgemeinen Chat, mit KI-Status.
+- **Aufbau:** Baum vom Orchestrator über die drei Entscheidungsschritte (Regeln, Supervisor, lokaler Rückfall) zu den vier Spezialisten und dem allgemeinen Chat, mit KI-Status.
 - **KI-Status:** „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder, wenn DeepSeek nicht erreichbar ist oder den Key ablehnt, die Warnung „Lokal (Qwen) aktiv · DeepSeek …“ mit dem Grund, z. B. „Rate-Limit (HTTP 429)“.
 - **Modelle:** Modell je Aufgabe (Antwort, Werkzeugwahl, Aktion, Analyse, Kategorisierung, Websuche, Auslesen, PDF-Auszüge) aus `/api/ai/status` mit dem Hinweis, dass Qwen bei Ausfällen übernimmt und Namen und Kontonummern pseudonymisiert werden.
 - **Agenten:** Zuständigkeit, Kurzbeschreibung, Modell (Router und Hauptmodell aus `/api/ai/status`) und Zahl der letzten Läufe.
@@ -117,7 +125,7 @@ Eine versteckte, rein lesende Seite unter **Einstellungen → „Assistent-Orche
 - **Feedback:** Ort der Feedback-Datei, Zahl der 👍/👎 und Kommentare, die neuesten fünf Einträge und **Herunterladen** (siehe [Feedback-Datei](#feedback-datei-für-copilot)).
 - **Aktualisieren** lädt den KI-Status, die Feedback-Übersicht und die Regeln neu. Außer den Regel-Schaltern lässt sich nichts bearbeiten.
 
-Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Signal, Modell, Rückfall), `ms` (Dauer), `calls` (höchstens acht Werkzeugaufrufe mit `tool`, `ok` und `summary`; der Ausgang einer Änderung folgt ihrem `status`) und `models` (höchstens vier: Anbieter, Modell, Aufgabe, Rückfall mit Grund, Denkmodus). Das ist JSON im bestehenden Verlauf, keine Migration.
+Dafür speichert jede Antwort im Chatverlauf zusätzlich die optionalen Felder `via` (Regel, Supervisor, Signal, Modell, Rückfall), `ms` (Dauer), `calls` (höchstens acht Werkzeugaufrufe mit `tool`, `ok` und `summary`; der Ausgang einer Änderung folgt ihrem `status`) und `models` (höchstens vier: Anbieter, Modell, Aufgabe, Rückfall mit Grund, Denkmodus). Das ist JSON im bestehenden Verlauf, keine Migration.
 
 **Dateien:** `src/lib/assistant/orchestrator-info.ts` (Daten), `src/components/orchestrator-admin.tsx` (Ansicht), `src/app/(dashboard)/einstellungen/orchestrator/page.tsx` (Route).
 
@@ -532,16 +540,44 @@ Der Assistent arbeitet freier: Aktuelle Werte holt er immer frisch aus dem Inter
 
 **Datenüberblick** (`appOverview` in `src/lib/assistant/facts.ts`): Bei Fragen zum eigenen Geld bekommt der antwortende Agent zusätzlich einen kompakten Überblick: Konten und Summe, dieser Monat samt überzogener Budgets, frei bis zum Gehalt, Abos (Anzahl, pro Monat, größtes), Sparziele, Giro-Prognose, Amex, Gehalt, Auffälliges und die letzten 8 Buchungen. Namen werden geschwärzt, Personen und IBANs pseudonymisiert; allgemeine Fragen sehen den Überblick nie.
 
-**Freie Werkzeugwahl** (`src/lib/ai/planner.ts`, `POST /api/ai/plan`):
-
-- Passt kein Werkzeug direkt, plant DeepSeek V4 Pro (Aufgabe „Planung“, rund 1–1,6 s), welche Lese-Werkzeuge (Budget, Prognose, Verträge, Was-wäre-wenn, Umsätze, Gehalt …) oder Websuchen die Antwort braucht – höchstens drei, mit je einer eigenen Teilfrage.
-- Der Browser führt sie mit seinen Daten aus; die Ergebnisse gehen als Evidenz in die freie Antwort. Ändernde Werkzeuge und Entwürfe sind im Planer und im Browser ausgeschlossen.
-- Ohne DeepSeek entfällt die Planung (nie Qwen); die Antwort entsteht wie bisher aus Fakten und Überblick.
-- Beispiel live: „Lohnt es sich, mein Netflix-Abo zu kündigen und das Geld ins Sparziel zu stecken?“ → Verträge + Was-wäre-wenn.
+**Freie Werkzeugwahl:** Die Wahl der Lese-Werkzeuge trifft seit dem 14.11.2026 der [Supervisor](#supervisor-deepseek-v4-pro) schon beim Routing. Der frühere eigene Planer (`/api/ai/plan`) entfällt; er hätte einen zweiten V4-Pro-Aufruf gekostet.
 
 **Natürlichere Antworten** (`src/lib/ai/specialists.ts`): Die Antwortregeln sind lockerer – direkt zur Sache, 2–4 Sätze, Zusammenhang erklären, wenn er hilft, den Überblick nutzen und aktuelle Web-Werte mit Stand und Quelle nennen. Die Belegprüfung bleibt: Jede Zahl muss aus Fakten, Werkzeugen oder Quellen stammen.
 
-**Änderungen nur mit Bestätigung:** Daran ändert sich nichts. Anlegen, Ändern, Löschen und Verschieben laufen weiter über Vorschau und „Ja“; der Planer kennt nur lesende Werkzeuge.
+**Änderungen nur mit Bestätigung:** Daran ändert sich nichts. Anlegen, Ändern, Löschen und Verschieben laufen weiter über Vorschau und „Ja“; der Supervisor führt nur lesende Werkzeuge aus.
+
+## Supervisor (DeepSeek V4 Pro)
+
+Der Assistent beantwortet Fragen, statt generisch zurückzufragen (`src/lib/ai/supervisor.ts`, Aufgaben „Supervisor“ und „Supervisor-Antwort“).
+
+- **Wer ihn bekommt:** alles, was der Thin Orchestrator nicht eindeutig zuordnen kann. Werkzeuge, die die Regeln erkennen, gehen trotzdem an ihn, wenn sie allein nur zurückfragen würden (`needsSupervisor`):
+  - Rat, Meinung und Sorgen („Lohnt sich …“, „Soll ich …“, „Was meinst du …“);
+  - `funds`, `affordability`, `depot` und `loan` ohne Betrag;
+  - ein Sparziel- oder Ausgaben-Formular aus einer Frage ohne Zahl („Wie viel sollte ich für die Pension zurücklegen?“).
+  Das Werkzeug der Regeln bekommt er als Hinweis mit.
+- **Was er sieht:** die Nachricht, bis zu vier Verlaufszeilen (Antworten des Assistenten bereinigt), die Namen der Sparziele und geplanten Ausgaben sowie im statischen Prompt alle Spezialisten mit ihren Werkzeugen, die Kategorien und die Regeln aus Feedback (Wirkung Werkzeugwahl). Keine Beträge, Buchungen oder Kontostände: Die Daten bleiben im Browser.
+- **Was er entscheidet** (JSON, geprüft in `cleanSupervision`):
+  - Spezialist und Art (`werkzeug`, `antwort`, `aktion`, `rueckfrage`);
+  - höchstens drei Lese-Schritte mit Teilfrage in der Ich-Form, nur Werkzeuge, die nichts ändern, oder `web`;
+  - ein Rechner ohne Betrag wird zum Monatsplan (`budget`), weil er sonst nur nach dem Betrag fragen könnte;
+  - eine Rückfrage nur als echte Frage; alles Unklare wird eine geschriebene Antwort.
+- **Antwort:** Der Browser führt die Schritte aus (`runWorkers`), der Supervisor schreibt aus ihren Ergebnissen, den Fakten und dem Datenüberblick die Antwort: zuerst die Einschätzung mit Grund, dann die tragenden Zahlen, zum Schluss ein konkreter nächster Schritt. V4 Pro ohne Denkmodus, weil die Zahlen schon berechnet sind; Steuerfragen an Gehalt & Steuern denken weiter gründlich. Die Belegprüfung gilt unverändert. Unter der Antwort steht die Karte des ersten Schritts.
+- **Rückfall:** Ohne DeepSeek, bei einer Pause oder einem unlesbaren Plan routet der Server wie bisher lokal (Signalwörter, ein Wort von Qwen), und Qwen antwortet.
+- **Admin:** Weg „Supervisor“ in „Letzte Läufe“, Modelle „DeepSeek V4 Pro · Supervisor“ und „· Supervisor-Antwort“; im Baum der Schritt „Supervisor“.
+
+**Gemessen am 14.11.2026** (DeepSeek, synthetische Daten):
+
+| Frage | Vorher | Mit Supervisor |
+| --- | --- | --- |
+| „Lohnt sich ein Bitcoin-Sparplan für mein Budget?“ | Depot-Rechner, fragt nach Betrag und Laufzeit | Monatsplan + Bitcoin-Kurs → „Nein, das passt gerade nicht …“ mit Girokonto, Rücklagen und Schwankung, 8 s |
+| „Kann ich mir ein neues Handy leisten?“ | Leistbarkeit, fragt nach dem Preis | Monatsplan → „Ja, … wenn du es aus dem geplanten Überschuss nimmst …“ samt Sparkonto, 5 s |
+| „Ich will mir ein Auto kaufen, was meinst du?“ | Ausgaben-Formular „Wie viel kostet Auto?“ | Monatsplan, Konten, Prognose → Einschätzung |
+| „Wie viel sollte ich für die Pension zurücklegen?“ | Sparziel-Formular „Wie viel möchtest du ansparen?“ | Finanz-Check, Monatsplan, Websuche → Antwort |
+| „Bin ich gut für Weihnachten aufgestellt?“ | allgemeiner Chat ohne Daten | Monatsplan, Puls, Prognose → „Ja, … Geschenke-Budget noch unangetastet …“, 5,5 s |
+
+- Der Supervisor-Aufruf dauert 1,1–2,3 s; der Supervisor-Prompt ist statisch (rund 12.000 Zeichen) und kommt meist aus dem DeepSeek-Cache.
+- Die Antwort-Prompts der Spezialisten sind 27 % kürzer (alle fünf zusammen 9.995 → 7.254 Zeichen), die Werkzeug-Prompts 8 % (17.844 → 16.433 Zeichen).
+- Eval: Smoke 24/24, Gold 80/80 (vorher 79/80), Deep 15/15 (drei neue Supervisor-Fälle: keine Rückfrage, kein Formular, mindestens ein passendes Lese-Werkzeug).
 
 
 ## Regeln aus Feedback
@@ -578,11 +614,14 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `orchestrator.test.ts`:
   - höchstens vier Spezialisten, jedes Werkzeug mit genau einem Eigentümer;
   - typische und grenzwertige Fragen;
+  - Thin Orchestrator: eindeutige Fälle per Regel, Rat, Rechner ohne Betrag und Formulare aus Fragen an den Supervisor;
   - Rückfall bei Unklarheit.
 - `assistant.test.ts`:
   - Chat ohne Modellaufruf;
-  - genau ein Ein-Wort-Aufruf mit Rückfall;
-  - Spezialist sieht nur eigene Werkzeuge.
+  - Supervisor beantwortet Rat mit Lese-Schritten statt Rückfrage;
+  - ohne Supervisor genau ein Ein-Wort-Aufruf mit Rückfall;
+  - eine Änderung geht an den Spezialisten, der nur eigene Werkzeuge sieht.
+- `supervisor.test.ts`: nur lesende Schritte, höchstens drei, Monatsplan statt Rechner ohne Betrag, Werkzeug direkt nur, wenn genannt, echte Rückfrage, V4 Pro mit Team und Regel-Hinweis, nur DeepSeek.
 - `speed.test.ts`: Stimme je Agent, Allgemeinwissen nur im Chat ohne persönliche Daten, `tidyAnswer`.
 - `payroll.test.ts`: Gehaltswerkzeug und Fakten-Ausschnitte.
 - `eval-cases.test.ts`: Eigentümer jeder goldenen Frage; grenzwertige Fragen nie beim falschen Spezialisten.
@@ -601,13 +640,14 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
   - `src/lib/web/live-data.test.ts`: Erkennung aktueller Werte (Kurs, Nachricht, Steuer, Preis, eigene Daten, Erklärung), Suchwörter mit „aktuell“, CoinGecko, Yahoo samt Rückfall, News-Feed, DuckDuckGo;
   - `search.test.ts`: bestätigte Antworten in der Hybrid-Suche.
 - Alle Aktionen im Chat (Chat-Test 4): `all-actions.test.ts` (197 Fälle: Routing, Vorschau, Anwenden mit Plan-Synchronisierung, Rückgängig, Grenzfälle, Sparziel-Entwurf, Hinweis des Modells), `app-actions.test.ts` (Positionen nur Einnahme oder Fixkosten), `transactions-why.test.tsx` (Notiz im Buchungsdialog und in der Liste), `tests/assistant-orchestrator.spec.ts` (neuer Befehl nach „Welches meinst du?“, „Nein“ und „Ja“ unter der Vertragsvorschau).
-- Lernen und Feedback-Schleife: `web-learning.test.ts` (gespeicherte Antworten, Ablaufdatum, nichts Persönliches oder Sensibles, 👍/👎), `search.test.ts` (Vektordatei überlebt einen Neustart), `follow-ups.test.ts` (Prüfung der Folgefragen, nur DeepSeek, fremde Themen fallen weg), `planner.test.ts` (nur lesende Werkzeuge, höchstens drei Schritte, nur DeepSeek), `rule-loop.test.ts` (vage, keine Regel, Duplikat, Aktivierung nur bei gleicher oder besserer Eval, Sicherheitsfehler, Warten, Schalter, Regeln im Prompt), `orchestrator-admin.test.tsx` (Regeln mit Eval und Schalter), `tests/assistant-orchestrator.spec.ts` (Folgefragen von DeepSeek und Planer gemockt), `tests/assistant-admin.spec.ts` (Bereich „Regeln aus Feedback“ hell und dunkel).
+- Lernen und Feedback-Schleife: `web-learning.test.ts` (gespeicherte Antworten, Ablaufdatum, nichts Persönliches oder Sensibles, 👍/👎), `search.test.ts` (Vektordatei überlebt einen Neustart), `follow-ups.test.ts` (Prüfung der Folgefragen, nur DeepSeek, fremde Themen fallen weg), `rule-loop.test.ts` (vage, keine Regel, Duplikat, Aktivierung nur bei gleicher oder besserer Eval, Sicherheitsfehler, Warten, Schalter, Regeln im Prompt), `orchestrator-admin.test.tsx` (Regeln mit Eval und Schalter), `tests/assistant-orchestrator.spec.ts` (Folgefragen von DeepSeek gemockt), `tests/assistant-admin.spec.ts` (Bereich „Regeln aus Feedback“ hell und dunkel).
 - Modelle und Rückfall: `src/lib/ai/cloud.test.ts` (Modell je Aufgabe, Denkmodus, Rückfall auf Qwen bei 401/402/429/5xx/Netzwerk mit Pausen, Streaming-Rückfall vor dem ersten Wort, Pseudonymisierung samt geteilter Platzhalter, Token-Zähler, Cache, Status), `orchestrator-admin.test.tsx` (Bereich „Modelle“, Warnung bei Rückfall, Modelle in den Läufen), `assistant-chat-parts.test.tsx` (Modell in der Statuszeile).
-- `npm run eval:assistant`: Stufen Smoke, Gold (höchstens 80 Fragen) und Deep (10–15 Fälle); zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Modell, Zahl der KI-Aufrufe und Dauer. Details: [local-ai.md](local-ai.md#qualitätsprüfung).
+- `npm run eval:assistant`: Stufen Smoke, Gold (höchstens 80 Fragen) und Deep (15 Fälle, davon drei für den Supervisor); zeigt je Frage Agent, Werkzeug oder Schritte des Supervisors, Weg (Regel, Supervisor, Signal, Modell, Rückfall), Modell, Zahl der KI-Aufrufe und Dauer. Antwortet der Supervisor mit Schritten, zählt ein erwartetes Werkzeug unter ihnen (`routedTo`). Details: [local-ai.md](local-ai.md#qualitätsprüfung).
 
 ## Grenzen
 
-- Die Signalwörter sind bewusst knapp gehalten. Was sie nicht eindeutig zuordnen, entscheidet das Modell oder, im Zweifel, der Chat.
+- Der Supervisor kostet bei unklaren Fragen 1–2 s, bevor die Arbeit beginnt; eindeutige Fragen bleiben ohne Modell. Ohne DeepSeek gilt das lokale Routing mit knappen Signalwörtern; was sie nicht eindeutig zuordnen, entscheidet ein Wort von Qwen oder, im Zweifel, der Chat.
+- Der Supervisor sieht keine Zahlen. Ob ein Werkzeug genügt, entscheidet er nur aus der Frage; fehlt etwas, schreibt er trotzdem eine Antwort aus Fakten und Überblick.
 - Bestehende Regelfehler einzelner Werkzeuge bleiben, wo sie keine falsche Zuständigkeit verursachen.
 - Kombinierte Fragen werden nur geteilt, wenn jeder Teil für sich steht. Verweist ein Teil zurück („… und was kosten sie im Jahr?“), antwortet ein Agent auf beides.
 - Finanzbegriffe beantwortet er zuerst aus dem lokalen Wissen; was dort fehlt, schlägt er in der Wikipedia nach und danach per Websuche. Offline und ohne lokalen Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.

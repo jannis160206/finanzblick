@@ -600,7 +600,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
   async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal,
-    step = workStatus.answer) {
+    step = workStatus.answer, supervised = false) {
     try {
       setStatus({ ...step, agent });
       const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
@@ -622,7 +622,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
-          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 2500) } : {}) }),
+          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 2500) } : {}), ...(supervised ? { supervised: true } : {}) }),
         });
         if (!response.ok) return undefined;
         if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
@@ -741,25 +741,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     return { text: said ?? webFallbackAnswer(result) ?? "", byModel: !!said, links: webLinks(result) };
   }
 
-  // Free choice of what to look up: DeepSeek picks up to three reading tools (app data or the web) with a sub-question each;
-  // they run here on the user's own data and their results back the answer. Changing tools are never run this way.
-  async function runLookups(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, names: string[], signal: AbortSignal):
-    Promise<{ evidence?: string; links: WebLinkEntry[] } | undefined> {
-    let steps: { tool: string; question: string }[] = [];
-    try {
-      setStatus((current) => ({ ...workStatus.plan, agent: current?.agent ?? agent }));
-      const response = await fetch("/api/ai/plan", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
-        body: JSON.stringify({ question: question.slice(0, 500), agent, history: history.slice(-4) }), signal: withTimeout(15000, signal) });
-      if (!response.ok) return undefined;
-      const reply = await response.json() as { steps?: unknown; models?: unknown };
-      if (Array.isArray(reply.models)) reply.models.forEach(noteModel);
-      steps = (Array.isArray(reply.steps) ? reply.steps : []).filter((step): step is { tool: string; question: string } =>
-        !!step && typeof step === "object" && typeof (step as { tool?: unknown }).tool === "string" && typeof (step as { question?: unknown }).question === "string").slice(0, 3);
-    } catch {
-      return undefined;
-    }
+  // The supervisor's workers: each step runs one reading tool (or the web search) here on the user's own data, and the results
+  // back the answer the supervisor then writes. Changing tools and forms never run this way; changes keep their confirmation.
+  async function runWorkers(raw: unknown, agent: AgentId, names: string[], signal: AbortSignal): Promise<{ evidence?: string; links: WebLinkEntry[]; card?: AgentResult["card"] } | undefined> {
+    const steps = (Array.isArray(raw) ? raw : []).filter((step): step is { tool: string; question: string } =>
+      !!step && typeof step === "object" && typeof (step as { tool?: unknown }).tool === "string" && typeof (step as { question?: unknown }).question === "string").slice(0, 3);
+    if (!steps.length) return undefined;
     const parts: string[] = [];
     const links: WebLinkEntry[] = [];
+    let card: AgentResult["card"];
     for (const step of steps) {
       if (signal.aborted) break;
       if (step.tool === "web") {
@@ -779,13 +769,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         const result = executeTool(tool, step.question, { state, dashboard, asOf: state.settings.asOf, market, knowledge, page: pageContext(), insights: extras?.copilot });
         const text = evidenceText(result, 450);
         if (text) parts.push(`${step.question}: ${text}`);
+        if (!card && result.card?.lines.length) card = result.card;
         noteCall(toolCall(tool, { ok: !failedAnswer(result.text) }));
       } catch {
         noteCall(toolCall(tool, { ok: false }));
       }
     }
     if (!parts.length) return links.length ? { links } : undefined;
-    return { evidence: `Für diese Frage nachgeschlagen (verlässlich berechnet bzw. öffentliche Quellen):\n${parts.join("\n")}`.slice(0, 1600), links: links.slice(0, 4) };
+    return { evidence: `Für diese Frage nachgeschlagen (verlässlich berechnet bzw. öffentliche Quellen):\n${parts.join("\n")}`.slice(0, 1600), links: links.slice(0, 4),
+      ...(card ? { card } : {}) };
   }
 
   // A confirmed answer from earlier: shown right away and counted as used, so often asked questions stay at the top.
@@ -1104,7 +1096,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setStatus(undefined);
       return true;
     };
-    let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel"; models?: unknown };
+    let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel"; models?: unknown;
+      steps?: unknown; supervised?: unknown };
     // "und im September?" reuses the previous question instead of asking the model again.
     const follow = pending ? undefined : resolveFollowUp(work, thread.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
@@ -1212,6 +1205,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       notes.push(`Gemerkt: Mit „${alias.from}“ meinst du „${alias.to}“.`);
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
+    // The supervisor asks back only when a detail is missing that no data and no search can give; the answer goes with the question.
+    if (!tool && !reply.draft && reply.via === "supervisor" && typeof reply.question === "string" && reply.question.trim()) {
+      await settle();
+      if (halted(agent)) return;
+      addResult(withNotes({ text: reply.question.trim().slice(0, 300) }), "KI", { ...run, asked: work, clarify: work, ms: elapsed() });
+      setStatus(undefined);
+      return;
+    }
+    const supervised = reply.supervised === true;
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
     const writes = !tool && !parsed?.success;
     // The orchestrator decides whether general finance knowledge helps (curated chunks and the user's confirmed answers)
@@ -1231,13 +1233,12 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     // The agent's evidence scans the ledger; it is only built when a written answer needs it. Without a live result for
     // today's value the answer says so instead of guessing from memory.
     const offline = current && !web ? "Die Live-Abfrage (Kurse, Nachrichten, Websuche) hat gerade nichts geliefert. Sag das ehrlich und nenne keine Werte aus dem Gedächtnis." : undefined;
-    // No single tool fits a question about the user's money: DeepSeek decides what else to look up before answering.
-    const lookups = writes && !confirmed && !web && !current && usesPersonalFacts(agent, work)
-      ? await runLookups(work, history, agent, [...goals, ...planned], signal) : undefined;
+    // The supervisor's workers look up what its answer needs (reading tools on the user's data, or the web).
+    const lookups = writes && !confirmed && !web && !current ? await runWorkers(reply.steps, agent, [...goals, ...planned], signal) : undefined;
     if (halted(agent)) return;
     let free = writes && !confirmed && !web ? await freeAnswer(work, history, agent,
       [offline, lookups?.evidence, knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work)].filter(Boolean).join("\n\n") || undefined,
-      signal) : undefined;
+      signal, supervised ? workStatus.combine : workStatus.answer, supervised) : undefined;
     if (halted(agent)) return;
     // An answer that admits not knowing (or none at all) gets one web search, for finance questions only.
     if (writes && !confirmed && !web && unsureAnswer(free) && wantsWebSearch(work, { hits: 0 })) {
@@ -1306,7 +1307,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       sources: [confirmed.label], knowledgeId: confirmed.knowledgeId, ...(confirmed.links?.length ? { links: confirmed.links } : {}) });
     else if (fromWeb?.text) addResult(withNotes({ text: fromWeb.text, suggestions: ["Das hat geholfen", ...onTopicFallback(work, "general").slice(0, 2)] }), fromWeb.byModel ? "KI" : "Regel",
       { tool: WEB_TOOL, asked: work, agent: "general", via, ms: elapsed(), links: fromWeb.links, ...keepAnswer(work, fromWeb.text, "web", fromWeb.links) });
-    else if (free) addResult(withNotes({ text: free, suggestions: onTopicFallback(work, agent) }), "KI", { tool: "free", asked: work, ...run, ms: elapsed(),
+    else if (free) addResult(withNotes({ text: free, ...(lookups?.card ? { card: lookups.card } : {}), suggestions: onTopicFallback(work, agent) }), "KI", { tool: "free", asked: work, ...run, ms: elapsed(),
       ...(lookups?.links.length ? { links: lookups.links } : {}),
       ...(wisdom?.hits.length ? { sources: wisdom.hits.map((hit) => hit.title) } : {}),
       // Kept only when it was written without the user's facts, so no personal situation ends up in general knowledge.

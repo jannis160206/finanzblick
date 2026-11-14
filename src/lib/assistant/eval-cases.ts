@@ -3,7 +3,7 @@ import type { AssistantTool } from "./tools";
 
 // Golden questions for the assistant router: clear wording, casual wording and typos, as people really write.
 // The unit test guards the rule-only baseline for all of them; `npm run eval:assistant` sends a fixed selection to a model
-// in three tiers: smoke (25 short requests), gold (at most 80 questions, fast model) and deep (12 complex cases).
+// in three tiers: smoke (25 short requests), gold (at most 80 questions, fast model) and deep (15 complex cases).
 export type EvalCase = { message: string; tools: AssistantTool[]; history?: { role: "user" | "assistant"; text: string }[] };
 
 export const routerCases: EvalCase[] = [
@@ -214,6 +214,12 @@ export const deepActionCases: EvalCase[] = [
   { message: "Tagge die Pizzeria Buchungen mit Essen gehen", tools: ["booking"] },
   { message: "die buchung vom 3.11. über 200 € ist transfer intern", tools: ["rule"] },
   { message: "Setze Tanken im Dezember auf 150 € und Freizeit auf 80 €", tools: ["batch", "budget_plan", "edit"] },
+];
+// Advice that needs the user's own data: the supervisor looks it up and answers, never asks for an amount or opens a form.
+export const deepSupervisorCases: EvalCase[] = [
+  { message: "Lohnt sich ein Bitcoin-Sparplan für mein Budget?", tools: ["budget", "pulse", "check", "accounts", "forecast", "coach"] },
+  { message: "Kann ich mir ein neues Handy leisten?", tools: ["budget", "pulse", "accounts", "forecast", "check"] },
+  { message: "Wie viel sollte ich monatlich für die Pension zurücklegen?", tools: ["budget", "pulse", "check", "accounts", "networth", "coach", "knowledge"] },
 ];
 export const deepAnswerCases: AnswerCase[] = [
   { question: "Warum zahle ich auf das Urlaubsgeld weniger Lohnsteuer als auf mein Gehalt?", agent: "payroll",

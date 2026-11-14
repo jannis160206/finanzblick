@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assistantMessageSchema } from "@/lib/types";
 import {
-  aboutMoney, agentIds, agentTools, chatRequest, parseAgent, routeByRules, specialistIds, toolOwner, type AgentId,
+  aboutMoney, agentIds, agentTools, chatRequest, orchestrate, parseAgent, routeByRules, specialistIds, toolOwner, type AgentId,
 } from "./orchestrator";
 import { assistantTools } from "./tools";
 
@@ -103,6 +103,32 @@ describe("routing without the model", () => {
     expect(aboutMoney("Wie wird das Wetter morgen?")).toBe(false);
     expect(aboutMoney("Was kostet mich Spotify?")).toBe(true);
     expect(aboutMoney("Wie viel ist übrig?")).toBe(true);
+  });
+});
+
+describe("thin orchestrator", () => {
+  it.each<[string, string]>([
+    // Clear cases stay with the rules: no model call.
+    ["Hallo!", "general"],
+    ["Schreib mir ein Gedicht über Sparen", "general"],
+    ["Was ist der aktuelle Bitcoin-Preis?", "general"],
+    ["Wie hoch ist der Großglockner?", "general"],
+    ["Kann man mit 3000 netto in Wien gut leben?", "general"],
+    ["Welche Abos habe ich?", "contracts/contracts"],
+    ["Kann ich mir im Mai einen Fernseher um 900 € leisten?", "budget/funds"],
+    ["Lösche die Buchung MediaMarkt vom 24.10.", "transactions/booking"],
+    ["neuer laptop 1200 € in 6 raten ab jänner", "budget/expense"],
+    // Advice, a calculator without an amount, a form opened by a question and every unclear money question go to the supervisor.
+    ["Lohnt sich ein Bitcoin-Sparplan für mein Budget?", "supervisor:depot"],
+    ["Kann ich mir ein neues Handy leisten?", "supervisor:funds"],
+    ["Sollte ich das Lebensmittelbudget erhöhen?", "supervisor:budget_plan"],
+    ["Wie viel sollte ich für die Pension zurücklegen?", "supervisor:savings_goal"],
+    ["Bin ich gut für Weihnachten aufgestellt?", "supervisor"],
+    ["Ich bin gestresst wegen Geld", "supervisor"],
+  ])("%s → %s", (text, expected) => {
+    const handoff = orchestrate(text, names);
+    expect(handoff.to === "supervisor" ? `supervisor${handoff.hint ? `:${handoff.hint}` : ""}`
+      : [handoff.decision.agent, handoff.decision.tool].filter(Boolean).join("/")).toBe(expected);
   });
 });
 

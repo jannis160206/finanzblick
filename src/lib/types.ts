@@ -748,7 +748,7 @@ export const assistantMessageSchema = z.object({
   // The agent the orchestrator chose for this answer (same names as `agentIds` in assistant/orchestrator).
   agent: z.enum(["transactions", "contracts", "budget", "payroll", "general"]).optional(),
   // How the orchestrator decided (`RouteVia`) and roughly how long the answer took, for the read-only admin view.
-  via: z.enum(["rule", "signal", "model", "fallback"]).optional(),
+  via: z.enum(["rule", "signal", "model", "fallback", "supervisor"]).optional(),
   ms: z.number().int().nonnegative().max(3_600_000).optional(),
   // Titles of the general finance knowledge an answer drew on; shown under it.
   sources: z.array(z.string().max(80)).max(5).optional(),

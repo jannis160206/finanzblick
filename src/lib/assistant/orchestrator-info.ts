@@ -95,13 +95,13 @@ export function toolCall(tool: string, { ok = true, change, empty = false }: { o
   return { tool: tool.slice(0, 40), ok, summary: summary.slice(0, 80) };
 }
 
-export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Signalwort", model: "Modell", fallback: "Rückfall" };
+export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Signalwort", model: "Modell", fallback: "Rückfall", supervisor: "Supervisor" };
 
-/** The orchestrator's decision steps, in the order it tries them. */
+/** The thin orchestrator's decision steps, in the order it tries them. */
 export const orchestratorSteps: { title: string; detail: string; calls: string }[] = [
-  { title: "Regeln", detail: "Begrüßung, fachfremde Themen, klare Befehle, Folgefragen", calls: "0 KI" },
-  { title: "Signalwörter", detail: "Genau ein Spezialist passt, oder gar kein Geldthema", calls: "0 KI" },
-  { title: "Modell-Rückfall", detail: "Ein Wort, höchstens 8 Token – im Zweifel Chat", calls: "1 KI" },
+  { title: "Regeln", detail: "Nur Eindeutiges: Begrüßung, kreative und fachfremde Bitten, aktuelle Werte, klare Befehle und Abfragen", calls: "0 KI" },
+  { title: "Supervisor", detail: "DeepSeek V4 Pro teilt die Frage auf Spezialisten und Lese-Werkzeuge auf und schreibt die Antwort", calls: "1–2 KI" },
+  { title: "Lokaler Rückfall", detail: "Ohne DeepSeek: Signalwörter, dann ein Wort vom lokalen Modell", calls: "0–1 KI" },
 ];
 
 export const agentOrder: readonly AgentId[] = [...specialistIds, "general"];

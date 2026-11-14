@@ -2,7 +2,7 @@ import { z } from "zod";
 import { assistantDraftSchema, dateSchema, type AssistantDraft } from "@/lib/types";
 import { groundModelExtraction, mergeDraft, missingField, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
 import { normalizeMessage } from "@/lib/assistant/normalize";
-import { agentTools, chatRequest, parseAgent, routeByRules, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
+import { agentTools, chatRequest, orchestrate, parseAgent, routeByRules, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
 import { detectTool, isAssistantTool, isDraftTool, matchName, splitCommands, type AssistantTool } from "@/lib/assistant/tools";
 import { changingTools } from "@/lib/assistant/conversation";
 import { categories } from "@/lib/categories";
@@ -11,6 +11,7 @@ import { chat, cloudPause, type ChatMessage, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
 import type { AiTask, ModelUse } from "./models";
 import { interpretPrompt, orchestratorPrompt, scopeNeeds } from "./specialists";
+import { supervise, type Supervision, type SupervisorStep } from "./supervisor";
 import { cleanUntrusted } from "./untrusted";
 
 export const assistantRequestSchema = z.object({
@@ -28,11 +29,15 @@ export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 /** Model options plus the active rules learned from feedback (the server loads them; the eval passes its own). */
 export type AssistantOptions = ChatOptions & { rules?: readonly RuleText[] };
-/** `agent` answers the message; `via` says how the orchestrator decided (rule, signal word, model or fallback). */
+/** `agent` answers the message; `via` says who decided (rule, supervisor, or locally: signal word, model, fallback). */
 export type AssistantReply = {
   agent: AgentId; via: RouteVia; tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel";
   /** The models that worked on the message (cloud model or the local fallback). */
   models?: ModelUse[];
+  /** The supervisor's reading steps for its answer: a tool (or the web) and a sub-question each, run by the workers in the browser. */
+  steps?: SupervisorStep[];
+  /** The supervisor writes the final answer from the steps' results. */
+  supervised?: true;
 };
 
 const modelSchema = z.object({
@@ -72,7 +77,7 @@ export const hintTools: readonly AssistantTool[] = ["query", "edit", "booking", 
 const fold = (value: string) => value.toLowerCase().normalize("NFKC");
 
 // The model may only name things that really exist and appear in the message; everything else is dropped.
-function groundHints(model: z.infer<typeof modelSchema> | undefined, input: AssistantRequest): AssistantHints {
+function groundHints(model: Pick<z.infer<typeof modelSchema>, "goal" | "planned" | "category" | "merchant"> | undefined, input: AssistantRequest): AssistantHints {
   if (!model) return {};
   const hints: AssistantHints = {};
   const text = input.message;
@@ -135,6 +140,23 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
   return models.length ? { ...reply, models } : reply;
 }
 
+// The supervisor's plan; undefined when DeepSeek is unavailable or gave nothing readable, so the local routing takes over.
+async function supervisorPlan(input: AssistantRequest, hint: AssistantTool | undefined, options: AssistantOptions): Promise<Supervision | undefined> {
+  try {
+    return await supervise({ message: input.message, history: input.history, context: input.context, hint },
+      { ...options, rules: rulesFor(options.rules, undefined, "routing") });
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    return undefined;
+  }
+}
+
+function fromPlan(plan: Exclude<Supervision, { kind: "action" }>, input: AssistantRequest): AssistantReply {
+  if (plan.kind === "tool") return { agent: plan.agent, via: "supervisor", tool: plan.tool, hints: groundHints(plan, input), source: "KI" };
+  if (plan.kind === "ask") return { agent: plan.agent, via: "supervisor", question: plan.question, source: "KI" };
+  return { agent: plan.agent, via: "supervisor", ...(plan.steps.length ? { steps: plan.steps } : {}), supervised: true, source: "KI" };
+}
+
 async function interpret(request: AssistantRequest, options: AssistantOptions): Promise<AssistantReply> {
   // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
   const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
@@ -142,9 +164,15 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
   const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
   // "Schreib mir ein Gedicht über Sparen" is a chat request, not a savings goal.
   if (!input.pending && chatRequest(input.message)) return { agent: "general", via: "rule", source: "Regel" };
-  const ruleTool = detectTool(input.message, names);
+  const detected = detectTool(input.message, names);
+  // Thin orchestrator: clear cases by rule, everything else to the supervisor. An open draft stays with its specialist.
+  const handoff = input.pending ? undefined : orchestrate(input.message, names);
+  const plan = handoff?.to === "supervisor" ? await supervisorPlan(input, handoff.hint, options) : undefined;
+  if (plan && plan.kind !== "action") return fromPlan(plan, input);
+  // A change the supervisor handed over is filled in by its specialist; a reading tool the rules saw does not override it.
+  const ruleTool = plan && detected && !changingTools.includes(detected) ? undefined : detected;
   // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.
-  if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
+  if (!plan && ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
     return { agent: toolOwner[ruleTool], via: "rule", tool: ruleTool, hints: {}, source: "Regel" };
   // A plain answer to the open draft's question ("3000 €", "bis Juni 2027", "Urlaub in Japan") needs no model: the rules fill it in.
   if (input.pending && !ruleTool) {
@@ -154,8 +182,11 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
       return { agent: toolOwner[quick.action], via: "rule", tool: quick.action, hints: {}, draft: quick, ...(question ? { question } : {}), source: "Regel" };
     }
   }
-  // Orchestrator: an open draft and every rule tool name their owner; otherwise small talk and signal words decide.
-  const decision: RouteDecision | undefined = input.pending ? { agent: toolOwner[input.pending.action], via: "rule" }
+  // The specialist who works on it: the supervisor's choice for a change, an open draft's owner, the orchestrator's clear case,
+  // and without the supervisor the local routing (rule tool, small talk and signal words).
+  const decision: RouteDecision | undefined = plan ? { agent: ruleTool ? toolOwner[ruleTool] : plan.agent, via: "supervisor" }
+    : input.pending ? { agent: toolOwner[input.pending.action], via: "rule" }
+    : handoff?.to === "specialist" ? handoff.decision
     : ruleTool ? { agent: toolOwner[ruleTool], tool: ruleTool, via: "rule" } : routeByRules(input.message, names);
   if (!decision) {
     // Still unclear: one short model call picks the agent, which then answers in words. No second interpretation.
@@ -163,7 +194,7 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
     return agent ? { agent, via: "model", source: "KI" } : { agent: "general", via: "fallback", source: "Regel" };
   }
   const { agent, via } = decision;
-  if (!ruleTool && !input.pending && agent === "general") return { agent, via, source: "Regel" };
+  if (!plan && !ruleTool && !input.pending && agent === "general") return { agent, via, source: "Regel" };
   // The specialist interprets the message with its own tools only.
   const needs = scopeNeeds(agent);
   const messages: ChatMessage[] = [
@@ -182,7 +213,7 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
   const model = await ask(messages, options, 300, (content) => {
     const candidate = modelSchema.safeParse(extractJsonObject(content));
     return candidate.success ? candidate.data : undefined;
-  }, interpretTask(input.message, ruleTool, !!input.pending, names));
+  }, plan ? "action" : interpretTask(input.message, ruleTool, !!input.pending, names));
   const source: AssistantReply["source"] = model ? "KI" : "Regel";
   // Only the specialist's own tools count; "ask" or anything else means: answer in words.
   const own = (value: unknown): AssistantTool | undefined => isAssistantTool(value) && value !== "ask" && agentTools(agent).includes(value) ? value : undefined;

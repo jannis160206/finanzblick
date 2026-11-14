@@ -1,13 +1,17 @@
+import { adviceQuestion, isQuestion } from "./conversation";
+import { currentInfo } from "./current-info";
 import { normalizeMessage } from "./normalize";
 import { changingFacts, explicitWeb, foldText, ownData, publicTerms, statedYear } from "./public-facts";
 import { detectSmallTalk } from "./smalltalk";
 import { fixedReply } from "./fixed-replies";
-import { assistantTools, detectTool, mentionsName, type AssistantTool } from "./tools";
+import { assistantTools, detectTool, isDraftTool, mentionsName, type AssistantTool } from "./tools";
 
 /**
- * Orchestrator-worker routing for the finance assistant. A light orchestrator picks exactly one agent per message:
- * rules first, then domain signal words, and only when both stay unclear one short model call. Four specialists own
- * their tools without overlap; everything else, and every doubt, goes to the general chat agent.
+ * Thin orchestrator plus supervisor and workers. The orchestrator does no work of its own: fixed rules decide only the
+ * clear cases (see `orchestrate`), everything else goes to the supervisor (DeepSeek V4 Pro), which splits the task among
+ * the specialists, runs their reading tools and writes the answer. Four specialists own their tools without overlap; the
+ * general chat answers everything else. Without DeepSeek the local routing below decides: signal words, then one word
+ * from the local model.
  */
 export const agentIds = ["transactions", "contracts", "budget", "payroll", "general"] as const;
 export type AgentId = typeof agentIds[number];
@@ -109,7 +113,7 @@ export function wantsWebSearch(input: string, context: { tool?: AssistantTool; h
 export const unsureAnswer = (text: string | undefined) => !text?.trim() ||
   /\b(?:weiß ich (?:leider )?nicht|weiss ich (?:leider )?nicht|kann ich (?:dir )?(?:leider )?nicht (?:sicher |genau )?sagen|bin (?:mir )?(?:da )?nicht (?:ganz )?sicher|keine (?:aktuellen |genauen |verlässlichen )?(?:informationen|infos|daten|angaben|zahlen)|nicht in meinen (?:daten|unterlagen)|habe ich (?:leider )?keine (?:aktuellen )?(?:infos|informationen|daten|zahlen))\b/i.test(text);
 
-export const routeVias = ["rule", "signal", "model", "fallback"] as const;
+export const routeVias = ["rule", "signal", "model", "fallback", "supervisor"] as const;
 export type RouteVia = typeof routeVias[number];
 export const isRouteVia = (value: unknown): value is RouteVia => typeof value === "string" && (routeVias as readonly string[]).includes(value);
 export type RouteDecision = { agent: AgentId; tool?: AssistantTool; via: RouteVia };
@@ -134,6 +138,40 @@ export function routeByRules(input: string, names: string[] = []): RouteDecision
   if (tool) return { agent: toolOwner[tool], tool, via: "rule" };
   if (generalQuestion(text.toLowerCase())) return { agent: "general", via: "rule" };
   return routeBySignals(text, names);
+}
+
+// Tools that compute from an amount; without one they could only ask for it, so the supervisor answers from the user's data instead.
+export const amountTools: readonly AssistantTool[] = ["funds", "affordability", "depot", "loan"];
+const firstPerson = words(String.raw`ich|mir|mich|mein\p{L}*|wir|uns|unser\p{L}*`);
+
+/**
+ * Whether a tool the rules recognised answers the message by itself. Advice, opinions and worries want judgment; a
+ * purchase, savings plan or loan without any amount and a form opened by a plain question would only ask back.
+ */
+export function needsSupervisor(input: string, tool: AssistantTool): boolean {
+  const text = normalizeMessage(input).toLowerCase();
+  if (adviceQuestion(text)) return true;
+  const amount = /\d/.test(text);
+  return !amount && (amountTools.includes(tool) || isDraftTool(tool) && isQuestion(text));
+}
+
+export type Handoff = { to: "specialist"; decision: RouteDecision } | { to: "supervisor"; hint?: AssistantTool };
+
+/**
+ * The thin orchestrator: it only decides who takes over. Fixed rules cover the clear cases – small talk, creative and
+ * fixed requests, today's values for the web search, general "man" questions, messages without any money topic, and clear
+ * commands and lookups that bring everything they need. Everything else goes to the supervisor, a recognised tool as a hint.
+ */
+export function orchestrate(input: string, names: string[] = []): Handoff {
+  const text = normalizeMessage(input);
+  const lower = text.toLowerCase();
+  const general: Handoff = { to: "specialist", decision: { agent: "general", via: "rule" } };
+  if (detectSmallTalk(text) || chatRequest(text) || fixedReply(text)) return general;
+  const tool = detectTool(text, names);
+  if ((!tool || tool === "knowledge") && (asksForWebSearch(text) || currentInfo(text))) return general;
+  if (tool) return needsSupervisor(text, tool) ? { to: "supervisor", hint: tool } : { to: "specialist", decision: { agent: toolOwner[tool], tool, via: "rule" } };
+  if (generalQuestion(lower) || !aboutMoney(text) && !firstPerson.test(lower)) return general;
+  return { to: "supervisor" };
 }
 
 // The router model answers with one of these words; anything else counts as unsure.

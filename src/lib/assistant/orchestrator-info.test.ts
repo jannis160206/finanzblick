@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "@/lib/types";
 import { agentIds } from "./orchestrator";
-import { agentOrder, agentToolList, assistantRuns, lookupTool, toolCall, toolLabel } from "./orchestrator-info";
+import { agentOrder, agentToolList, assistantRuns, lookupTool, toolCall, toolLabel, viaLabel } from "./orchestrator-info";
 import { assistantTools } from "./tools";
 
 const user = (id: string, at: number, text: string): AssistantMessage => ({ id, role: "user", text, at });
@@ -88,5 +88,16 @@ describe("models in the runs", () => {
       { label: "DeepSeek Flash", model: "deepseek-flash", task: "Werkzeugwahl", fallback: false },
       { label: "Lokal (Qwen)", model: "OpenVINO/Qwen3-8B-int4-cw-ov", task: "Analyse", fallback: true, reason: "Rate-Limit (HTTP 429)" },
     ]);
+  });
+
+  it("names the supervisor's route and both of its calls", () => {
+    const [run] = assistantRuns([
+      user("u1", 1, "Lohnt sich ein Bitcoin-Sparplan für mein Budget?"),
+      answer("a1", 2, { agent: "budget", via: "supervisor", tool: "free", source: "KI", models: [
+        { provider: "deepseek", model: "deepseek-v4-pro", task: "supervise" }, { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" },
+      ] }),
+    ]);
+    expect([run.via && viaLabel[run.via], ...run.models.map((model) => `${model.label} · ${model.task}`)])
+      .toEqual(["Supervisor", "DeepSeek V4 Pro · Supervisor", "DeepSeek V4 Pro · Supervisor-Antwort"]);
   });
 });

@@ -1,24 +1,24 @@
 // Which model answers which kind of work, and how a model is named in the UI. Pure: used by server and browser.
 
 /** The kinds of model work; the orchestrator picks one per call. */
-export const aiTasks = ["chat", "route", "action", "reasoning", "categorize", "web", "extract", "document", "suggest", "rule", "plan"] as const;
+export const aiTasks = ["chat", "route", "action", "reasoning", "categorize", "web", "extract", "document", "suggest", "rule", "supervise", "synthesize"] as const;
 export type AiTask = (typeof aiTasks)[number];
 export type ModelTier = "fast" | "pro" | "reasoning";
 export type AiProvider = "deepseek" | "local";
 
-/** Cloud tier per task: fast for most work, pro for multi-step actions, the thinking mode for analyses and tax questions. */
+/** Cloud tier per task: fast for most work, pro for the supervisor and multi-step actions, the thinking mode for analyses and tax questions. */
 export const taskTier: Record<AiTask, ModelTier> = {
   chat: "fast", route: "fast", categorize: "fast", web: "fast", extract: "fast", document: "fast", suggest: "fast",
-  action: "pro", rule: "pro", plan: "pro", reasoning: "reasoning",
+  action: "pro", rule: "pro", supervise: "pro", synthesize: "pro", reasoning: "reasoning",
 };
 
 export const taskLabel: Record<AiTask, string> = {
   chat: "Antwort", route: "Werkzeugwahl", action: "Aktion", reasoning: "Analyse", categorize: "Kategorisierung",
-  web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Regel aus Feedback", plan: "Planung",
+  web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Regel aus Feedback", supervise: "Supervisor", synthesize: "Supervisor-Antwort",
 };
 
-/** Work only DeepSeek does; without it the chat keeps its fixed suggestions and rule checks wait. Never the local model. */
-export const cloudOnlyTasks: Partial<Record<AiTask, string>> = { suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek", plan: "Feste Abläufe" };
+/** Work only DeepSeek does; without it the chat keeps its fixed suggestions, routes locally and rule checks wait. Never the local model. */
+export const cloudOnlyTasks: Partial<Record<AiTask, string>> = { suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek", supervise: "Lokales Routing" };
 
 /** One model call as the server reports it: who answered, for what, and whether it was the local fallback. */
 export type ModelUse = {
@@ -50,10 +50,13 @@ export const modelTitle = (use: Pick<ModelUse, "provider" | "model" | "thinking"
 
 const reasoningWords = /\b(?:warum|wieso|weshalb|analysier\w*|analyse|vergleich\w*|berechn\w*|rechne|steuer\w*|lohnsteuer|einkommensteuer|veranlagung|absetz\w*|abschreib\w*|grenzsteuer\w*|progression|sechstel|lohnt (?:sich|es)|sollte ich|soll ich|was passiert,? wenn|was wäre,? wenn|strategie|langfristig|vor- und nachteile|pro und contra|optimier\w*)\b/i;
 
+/** A tax question for the payroll specialist; it keeps the thinking mode even when the supervisor writes the answer. */
+export const taxQuestion = (question: string, agent?: string) =>
+  agent === "payroll" && /\b(?:\w*steuer\w*|netto|brutto|sv|sozialversicherung|\w*sechstel|veranlagung|absetz\w*|progression)\b/i.test(question);
+
 /** Analyses, tax questions and "should I …" advice get the thinking model; short or casual questions stay fast. */
 export function needsReasoning(question: string, agent?: string): boolean {
   const text = question.trim();
   if (text.length < 12) return false;
-  return agent === "payroll" && /\b(?:steuer\w*|netto|brutto|sv|sozialversicherung|sechstel|veranlagung|absetz\w*|progression)\b/i.test(text) ||
-    reasoningWords.test(text);
+  return taxQuestion(text, agent) || reasoningWords.test(text);
 }

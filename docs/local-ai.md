@@ -59,14 +59,15 @@ Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das l
 | Aufgabe | Modell | Beispiele |
 | --- | --- | --- |
 | Antwort (normaler Chat) | `deepseek-flash` | freie Antworten, Smalltalk, Monatszusammenfassung, Hintergrund-Agent |
-| Werkzeugwahl | `deepseek-flash` | Orchestrator und Spezialist entscheiden, welches Werkzeug passt |
+| Werkzeugwahl | `deepseek-flash` | der Spezialist liest Werkzeug-Hinweise und Entwürfe; ohne Supervisor das lokale Routing |
 | Aktion (mehrere Schritte, Änderungen) | `deepseek-v4-pro` | offener Entwurf, ändernde Regel-Werkzeuge, mehrere Befehle in einer Nachricht, „anlegen/ändern/lösche…“, `npm run ai:agent` |
 | Analyse und Steuern | `deepseek-v4-pro` im Denkmodus | „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen an Gehalt & Steuern |
 | Kategorisierung | `deepseek-flash` | offene Prüfungen in Achterpaketen |
 | Websuche | `deepseek-flash` | Zusammenfassung der Suchtreffer |
 | Auslesen | `deepseek-flash` | Kassenbon-Artikel, Logo-Suche |
 | Folgefragen | `deepseek-flash` | 2–3 Vorschläge zum selben Thema unter jeder Antwort; ohne DeepSeek feste Vorschläge zum Thema, nie Qwen |
-| Planung | `deepseek-v4-pro` | wählt bis zu drei Lese-Werkzeuge oder Websuchen für eine freie Antwort; ohne DeepSeek entfällt sie, nie Qwen |
+| Supervisor | `deepseek-v4-pro` | zerlegt unklare Fragen: Spezialisten, bis zu drei Lese-Werkzeuge oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
+| Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt die Antwort aus den Ergebnissen der Spezialisten; Steuerfragen im Denkmodus |
 | Regel aus Feedback | `deepseek-v4-pro` | 👎-Kommentar → Regel, danach Gold-Eval auf Flash; ohne DeepSeek wartet sie |
 | PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
 | Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |
