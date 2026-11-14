@@ -1,5 +1,6 @@
 import { contentWords } from "@/lib/knowledge-base/query";
 import type { AssistantKnowledge } from "@/lib/types";
+import { currentInfo } from "./current-info";
 import { redactSensitive } from "./feedback";
 import { unsureAnswer } from "./orchestrator";
 import { foldText, ownData, publicTerms, statedYear } from "./public-facts";
@@ -33,6 +34,9 @@ const endOfYear = (year: number) => Date.UTC(year, 11, 31, 23, 59, 59);
 export function volatility(question: string, answer: string, now = Date.now()): Volatility {
   const asked = foldText(question);
   const said = foldText(answer);
+  // A question for today's value (quote, news, price, rate, this year's tax figure) always goes to the web again.
+  const live = currentInfo(question);
+  if (live) return { kind: "never", reason: live.kind === "news" ? "Nachrichten" : live.kind === "quote" ? "Kurse" : "Aktueller Wert" };
   const current = currentValue.test(asked) || figure.test(answer);
   if (news.test(asked)) return { kind: "never", reason: "Nachrichten" };
   if (quotes.test(asked) && current) return { kind: "never", reason: "Kurse" };

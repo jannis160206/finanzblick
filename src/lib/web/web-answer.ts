@@ -21,7 +21,7 @@ export const scrubQuestion = (question: string) => question
 export const searchTopicWords = (question: string) => contentWords(scrubQuestion(question)).filter((word) => !searchFiller.has(word));
 
 export type WebSource = { n: number; title: string; url: string; site: string; text: string; official: boolean };
-export type WebSearchProvider = "searxng" | "brave" | "bing" | "wikipedia" | "none";
+export type WebSearchProvider = "searxng" | "brave" | "duckduckgo" | "bing" | "wikipedia" | "live" | "none";
 export type WebSearchResult = {
   query: string; sources: WebSource[]; agreed: string[]; provider: WebSearchProvider; ms: number; disabled?: boolean;
 };

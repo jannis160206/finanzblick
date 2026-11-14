@@ -90,7 +90,7 @@ describe("payroll specialist", () => {
 });
 
 describe("specialist context", () => {
-  it("gives each agent only its own facts and the general chat none for small talk", () => {
+  it("gives each agent its own detailed facts plus an overview of all data, and the general chat none for small talk", () => {
     const state = year2026();
     const dashboard = calculateDashboard(state);
     const today = state.settings.asOf;
@@ -101,11 +101,16 @@ describe("specialist context", () => {
     expect(budget).toHaveProperty("currentMonth");
     expect(budget).not.toHaveProperty("spendingByMonthAndCategory");
     expect(budget).not.toHaveProperty("subscriptions");
-    expect(Object.keys(agentFacts("contracts", state, dashboard, today, "Welche Abos?"))).toEqual(["today", "subscriptions", "priceIncreases", "possibleDuplicateFixedCosts", "memory"]);
+    const contracts = agentFacts("contracts", state, dashboard, today, "Welche Abos?");
+    expect(Object.keys(contracts)).toEqual(["today", "subscriptions", "priceIncreases", "possibleDuplicateFixedCosts", "memory", "overview"]);
+    // The overview lets every agent answer across topics: accounts, this month, subscriptions, goals, forecast and the latest bookings.
+    expect(Object.keys(contracts.overview as object)).toEqual(["accounts", "totalOnAllAccounts", "thisMonth", "freeUntilSalary", "subscriptions", "goals",
+      "giroForecast", "amex", "salary", "notable", "recentBookings"]);
+    const recent = (contracts.overview as { recentBookings: { date: string; name: string }[] }).recentBookings;
+    expect(recent.length).toBeLessThanOrEqual(8);
+    expect(recent.every((item, index) => item.date <= today && (index === 0 || recent[index - 1].date >= item.date))).toBe(true);
+    expect(JSON.stringify(recent)).not.toMatch(/AT\d{2}\s?\d{4}/);
     expect(agentFacts("payroll", state, dashboard, today, "Wie viel netto?")).toHaveProperty("payroll.latestPayslip.net", 2780);
-    // Smaller than the old all-in-one facts: the model reads less and stays on topic.
-    const everything = JSON.stringify(agentFacts("general", state, dashboard, today, "Wie viel Geld habe ich?")).length;
-    expect(JSON.stringify(agentFacts("contracts", state, dashboard, today, "Abos")).length).toBeLessThan(everything);
     expect(agentEvidence("payroll", state, dashboard, today, "Wie viel netto?")).toContain("netto");
     expect(agentEvidence("general", state, dashboard, today, "Hallo")).toBeUndefined();
   });

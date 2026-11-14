@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AiUnavailableError, resetCloudHealth } from "./client";
 import { readAiConfig } from "./config";
+import { topicFollowUps } from "@/lib/assistant/follow-up-topics";
 import { cleanFollowUps, suggestFollowUps } from "./follow-ups";
 
 const config = readAiConfig({ DEEPSEEK_API_KEY: "sk-test-1234567890" });
@@ -39,9 +40,21 @@ describe("follow-up questions", () => {
   it("asks DeepSeek's fast model only and returns two or three questions with the model used", async () => {
     const { urls, fetcher } = stub('{"fragen": ["Welche Verträge kann ich kündigen?", "Wie viel zahle ich im Jahr für Abos?", "Wo kann ich sparen?"]}');
     const result = await suggestFollowUps(input, { config, fetcher });
-    expect(result.suggestions).toEqual(["Welche Verträge kann ich kündigen?", "Wie viel zahle ich im Jahr für Abos?", "Wo kann ich sparen?"]);
+    // "Wo kann ich sparen?" leaves the topic of the answer (the subscriptions) and is dropped.
+    expect(result.suggestions).toEqual(["Welche Verträge kann ich kündigen?", "Wie viel zahle ich im Jahr für Abos?"]);
     expect(result.models).toEqual([{ provider: "deepseek", model: "deepseek-flash", task: "suggest" }]);
     expect(urls).toEqual(["https://api.deepseek.com/chat/completions"]);
+  });
+
+  it("keeps only questions about the same subject, with prices, quotes and values counted as one topic", () => {
+    const bitcoin = { question: "Was ist der aktuelle Bitcoin-Preis?", answer: "Bitcoin kostet laut CoinGecko gerade 59.463 € [1], minus 18,8 % in 30 Tagen." };
+    expect(cleanFollowUps(["Soll ich den aktuellen Kurs in mein Portfolio eintragen?", "Wie hat sich der Bitcoin-Preis in den letzten 30 Tagen entwickelt?",
+      "Wo kann ich diesen Monat sparen?", "Wie hoch sind die Sparzinsen aktuell?"], bitcoin))
+      .toEqual(["Soll ich den aktuellen Kurs in mein Portfolio eintragen?", "Wie hat sich der Bitcoin-Preis in den letzten 30 Tagen entwickelt?"]);
+    expect(topicFollowUps("Was ist der aktuelle Bitcoin-Preis?")).toEqual(["Wie hat sich Bitcoin in den letzten 30 Tagen entwickelt?",
+      "Was beeinflusst den Preis von Bitcoin gerade?", "Wie viel Bitcoin passt zu meinem Budget?"]);
+    expect(topicFollowUps("Was gibt es Neues an der Börse?")).toEqual(["Was bedeutet das für meine Finanzen?", "Gibt es weitere Nachrichten zu Börse?"]);
+    expect(topicFollowUps("Warum bleibt mir am Monatsende so wenig Geld übrig?")).toEqual([]);
   });
 
   it("fails instead of asking the local model, so the chat keeps its fixed suggestions", async () => {

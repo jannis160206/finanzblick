@@ -12,7 +12,7 @@ export const answerRequestSchema = z.object({
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(500) }).strict()).max(6).optional(),
   facts: z.record(z.string(), z.unknown()),
   // What a finance tool already computed for this question; the model may quote it.
-  evidence: z.string().max(1500).optional(),
+  evidence: z.string().max(2500).optional(),
   // The agent the orchestrator chose; it decides the voice. Without one the general chat answers.
   agent: z.enum(agentIds).optional(),
 }).strict();
@@ -114,7 +114,7 @@ const echoes = (sentence: string, question: string) => !!question.trim() && plai
 
 function prepare(input: AnswerRequest) {
   const facts = cleanFacts(input.facts, 1500);
-  const evidence = input.evidence ? cleanUntrusted(input.evidence, 1500) : undefined;
+  const evidence = input.evidence ? cleanUntrusted(input.evidence, 2500) : undefined;
   const check = answerCheck(input.agent, facts, evidence);
   return { facts, evidence, source: backing(facts, evidence, input.question),
     check: (sentence: string, source: object) => !echoes(sentence, input.question) && check(sentence, source) };

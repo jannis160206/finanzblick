@@ -146,19 +146,21 @@ describe("keeping answers as local knowledge", () => {
     expect(storableAnswer(etf.question, etf.text)).toBe(true);
   });
 
-  it("lets changing facts expire and never keeps news or quotes", () => {
-    expect(volatility("Wie hoch ist der Leitzins der EZB aktuell?", "Der Einlagesatz liegt bei 2 %.", now)).toEqual({ kind: "expires", reason: "Zinsen ändern sich", expiresAt: now + 7 * day });
-    expect(volatility("Wie hoch ist die Pendlerpauschale 2026?", "Ab 20 km sind es 58 € im Monat.", now)).toMatchObject({ kind: "expires", expiresAt: Date.UTC(2026, 11, 31, 23, 59, 59) });
-    expect(volatility("Wie hoch ist die Geringfügigkeitsgrenze 2027?", "Sie wird 2027 neu festgelegt.", now)).toMatchObject({ expiresAt: Date.UTC(2027, 11, 31, 23, 59, 59) });
+  it("lets changing facts expire and never keeps today's values, news or quotes", () => {
+    expect(volatility("Wie hoch ist der Leitzins der EZB?", "Der Einlagesatz liegt bei 2 %.", now)).toEqual({ kind: "expires", reason: "Zinsen ändern sich", expiresAt: now + 7 * day });
+    expect(volatility("Wie hoch ist die Pendlerpauschale?", "Ab 20 km sind es 58 € im Monat.", now)).toMatchObject({ kind: "expires", expiresAt: Date.UTC(2026, 11, 31, 23, 59, 59) });
+    expect(volatility("Was ist die Geringfügigkeitsgrenze?", "Sie liegt 2027 bei 600 € im Monat.", now)).toMatchObject({ expiresAt: Date.UTC(2027, 11, 31, 23, 59, 59) });
+    expect(volatility("Wie hoch ist die Pendlerpauschale 2026?", "Ab 20 km sind es 58 € im Monat.", now)).toEqual({ kind: "never", reason: "Aktueller Wert" });
+    expect(volatility("Wie hoch ist der Leitzins aktuell?", "2 %.", now)).toEqual({ kind: "never", reason: "Aktueller Wert" });
     expect(volatility("Wie steht der Bitcoin-Kurs heute?", "Rund 90.000 €.", now)).toEqual({ kind: "never", reason: "Kurse" });
     expect(volatility("Was gibt es Neues in den Nachrichten zur Wirtschaft?", "Die Inflation ist gesunken.", now)).toEqual({ kind: "never", reason: "Nachrichten" });
     expect(volatility("Was ist ein Wechselkurs?", "Der Preis einer Währung in einer anderen Währung.", now)).toEqual({ kind: "stable" });
     expect(volatility(etf.question, etf.text, now)).toEqual({ kind: "stable" });
 
-    const rate = rememberAnswer([], { id: "z", kind: "web", question: "Wie hoch ist der Leitzins der EZB aktuell?", text: "Der Einlagesatz der EZB liegt bei 2 % [1].", links, now });
+    const rate = rememberAnswer([], { id: "z", kind: "web", question: "Wie hoch ist der Leitzins der EZB?", text: "Der Einlagesatz der EZB liegt bei 2 % [1].", links, now });
     expect(rate.entries[0]).toMatchObject({ kind: "web", expiresAt: now + 7 * day, url: links[0].url });
     expect(learnedCandidates(rate.entries, 60, now + 8 * day)).toEqual([]);
-    expect(recallConfirmed(rate.entries, "Wie hoch ist der Leitzins der EZB aktuell?", now + 8 * day)).toBeUndefined();
+    expect(recallConfirmed(rate.entries, "Wie hoch ist der Leitzins der EZB?", now + 8 * day)).toBeUndefined();
     expect(relevantKnowledge(rate.entries, "Leitzins EZB", 2, now + 8 * day)).toEqual([]);
     expect(rememberAnswer(rate.entries, { ...etf, now: now + 8 * day }).entries.map((entry) => entry.id)).toEqual(["e"]);
     expect(rememberAnswer([], { id: "n", kind: "web", question: "Wie steht der DAX heute?", text: "Der DAX steht bei 19.000 Punkten.", now }).entries).toEqual([]);

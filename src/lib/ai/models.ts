@@ -1,7 +1,7 @@
 // Which model answers which kind of work, and how a model is named in the UI. Pure: used by server and browser.
 
 /** The kinds of model work; the orchestrator picks one per call. */
-export const aiTasks = ["chat", "route", "action", "reasoning", "categorize", "web", "extract", "document", "suggest", "rule"] as const;
+export const aiTasks = ["chat", "route", "action", "reasoning", "categorize", "web", "extract", "document", "suggest", "rule", "plan"] as const;
 export type AiTask = (typeof aiTasks)[number];
 export type ModelTier = "fast" | "pro" | "reasoning";
 export type AiProvider = "deepseek" | "local";
@@ -9,16 +9,16 @@ export type AiProvider = "deepseek" | "local";
 /** Cloud tier per task: fast for most work, pro for multi-step actions, the thinking mode for analyses and tax questions. */
 export const taskTier: Record<AiTask, ModelTier> = {
   chat: "fast", route: "fast", categorize: "fast", web: "fast", extract: "fast", document: "fast", suggest: "fast",
-  action: "pro", rule: "pro", reasoning: "reasoning",
+  action: "pro", rule: "pro", plan: "pro", reasoning: "reasoning",
 };
 
 export const taskLabel: Record<AiTask, string> = {
   chat: "Antwort", route: "Werkzeugwahl", action: "Aktion", reasoning: "Analyse", categorize: "Kategorisierung",
-  web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Regel aus Feedback",
+  web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Regel aus Feedback", plan: "Planung",
 };
 
 /** Work only DeepSeek does; without it the chat keeps its fixed suggestions and rule checks wait. Never the local model. */
-export const cloudOnlyTasks: Partial<Record<AiTask, string>> = { suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek" };
+export const cloudOnlyTasks: Partial<Record<AiTask, string>> = { suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek", plan: "Feste Abläufe" };
 
 /** One model call as the server reports it: who answered, for what, and whether it was the local fallback. */
 export type ModelUse = {

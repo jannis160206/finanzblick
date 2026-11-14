@@ -155,7 +155,7 @@ describe("agent answers", () => {
     const reply = await answerFreeQuestion({ question: "Was bleibt?", facts: { budget: { left: 420 } }, agent: "budget" }, { config, fetcher });
     expect(reply.text).toBe("Dir bleiben 420 €.");
     expect(system(calls)).toContain("Monatsplan");
-    expect(system(calls)).toContain("Beginne mit der direkten Antwort");
+    expect(system(calls)).toContain("ohne Floskel direkt zur Sache");
   });
 
   it("turns Markdown and lists into plain chat text", () => {

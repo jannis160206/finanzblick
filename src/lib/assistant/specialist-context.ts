@@ -4,7 +4,7 @@ import type { AgentResult } from "./agent";
 import { evidenceText } from "./conversation";
 import { contractsAnswer } from "./copilot";
 import { monthReview } from "./essentials";
-import { assistantFacts, type AssistantFacts } from "./facts";
+import { appOverview, assistantFacts, type AssistantFacts } from "./facts";
 import { aboutMoney, generalQuestion, type AgentId } from "./orchestrator";
 import { payrollAnswer, payrollFacts } from "./payroll";
 import { pulseAnswer } from "./pulse";
@@ -24,11 +24,15 @@ const factKeys: Record<AgentId, readonly (keyof AssistantFacts)[]> = {
 export const usesPersonalFacts = (agent: AgentId, question: string) =>
   !(agent === "general" && (!aboutMoney(question) || generalQuestion(question.toLowerCase())));
 
-/** Only the facts the agent needs. The general chat gets none when the question is not about the user's money. */
+/**
+ * The agent's own detailed facts plus a compact overview of all app data, so it can answer across topics. The general
+ * chat gets none when the question is not about the user's money.
+ */
 export function agentFacts(agent: AgentId, state: AppState, dashboard: Dashboard, today: string, question: string): Record<string, unknown> {
   if (!usesPersonalFacts(agent, question)) return { today };
   const all = assistantFacts(state, dashboard, today);
   const facts: Record<string, unknown> = Object.fromEntries(factKeys[agent].map((key) => [key, all[key]]));
+  facts.overview = appOverview(all, state, today);
   if (agent === "payroll") facts.payroll = payrollFacts(state, today);
   return facts;
 }

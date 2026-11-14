@@ -9,6 +9,7 @@ import { budgetPace, safeToSpend, salaryStatus, unusualCategories } from "./puls
 import { accountLabel, accountsWithRules, ruleText } from "./funds";
 import { financialCheck } from "./check";
 import { accountForecast } from "./forecast";
+import { redactSensitive } from "./feedback";
 
 const DAY_MS = 86_400_000;
 const shift = (date: string, days: number) => new Date(Date.parse(`${date}T00:00:00Z`) + days * DAY_MS).toISOString().slice(0, 10);
@@ -89,3 +90,30 @@ export function assistantFacts(state: AppState, dashboard: Dashboard, today: str
   };
 }
 export type AssistantFacts = ReturnType<typeof assistantFacts>;
+
+/**
+ * A compact view of everything the app knows, for every question about the user's money: accounts, this month with its
+ * budgets, subscriptions, goals, forecast, Amex, salary, what stands out and the latest bookings. The model picks what fits.
+ * Names are cleaned of account and card numbers; transfers between own accounts are left out.
+ */
+export function appOverview(facts: AssistantFacts, state: AppState, today: string) {
+  const recent = ledger(state).filter(({ row }) => row.date <= today).sort((a, b) => b.row.date.localeCompare(a.row.date)).slice(0, 8)
+    .map(({ row, category }) => ({ date: row.date, name: redactSensitive(row.merchantAlias?.trim() || row.description.trim()).slice(0, 40), amount: round(row.amount), category }));
+  const subscriptions = facts.subscriptions;
+  return {
+    accounts: facts.balances.slice(0, 12).map((item) => ({ name: item.name, amount: item.amount })),
+    totalOnAllAccounts: facts.totalOnAllAccounts,
+    thisMonth: { month: facts.currentMonth.month, income: facts.currentMonth.income, fixedCosts: facts.currentMonth.fixedCosts, spentSoFar: facts.currentMonth.spentSoFar,
+      surplus: facts.currentMonth.surplus, budgetsOver: facts.currentMonth.budgets.filter((item) => item.status === "over").map((item) => item.name) },
+    freeUntilSalary: facts.safeToSpendToday,
+    subscriptions: { count: subscriptions.length, perMonth: round(subscriptions.reduce((sum, item) => sum + item.monthly, 0)),
+      largest: [...subscriptions].sort((a, b) => b.monthly - a.monthly).slice(0, 3) },
+    goals: facts.goals.slice(0, 8).map((goal) => ({ name: goal.name, target: goal.target, saved: goal.saved, date: goal.date })),
+    giroForecast: facts.giroForecast12Months,
+    amex: { open: facts.amex.open, stillToTransfer: facts.amex.stillToTransfer },
+    salary: facts.salary,
+    notable: { unusuallyHigh: facts.unusuallyHighThisMonth, possibleDuplicates: facts.possibleDuplicateCharges.length,
+      priceIncreases: facts.priceIncreases.map((item) => item.name) },
+    recentBookings: recent,
+  };
+}

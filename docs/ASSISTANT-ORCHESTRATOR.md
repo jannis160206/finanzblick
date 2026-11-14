@@ -452,13 +452,15 @@ Fragen und Aufträge funktionieren unabhängig von der genauen Formulierung. Bei
 
 - **Wann:** Der Orchestrator entscheidet (`wantsWebSearch`):
   - immer bei „Such im Internet nach …“ oder „google mal …“;
+  - immer bei aktuellen Werten (Kurse, Preise, Zinsen, Steuersätze, Nachrichten), siehe [Aktuelle Werte](#aktuelle-werte-datenüberblick-und-freie-werkzeugwahl);
   - bei öffentlichen Beträgen und Regeln, die sich jährlich ändern (Grenzen, Pauschalen, Absetzbeträge, Beihilfen, Förderungen, Boni, Mindestlohn, Pension …), wenn das lokale Wissen sie nicht sicher kennt oder ein Jahr genannt ist;
   - bei allgemeinen Finanzfragen ohne Treffer im lokalen Wissen;
   - einmal nachträglich, wenn die freie Antwort zugibt, es nicht zu wissen.
 - **Wann nicht:** App-Aktionen, Werkzeuge mit eigenen Daten, Fragen zu den eigenen Zahlen, kreative und fachfremde Anfragen. Normale Aktionen warten nie auf das Internet.
 - **Datenschutz:** Ins Internet gehen nur Suchwörter. Beträge, lange Zahlen, E-Mail-Adressen, IBANs und Links werden vorher entfernt; ohne Landesangabe wird „Österreich“ angehängt.
 - **Quellen:**
-  - Standard ist Bing (HTML-Ergebnisse); optional ein eigenes SearXNG (`FINANZBLICK_SEARXNG_URL`) oder die Brave-Search-API (`BRAVE_SEARCH_API_KEY`);
+  - Standard ist DuckDuckGo (HTML-Ergebnisse), danach Bing; optional ein eigenes SearXNG (`FINANZBLICK_SEARXNG_URL`) oder die Brave-Search-API (`BRAVE_SEARCH_API_KEY`);
+  - ein Anbieter zählt nur, wenn mindestens ein Treffer ein Themenwort der Frage enthält; sonst ist der nächste dran;
   - Wikipedia ergänzt, wenn weniger als drei Seiten brauchbar sind;
   - amtliche Seiten (`.gv.at`, Arbeiterkammer, WKO, Sozialversicherung, AMS …) zuerst; soziale Netzwerke, Shops und PDFs nie.
 - **Seiten lesen:**
@@ -494,7 +496,7 @@ Was der Assistent allgemein beantwortet, merkt er sich lokal und fragt beim näc
   - Antworten mit den Zahlen oder der Lage des Nutzers (Spezialisten, persönliche Fakten im allgemeinen Chat) und Fragen mit „ich/mein/mir“;
   - Texte mit IBAN, Karten-, Telefon- oder langen Kontonummern, E-Mail-Adressen, Schlüsseln oder Platzhaltern der Pseudonymisierung (`redactSensitive`);
   - Antworten, die zugeben, es nicht zu wissen;
-  - Nachrichten und aktuelle Kurse (Aktien, Börsenindizes, Bitcoin, Gold).
+  - Nachrichten, Kurse und jede Frage nach einem aktuellen Wert („Was kostet Diesel gerade?“, „Wie hoch ist die KESt 2026?“), siehe [Aktuelle Werte](#aktuelle-werte-datenüberblick-und-freie-werkzeugwahl).
 - **Ablaufdatum** (`volatility`): Zinsen, Inflation und Preise gelten 7 Tage; jährliche Grenzwerte, Pauschalen, Absetzbeträge und Steuersätze bis zum Jahresende (bei „2027“ bis Ende 2027). Abgelaufene Einträge werden nicht mehr gefunden und beim nächsten Speichern entfernt. Erklärungen („Was ist ein Wechselkurs?“) bleiben.
 - **Zuerst lokal:**
   - Vor dem Routing: dieselbe Frage (beide Richtungen mindestens 85 % gleiche Wörter, bestätigte Antworten ab 80 %) wird sofort aus dem Gedächtnis beantwortet, ohne Modell („Lokal gemerkt“ bzw. „Von dir bestätigt“).
@@ -509,7 +511,38 @@ Unter jeder fertigen Antwort stehen 2–3 Folgefragen, die DeepSeek Flash passen
 - **Ablauf:** Die Antwort zeigt zuerst die festen Vorschläge des Werkzeugs. Nach dem Lauf lädt der Chat die Folgefragen im Hintergrund (etwa 1 s, rund 300 Token) und ersetzt die festen, solange die Antwort die neueste ist. Eine neue Frage bricht das Laden ab. Die Gruppe heißt dann „Vorschläge von DeepSeek“; ein Klick stellt die Frage.
 - **Nicht bei** Formularen, Vorschauen, Rückfragen mit Optionen, gestoppten oder fehlgeschlagenen Antworten.
 - **Prüfung:** nur Fragen oder harmlose Bitten („Zeig mir …“, „Erklär …“), 8–90 Zeichen, nichts schon Gefragtes, keine Lösch-, Überweisungs- oder Passwort-Wörter, keine Links, Kontonummern, Platzhalter oder versteckten Anweisungen. Bleiben weniger als zwei, gelten die festen Vorschläge.
-- **Ohne DeepSeek** (kein Key, Pause, Fehler) bleiben die festen Vorschläge; das lokale Modell wird dafür nie gefragt. Das Modell steht in „Letzte Läufe“ (Aufgabe „Folgefragen“).
+- **Beim Thema:** Der Prompt verlangt denselben Gegenstand (Bitcoin, Netflix, Lebensmittel …), keinen Themenwechsel und nichts, was die Antwort schon beantwortet; gut sind Entwicklung, Vergleich, Bezug zu den eigenen Finanzen oder der nächste Schritt in der App. Danach muss jede Frage einen Wortstamm mit Frage oder Antwort teilen (`src/lib/assistant/follow-up-topics.ts`; Kurs, Preis und Wert gelten als gleich, Zeitwörter zählen nicht). Fremde Vorschläge fallen weg.
+- **Ohne DeepSeek** (kein Key, Pause, Fehler) gelten feste Vorschläge zum selben Thema (`topicFollowUps`: nach einem Kurs etwa „Wie hat sich Bitcoin in den letzten 30 Tagen entwickelt?“), sonst die des Werkzeugs; das lokale Modell wird dafür nie gefragt. Nach einer Web-Antwort steht „Das hat geholfen“ immer zuerst. Das Modell steht in „Letzte Läufe“ (Aufgabe „Folgefragen“).
+
+## Aktuelle Werte, Datenüberblick und freie Werkzeugwahl
+
+Der Assistent arbeitet freier: Aktuelle Werte holt er immer frisch aus dem Internet, er sieht einen Überblick über alle App-Daten und entscheidet selbst, was er zusätzlich nachschlägt. Ändern tut er weiter nur nach Bestätigung.
+
+**Aktuelle Werte** (`src/lib/assistant/current-info.ts`, `src/lib/web/live-data.ts`):
+
+- **Erkennung ohne Modell:** `currentInfo` unterscheidet Kurs (Bitcoin, Gold, DAX, „…aktie“ mit Kurs-, Preis- oder Jetzt-Wort), Nachrichten („Was gibt es Neues an der Börse?“) und – mit einem Jetzt-Wort wie „aktuell“, „heute“, „gerade“ oder einer Jahreszahl – Steuersätze und Grenzwerte, Zinsen und Preise. Fragen nach den eigenen Zahlen („mein Depot“) und Erklärungen („Was ist ein ETF?“) zählen nicht.
+- **Immer Web:** Bei einem aktuellen Wert überspringt der Chat das lokale Wissen und das Gedächtnis und sucht sofort; Leitzins, Inflation und Wechselkurse beantwortet weiter das Markt-Werkzeug (EZB, Eurostat).
+- **Live-Quellen zuerst** (ohne Key, 2 bzw. 15 Minuten im Speicher):
+  - Krypto: CoinGecko (Euro- und Dollarkurs, 24 h und 30 Tage);
+  - Aktien, Indizes, Gold, Silber, Öl: Yahoo Finance (Suche nach dem Symbol, Tageskurs, Vortag, 30 Tage samt Spanne; Dollarwerte zusätzlich grob in Euro);
+  - Nachrichten: Bing-News-Feed, neueste zuerst, nur https und höchstens 14 Tage alt.
+  Danach folgt die normale Websuche mit „aktuell“ in den Suchwörtern. Jede Live-Quelle nennt „Stand dd.mm.yyyy, hh:mm Uhr“; die Antwort nennt den Wert, den Stand und die Quelle.
+- **Nichts gefunden:** Die Antwort sagt ehrlich, dass gerade kein aktueller Wert abrufbar ist, statt aus altem Wissen zu antworten.
+- **Nie gemerkt:** Kurse, Nachrichten und aktuelle Werte landen nicht im lokalen Gedächtnis (`volatility` → nie).
+
+**Datenüberblick** (`appOverview` in `src/lib/assistant/facts.ts`): Bei Fragen zum eigenen Geld bekommt der antwortende Agent zusätzlich einen kompakten Überblick: Konten und Summe, dieser Monat samt überzogener Budgets, frei bis zum Gehalt, Abos (Anzahl, pro Monat, größtes), Sparziele, Giro-Prognose, Amex, Gehalt, Auffälliges und die letzten 8 Buchungen. Namen werden geschwärzt, Personen und IBANs pseudonymisiert; allgemeine Fragen sehen den Überblick nie.
+
+**Freie Werkzeugwahl** (`src/lib/ai/planner.ts`, `POST /api/ai/plan`):
+
+- Passt kein Werkzeug direkt, plant DeepSeek V4 Pro (Aufgabe „Planung“, rund 1–1,6 s), welche Lese-Werkzeuge (Budget, Prognose, Verträge, Was-wäre-wenn, Umsätze, Gehalt …) oder Websuchen die Antwort braucht – höchstens drei, mit je einer eigenen Teilfrage.
+- Der Browser führt sie mit seinen Daten aus; die Ergebnisse gehen als Evidenz in die freie Antwort. Ändernde Werkzeuge und Entwürfe sind im Planer und im Browser ausgeschlossen.
+- Ohne DeepSeek entfällt die Planung (nie Qwen); die Antwort entsteht wie bisher aus Fakten und Überblick.
+- Beispiel live: „Lohnt es sich, mein Netflix-Abo zu kündigen und das Geld ins Sparziel zu stecken?“ → Verträge + Was-wäre-wenn.
+
+**Natürlichere Antworten** (`src/lib/ai/specialists.ts`): Die Antwortregeln sind lockerer – direkt zur Sache, 2–4 Sätze, Zusammenhang erklären, wenn er hilft, den Überblick nutzen und aktuelle Web-Werte mit Stand und Quelle nennen. Die Belegprüfung bleibt: Jede Zahl muss aus Fakten, Werkzeugen oder Quellen stammen.
+
+**Änderungen nur mit Bestätigung:** Daran ändert sich nichts. Anlegen, Ändern, Löschen und Verschieben laufen weiter über Vorschau und „Ja“; der Planer kennt nur lesende Werkzeuge.
+
 
 ## Regeln aus Feedback
 
@@ -565,9 +598,10 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
   - `intents.test.ts`: 35 Varianten für Vertrag, Sparziel, Budget, Umsätze und Gehalt samt Tippfehlern, ausgeschlossene Fragen, Rückfrage mit Optionen und kombinierte Nachrichten;
   - `web-learning.test.ts`: wann gesucht wird, 👍/👎, Korrektur als Hinweis, gleiche Frage in anderen Worten;
   - `src/lib/web/search.test.ts`: Suchwörter ohne persönliche Daten, Bing-Ergebnisse, Passagen und Tabellen, DNS-Schutz, Vergleich und Abschaltung;
+  - `src/lib/web/live-data.test.ts`: Erkennung aktueller Werte (Kurs, Nachricht, Steuer, Preis, eigene Daten, Erklärung), Suchwörter mit „aktuell“, CoinGecko, Yahoo samt Rückfall, News-Feed, DuckDuckGo;
   - `search.test.ts`: bestätigte Antworten in der Hybrid-Suche.
 - Alle Aktionen im Chat (Chat-Test 4): `all-actions.test.ts` (197 Fälle: Routing, Vorschau, Anwenden mit Plan-Synchronisierung, Rückgängig, Grenzfälle, Sparziel-Entwurf, Hinweis des Modells), `app-actions.test.ts` (Positionen nur Einnahme oder Fixkosten), `transactions-why.test.tsx` (Notiz im Buchungsdialog und in der Liste), `tests/assistant-orchestrator.spec.ts` (neuer Befehl nach „Welches meinst du?“, „Nein“ und „Ja“ unter der Vertragsvorschau).
-- Lernen und Feedback-Schleife: `web-learning.test.ts` (gespeicherte Antworten, Ablaufdatum, nichts Persönliches oder Sensibles, 👍/👎), `search.test.ts` (Vektordatei überlebt einen Neustart), `follow-ups.test.ts` (Prüfung der Folgefragen, nur DeepSeek), `rule-loop.test.ts` (vage, keine Regel, Duplikat, Aktivierung nur bei gleicher oder besserer Eval, Sicherheitsfehler, Warten, Schalter, Regeln im Prompt), `orchestrator-admin.test.tsx` (Regeln mit Eval und Schalter), `tests/assistant-orchestrator.spec.ts` (Folgefragen von DeepSeek gemockt), `tests/assistant-admin.spec.ts` (Bereich „Regeln aus Feedback“ hell und dunkel).
+- Lernen und Feedback-Schleife: `web-learning.test.ts` (gespeicherte Antworten, Ablaufdatum, nichts Persönliches oder Sensibles, 👍/👎), `search.test.ts` (Vektordatei überlebt einen Neustart), `follow-ups.test.ts` (Prüfung der Folgefragen, nur DeepSeek, fremde Themen fallen weg), `planner.test.ts` (nur lesende Werkzeuge, höchstens drei Schritte, nur DeepSeek), `rule-loop.test.ts` (vage, keine Regel, Duplikat, Aktivierung nur bei gleicher oder besserer Eval, Sicherheitsfehler, Warten, Schalter, Regeln im Prompt), `orchestrator-admin.test.tsx` (Regeln mit Eval und Schalter), `tests/assistant-orchestrator.spec.ts` (Folgefragen von DeepSeek und Planer gemockt), `tests/assistant-admin.spec.ts` (Bereich „Regeln aus Feedback“ hell und dunkel).
 - Modelle und Rückfall: `src/lib/ai/cloud.test.ts` (Modell je Aufgabe, Denkmodus, Rückfall auf Qwen bei 401/402/429/5xx/Netzwerk mit Pausen, Streaming-Rückfall vor dem ersten Wort, Pseudonymisierung samt geteilter Platzhalter, Token-Zähler, Cache, Status), `orchestrator-admin.test.tsx` (Bereich „Modelle“, Warnung bei Rückfall, Modelle in den Läufen), `assistant-chat-parts.test.tsx` (Modell in der Statuszeile).
 - `npm run eval:assistant`: Stufen Smoke, Gold (höchstens 80 Fragen) und Deep (10–15 Fälle); zeigt je Frage Agent, Weg (Regel, Signal, Modell, Rückfall), Modell, Zahl der KI-Aufrufe und Dauer. Details: [local-ai.md](local-ai.md#qualitätsprüfung).
 
@@ -577,7 +611,8 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - Bestehende Regelfehler einzelner Werkzeuge bleiben, wo sie keine falsche Zuständigkeit verursachen.
 - Kombinierte Fragen werden nur geteilt, wenn jeder Teil für sich steht. Verweist ein Teil zurück („… und was kosten sie im Jahr?“), antwortet ein Agent auf beides.
 - Finanzbegriffe beantwortet er zuerst aus dem lokalen Wissen; was dort fehlt, schlägt er in der Wikipedia nach und danach per Websuche. Offline und ohne lokalen Treffer sagt er ehrlich, dass er nichts Verlässliches gefunden hat.
-- Die Websuche liest öffentliche HTML-Seiten und kann sich irren oder veraltete Seiten finden. Deshalb zeigt sie immer die Quellen, bevorzugt amtliche Seiten und merkt sich Antworten erst nach deinem 👍. Bing kann das Format seiner Ergebnisseite ändern; ein eigenes SearXNG oder die Brave-API sind die stabileren Wege.
+- Die Websuche liest öffentliche HTML-Seiten und kann sich irren oder veraltete Seiten finden. Deshalb zeigt sie immer die Quellen, bevorzugt amtliche Seiten und merkt sich Antworten erst nach deinem 👍. DuckDuckGo bremst viele Suchen kurz hintereinander (dann übernimmt Bing), und beide können das Format ihrer Ergebnisseite ändern; ein eigenes SearXNG oder die Brave-API sind die stabileren Wege.
+- CoinGecko, Yahoo Finance und der Bing-News-Feed sind frei nutzbare, aber inoffizielle Schnittstellen ohne Zusage. Fallen sie aus, sucht er normal im Internet; Goldkurse von Yahoo sind COMEX-Futures in Dollar, der Euro-Wert ist gerundet.
 - Das lokale Wissen ist bewusst klein (51 Abschnitte) und allgemein; es ersetzt keine Steuer- oder Anlageberatung.
 - Die Themen-Prüfung arbeitet mit Wortlisten. Seltene fachfremde Fragen ohne bekanntes Wort gehen an den allgemeinen Chat, dessen Prompt ebenfalls nur Finanzen erlaubt.
 - Nicht im Chat: Buchungen von Hand anlegen (gibt es in der App nicht), Bank- und Google-Anmeldung, Datei-Uploads und Backups (nur Link zur Seite), „Alle Buchungen löschen“ und eine geteilte Buchung wieder ungeteilt stellen (beides geht auch in der App nicht), Akzentfarbe und Bewegung (Link), Kassenbon aufteilen (Datei). Beim Sparziel gibt es statt „So schnell wie möglich“ die Wahl zwischen Datum und Monatsrate; die Verteilung über mehrere Konten bleibt im Zieldialog, im Chat gibt es Rate, Konto und Extra-Beträge aus einem Pocket.

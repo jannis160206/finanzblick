@@ -1,8 +1,10 @@
 import { lookup } from "node:dns/promises";
 import { decodeEntities, fetchPage } from "@/lib/ai/industry";
 import { cleanUntrusted } from "@/lib/ai/untrusted";
+import type { CurrentKind } from "@/lib/assistant/current-info";
 import { contentWords } from "@/lib/knowledge-base/query";
 import { lookupKnowledge, shortenText, type KnowledgeHit } from "./knowledge";
+import { liveSources } from "./live-data";
 import { cached } from "./market-data";
 import { agreedFigures, scrubQuestion, searchFiller, searchTopicWords, type WebSearchProvider, type WebSearchResult, type WebSource } from "./web-answer";
 
@@ -10,11 +12,15 @@ import { agreedFigures, scrubQuestion, searchFiller, searchTopicWords, type WebS
 // user's accounts, e-mail addresses or IBANs. Pages are read over https from public hosts only, size- and time-capped.
 
 const USER_AGENT = "Finanzblick/1.0 (privates Finanzdashboard; Websuche des Finanz-Assistenten)";
+// DuckDuckGo's HTML page answers browsers only.
+const BROWSER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 const SEARCH_TIMEOUT_MS = 5_000;
 const PAGE_TIMEOUT_MS = 4_500;
 const MAX_SOURCES = 3;
 const SOURCE_LENGTH = 460;
 const CACHE_MS = 6 * 60 * 60 * 1000;
+// Current prices, rates and tax figures are searched again after half an hour.
+const CURRENT_CACHE_MS = 30 * 60 * 1000;
 
 export type WebHit = { title: string; url: string; snippet: string };
 export type WebSearchOptions = {
@@ -24,6 +30,8 @@ export type WebSearchOptions = {
   wikipedia?: (topic: string) => Promise<KnowledgeHit | undefined>;
   env?: Partial<Record<string, string>>;
   avoid?: string[];
+  /** A question about a value that changes: quotes and news come from live sources, the rest is searched as "aktuell". */
+  current?: CurrentKind;
 };
 
 const fold = (value: string) => value.toLowerCase().replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss");
@@ -33,12 +41,16 @@ const plain = (html: string) => decodeEntities(html.replace(/<[^>]+>/g, " ").rep
 
 const country = /\b(?:österreich|oesterreich|austria|deutschland|schweiz|usa|eu)\b/i;
 
-/** The search words sent to the search engine: personal details and amounts never leave the device. */
-export function webQuery(question: string): string {
+/**
+ * The search words sent to the search engine: personal details and amounts never leave the device. A current question
+ * keeps "aktuell"; quotes and news are not limited to Austria.
+ */
+export function webQuery(question: string, current?: CurrentKind): string {
   const scrubbed = scrubQuestion(question);
   const words = contentWords(scrubbed).filter((word) => !searchFiller.has(word)).slice(0, 8);
   if (!words.length) return "";
-  return country.test(scrubbed) ? words.join(" ") : `${words.join(" ")} Österreich`;
+  const now = current && !words.some((word) => /^20[23]\d$/.test(word)) ? [...words, "aktuell"] : words;
+  return country.test(scrubbed) || current === "quote" || current === "news" ? now.join(" ") : `${now.join(" ")} Österreich`;
 }
 
 const official = /(?:^|\.)(?:gv\.at|sozialministerium\.at|arbeiterkammer\.at|wko\.at|oenb\.at|statistik\.at|svs\.at|gesundheitskasse\.at|sozialversicherung\.at|ams\.at|konsument\.at|europa\.eu)$/;
@@ -70,6 +82,30 @@ export function parseBing(html: string): WebHit[] {
     const snippet = part.match(/<div class="b_caption[^"]*"[^>]*>[\s\S]*?<p\b[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? part.match(/<p\b[^>]*>([\s\S]*?)<\/p>/)?.[1] ?? "";
     if (url) hits.push({ title: plain(link[2]), url, snippet: plain(snippet).replace(/\s*…$/, "") });
   }
+  return hits;
+}
+
+/** The organic results of DuckDuckGo's HTML page; links go through a redirect whose `uddg` parameter is the target. */
+export function parseDuckDuckGo(html: string): WebHit[] {
+  const hits: WebHit[] = [];
+  const anchors = [...html.matchAll(/<a\b[^>]*\bclass="result__a"[^>]*>([\s\S]*?)<\/a>/g)];
+  anchors.forEach((anchor, index) => {
+    const href = decodeEntities(anchor[0].match(/\bhref="([^"]+)"/)?.[1] ?? "");
+    let url: string | undefined;
+    try {
+      const target = new URL(href, "https://duckduckgo.com");
+      url = /(?:^|\.)duckduckgo\.com$/.test(target.hostname) ? target.searchParams.get("uddg") ?? undefined : target.href;
+    } catch {
+      url = undefined;
+    }
+    // Ads point at duckduckgo.com/y.js and carry no target.
+    if (!url) return;
+    const rest = html.slice((anchor.index ?? 0) + anchor[0].length, anchors[index + 1]?.index ?? html.length);
+    const snippet = rest.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/(?:a|div|td)>/)?.[1] ?? "";
+    // Highlighted search words (<b>Pendler</b>rechner) stay part of their word.
+    const text = (value: string) => plain(value.replace(/<\/?(?:b|strong|em|i|span)\b[^>]*>/gi, "")).replace(/\s+/g, " ").trim();
+    hits.push({ title: text(anchor[1]), url, snippet: text(snippet) });
+  });
   return hits;
 }
 
@@ -172,6 +208,14 @@ function providers(env: Partial<Record<string, string>>, fetcher: typeof fetch):
     const data = await getJson(url, fetcher, signal, { "X-Subscription-Token": brave }) as { web?: { results?: { title?: string; url?: string; description?: string }[] } };
     return (data.web?.results ?? []).map((item) => ({ title: plain(item.title ?? ""), url: item.url ?? "", snippet: plain(item.description ?? "") }));
   } });
+  // DuckDuckGo first: its results are on topic; it throttles bursts (HTTP 202), then Bing steps in.
+  list.push({ name: "duckduckgo", run: async (query, signal) => {
+    const response = await fetcher(new URL("https://html.duckduckgo.com/html/"), { method: "POST", signal, cache: "no-store",
+      headers: { Accept: "text/html", "Content-Type": "application/x-www-form-urlencoded", "User-Agent": BROWSER_AGENT, "Accept-Language": "de-AT,de;q=0.9" },
+      body: new URLSearchParams({ q: query, kl: "at-de" }).toString() });
+    if (response.status !== 200) throw new Error(`DuckDuckGo antwortet mit ${response.status}`);
+    return parseDuckDuckGo(await response.text());
+  } });
   list.push({ name: "bing", run: async (query, signal) => {
     const url = new URL("https://www.bing.com/search");
     url.search = new URLSearchParams({ q: query, setlang: "de", cc: "AT", count: "10" }).toString();
@@ -217,6 +261,9 @@ async function runSearch(question: string, query: string, options: WebSearchOpti
   for (const candidate of providers(env, fetcher)) {
     try {
       hits = usableHits(await candidate.run(query, AbortSignal.any([signal, AbortSignal.timeout(SEARCH_TIMEOUT_MS)])), avoid);
+      // When no result names a word of the question, the engine guessed wildly ("KESt" → a racing driver): the next one is asked.
+      const topic = stems.filter((stem) => !/^\d+$/.test(stem));
+      if (topic.length && !hits.some((hit) => topic.some((stem) => fold(`${hit.title} ${hit.snippet} ${hit.url}`).includes(stem)))) hits = [];
     } catch {
       if (signal.aborted) break;
       hits = [];
@@ -257,10 +304,15 @@ async function runSearch(question: string, query: string, options: WebSearchOpti
 export async function searchWeb(question: string, options: WebSearchOptions = {}): Promise<WebSearchResult> {
   const started = performance.now();
   const env = options.env ?? process.env;
-  const query = webQuery(question);
+  const query = webQuery(question, options.current);
   const empty = (disabled?: boolean): WebSearchResult => ({ query, sources: [], agreed: [], provider: "none", ms: Math.round(performance.now() - started), ...(disabled ? { disabled } : {}) });
   if (/^(?:off|false|0|aus|nein)$/i.test(env.FINANZBLICK_WEB_SEARCH?.trim() ?? "")) return empty(true);
   if (!query) return empty();
+  if (options.current) {
+    // Quotes and headlines from live sources first; without them the normal search runs.
+    const live = await liveSources(question, options.current, { fetcher: options.fetcher, signal: options.signal });
+    if (live.length) return { query, sources: live.map((source, index) => ({ ...source, n: index + 1 })), agreed: [], provider: "live", ms: Math.round(performance.now() - started) };
+  }
   const key = `web-search:v1:${fold(query)}:${[...(options.avoid ?? [])].sort().join(",")}`;
   try {
     const result = await cached(key, async () => {
@@ -268,7 +320,7 @@ export async function searchWeb(question: string, options: WebSearchOptions = {}
       // Nothing found is not cached, so the next try searches again.
       if (!found.sources.length) throw new Error("Keine Quellen.");
       return found;
-    }, CACHE_MS);
+    }, options.current ? CURRENT_CACHE_MS : CACHE_MS);
     return { ...result, ms: Math.round(performance.now() - started) };
   } catch {
     return empty();

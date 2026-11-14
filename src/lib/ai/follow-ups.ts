@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { onTopic, topicStems } from "@/lib/assistant/follow-up-topics";
 import { agentIds } from "@/lib/assistant/orchestrator";
 import { contentWords } from "@/lib/knowledge-base/query";
 import { AiUnavailableError, chat, type ChatOptions } from "./client";
@@ -19,9 +20,11 @@ export type FollowUpRequest = z.infer<typeof followUpRequestSchema>;
 export const MAX_FOLLOW_UPS = 3;
 
 const prompt = "Du schlägst für einen privaten Finanz-Assistenten in Österreich drei kurze Folgefragen vor, die der Nutzer als Nächstes stellen könnte. " +
-  "Schreib aus Sicht des Nutzers in der Ich-Form, natürlich und konkret, je höchstens 70 Zeichen, passend zur letzten Antwort. " +
-  "Nur Themen, die die App beantworten kann: Umsätze und Ausgaben, Verträge und Abos, Budget, Kontostände und Prognose, Sparziele, Gehalt und Steuern, " +
-  "allgemeines Finanzwissen. Keine Beträge, Namen, Links oder Kontonummern erfinden, nichts wiederholen, was schon gefragt wurde, nichts löschen oder überweisen. " +
+  "Jede Frage knüpft direkt an die letzte Frage und Antwort an und bleibt beim selben Gegenstand (z. B. Bitcoin, Netflix, Lebensmittel, Pendlerpauschale): " +
+  "kein Themenwechsel, keine allgemeinen Finanzfragen. Gut sind die Entwicklung oder ein Vergleich (letzte 30 Tage, Vormonat, Vorjahr), " +
+  "der Bezug zu den eigenen Finanzen (Budget, Sparziel, Portfolio, Abos) oder ein naheliegender nächster Schritt in der App. " +
+  "Schreib aus Sicht des Nutzers in der Ich-Form, natürlich und konkret, je höchstens 70 Zeichen, und nenne den Gegenstand beim Namen. " +
+  "Keine Beträge, Namen, Links oder Kontonummern erfinden, nichts fragen, was die Antwort schon beantwortet oder was schon gefragt wurde, nichts löschen oder überweisen. " +
   "Antworte nur mit JSON: {\"fragen\": [\"…\", \"…\", \"…\"]}. " + DATA_RULE;
 
 // Reading questions and harmless requests only: a click must never start a deletion or a transfer.
@@ -38,10 +41,14 @@ function sameQuestion(a: string, b: string) {
   return [...left].filter((word) => right.has(word)).length / Math.max(left.size, right.size) >= 0.8;
 }
 
-/** The model's suggestions, cleaned: short reading questions only, nothing invented, injected or already asked; at most three. */
-export function cleanFollowUps(raw: unknown, input: Pick<FollowUpRequest, "question" | "asked">): string[] {
+/**
+ * The model's suggestions, cleaned: short reading questions on the topic of the last question and answer only, nothing
+ * invented, injected or already asked; at most three.
+ */
+export function cleanFollowUps(raw: unknown, input: Pick<FollowUpRequest, "question" | "asked"> & { answer?: string }): string[] {
   const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? Object.values(raw).find(Array.isArray) ?? [] : [];
   const seen = [input.question, ...(input.asked ?? [])];
+  const topic = topicStems(`${input.question} ${(input.answer ?? "").slice(0, 400)}`);
   const kept: string[] = [];
   for (const item of list) {
     if (typeof item !== "string") continue;
@@ -52,7 +59,7 @@ export function cleanFollowUps(raw: unknown, input: Pick<FollowUpRequest, "quest
     else continue;
     if (text.length < 8 || text.length > 90 || !/\p{L}{3}/u.test(text)) continue;
     if (harmful.test(text) || looksInjected(text) || maskContacts(text) !== text || /\d{5,}|[<>]|\b(?:Person|IBAN|Karte|Nummer|Telefon|email)-\d+\b/.test(text)) continue;
-    if ([...seen, ...kept].some((other) => sameQuestion(other, text))) continue;
+    if ([...seen, ...kept].some((other) => sameQuestion(other, text)) || topic.size && !onTopic(text, topic)) continue;
     kept.push(text);
     if (kept.length === MAX_FOLLOW_UPS) break;
   }

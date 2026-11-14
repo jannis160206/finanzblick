@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { SECURITY_ACTIVATION_KEY } from "../src/lib/security-mode";
 import { payrollFixture } from "./fixtures/payroll-state";
 
-// Nur synthetische Daten. Die freie Antwort und die Folgefragen der KI sind gemockt; Routing und Werkzeuge laufen echt.
+// Nur synthetische Daten. Die freie Antwort, der Nachschlage-Planer und die Folgefragen der KI sind gemockt; Routing und Werkzeuge laufen echt.
 const storageKey = "finanzdashboard.v1";
 
 async function prepare(page: Page, width: number, theme: "light" | "dark") {
@@ -12,6 +12,7 @@ async function prepare(page: Page, width: number, theme: "light" | "dark") {
   await page.route("**/api/ai/follow-ups", (route) => /Bitcoin/.test(route.request().postData() ?? "")
     ? route.fulfill({ json: { suggestions: ["Wie viel Bitcoin wäre vertretbar?", "Was ist ein ETF?"], models: [{ provider: "deepseek", model: "deepseek-flash", task: "suggest" }] } })
     : route.fulfill({ status: 503, json: { error: "DeepSeek: nicht eingerichtet." } }));
+  await page.route("**/api/ai/plan", (route) => route.fulfill({ status: 503, json: { error: "DeepSeek: nicht eingerichtet." } }));
   await page.addInitScript(({ key, json, theme, activation }) => {
     localStorage.setItem("theme", theme);
     localStorage.setItem(activation, "off");
