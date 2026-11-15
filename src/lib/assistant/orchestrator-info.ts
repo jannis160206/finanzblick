@@ -86,21 +86,26 @@ export const callLabel = (tool: string) => isAssistantTool(tool) ? toolLabel[too
 /** The answer every tool gives when it throws. */
 export const failedAnswer = (text: string) => /^Dabei ist etwas schiefgegangen/m.test(text);
 
+const excerpt = (value: string | undefined, max: number) => value?.replace(/\s+/g, " ").trim().slice(0, max) || undefined;
+
 /**
  * One tool call for the run's record: tool, success and a short action phrase. The phrase comes from the tool or the kinds of
  * operations of its change, never from arguments, amounts or the user's words. `empty`: a lookup that worked but found nothing.
+ * `args` and `result` (the question the tool got, an excerpt of what it returned) are only shown in the answer's "Details".
  */
-export function toolCall(tool: string, { ok = true, change, empty = false }: { ok?: boolean; change?: Pick<AssistantChange, "operations">; empty?: boolean } = {}): AssistantToolCall {
+export function toolCall(tool: string, { ok = true, change, empty = false, args, result }:
+  { ok?: boolean; change?: Pick<AssistantChange, "operations">; empty?: boolean; args?: string; result?: string } = {}): AssistantToolCall {
   const summary = (change ? changeAction(change.operations) : undefined) ?? (empty ? emptyAction[tool] : undefined) ?? callAction[tool] ?? callLabel(tool);
-  return { tool: tool.slice(0, 40), ok, summary: summary.slice(0, 80) };
+  const shown = { args: excerpt(args, 200), result: excerpt(result, 400) };
+  return { tool: tool.slice(0, 40), ok, summary: summary.slice(0, 80), ...(shown.args ? { args: shown.args } : {}), ...(shown.result ? { result: shown.result } : {}) };
 }
 
 export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Signalwort", model: "Modell", fallback: "Rückfall", supervisor: "Supervisor" };
 
 /** The thin orchestrator's decision steps, in the order it tries them. */
 export const orchestratorSteps: { title: string; detail: string; calls: string }[] = [
-  { title: "Regeln", detail: "Nur Änderungen und Befehle: Vorschau mit Bestätigung, Rechnen, Navigation, Design", calls: "0 KI" },
-  { title: "Supervisor", detail: "DeepSeek V4 Pro sieht den Datenüberblick, lässt Daten holen oder recherchieren und schreibt jede Antwort", calls: "2 KI" },
+  { title: "Regeln", detail: "Nur Änderungen und Systembefehle: Vorschau mit Bestätigung, Datum und Uhrzeit, Rechnen, Navigation, Design", calls: "0 KI" },
+  { title: "Supervisor", detail: "DeepSeek Flash plant mit dem Datenüberblick, die Spezialisten holen Daten oder recherchieren, DeepSeek V4 Pro schreibt jede Analyse", calls: "2 KI" },
   { title: "Lokaler Rückfall", detail: "Ohne DeepSeek: feste Wege, Signalwörter, dann ein Wort vom lokalen Modell", calls: "0–1 KI" },
 ];
 

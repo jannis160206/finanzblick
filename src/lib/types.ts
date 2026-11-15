@@ -712,11 +712,15 @@ export const webLinkSchema = z.object({
   url: z.string().max(500).regex(/^https:\/\/[^\s"<>]+$/),
 }).strict();
 export type WebLinkEntry = z.infer<typeof webLinkSchema>;
-// One tool call of an answer: the tool, whether it worked and a short action phrase, never arguments, amounts or the user's words.
+export const MAX_PROMPT_PREVIEW = 3000;
+// One tool call of an answer: the tool, whether it worked and a short action phrase; for the "Details" panel under the answer
+// also the question it got and a short excerpt of its result. Only tool, ok and summary go into the feedback file.
 export const assistantToolCallSchema = z.object({
   tool: z.string().min(1).max(40),
   ok: z.boolean(),
   summary: z.string().max(80),
+  args: z.string().max(200).optional(),
+  result: z.string().max(400).optional(),
 }).strict();
 export type AssistantToolCall = z.infer<typeof assistantToolCallSchema>;
 // One model that worked on an answer: DeepSeek in the cloud or the local model, for which task, and whether it stepped in as fallback.
@@ -771,11 +775,15 @@ export const assistantMessageSchema = z.object({
   calls: z.array(assistantToolCallSchema).max(8).optional(),
   // The models of the run (routing, action, answer), in order; shown under the answer and in "Letzte Läufe".
   models: z.array(assistantModelUseSchema).max(4).optional(),
+  // The system prompt the answer was written with (shortened), for the "Details" panel; only the newest answers keep it.
+  prompt: z.string().max(MAX_PROMPT_PREVIEW).optional(),
   correcting: z.string().max(1000).optional(),
   clarify: z.string().max(1000).optional(),
 }).strict();
 export type AssistantMessage = z.infer<typeof assistantMessageSchema>;
 export const MAX_ASSISTANT_MESSAGES = 100;
+/** How many of the newest messages keep the system prompt of their answer. */
+export const PROMPT_KEPT_MESSAGES = 20;
 export const assistantMemorySchema = z.object({
   id: agentIdSchema,
   text: z.string().trim().min(1).max(200),

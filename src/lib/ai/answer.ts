@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { rulesFor, type RuleText } from "@/lib/assistant/feedback-rules";
-import { agentIds, type AgentId } from "@/lib/assistant/orchestrator";
+import { detectSmallTalk } from "@/lib/assistant/smalltalk";
+import { agentIds, chatRequest, type AgentId } from "@/lib/assistant/orchestrator";
+import { MAX_PROMPT_PREVIEW } from "@/lib/types";
 import { chat, chatStream, stripThinking, type ChatMessage, type ChatOptions } from "./client";
 import { analysisQuestion, needsReasoning, taxQuestion, type AiTask, type ModelUse } from "./models";
+import type { PromptOverrides } from "./agent-prompts";
 import { answerPrompt } from "./specialists";
 import { numbersBacked } from "./summary";
 import { cleanFacts, cleanUntrusted, contactsBacked } from "./untrusted";
@@ -12,7 +15,7 @@ export const answerRequestSchema = z.object({
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(500) }).strict()).max(6).optional(),
   facts: z.record(z.string(), z.unknown()),
   // What a finance tool already computed for this question; the model may quote it.
-  evidence: z.string().max(2500).optional(),
+  evidence: z.string().max(4000).optional(),
   // The agent the orchestrator chose; it decides the voice. Without one the general chat answers.
   agent: z.enum(agentIds).optional(),
   // The supervisor planned the lookups and now writes the answer from all of their results.
@@ -33,13 +36,13 @@ function unwrapJson(content: string): string {
   }
 }
 
-/** Model options plus the active rules learned from feedback (the server loads them; the eval passes its own). */
-export type AnswerOptions = ChatOptions & { rules?: readonly RuleText[] };
+/** Model options plus the active rules learned from feedback and the admin's prompts (the server loads both; the eval passes its own). */
+export type AnswerOptions = ChatOptions & { rules?: readonly RuleText[]; prompts?: PromptOverrides };
 
-function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, evidence?: string, rules?: readonly RuleText[]): ChatMessage[] {
+function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, evidence?: string, rules?: readonly RuleText[], prompts?: PromptOverrides): ChatMessage[] {
   const agent = input.agent ?? "general";
   return [
-    { role: "system", content: answerPrompt(agent, rulesFor(rules, agent, "answer"), input.supervised) },
+    { role: "system", content: answerPrompt(agent, rulesFor(rules, agent, "answer"), input.supervised, prompts) },
     { role: "user", content: [
       `Fakten (JSON):\n${JSON.stringify(facts)}`,
       evidence ? `${input.supervised ? "Ergebnisse der Spezialisten" : "Werkzeug-Ergebnis"} zu dieser Frage (verlässlich berechnet):\n${evidence}` : "",
@@ -58,10 +61,22 @@ const answerOptions = (agent: AgentId = "general", supervised = false) => superv
  * writes from results its workers already computed, so V4 Pro answers without the slow thinking mode, except for tax analyses
  * ("Warum zahle ich so viel Lohnsteuer?"); "Wie viel netto bekomme ich?" is a figure the payroll tool already computed.
  */
-export function answerTask(input: Pick<AnswerRequest, "question" | "agent" | "evidence" | "supervised">): AiTask {
+export function answerTask(input: Pick<AnswerRequest, "question" | "agent" | "evidence" | "supervised"> & { facts?: Record<string, unknown> }): AiTask {
   if (input.evidence?.startsWith("Websuche")) return "web";
-  if (input.supervised) return taxQuestion(input.question, input.agent) && analysisQuestion(input.question) ? "reasoning" : "synthesize";
+  if (input.supervised) {
+    if (briefTalk(input)) return "chat";
+    return taxQuestion(input.question, input.agent) && analysisQuestion(input.question) ? "reasoning" : "synthesize";
+  }
   return needsReasoning(input.question, input.agent) ? "reasoning" : "chat";
+}
+
+/**
+ * Greetings, thanks and creative requests without data or lookups need no analysis: the fast model writes them. Everything
+ * else the supervisor answers – analysis, summary, assessment, research, explanation – V4 Pro writes.
+ */
+export function briefTalk(input: Pick<AnswerRequest, "question" | "agent" | "evidence"> & { facts?: Record<string, unknown> }): boolean {
+  const personal = Object.keys(input.facts ?? {}).some((key) => !PERSONAL.has(key));
+  return (input.agent ?? "general") === "general" && !input.evidence && !personal && (!!detectSmallTalk(input.question) || chatRequest(input.question));
 }
 
 // Amounts written inside texts (tool results, health check) and the user's own numbers in the question count as backed, too.
@@ -135,15 +150,19 @@ function prepare(input: AnswerRequest) {
 }
 
 // A grounded free answer: every number, link and account number must come from the facts or the tool result.
-export async function answerFreeQuestion(input: AnswerRequest, options: AnswerOptions = {}): Promise<{ text?: string; source: "KI"; models: ModelUse[] }> {
+export async function answerFreeQuestion(input: AnswerRequest, options: AnswerOptions = {}): Promise<{ text?: string; source: "KI"; models: ModelUse[]; prompt: string }> {
   const { facts, evidence, source, check } = prepare(input);
-  const answer = await chat(answerMessages(input, facts, evidence, options.rules), { task: answerTask(input), ...answerOptions(input.agent, input.supervised), ...options });
+  const messages = answerMessages(input, facts, evidence, options.rules, options.prompts);
+  const answer = await chat(messages, { task: answerTask({ ...input, facts }), ...answerOptions(input.agent, input.supervised), ...options });
   const text = groundedText(answer.content, source, check);
-  return text ? { text, source: "KI", models: [answer.use] } : { source: "KI", models: [answer.use] };
+  return { ...(text ? { text } : {}), source: "KI", models: [answer.use], prompt: systemPrompt(messages) };
 }
 
-/** `model` names the model as soon as it accepted the question, before the first word. */
-export type AnswerEvent = { model: ModelUse } | { delta: string } | { replace: string } | { done: true; ok: boolean; text?: string };
+// The system prompt the answer is written with, for the "Details" under it; it holds no facts, only rules and voice.
+const systemPrompt = (messages: ChatMessage[]) => (messages[0]?.role === "system" ? messages[0].content : "").slice(0, MAX_PROMPT_PREVIEW);
+
+/** `prompt` comes first, `model` names the model as soon as it accepted the question, before the first word. */
+export type AnswerEvent = { prompt: string } | { model: ModelUse } | { delta: string } | { replace: string } | { done: true; ok: boolean; text?: string };
 
 // Text that may already be shown: finished sentences that are backed, plus the whole words of the sentence being written while it is backed.
 export function visiblePrefix(content: string, source: object, check: (sentence: string, source: object) => boolean = backed): string {
@@ -166,7 +185,9 @@ export async function* streamFreeAnswer(input: AnswerRequest, options: AnswerOpt
   let shown = "";
   const trace: ModelUse[] = [];
   let named = 0;
-  for await (const piece of chatStream(answerMessages(input, facts, evidence, options.rules), { task: answerTask(input), ...answerOptions(input.agent, input.supervised), ...options, trace })) {
+  const messages = answerMessages(input, facts, evidence, options.rules, options.prompts);
+  yield { prompt: systemPrompt(messages) };
+  for await (const piece of chatStream(messages, { task: answerTask({ ...input, facts }), ...answerOptions(input.agent, input.supervised), ...options, trace })) {
     while (named < trace.length) yield { model: trace[named++] };
     content += piece;
     const visible = visiblePrefix(content, source, check);

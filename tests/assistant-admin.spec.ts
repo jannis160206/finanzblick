@@ -23,8 +23,20 @@ function adminState() {
 async function prepare(page: Page, width: number, theme: "light" | "dark") {
   await page.clock.setFixedTime(new Date("2026-10-15T12:00:00Z"));
   await page.setViewportSize({ width, height: width < 768 ? 812 : 1000 });
-  const routing = [["chat", "deepseek-flash", "DeepSeek Flash"], ["route", "deepseek-flash", "DeepSeek Flash"], ["action", "deepseek-v4-pro", "DeepSeek V4 Pro"],
+  const routing = [["chat", "deepseek-flash", "DeepSeek Flash"], ["route", "deepseek-flash", "DeepSeek Flash"], ["supervise", "deepseek-flash", "DeepSeek Flash"],
+    ["synthesize", "deepseek-v4-pro", "DeepSeek V4 Pro"], ["action", "deepseek-v4-pro", "DeepSeek V4 Pro"],
     ["reasoning", "deepseek-v4-pro", "DeepSeek V4 Pro · Denkmodus"], ["document", local, "Lokal (Qwen)"]].map(([task, model, label]) => ({ task, model, label, fallback: model === local }));
+  // The prompt file is mocked: one saved change per test run, never written to disk.
+  let voice = { id: "voice.budget", group: "budget", label: "Stimme", hint: "Rolle, Fachwissen und Ton.", default: "Du bist Finanzblick.", text: "Du bist Finanzblick.", custom: false };
+  await page.route("**/api/agent-prompts", async (route) => {
+    if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON() as { text?: string };
+      voice = { ...voice, text: body.text ?? voice.default, custom: !!body.text };
+    }
+    await route.fulfill({ json: { file: "config/agent-prompts.json", prompts: [
+      { id: "supervisor", group: "supervisor", label: "Planung (DeepSeek Flash)", hint: "Plant.", default: "Plane.", text: "Plane.", custom: false }, voice,
+    ] } });
+  });
   const at = "2026-10-15T11:00:00.000Z";
   await page.route("**/api/assistant-rules", (route) => route.fulfill({ json: { file: "data/assistant-rules.json", loop: "bereit", count: {}, rules: [
     { id: "rule-0001", feedbackId: "fb-00000001", createdAt: at, updatedAt: at, status: "active", comment: "Die Antwort beginnt mit einer Floskel und wiederholt sich.",
@@ -34,6 +46,7 @@ async function prepare(page: Page, width: number, theme: "light" | "dark") {
   await page.route("**/api/ai/status", (route) => route.fulfill({ json: {
     available: true, model: "deepseek-flash", label: "DeepSeek Flash", device: "Cloud", local: { available: true, model: local },
     cloud: { provider: "deepseek", available: true, models: { fast: "deepseek-flash", pro: "deepseek-v4-pro", reasoning: "deepseek-v4-pro" } }, routing,
+    usage: { "deepseek-flash": { calls: 4, input: 12000, output: 500, cached: 6000 }, "deepseek-v4-pro": { calls: 2, input: 8000, output: 500, cached: 2000 } },
   } }));
   await page.addInitScript(({ key, json, theme, activation }) => {
     localStorage.setItem("theme", theme);
@@ -46,34 +59,68 @@ test.describe("assistant orchestrator admin", () => {
   test.skip(process.env.FINANZBLICK_AUTH === "true", "Seeds the browser-mode store.");
 
   for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
-    test(`is reachable only from the settings and lists tree, agents, runs and tools at ${width}px (${theme})`, async ({ page }, testInfo) => {
+    test(`is reachable only from the settings, folds out its subpages and shows tree, prompts, runs, tools and feedback at ${width}px (${theme})`, async ({ page }, testInfo) => {
       await prepare(page, width, theme);
       await page.goto("/einstellungen");
       await expect(page.getByRole("link", { name: "Assistent-Orchestrator" })).toBeVisible();
       await expect(page.getByRole("navigation").getByRole("link", { name: /Orchestrator/ })).toHaveCount(0);
+      // The arrow next to the link folds out the subpages.
+      const arrow = page.getByRole("button", { name: "Orchestrator-Unterseiten anzeigen" });
+      await arrow.click();
+      const pages = page.getByRole("list", { name: "Orchestrator-Unterseiten" });
+      await expect(pages.getByRole("link")).toHaveText(["Aufbau & Topologie", "Agenten & Prompts", "Letzte Läufe", "Werkzeuge", "Feedback & Regeln"]);
+      await expect(page.getByRole("button", { name: "Orchestrator-Unterseiten ausblenden" })).toHaveAttribute("aria-expanded", "true");
       await page.getByRole("link", { name: "Assistent-Orchestrator" }).click();
-      await expect(page).toHaveURL(/\/einstellungen\/orchestrator$/);
+      await expect(page).toHaveURL(/\/einstellungen\/orchestrator\/aufbau$/);
 
       await expect(page.getByRole("heading", { level: 1, name: "Orchestrator" })).toBeVisible();
-      for (const name of ["Aufbau", "Modelle", "Agenten", "Letzte Läufe", "Werkzeuge", "Feedback", "Regeln aus Feedback"])
-        await expect(page.getByRole("heading", { level: 2, name, exact: true })).toBeVisible();
-      await expect(page.getByRole("group", { name: "Orchestrator-Baum" })).toBeVisible();
-      await expect(page.getByText("KI bereit · DeepSeek Flash · Qwen als Rückfall")).toBeVisible();
+      const sub = page.getByRole("navigation", { name: "Orchestrator-Bereiche" });
+      await expect(sub.getByRole("link", { name: "Aufbau & Topologie" })).toHaveAttribute("aria-current", "page");
+      for (const name of ["Topologie", "Modelle", "Kosten"]) await expect(page.getByRole("heading", { level: 2, name, exact: true })).toBeVisible();
+      const tree = page.getByRole("group", { name: "Orchestrator-Baum" });
+      await expect(tree).toBeVisible();
+      await expect(tree.getByText("KI bereit · DeepSeek Flash · Qwen als Rückfall")).toBeVisible();
+      await expect(tree.getByRole("list", { name: "Werkzeuge im Baum: Gehalt & Steuern" })).toContainText("Gehaltsübersicht");
+      await expect(tree).toContainText("Schreibt:DeepSeek V4 Pro");
       await expect(page.getByRole("list", { name: "Modell je Aufgabe" })).toContainText("DeepSeek V4 Pro · Denkmodus");
+      await expect(page.getByRole("list", { name: "Kosten je Modell" })).toContainText("deepseek-v4-pro");
+      await page.screenshot({ path: testInfo.outputPath(`orchestrator-aufbau-${width}-${theme}.png`), fullPage: true });
+
+      await sub.getByRole("link", { name: "Agenten & Prompts" }).click();
+      await expect(page).toHaveURL(/\/orchestrator\/agenten$/);
+      await expect(page.getByRole("heading", { level: 2, name: "System-Prompts" })).toBeVisible();
+      await page.getByRole("button", { name: "Stimme" }).click();
+      const field = page.getByRole("textbox", { name: "System-Prompt: Budget & Prognose · Stimme" });
+      await field.fill("Du bist ein strenger Budget-Coach.");
+      await page.getByRole("button", { name: "Speichern" }).click();
+      await expect(page.getByText("Gespeichert – gilt ab der nächsten Frage.")).toBeVisible();
+      await expect(page.getByText("1 von 2 angepasst")).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+      await page.screenshot({ path: testInfo.outputPath(`orchestrator-agenten-${width}-${theme}.png`), fullPage: true });
+      await page.getByRole("button", { name: "Auf Standard zurücksetzen" }).click();
+      await expect(field).toHaveValue("Du bist Finanzblick.");
+
+      await sub.getByRole("link", { name: "Letzte Läufe" }).click();
       const runs = page.getByRole("list", { name: "Letzte Läufe" });
       await expect(runs.locator(":scope > li")).toHaveCount(2);
       await expect(runs.getByText("Wie viel netto bekomme ich?")).toBeVisible();
       await expect(runs.getByRole("group", { name: "Modelle" })).toHaveText("Lokal (Qwen) (Rückfall, weil DeepSeek: Rate-Limit (HTTP 429))");
       await expect(runs.getByRole("list", { name: "Werkzeugaufrufe" }).first()).toContainText("Erfolgreich: Antwort formulieren");
+
+      await sub.getByRole("link", { name: "Werkzeuge" }).click();
       await expect(page.getByRole("list", { name: "Werkzeuge Gehalt & Steuern" })).toContainText("Gehalt");
-      await expect(page.getByRole("button", { name: "Aktualisieren" })).toBeEnabled();
+
+      await sub.getByRole("link", { name: "Feedback & Regeln" }).click();
       const rules = page.getByRole("list", { name: "Regeln aus Feedback" });
       await expect(rules).toContainText("Beginne Antworten ohne Floskel und vermeide Wiederholungen.");
       await expect(rules).toContainText("Gold-Eval ohne → mit Regel: 85/86 → 85/86");
       await expect(rules.getByRole("button", { name: /^Regel deaktivieren/ })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Aktualisieren" })).toBeEnabled();
 
+      // The bare address still works and opens the first subpage.
+      await page.goto("/einstellungen/orchestrator");
+      await expect(page).toHaveURL(/\/einstellungen\/orchestrator\/aufbau$/);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
-      await page.screenshot({ path: testInfo.outputPath(`orchestrator-admin-${width}-${theme}.png`), fullPage: true });
     });
   }
 });

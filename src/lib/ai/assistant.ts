@@ -10,6 +10,7 @@ import { rulesFor, rulesSection, type RuleText } from "@/lib/assistant/feedback-
 import { chat, cloudPause, type ChatMessage, type ChatOptions } from "./client";
 import { readAiConfig } from "./config";
 import type { AiTask, ModelUse } from "./models";
+import type { PromptOverrides } from "./agent-prompts";
 import { interpretPrompt, orchestratorPrompt, scopeNeeds } from "./specialists";
 import { supervise, type Supervision, type SupervisorStep } from "./supervisor";
 import { cleanUntrusted } from "./untrusted";
@@ -30,7 +31,7 @@ export const assistantRequestSchema = z.object({
 export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 /** Model options plus the active rules learned from feedback (the server loads them; the eval passes its own). */
-export type AssistantOptions = ChatOptions & { rules?: readonly RuleText[] };
+export type AssistantOptions = ChatOptions & { rules?: readonly RuleText[]; prompts?: PromptOverrides };
 /** `agent` answers the message; `via` says who decided (rule, supervisor, or locally: signal word, model, fallback). */
 export type AssistantReply = {
   agent: AgentId; via: RouteVia; tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel";
@@ -123,7 +124,7 @@ async function ask<T>(messages: ChatMessage[], options: ChatOptions, maxTokens: 
 /** The orchestrator's model fallback: one short call that names the agent; unsure or unreachable means general chat. */
 export async function classifyAgent(input: AssistantRequest, options: AssistantOptions = {}): Promise<AgentId | undefined> {
   const messages: ChatMessage[] = [
-    { role: "system", content: orchestratorPrompt + rulesSection(rulesFor(options.rules, undefined, "routing")) },
+    { role: "system", content: orchestratorPrompt(options.prompts) + rulesSection(rulesFor(options.rules, undefined, "routing")) },
     { role: "user", content: [...historyLines(input, 1).map((line) => `Davor: ${line.slice(0, 240)}`), `Nachricht: ${input.message}`].join("\n") },
   ];
   return ask(messages, options, 8, parseAgent, "route");
@@ -209,7 +210,7 @@ async function specialist(input: AssistantRequest, parsed: ReturnType<typeof par
   // The specialist interprets the message with its own tools only.
   const needs = scopeNeeds(agent);
   const messages: ChatMessage[] = [
-    { role: "system", content: interpretPrompt(agent, rulesFor(options.rules, agent, "routing")) },
+    { role: "system", content: interpretPrompt(agent, rulesFor(options.rules, agent, "routing"), options.prompts) },
     { role: "user", content: [
       `Heute: ${input.asOf}`,
       needs.names ? (input.context?.goals.length ? `Sparziele: ${input.context.goals.join(", ")}` : "Sparziele: keine") : "",

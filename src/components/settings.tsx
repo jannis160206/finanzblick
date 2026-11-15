@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, DatabaseBackup, Palette, Save, Search, TriangleAlert, Volume2, Workflow, X } from "lucide-react";
-import Link from "next/link";
+import { ChevronLeft, ChevronRight, DatabaseBackup, Palette, Save, Search, TriangleAlert, Volume2, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -28,6 +27,7 @@ import { FinancialData } from "@/components/financial-data";
 import { BankConnections } from "@/components/bank-connections";
 import { MailConnection } from "@/components/mail-connection";
 import { DriveConnection } from "@/components/drive-connection";
+import { OrchestratorSettingsLinks } from "@/components/orchestrator-nav";
 import { PayslipPasswordSettings } from "@/components/payslip-password-settings";
 import { PayslipLogSettings } from "@/components/payslip-log-settings";
 import { PayrollModelSettings } from "@/components/payroll-model-settings";
@@ -191,12 +191,8 @@ export function Settings() {
             })}
           </ul>
         </nav>
-        {/* Hidden admin view of the assistant: deliberately quiet, outside the category list. */}
-        <Link href="/einstellungen/orchestrator" title="Aufbau, Läufe und Feedback-Datei des Finanz-Assistenten"
-          className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:px-3",
-            searching && "max-lg:hidden")}>
-          <Workflow aria-hidden="true" className="size-3.5" />Assistent-Orchestrator
-        </Link>
+        {/* Hidden admin view of the assistant: deliberately quiet, outside the category list; the arrow folds out its subpages. */}
+        <OrchestratorSettingsLinks className={cn(searching && "max-lg:hidden")} />
       </aside>
       <div className={cn("min-w-0 lg:max-w-3xl", opened === null && !searching && "max-lg:hidden")}>
         {opened !== null && !searching && <button type="button" onClick={back}

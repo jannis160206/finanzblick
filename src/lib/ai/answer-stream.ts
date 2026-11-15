@@ -1,7 +1,8 @@
 // Browser side of `/api/ai/answer?stream=1`: shows the text while it grows and returns it only if the server's final check accepted it.
-// `onModel` hears which model took the question (DeepSeek or the local fallback) before the first word.
+// `onModel` hears which model took the question (DeepSeek or the local fallback) before the first word, `onPrompt` the
+// system prompt the answer is written with.
 export async function readAnswerStream(body: ReadableStream<Uint8Array>, onText: (text: string) => void,
-  onModel?: (model: unknown) => void): Promise<string | undefined> {
+  onModel?: (model: unknown) => void, onPrompt?: (prompt: string) => void): Promise<string | undefined> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -14,12 +15,13 @@ export async function readAnswerStream(body: ReadableStream<Uint8Array>, onText:
       buffer = done ? "" : lines.pop() ?? "";
       for (const line of lines) {
         if (!line.trim()) continue;
-        let event: { model?: unknown; delta?: unknown; replace?: unknown; done?: unknown; ok?: unknown; text?: unknown };
+        let event: { prompt?: unknown; model?: unknown; delta?: unknown; replace?: unknown; done?: unknown; ok?: unknown; text?: unknown };
         try {
           event = JSON.parse(line);
         } catch {
           continue;
         }
+        if (typeof event.prompt === "string") onPrompt?.(event.prompt);
         if (event.model && typeof event.model === "object") onModel?.(event.model);
         if (typeof event.delta === "string" || typeof event.replace === "string") {
           // `replace` withdraws a sentence the server could not back after all.

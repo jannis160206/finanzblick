@@ -1,6 +1,6 @@
-import { OrchestratorAdmin } from "@/components/orchestrator-admin";
+import { redirect } from "next/navigation";
+import { orchestratorHref } from "@/lib/assistant/orchestrator-pages";
 
-// Hidden admin view: only linked from the settings, never part of the main navigation.
 export default function OrchestratorRoute() {
-  return <OrchestratorAdmin />;
+  redirect(orchestratorHref("aufbau"));
 }

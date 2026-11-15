@@ -104,24 +104,30 @@ function evaluate(source: string): number | undefined {
 }
 const format = (value: number) => new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(value);
 
-export function fixedReply(input: string): FixedReply | undefined {
-  return fixed(input)?.reply;
+export function fixedReply(input: string, now = new Date()): FixedReply | undefined {
+  return fixed(input, now)?.reply;
 }
 
 /**
  * Only the commands among the fixed replies: arithmetic (the code calculates, not the model), switching the theme or a device
  * setting, opening a page, and actions that only work on their own page. Answers to questions go to the supervisor.
  */
-export function fixedCommand(input: string): FixedReply | undefined {
-  const found = fixed(input);
+export function fixedCommand(input: string, now = new Date()): FixedReply | undefined {
+  const found = fixed(input, now);
   return found?.command ? found.reply : undefined;
 }
 
-function fixed(input: string): { reply: FixedReply; command: boolean } | undefined {
+// "Welcher Tag ist heute?", "Wie spät ist es?": a system question the clock answers.
+const askDate = /^(?:welche[rns]? (?:tag|datum) (?:ist|haben wir)(?: heute)?|was für ein tag ist heute|der wievielte ist heute|den wievielten haben wir(?: heute)?|(?:heutiges )?datum)[\s?!.]*$/;
+const askTime = /^(?:wie (?:spät|spaet) ist es|wie ?viel uhr (?:ist es|haben wir)|uhrzeit)(?: (?:jetzt|gerade|bitte))?[\s?!.]*$/;
+
+function fixed(input: string, now: Date): { reply: FixedReply; command: boolean } | undefined {
   const lower = normalizeMessage(input).toLowerCase().trim();
   if (!lower || lower.length > 120) return undefined;
   const command = (reply: FixedReply) => ({ reply, command: true });
   const answer = (reply: FixedReply) => ({ reply, command: false });
+  if (askTime.test(lower)) return command({ text: `Es ist ${now.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" })} Uhr.` });
+  if (askDate.test(lower)) return command({ text: `Heute ist ${now.toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.` });
   const percent = percentOf.exec(lower);
   if (percent) return command({ text: `${format(number(percent[1]))} % von ${format(number(percent[2]))} sind ${format(number(percent[1]) * number(percent[2]) / 100)}.` });
   const math = expression.exec(lower);

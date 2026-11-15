@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyAccountState } from "@/lib/account-state";
 import type { Transaction } from "@/lib/types";
-import { fixedReply, topicClarify } from "./fixed-replies";
+import { fixedCommand, fixedReply, topicClarify } from "./fixed-replies";
 import { detectTool } from "./tools";
 
 describe("fixed replies", () => {
@@ -31,6 +31,13 @@ describe("fixed replies", () => {
     expect(fixedReply("was ist (250 + 150) * 3")?.text).toBe("(250 + 150) * 3 = 1.200");
     expect(fixedReply("Was ist 12 + ")).toBeUndefined();
     expect(fixedReply("Was ist 2026?")).toBeUndefined();
+  });
+
+  it("answers date and time from the clock as a command, but not the time somewhere else", () => {
+    const now = new Date(2026, 10, 15, 14, 5);
+    expect(fixedCommand("Welcher Tag ist heute?", now)?.text).toBe("Heute ist Sonntag, 15. November 2026.");
+    expect(fixedCommand("Wie spät ist es?", now)?.text).toBe("Es ist 14:05 Uhr.");
+    for (const text of ["Wie spät ist es in Tokio?", "Welcher Tag ist heute mein Gehalt da?"]) expect(fixedCommand(text, now), text).toBeUndefined();
   });
 
   it("asks back on bare words and reads a bare account or goal name as a balance question", () => {

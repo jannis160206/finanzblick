@@ -7,7 +7,7 @@ import { BorderBeam } from "border-beam";
 import { BotAvatar, type BotAvatarState } from "bot-avatars";
 import { MetalFx } from "metal-fx";
 import { ThinkingOrb } from "thinking-orbs";
-import { ArrowUp, Check, Copy, MessageSquarePlus, RefreshCw, Square, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ArrowUp, Check, Copy, LoaderCircle, MessageSquarePlus, RefreshCw, Square, ThumbsDown, ThumbsUp, TriangleAlert } from "lucide-react";
 import { dialogSpring, exitTween, useMotionMode } from "@/components/ui/premium-dialog/motion";
 import { workStatus, type WorkActivity, type WorkStatus } from "@/lib/assistant/status";
 import { cn } from "@/lib/utils";
@@ -31,8 +31,11 @@ export function DroidAvatar({ state = "default", size = 32, still, label, classN
     className={cn("shrink-0", className)} {...(label ? { "aria-label": label, title: label } : { "aria-hidden": true })} />;
 }
 
-/** What a running answer shows: the current step and the words streamed so far. */
-export type LiveRun = { status?: WorkStatus; text?: string };
+/** One tool the running answer called, while it runs and once it is done. */
+export type LiveTool = { id: number; tool: string; label: string; state: "running" | "ok" | "failed" };
+/** What a running answer shows: the current step, its tool calls and the words streamed so far. */
+export type LiveRun = { status?: WorkStatus; text?: string; tools?: LiveTool[] };
+const MAX_LIVE_TOOLS = 6;
 export type LiveRunStore = ReturnType<typeof createLiveRun>;
 
 /**
@@ -42,6 +45,7 @@ export type LiveRunStore = ReturnType<typeof createLiveRun>;
 export function createLiveRun() {
   let value: LiveRun = {};
   let queued: string | undefined;
+  let toolId = 0;
   let frame: { cancel: () => void } | undefined;
   const listeners = new Set<() => void>();
   const publish = (next: LiveRun) => {
@@ -79,11 +83,23 @@ export function createLiveRun() {
         if (queued !== value.text) publish({ ...value, text: queued });
       });
     },
+    /** A tool call starts: it shows as running until `finishTool` reports its result. */
+    startTool(tool: string, label: string) {
+      publish({ ...value, tools: [...value.tools ?? [], { id: ++toolId, tool, label, state: "running" as const }].slice(-MAX_LIVE_TOOLS) });
+    },
+    /** The first running call of the tool finishes; a call that never showed as running appears finished. */
+    finishTool(tool: string, label: string, ok: boolean) {
+      const tools = value.tools ?? [];
+      const state = ok ? "ok" as const : "failed" as const;
+      const index = tools.findIndex((item) => item.tool === tool && item.state === "running");
+      publish({ ...value, tools: index >= 0 ? tools.map((item, at) => at === index ? { ...item, state } : item)
+        : [...tools, { id: ++toolId, tool, label, state }].slice(-MAX_LIVE_TOOLS) });
+    },
     reset() {
       frame?.cancel();
       frame = undefined;
       queued = undefined;
-      if (value.status || value.text !== undefined) publish({});
+      if (value.status || value.text !== undefined || value.tools?.length) publish({});
     },
   };
 }
@@ -120,24 +136,50 @@ export function StatusLine({ status, className }: { status: WorkStatus; classNam
   </span>;
 }
 
+const toolState: Record<LiveTool["state"], { text: string; className: string }> = {
+  running: { text: "Läuft", className: "bg-muted text-muted-foreground ring-border/60" },
+  ok: { text: "Erfolgreich", className: "bg-success-soft text-success ring-success/20" },
+  failed: { text: "Fehler", className: "bg-destructive-soft text-destructive ring-destructive/20" },
+};
+
+/** The tools of the running answer as compact chips: running, done or failed. */
+export function ToolStatus({ tools, className }: { tools: LiveTool[]; className?: string }) {
+  const mode = useMotionMode();
+  return <ul className={cn("flex flex-wrap gap-1.5", className)} aria-label="Werkzeuge" data-live-tools="">
+    {tools.map((item) => {
+      const state = toolState[item.state];
+      const Icon = item.state === "running" ? LoaderCircle : item.state === "ok" ? Check : TriangleAlert;
+      return <m.li key={item.id} data-tool-state={item.state} data-tool={item.tool}
+        initial={mode === "full" ? { opacity: 0, y: 4, filter: "blur(2px)" } : false} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+        transition={mode === "full" ? dialogSpring : { duration: 0 }}
+        className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium ring-1 ring-inset transition-colors duration-200", state.className)}>
+        <Icon aria-hidden="true" className={cn("size-3", item.state === "running" && "animate-spin motion-reduce:animate-none")} />
+        {item.label}<span className="opacity-75">· {state.text}</span>
+      </m.li>;
+    })}
+  </ul>;
+}
+
 /**
- * The answer that is being worked on: the orb, the current step and the streamed words inside a traveling beam.
- * It subscribes to the live store itself, so streaming never re-renders the conversation above it.
+ * The answer that is being worked on: the orb, the current step, the tools it calls and the streamed words inside a
+ * traveling beam. It subscribes to the live store itself, so streaming never re-renders the conversation above it.
  */
 export function LiveAnswer({ live }: { live: LiveRunStore }) {
-  const { status = workStatus.read, text } = useSyncExternalStore(live.subscribe, live.get, live.get);
+  const { status = workStatus.read, text, tools } = useSyncExternalStore(live.subscribe, live.get, live.get);
   const row = useRef<HTMLDivElement>(null);
   // Keeps the growing answer in view; instant, so a smooth scroll per frame does not fight the next one.
-  useLayoutEffect(() => { row.current?.scrollIntoView?.({ block: "end" }); }, [text, status.text]);
+  useLayoutEffect(() => { row.current?.scrollIntoView?.({ block: "end" }); }, [text, status.text, tools?.length]);
   return <div ref={row} data-live-answer="">
     <MessageEnter animate mine={false} className="flex items-start gap-3" aria-busy="true">
       <OrbAvatar activity={status.activity} />
       <GlowFrame kind="working" active className={text ? "min-w-0 max-w-[85%]" : "min-w-0"}>
         {text ? <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
           <StatusLine status={status} className="mb-1.5" />
+          {tools?.length ? <ToolStatus tools={tools} className="mb-2" /> : null}
           <span className="sr-only">Assistent: </span><StreamingText text={text} />
         </div>
-          : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status} /></div>}
+          : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status} />
+            {tools?.length ? <ToolStatus tools={tools} className="mt-2" /> : null}</div>}
       </GlowFrame>
     </MessageEnter>
   </div>;

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { Dialog } from "radix-ui";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatEmptyState, ComposerButton, createLiveRun, LiveAnswer, MessageActions } from "@/components/assistant-chat-parts";
+import { AnswerDetails } from "@/components/assistant-details";
 import { workStatus } from "@/lib/assistant/status";
 
 // jsdom has no canvas; the orb and the bots simply draw nothing.
@@ -117,6 +118,36 @@ it("shows only the thinking orb and the current step while an answer is worked o
   act(() => live.setStatus({ ...workStatus.think, agent: "payroll", model: "Lokal (Qwen)" }));
   expect(screen.getByText("Denke gründlich nach…")).toBeTruthy();
   expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: Lokal (Qwen)");
+});
+
+it("shows each tool call live as running, then done or failed, and bundles models, prompt and calls in one closed Details panel", () => {
+  const live = createLiveRun();
+  live.setStatus(workStatus.web);
+  const { container } = render(<LiveAnswer live={live} />);
+  act(() => { live.startTool("web", "Websuche"); live.startTool("query", "Ausgaben & Einnahmen"); });
+  const chip = (tool: string) => container.querySelector(`[data-tool="${tool}"]`);
+  expect(chip("web")?.getAttribute("data-tool-state")).toBe("running");
+  expect(chip("web")?.textContent).toContain("Läuft");
+  act(() => { live.finishTool("web", "Websuche", true); live.finishTool("query", "Ausgaben & Einnahmen", false); });
+  expect(chip("web")?.textContent).toContain("Erfolgreich");
+  expect(chip("query")?.textContent).toContain("Fehler");
+  act(() => live.reset());
+  expect(container.querySelector("[data-live-tools]")).toBeNull();
+  cleanup();
+
+  render(<AnswerDetails source="KI" prompt="Du bist Finanzblick …"
+    models={[{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }, { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" }]}
+    calls={[{ tool: "query", ok: true, summary: "Ausgaben & Einnahmen", args: "Wie viel für Essen im Oktober?", result: "Essen im Oktober: 312 €" }]} />);
+  const toggle = screen.getByRole("button", { name: /^Details\s+DeepSeek V4 Pro\s+1 Werkzeug$/ });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("Du bist Finanzblick …")).toBeNull();
+  fireEvent.click(toggle);
+  const panel = screen.getByRole("region", { name: "Details zur Antwort" });
+  expect(panel.textContent).toContain("Supervisor:DeepSeek Flash");
+  expect(panel.textContent).toContain("Supervisor-Antwort:DeepSeek V4 Pro");
+  expect(panel.textContent).toContain("Du bist Finanzblick …");
+  expect(panel.textContent).toContain("Eingabe: Wie viel für Essen im Oktober?");
+  expect(panel.textContent).toContain("Ergebnis: Essen im Oktober: 312 €");
 });
 
 it("draws streamed words at most once per frame and clears at once", async () => {

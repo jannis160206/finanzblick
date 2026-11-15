@@ -67,8 +67,8 @@ Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das l
 | Websuche | `deepseek-flash` | Zusammenfassung der Suchtreffer |
 | Auslesen | `deepseek-flash` | Kassenbon-Artikel, Logo-Suche |
 | Folgefragen | `deepseek-flash` | 2–3 Vorschläge zum selben Thema unter jeder Antwort; ohne DeepSeek feste Vorschläge zum Thema, nie Qwen |
-| Supervisor | `deepseek-v4-pro` | jede Frage, die kein Befehl ist: sieht den Datenüberblick, wählt 0–4 Lese-Werkzeuge, lokales Wissen oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
-| Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt jede Antwort aus den Rohdaten der Spezialisten; Steuer-Analysen im Denkmodus |
+| Supervisor | `deepseek-flash` | jede Frage, die kein Befehl ist: sieht den Datenüberblick, wählt 0–4 Lese-Werkzeuge, lokales Wissen oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
+| Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt jede Analyse, Zusammenfassung, Bewertung, Recherche und Erklärung aus den Rohdaten der Spezialisten; Steuer-Analysen im Denkmodus; Smalltalk ohne Daten auf `deepseek-flash` |
 | Regel aus Feedback | `deepseek-v4-pro` | 👎-Kommentar → Regel, danach Gold-Eval auf Flash; ohne DeepSeek wartet sie |
 | PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
 | Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |
@@ -96,6 +96,7 @@ DEEPSEEK_API_KEY=sk-…
 | `FINANZBLICK_AI_LOG` | an | `off` schaltet die `[KI]`-Zeilen im Serverlog ab |
 | `FINANZBLICK_KNOWLEDGE_VECTORS` | `data/assistant-knowledge.sqlite`, in Produktion neben der Datenbank | sqlite-vec-Datei mit den Vektoren gespeicherter Antworten (absoluter Pfad, `off` = nur im Speicher) |
 | `FINANZBLICK_RULES_FILE` | neben der Feedback-Datei | Regeln aus 👎-Kommentaren (absoluter Pfad) |
+| `FINANZBLICK_AGENT_PROMPTS` | `config/agent-prompts.json`, in Produktion neben der Datenbank | bearbeitete Agenten-Prompts (absoluter Pfad); ohne Datei gelten die Standards im Code |
 
 **Rückfall:** Schlägt ein DeepSeek-Aufruf fehl, beantwortet Qwen dieselbe Anfrage sofort. Damit nicht jede Nachricht erst auf einen Fehler wartet, pausiert DeepSeek danach:
 
@@ -108,9 +109,9 @@ Beim Streamen wechselt der Rückfall nur vor dem ersten Wort. Bricht DeepSeek mi
 **Sichtbarkeit:**
 
 - Serverlog: `[KI] Antwort → DeepSeek Flash (deepseek-flash) · 1840 ms · 512→64 Token`, beim Rückfall mit dem Grund, z. B. `· Fallback: DeepSeek Rate-Limit (HTTP 429)`.
-- Chat: Die Statuszeile zeigt, welches Modell gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“). Jede fertige Antwort nennt das Modell statt „KI“, beim Rückfall mit „· Fallback“ und dem Grund als Tooltip.
+- Chat: Die Statuszeile zeigt, welches Modell gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“), darunter die laufenden Werkzeuge. Jede fertige Antwort trägt ein eingeklapptes „Details“ mit dem Modell (beim Rückfall „· Fallback“ und dem Grund als Tooltip), dem System-Prompt und den Werkzeugaufrufen.
 - Admin-Ansicht (Einstellungen → „Assistent-Orchestrator“): Status „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder die Warnung „Lokal (Qwen) aktiv · DeepSeek …“, der Bereich „Modelle“ mit dem Modell je Aufgabe und in „Letzte Läufe“ die Modelle jedes Laufs.
-- `/api/ai/status` meldet `cloud.available`, `cloud.error`, `local` und `routing` (Modell je Aufgabe). Den Key prüft es höchstens einmal pro Minute mit `GET /models`.
+- `/api/ai/status` meldet `cloud.available`, `cloud.error`, `local`, `routing` (Modell je Aufgabe) und `usage` (Token je Modell seit Serverstart, für die Kostenschätzung). Den Key prüft es höchstens einmal pro Minute mit `GET /models`.
 
 **Datenschutz:** Vor dem Versand ersetzt derselbe Pseudonymisierer wie beim MCP-Server (siehe [Pseudonymisierung](#pseudonymisierung)) Personen, IBANs, E-Mails, Telefon-, Karten- und lange Kontonummern durch Platzhalter. In Antworten und Werkzeugargumenten setzt der Server die echten Werte wieder ein, auch wenn ein Platzhalter beim Streamen auf zwei Teile fällt. Händlernamen, Kategorien, Beträge und Datumsangaben gehen lesbar an DeepSeek. PDF-Auszüge, Einbettungen, das lokale Finanzwissen (RAG) und die gespeicherten Antworten bleiben auf dem Rechner; gespeichert werden nur allgemeine Antworten ohne persönliche Daten (siehe [Lokales Wissen aus Antworten](ASSISTANT-ORCHESTRATOR.md#lokales-wissen-aus-antworten)). Wer gar nichts verschicken will, lässt den Key weg oder setzt `FINANZBLICK_CLOUD_AI=off`.
 

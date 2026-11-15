@@ -31,7 +31,7 @@ test.describe("assistant orchestrator", () => {
   for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
     test(`lets the supervisor answer every question with the droid and lays out the results at ${width}px (${theme})`, async ({ page }, testInfo) => {
       await prepare(page, width, theme);
-      // The supervisor's plans are mocked (DeepSeek V4 Pro decides them in production); the workers run the real tools on synthetic data.
+      // The supervisor's plans are mocked (DeepSeek Flash makes them in production); the workers run the real tools on synthetic data.
       const plans: Record<string, object> = {
         "Hallo": { agent: "general", steps: [] },
         "Was hältst du von Bitcoin?": { agent: "general", steps: [] },
@@ -43,7 +43,7 @@ test.describe("assistant orchestrator", () => {
         const body = route.request().postDataJSON() as { message: string; overview?: Record<string, unknown> };
         routed.push(body);
         await route.fulfill({ json: { ...plans[body.message], via: "supervisor", supervised: true, source: "KI",
-          models: [{ provider: "deepseek", model: "deepseek-v4-pro", task: "supervise" }] } });
+          models: [{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }] } });
       });
       const answers: { question: string; agent?: string; facts?: Record<string, unknown>; evidence?: string; supervised?: boolean }[] = [];
       const replies: Record<string, string> = {
@@ -56,8 +56,11 @@ test.describe("assistant orchestrator", () => {
         const body = route.request().postDataJSON() as (typeof answers)[number];
         answers.push(body);
         const text = replies[body.question] ?? "Okay.";
+        // The forecast's answer takes a moment, so its finished tool call can be seen live.
+        if (body.question === "Wird mein Konto knapp?") await new Promise((resolve) => setTimeout(resolve, 1500));
         await route.fulfill({ contentType: "application/x-ndjson; charset=utf-8",
-          body: [{ model: { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" } }, { delta: text.slice(0, 6) }, { done: true, ok: true, text }]
+          body: [{ prompt: "Du bist Finanzblick (Test-Prompt)." }, { model: { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" } },
+            { delta: text.slice(0, 6) }, { done: true, ok: true, text }]
             .map((event) => JSON.stringify(event)).join("\n") + "\n" });
       });
       await page.goto("/");
@@ -85,11 +88,29 @@ test.describe("assistant orchestrator", () => {
       expect(answers.at(-1)?.evidence).toMatch(/^Rohdaten der Spezialisten[\s\S]*\[Gehaltsübersicht\] Wie viel netto bekomme ich\?/);
       const payroll = chat.getByRole("list", { name: "Ergebnisse" }).last().getByRole("article", { name: /^Gehalt · / });
       await expect(payroll).toBeVisible();
-      await payroll.getByRole("button", { name: "Details" }).click();
+      await payroll.getByRole("button", { name: "Mehr" }).click();
       await expect(payroll.getByText(/^Nächste Sonderzahlung/)).toBeVisible();
+      // One closed "Details" panel: the models, the system prompt and the tool call with its question and result.
+      const details = chat.getByRole("button", { name: /^Details\s/ }).last();
+      await expect(details).toHaveAccessibleName(/^Details\s+DeepSeek V4 Pro\s+\d Werkzeuge$/);
+      await expect(details).toHaveAttribute("aria-expanded", "false");
+      await details.click();
+      const panel = chat.getByRole("region", { name: "Details zur Antwort" });
+      await expect(panel).toContainText("Supervisor:DeepSeek Flash");
+      await expect(panel).toContainText("Supervisor-Antwort:DeepSeek V4 Pro");
+      await expect(panel).toContainText("Du bist Finanzblick (Test-Prompt).");
+      await expect(panel.locator('[data-call="payroll"]')).toContainText("Gehaltsübersicht");
+      await expect(panel).toContainText("Eingabe: Wie viel netto bekomme ich?");
+      await expect(panel).toContainText("Ergebnis:");
+      await details.click();
+      await expect(panel).toHaveCount(0);
 
       // A forecast: key figures as badges, the trend as a sparkline, the key statement first.
       await ask(page, "Wird mein Konto knapp?");
+      // While the answer is written, the finished tool call shows live with its state.
+      const live = chat.locator('[data-live-answer] [data-tool="forecast"]');
+      await expect(live).toHaveAttribute("data-tool-state", "ok");
+      await expect(live).toHaveText("Kontoprognose· Erfolgreich");
       await expect(chat.getByText("Ja, dein Girokonto wird knapp.")).toBeVisible();
       await expect(chat.getByRole("list", { name: "Kennzahlen" }).last()).toBeVisible();
       await expect(chat.getByRole("img", { name: /^Verlauf / }).last()).toBeVisible();

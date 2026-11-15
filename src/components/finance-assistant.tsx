@@ -39,12 +39,13 @@ import {
 } from "@/lib/assistant/web-learning";
 import { webEvidence, webFallbackAnswer, webLinks, type WebSearchResult } from "@/lib/web/web-answer";
 import { buildFeedbackEntry, type FeedbackEntry } from "@/lib/assistant/feedback";
-import { failedAnswer, lookupTool, toolCall, toolLabel } from "@/lib/assistant/orchestrator-info";
+import { callLabel, failedAnswer, lookupTool, toolCall, toolLabel } from "@/lib/assistant/orchestrator-info";
+import { AnswerDetails } from "@/components/assistant-details";
 import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
 import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
 import type { LocalKnowledgeHit, LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
-import { agentEvidence, agentFacts, agentSuggestions, usesPersonalFacts } from "@/lib/assistant/specialist-context";
+import { agentEvidence, agentFacts, agentSuggestions, contextFacts, usesPersonalFacts } from "@/lib/assistant/specialist-context";
 import { currentInfo, type CurrentKind } from "@/lib/assistant/current-info";
 import { topicFollowUps } from "@/lib/assistant/follow-up-topics";
 import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
@@ -66,11 +67,11 @@ import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
 import { plannedOccurrences } from "@/lib/planned-one-offs";
 import {
-  appStateSchema, assistantDraftSchema, assistantMessageSchema, assistantModelUseSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES,
+  appStateSchema, assistantDraftSchema, assistantMessageSchema, assistantModelUseSchema, extraSourceSchema, MAX_ASSISTANT_MESSAGES, MAX_PROMPT_PREVIEW, PROMPT_KEPT_MESSAGES,
   type AppState, type AssistantCard, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantModelUse, type AssistantOperation, type AssistantToolCall,
   type WebLinkEntry,
 } from "@/lib/types";
-import { modelLabel, modelTitle } from "@/lib/ai/models";
+import { modelTitle } from "@/lib/ai/models";
 import { cn } from "@/lib/utils";
 
 // Tools whose answer depends only on the message text; phrasings for these are learned when the model understood them.
@@ -279,8 +280,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   };
   // The tools the running answer called (lookups, web search); the next answer it writes takes them, plus its own tool.
   const runCalls = useRef<AssistantToolCall[]>([]);
+  // A tool shows as running in the live answer from its start; its result turns it green or red.
+  const beginCall = (tool: string) => {
+    if (running.current) live.startTool(tool, callLabel(tool));
+  };
   const noteCall = (call: AssistantToolCall) => {
-    if (running.current && runCalls.current.length < 8) runCalls.current.push(call);
+    if (!running.current) return;
+    if (runCalls.current.length < 8) runCalls.current.push(call);
+    live.finishTool(call.tool, callLabel(call.tool), call.ok);
   };
   const takeCalls = (own?: AssistantToolCall) => {
     const noted = running.current ? runCalls.current : [];
@@ -300,6 +307,16 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const models = running.current ? runModels.current : [];
     runModels.current = [];
     return models.length ? { models } : {};
+  };
+  // The system prompt the running answer was written with, for its "Details".
+  const runPrompt = useRef<string | undefined>(undefined);
+  const notePrompt = (prompt: unknown) => {
+    if (running.current && typeof prompt === "string" && prompt.trim()) runPrompt.current = prompt;
+  };
+  const takePrompt = () => {
+    const prompt = running.current ? runPrompt.current : undefined;
+    runPrompt.current = undefined;
+    return prompt ? { prompt: prompt.slice(0, MAX_PROMPT_PREVIEW) } : {};
   };
   // The answer whose feedback comment field is open.
   const [commentFor, setCommentFor] = useState<string>();
@@ -437,10 +454,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       ...takeSteps(),
       ...takeCalls(meta.tool ? toolCall(meta.tool, { ok: !failedAnswer(result.text), change: result.change }) : undefined),
       ...takeModels(),
+      ...takePrompt(),
     };
     const parsed = assistantMessageSchema.safeParse(message);
     noteHandoff(message.id);
-    save((items) => [...items, parsed.success ? parsed.data : { id: message.id, role: "assistant", text: message.text, at: message.at }]);
+    save((items) => [...withoutOldPrompts(items), parsed.success ? parsed.data : { id: message.id, role: "assistant", text: message.text, at: message.at }]);
   };
   const knownNames = () => [...savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50),
     ...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth).map((item) => item.name.slice(0, 100)))].slice(0, 110);
@@ -622,10 +640,12 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
   async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal,
-    step = workStatus.answer, supervised = false) {
+    step = workStatus.answer, supervised = false, team: AgentId[] = []) {
     try {
       setStatus({ ...step, agent });
-      const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
+      // After the supervisor's plan V4 Pro sees the facts of every specialist involved, not just the leading one.
+      const facts = supervised ? contextFacts([agent, ...team], state, dashboard, state.settings.asOf, question)
+        : agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
@@ -644,17 +664,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
-          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 2500) } : {}), ...(supervised ? { supervised: true } : {}) }),
+          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 4000) } : {}), ...(supervised ? { supervised: true } : {}) }),
         });
         if (!response.ok) return undefined;
         if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
-          const text = await readAnswerStream(response.body, showText, onModel);
+          const text = await readAnswerStream(response.body, showText, onModel, notePrompt);
           // A rejected answer disappears again; the normal fallback takes over.
           if (!text) setStreaming(undefined);
           return text;
         }
-        const answer: { text?: unknown; models?: unknown } = await response.json();
+        const answer: { text?: unknown; models?: unknown; prompt?: unknown } = await response.json();
         if (Array.isArray(answer.models)) answer.models.forEach(onModel);
+        notePrompt(answer.prompt);
         return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
       };
       const text = await ask(context);
@@ -680,6 +701,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       return cached.value;
     }
     let value: MarketSnapshot | undefined;
+    beginCall(lookupTool.market);
     try {
       const response = await fetch(`/api/market?currencies=${encodeURIComponent(codes)}`, { cache: "no-store", signal: withTimeout(15000, signal) });
       if (response.ok) {
@@ -689,7 +711,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     } catch {
       // Unreachable: the values from earlier stay.
     }
-    if (!signal?.aborted) noteCall(toolCall(lookupTool.market, { ok: !!value }));
+    if (!signal?.aborted) noteCall(toolCall(lookupTool.market, { ok: !!value, args: codes || "EZB und Eurostat" }));
     return value ?? cached?.value;
   }
 
@@ -698,6 +720,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const topics = knowledgeTopics(text, names, true);
     const found: AssistantKnowledge[] = [], fresh: AssistantKnowledge[] = [], used: string[] = [];
     let offline = false;
+    if (topics.length) beginCall(lookupTool.lexicon);
     for (const topic of topics) {
       const stored = findKnowledge(state.assistantKnowledge, topic);
       if (stored && !isStale(stored)) { found.push(stored); used.push(stored.id); continue; }
@@ -717,7 +740,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       }
     }
     if (fresh.length || used.length) learn((current) => ({ ...current, assistantKnowledge: storeKnowledge(current.assistantKnowledge, fresh, used) }));
-    if (topics.length && !signal?.aborted) noteCall(toolCall(lookupTool.lexicon, { ok: !offline, empty: !found.length }));
+    if (topics.length && !signal?.aborted) noteCall(toolCall(lookupTool.lexicon, { ok: !offline, empty: !found.length, args: topics.join(", "),
+      result: found.map((entry) => entry.title).join(" · ") }));
     return { found, fresh: fresh.map((entry) => entry.id), offline };
   }
 
@@ -726,11 +750,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   async function searchLocalKnowledge(question: string, signal?: AbortSignal): Promise<LocalKnowledgeSearch | undefined> {
     const learned = learnedCandidates(state.assistantKnowledge);
     setStatus((current) => ({ ...(learned.length ? workStatus.recall : workStatus.knowledge), agent: current?.agent }));
+    beginCall(lookupTool.knowledge);
     try {
       const response = await fetch("/api/ai/knowledge", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500), ...(learned.length ? { learned } : {}) }), signal: withTimeout(5000, signal) });
       const result = response.ok ? await response.json() as LocalKnowledgeSearch : undefined;
-      noteCall(toolCall(lookupTool.knowledge, { ok: !!result, empty: !Array.isArray(result?.hits) || !result.hits.length }));
+      const hits = Array.isArray(result?.hits) ? result.hits : [];
+      noteCall(toolCall(lookupTool.knowledge, { ok: !!result, empty: !hits.length, args: question, result: hits.map((hit) => hit.title).join(" · ") }));
       return result;
     } catch {
       if (!signal?.aborted) noteCall(toolCall(lookupTool.knowledge, { ok: false }));
@@ -741,12 +767,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // The automatic web search: only search words leave the device; sources the user rejected for this question are skipped.
   async function searchTheWeb(question: string, signal?: AbortSignal, current?: CurrentKind): Promise<WebSearchResult | undefined> {
     setStatus((current) => ({ ...workStatus.web, agent: current?.agent }));
+    beginCall(WEB_TOOL);
     try {
       const avoid = avoidedSources(state.assistantKnowledge, question);
       const response = await fetch("/api/ai/web-search", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500), ...(avoid.length ? { avoid } : {}), ...(current ? { current } : {}) }), signal: withTimeout(15000, signal) });
       const result = response.ok ? await response.json() as WebSearchResult : undefined;
-      noteCall(toolCall(WEB_TOOL, { ok: !!result, empty: !result?.sources?.length }));
+      noteCall(toolCall(WEB_TOOL, { ok: !!result, empty: !result?.sources?.length, args: question,
+        result: result?.sources?.length ? `${result.sources.length} Quellen: ${webLinks(result).map((link) => linkSite(link.url)).join(", ")}` : undefined }));
       return result?.sources?.length ? result : undefined;
     } catch {
       if (!signal?.aborted) noteCall(toolCall(WEB_TOOL, { ok: false }));
@@ -790,6 +818,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (!isAssistantTool(step.tool) || changingTools.includes(step.tool) || isDraftTool(step.tool)) continue;
       const tool = step.tool;
       setStatus(statusFor(tool, agent));
+      beginCall(tool);
       try {
         const market = tool === "market" || tool === "depot" ? await loadMarket(step.question, signal) : undefined;
         const knowledge = tool === "knowledge" ? await loadKnowledge(step.question, names, signal) : undefined;
@@ -798,12 +827,12 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         parts.push(rawData(toolLabel[tool], step.question, result));
         if (result.card && showsData(result.card) && cards.length < 4) cards.push(result.card);
         if (result.text.trim()) findings.push(result.text);
-        noteCall(toolCall(tool, { ok: !failedAnswer(result.text) }));
+        noteCall(toolCall(tool, { ok: !failedAnswer(result.text), args: step.question, result: result.text }));
       } catch {
-        noteCall(toolCall(tool, { ok: false }));
+        noteCall(toolCall(tool, { ok: false, args: step.question }));
       }
     }
-    return { ...(parts.length ? { evidence: `Rohdaten der Spezialisten (vom Code berechnet bzw. öffentliche Quellen):\n\n${parts.join("\n\n")}`.slice(0, 2300) } : {}),
+    return { ...(parts.length ? { evidence: `Rohdaten der Spezialisten (vom Code berechnet bzw. öffentliche Quellen):\n\n${parts.join("\n\n")}`.slice(0, 3200) } : {}),
       links: links.slice(0, 4), cards, findings, web };
   }
 
@@ -890,6 +919,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     runSteps.current = [];
     runCalls.current = [];
     runModels.current = [];
+    runPrompt.current = undefined;
     setCommentFor(undefined);
     setStatus(workStatus.read);
     await afterPaint();
@@ -1087,7 +1117,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
-    // The same question as a confirmed answer from earlier: answered right away, without routing, search or model.
+    // Only while the supervisor is down: the same question as a confirmed answer from earlier is answered right away. With the
+    // supervisor V4 Pro writes the answer and uses the confirmed one as evidence (see the supervised branch).
     // A command or a question for one of the tools ("Zeig mir meinen ETF-Sparplan") always goes to its tool.
     // Today's values (quotes, news, current prices, rates, this year's tax figures) always come from the web, never from local
     // knowledge. The market tool keeps its live ECB and Eurostat data; questions about the user's own figures keep their tools.
@@ -1095,7 +1126,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const liveTool = live ? detectTool(work, names) : undefined;
     const current = live && (!liveTool || liveTool === "knowledge") ? live : undefined;
     const webFirst = forceWeb || !!current;
-    const remembered = open && !webFirst && !detectTool(work, names) ? recallConfirmed(state.assistantKnowledge, work) : undefined;
+    const remembered = open && !supervisorFirst && !webFirst && !detectTool(work, names) ? recallConfirmed(state.assistantKnowledge, work) : undefined;
     if (remembered) {
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
@@ -1253,25 +1284,20 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         ? await searchLocalKnowledge(work, signal) : undefined;
       if (halted(agent)) return;
       const recalled = wisdom ? confidentHit(wisdom.hits, wisdom.mode) : undefined;
+      // A confirmed answer from earlier is the most reliable evidence, but V4 Pro still writes the answer with today's data.
       const confirmed = recalled?.learned && !webFirst ? learnedAnswer(recalled) : undefined;
-      if (confirmed) {
-        await settle();
-        if (halted(agent)) return;
-        addResult(withNotes(confirmed.result), "Regel", { tool: LEARNED_TOOL, asked: work, agent: "general", via, ms: elapsed(),
-          sources: [confirmed.label], knowledgeId: confirmed.knowledgeId, ...(confirmed.links?.length ? { links: confirmed.links } : {}) });
-        setStatus(undefined);
-        return;
-      }
       const found = await runWorkers(steps, agent, [...goals, ...planned], signal, current?.kind);
       if (halted(agent)) return;
       const hints = found.web ? correctionNotes(state.assistantKnowledge, work) : [];
+      const team = [...new Set(steps.flatMap((step) => (toolOwner as Partial<Record<string, AgentId>>)[step.tool] ?? []))];
       const evidence = [
+        confirmed ? `Vom Nutzer bestätigte frühere Antwort auf diese Frage (verlässlich, übernimm den Inhalt in eigenen Worten): ${confirmed.result.text.slice(0, 1200)}` : "",
         current && !found.web ? "Die Live-Abfrage (Kurse, Nachrichten, Websuche) hat gerade nichts geliefert. Sag das ehrlich und nenne keine Werte aus dem Gedächtnis." : "",
         found.evidence, hints.length ? `Hinweis des Nutzers zu früheren Antworten auf diese Frage: ${hints.join(" ")}` : "",
         knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work),
       ].filter(Boolean).join("\n\n") || undefined;
-      let links = found.links;
-      let free = await freeAnswer(work, history, agent, evidence, signal, workStatus.combine, true);
+      let links = confirmed?.links?.length ? [...confirmed.links, ...found.links].slice(0, 4) : found.links;
+      let free = await freeAnswer(work, history, agent, evidence, signal, workStatus.combine, true, team);
       if (halted(agent)) return;
       // An answer that admits not knowing gets one more web search, then the supervisor writes again.
       if (unsureAnswer(free) && !found.web) {
@@ -1280,7 +1306,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         if (web) {
           setStreaming(undefined);
           links = webLinks(web);
-          free = await freeAnswer(work, history, agent, [webEvidence(web, 1200), evidence].filter(Boolean).join("\n\n"), signal, workStatus.combine, true) ?? free;
+          free = await freeAnswer(work, history, agent, [webEvidence(web, 1200), evidence].filter(Boolean).join("\n\n"), signal, workStatus.combine, true, team) ?? free;
           if (halted(agent)) return;
         }
       }
@@ -1293,9 +1319,14 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         suggestions: webAnswer ? ["Das hat geholfen", ...onTopicFallback(work, agent).slice(0, 2)] : onTopicFallback(work, agent) }), "KI",
         { tool: webAnswer ? WEB_TOOL : "free", asked: work, ...run, ms: elapsed(), ...(links.length ? { links } : {}),
           ...(wisdom?.hits.length && steps.some((step) => step.tool === "knowledge") ? { sources: wisdom.hits.map((hit) => hit.title) } : {}),
-          // Kept as general knowledge only without the user's figures; today's values never (see answer memory).
-          ...(webAnswer ? keepAnswer(work, free, "web", links) : !personal ? keepAnswer(work, free, "answer") : {}) });
-      else {
+          // 👍/👎 on an answer built from a confirmed one count for that entry.
+          ...(confirmed ? { sources: [confirmed.label], ...(confirmed.knowledgeId ? { knowledgeId: confirmed.knowledgeId } : {}) }
+            // Kept as general knowledge only without the user's figures; today's values never (see answer memory).
+            : webAnswer ? keepAnswer(work, free, "web", links) : !personal ? keepAnswer(work, free, "answer") : {}) });
+      else if (confirmed) {
+        addResult(withNotes(confirmed.result), "Regel", { tool: LEARNED_TOOL, asked: work, agent: "general", via, ms: elapsed(),
+          sources: [confirmed.label], knowledgeId: confirmed.knowledgeId, ...(confirmed.links?.length ? { links: confirmed.links } : {}) });
+      } else {
         if (!signal.aborted) noteCall(toolCall("free", { ok: false }));
         // Without words from the model the workers' own findings speak, with their cards.
         addResult(withNotes({ text: found.findings[0] ?? "Gerade kann ich keine Antwort formulieren. Versuch es gleich noch einmal.", ...(cards.length ? { cards } : {}),
@@ -1589,8 +1620,8 @@ const MessageRow = memo(function MessageRow({ message, state, dashboard, last, l
   return <MessageEnter animate={enter} mine={message.role === "user"}
     className="group/message flex flex-col gap-2" data-role={message.role} data-agent={message.agent}
     data-via={message.via} data-ms={message.ms} data-tool={message.tool} data-source={message.source}>
-    <Bubble role={message.role} text={message.text} source={message.source} models={message.models} sources={message.sources} links={message.links} faded={message.status === "dismissed"}
-      live={live} handoff={handoff}>
+    <Bubble role={message.role} text={message.text} source={message.source} models={message.models} calls={message.calls} prompt={message.prompt}
+      sources={message.sources} links={message.links} faded={message.status === "dismissed"} live={live} handoff={handoff}>
       {message.cards?.length ? <AnswerLayout cards={message.cards} state={state} onResult={locked ? undefined : (result) => act()?.addResult(result, "Regel")} />
         : message.card && message.card.kind !== "homeoffice" && <ResultCard card={message.card} state={state} embedded
           onResult={locked ? undefined : (result) => act()?.addResult(result, "Regel")} />}
@@ -1674,9 +1705,9 @@ function QuickReplies({ items, byModel, disabled, onPick }: { items: string[]; b
   </div>;
 }
 
-function Bubble({ role, text, source, models, sources, links, faded, live, handoff, children }: {
-  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; models?: AssistantModelUse[]; sources?: string[]; links?: WebLinkEntry[];
-  faded?: boolean; live?: boolean;
+function Bubble({ role, text, source, models, calls, prompt, sources, links, faded, live, handoff, children }: {
+  role: "user" | "assistant"; text: string; source?: "KI" | "Regel"; models?: AssistantModelUse[]; calls?: AssistantToolCall[]; prompt?: string;
+  sources?: string[]; links?: WebLinkEntry[]; faded?: boolean; live?: boolean;
   handoff?: { activity: WorkActivity }; children?: React.ReactNode;
 }) {
   if (role === "user") return <div className={cn("flex justify-end", faded && "opacity-60")}>
@@ -1684,28 +1715,35 @@ function Bubble({ role, text, source, models, sources, links, faded, live, hando
       <span className="sr-only">Du: </span><span className="whitespace-pre-line">{text}</span>
     </div>
   </div>;
-  // The model that wrote the answer replaces the plain "KI"; a fallback to the local model says why on hover.
-  const model = source === "KI" ? models?.findLast((item) => item.task !== "suggest") : undefined;
-  // Which specialist worked on the answer stays internal (admin view); the chat names only the model.
-  const label = source === "KI" ? model ? modelLabel(model) : "KI" : "";
-  const labelTitle = model?.fallback ? `DeepSeek nicht verfügbar${model.reason ? ` (${model.reason})` : ""} – das lokale Modell hat geantwortet` : undefined;
+  // How the answer came about (models, prompt, tool calls) sits in one closed "Details" panel; which specialist worked on it stays internal.
+  const details = source === "KI" || !!models?.length || !!calls?.length || !!prompt;
   // Only the newest answer's bot stays awake; older ones keep their pose, so a long chat costs no extra frames.
   return <div className={cn("flex items-start gap-3", faded && "opacity-60")}>
     {handoff ? <HandoffAvatar activity={handoff.activity} live={!!live} /> : <DroidAvatar still={!live} className="mt-0.5" />}
     <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
       <span className="sr-only">Assistent: </span><AnswerProse text={text} />
-      {(label || sources?.length || links?.length) && <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
-        {label && <span title={labelTitle} data-model={model?.model}>{label}{model?.fallback && <>{" · Fallback"}<span className="sr-only">: {labelTitle}</span></>}</span>}
+      {(details || sources?.length || links?.length) && <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+        {details && <AnswerDetails source={source} models={models} calls={calls} prompt={prompt} />}
         {sources?.length ? <span>{links?.length ? sources.join(" · ") : `Wissen: ${sources.join(" · ")}`}</span> : null}
         {links?.length ? <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1"><span>Quellen:</span>
           {links.map((link, index) => <a key={link.url} href={link.url} target="_blank" rel="noreferrer noopener" title={link.title}
             className="rounded-sm underline decoration-border underline-offset-2 transition-colors hover:text-foreground hover:decoration-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
             [{index + 1}] {linkSite(link.url)}<span className="sr-only"> (öffnet in neuem Tab)</span></a>)}
         </span> : null}
-      </span>}
+      </div>}
       {children}
     </div>
   </div>;
+}
+
+// Only the newest answers keep their system prompt, so a long chat stays small.
+function withoutOldPrompts(items: AssistantMessage[]): AssistantMessage[] {
+  const keepFrom = items.length - PROMPT_KEPT_MESSAGES + 1;
+  return items.map((item, index) => {
+    if (!item.prompt || index >= keepFrom) return item;
+    const { prompt: _dropped, ...rest } = item;
+    return rest;
+  });
 }
 
 const linkSite = (url: string) => {

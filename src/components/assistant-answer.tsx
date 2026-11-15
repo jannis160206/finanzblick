@@ -105,7 +105,7 @@ function Tile({ card, state, onResult }: { card: AssistantCard; state: AppState;
     </ul>}
     {more && <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}
       className="mt-auto inline-flex min-h-9 items-center gap-1 self-start pt-2 text-xs font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-ring">
-      <ChevronDown aria-hidden="true" className={cn("size-3.5 transition-transform motion-reduce:transition-none", open && "rotate-180")} />{open ? "Weniger" : "Details"}</button>}
+      <ChevronDown aria-hidden="true" className={cn("size-3.5 transition-transform motion-reduce:transition-none", open && "rotate-180")} />{open ? "Weniger" : "Mehr"}</button>}
     {open && <ResultCard card={card} state={state} embedded onResult={onResult} />}
   </article>;
 }

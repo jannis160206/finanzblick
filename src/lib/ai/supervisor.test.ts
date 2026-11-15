@@ -32,7 +32,17 @@ describe("supervisor", () => {
     ["anything vague becomes a written answer", { art: "rueckfrage", rueckfrage: "Betrag" }, { kind: "answer", agent: "general", steps: [] }],
   ])("%s", (_label, raw, expected) => expect(cleanSupervision(raw)).toEqual(expected));
 
-  it("asks DeepSeek V4 Pro with the team, the data overview and the rule hint, and fails without DeepSeek instead of asking the local model", async () => {
+  it("answers from the user's figures instead of asking for a price, an amount or a duration", () => {
+    expect(cleanSupervision({ spezialist: "budget", art: "rueckfrage", rueckfrage: "Wie viel soll das neue Handy kosten?" }, undefined, "Kann ich mir ein neues Handy leisten?"))
+      .toEqual({ kind: "answer", agent: "budget", steps: [{ tool: "budget", question: "Kann ich mir ein neues Handy leisten?" }] });
+    expect(cleanSupervision({ spezialist: "budget", art: "rueckfrage", rueckfrage: "Über welchen Zeitraum willst du sparen?", schritte: [{ werkzeug: "pulse", frage: "Was ist frei?" }] }))
+      .toEqual({ kind: "answer", agent: "budget", steps: [{ tool: "pulse", question: "Was ist frei?" }] });
+    // Which of several bookings is meant stays a real question, even when it names an amount.
+    expect(cleanSupervision({ spezialist: "umsaetze", art: "rueckfrage", rueckfrage: "Welche Buchung meinst du, die mit dem Betrag 49,99 € oder 59,99 €?" }))
+      .toMatchObject({ kind: "ask" });
+  });
+
+  it("asks DeepSeek Flash with the team, the data overview and the rule hint, and fails without DeepSeek instead of asking the local model", async () => {
     let body: { model?: string; messages?: { content: string }[] } = {};
     const fetcher = (async (_url: RequestInfo | URL, init?: RequestInit) => {
       body = JSON.parse(String(init?.body));
@@ -42,7 +52,7 @@ describe("supervisor", () => {
     const plan = await supervise({ message: "Kann ich mir ein neues Handy leisten?", hint: "funds", overview: { freeUntilSalary: { freeUntilSalary: 412.5 } } },
       { config, fetcher, trace, rules: ["Nenne immer den Monat."] });
     expect(plan).toEqual({ kind: "answer", agent: "budget", steps: [] });
-    expect(trace).toMatchObject([{ model: "deepseek-v4-pro", task: "supervise" }]);
+    expect(trace).toMatchObject([{ model: "deepseek-flash", task: "supervise" }]);
     expect(body.messages?.[0].content).toMatch(/budget_plan\* = [\s\S]*\nweb = /);
     expect(body.messages?.[0].content).toContain("Nenne immer den Monat.");
     expect(body.messages?.[1].content).toContain('Datenüberblick (JSON): {"freeUntilSalary":{"freeUntilSalary":412.5}}');

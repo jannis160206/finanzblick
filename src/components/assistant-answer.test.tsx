@@ -21,7 +21,7 @@ it("lays out key figures, one tile per result with its trend, and the full card 
     .toEqual(["Monatsplan · November 2026", "Kontoprognose"]);
   expect(screen.getByRole("img", { name: /^Verlauf Kontostand: Nov 1\.200,00\s€, Dez 900,00\s€$/ })).toBeTruthy();
   expect(screen.getByText("−25 %")).toBeTruthy();
-  const details = screen.getAllByRole("button", { name: "Details" })[0];
+  const details = screen.getAllByRole("button", { name: "Mehr" })[0];
   fireEvent.click(details);
   expect(details.getAttribute("aria-expanded")).toBe("true");
 });

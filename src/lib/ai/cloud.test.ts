@@ -150,7 +150,9 @@ describe("fallback to the local model", () => {
     const events = [];
     resetCloudHealth();
     for await (const event of streamFreeAnswer({ question: "Was bleibt?", facts: { left: 420 } }, { config, fetcher })) events.push(event);
-    expect(events[0]).toEqual({ model: { provider: "local", model: config.model, task: "chat", fallback: true, reason: "Dienst gestört (HTTP 500)" } });
+    // The system prompt comes first for the answer's "Details", then the model that took the question.
+    expect(events[0]).toMatchObject({ prompt: expect.stringContaining("Du bist Finanzblick") });
+    expect(events[1]).toEqual({ model: { provider: "local", model: config.model, task: "chat", fallback: true, reason: "Dienst gestört (HTTP 500)" } });
     expect(events.at(-1)).toEqual({ done: true, ok: true, text: "Dir bleiben 420 €." });
   });
 });
@@ -230,7 +232,7 @@ describe("privacy and tokens", () => {
   it("reports the models of an interpretation", async () => {
     const { fetcher } = stub(() => completion("{\"spezialist\":\"umsaetze\",\"art\":\"antwort\",\"schritte\":[{\"werkzeug\":\"query\",\"frage\":\"Essen im Oktober\"}]}"));
     const reply = await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober fürs Essen ausgegeben?", asOf: "2026-11-14" }, { config, fetcher });
-    expect(reply).toMatchObject({ supervised: true, steps: [{ tool: "query" }], source: "KI", models: [{ provider: "deepseek", model: "deepseek-v4-pro", task: "supervise" }] });
+    expect(reply).toMatchObject({ supervised: true, steps: [{ tool: "query" }], source: "KI", models: [{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }] });
     const offline = await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober fürs Essen ausgegeben?", asOf: "2026-11-14" },
       { config: { ...local, enabled: false }, fetcher });
     expect(offline.models).toBeUndefined();

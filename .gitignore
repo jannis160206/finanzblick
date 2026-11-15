@@ -55,6 +55,7 @@ next-env.d.ts
 /data/assistant-feedback.json*
 # rules learned from 👎 comments and the response cache of their eval check
 /data/assistant-rules.json*
+/config/agent-prompts.json*
 /data/ai-cache/
 /test-results/
 /playwright-report/

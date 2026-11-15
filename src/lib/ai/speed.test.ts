@@ -150,6 +150,12 @@ describe("agent answers", () => {
     expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?", supervised: undefined })).toBe("reasoning");
     expect(answerTask({ ...input, agent: "payroll", question: "Warum zahle ich so viel Lohnsteuer?" })).toBe("reasoning");
     expect(answerTask({ ...input, agent: "payroll", question: "Wie viel netto bekomme ich?" })).toBe("synthesize");
+    // Only small talk and creative requests without data stay on Flash once the supervisor took the question.
+    const talk = { question: "Hey, wie geht's dir?", facts: { today: "2026-11-11" }, supervised: true };
+    expect(answerTask(talk)).toBe("chat");
+    expect(answerTask({ ...talk, question: "Schreib mir ein Gedicht über den Herbst" })).toBe("chat");
+    expect(answerTask({ ...talk, question: "Erklär mir, was ein ETF ist" })).toBe("synthesize");
+    expect(answerTask({ ...talk, evidence: "Websuche …" })).toBe("web");
   });
 
   it("never lets an invented small euro amount through", async () => {

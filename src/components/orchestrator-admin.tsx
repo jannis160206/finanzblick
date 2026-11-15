@@ -1,8 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { Ban, Check, CheckCheck, ChevronLeft, Clock, Cpu, Download, Inbox, MessageSquareText, RefreshCw, ThumbsDown, ThumbsUp, Undo2, Workflow, X, type LucideIcon } from "lucide-react";
+import { m } from "motion/react";
+import {
+  Ban, Check, CheckCheck, ChevronLeft, Clock, Cpu, Download, Globe, Inbox, ListChecks, MessageSquareText, RefreshCw, RotateCcw, Save, Sparkles, ThumbsDown,
+  ThumbsUp, Undo2, Workflow, X, type LucideIcon,
+} from "lucide-react";
+import { OrchestratorNav } from "@/components/orchestrator-nav";
+import { dialogSpring, useMotionMode } from "@/components/ui/premium-dialog/motion";
 import { FinancialData } from "@/components/financial-data";
 import { useFinance } from "@/components/finance-provider";
 import { PageHeading } from "@/components/finance-ui";
@@ -14,7 +20,9 @@ import {
   agentInfo, agentOrder, agentToolList, assistantRuns, callStateLabel, changesData, orchestratorSteps, runStatusLabel, toolLabel, viaLabel,
   type AssistantRun, type CallState, type RunCall, type RunModel, type RunStatus,
 } from "@/lib/assistant/orchestrator-info";
-import { taskLabel, type AiTask } from "@/lib/ai/models";
+import { costOverview, MONTHLY_BUDGET_USD, taskLabel, type AiTask } from "@/lib/ai/models";
+import { MAX_PROMPT_LENGTH, type PromptGroup, type PromptId, type PromptMeta } from "@/lib/ai/agent-prompts";
+import type { OrchestratorView } from "@/lib/assistant/orchestrator-pages";
 import { MAX_ACTIVE_RULES, statusLabel, type FeedbackRule, type RuleStatus } from "@/lib/assistant/feedback-rules";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +33,8 @@ type AiStatus = {
   cloud?: { provider: "deepseek"; available: boolean; models: Record<"fast" | "pro" | "reasoning", string>; error?: string };
   /** Which model answers each task right now (with the local model as fallback). */
   routing?: { task: AiTask; label: string; model: string; fallback?: boolean }[];
+  /** Token counters per model since the server started. */
+  usage?: Record<string, { calls: number; input: number; output: number; cached: number }>;
 };
 const routeLabel = (status: AiStatus | undefined, task: AiTask) => status?.routing?.find((item) => item.task === task)?.label;
 
@@ -93,43 +103,103 @@ const branch = "relative pl-7 before:absolute before:left-2 before:top-0 before:
 
 const agentName = (agent: AgentId) => agent === "general" ? "Allgemeiner Chat" : agentLabel[agent];
 
-function Tree({ status, loading }: { status?: AiStatus; loading: boolean }) {
+function NodeTitle({ icon: Icon, title, detail, calls }: { icon: LucideIcon; title: string; detail: string; calls: string }) {
+  return <div className="flex min-h-10 items-start justify-between gap-3 py-1.5">
+    <span className="min-w-0">
+      <span className="flex items-center gap-2 text-sm font-semibold"><Icon aria-hidden="true" className="size-4 shrink-0 text-primary" />{title}</span>
+      <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{detail}</span>
+    </span>
+    <span className="shrink-0 pt-0.5 text-xs tabular-nums text-muted-foreground">{calls}</span>
+  </div>;
+}
+
+function ModelBadge({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "pro" | "local" }) {
+  return <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs ring-1 ring-inset",
+    tone === "pro" ? "bg-primary/10 text-primary ring-primary/20" : tone === "local" ? "bg-warning-soft text-warning ring-warning/25" : "bg-background text-foreground ring-border/60")}>
+    <span className="text-muted-foreground">{label}:</span>{value}
+  </span>;
+}
+
+function ToolChip({ label, tool, changes }: { label: string; tool: string; changes?: boolean }) {
+  return <li title={tool} className="inline-flex items-center gap-1 rounded-md bg-muted/70 px-1.5 py-0.5 text-2xs">
+    {label}{changes && <><span aria-hidden="true" className="size-1.5 rounded-full bg-warning" /><span className="sr-only">(ändert Daten)</span></>}
+  </li>;
+}
+
+/** The structure as a tree: orchestrator → rules, supervisor with its specialists and their tools, the local fallback. */
+function Topology({ status, loading }: { status?: AiStatus; loading: boolean }) {
+  const [rules, supervisor, fallback] = orchestratorSteps;
+  const local = status?.local && !status.local.available ? `Qwen · ${status.local.error ?? "nicht erreichbar"}` : "Qwen auf der NPU";
   return <div aria-label="Orchestrator-Baum" role="group">
     <div className="flex min-h-10 flex-wrap items-center justify-between gap-2 rounded-xl border border-border/70 bg-muted/40 px-3 py-2">
       <span className="flex items-center gap-2 text-sm font-semibold"><Workflow aria-hidden="true" className="size-4 text-primary" />Orchestrator</span>
       <ModelPill status={status} loading={loading} />
     </div>
-    <ul className="ml-3">
+    <ul aria-label="Wege des Orchestrators" className="ml-3">
+      <li className={branch}><NodeTitle icon={ListChecks} title={rules.title} detail={rules.detail} calls={rules.calls} /></li>
       <li className={branch}>
-        <p className="flex min-h-10 items-center text-xs font-medium text-muted-foreground">Entscheidet in drei Schritten</p>
-        <ol aria-label="Entscheidungsschritte" className="space-y-0.5 pb-2">
-          {orchestratorSteps.map((step, index) => <li key={step.title} className="flex items-start justify-between gap-3 rounded-lg px-2 py-1.5 even:bg-muted/30">
-            <span className="flex min-w-0 items-baseline gap-2.5">
-              <span aria-hidden="true" className="w-3 shrink-0 text-xs tabular-nums text-muted-foreground">{index + 1}</span>
-              <span className="min-w-0"><span className="text-sm font-medium">{step.title}</span>
-                <span className="block text-xs text-muted-foreground">{step.detail}</span></span>
-            </span>
-            <span className="shrink-0 pt-0.5 text-xs tabular-nums text-muted-foreground">{step.calls}</span>
-          </li>)}
-        </ol>
-      </li>
-      <li className={branch}>
-        <p className="flex min-h-10 items-center text-xs font-medium text-muted-foreground">Übergibt an genau einen Agenten</p>
-        <ul aria-label="Agenten" className="ml-1">
+        <NodeTitle icon={Sparkles} title={supervisor.title} detail={supervisor.detail} calls={supervisor.calls} />
+        <p className="flex flex-wrap gap-1.5 pb-2">
+          <ModelBadge label="Plant" value={routeLabel(status, "supervise") ?? "DeepSeek Flash"} />
+          <ModelBadge label="Schreibt" value={routeLabel(status, "synthesize") ?? "DeepSeek V4 Pro"} tone="pro" />
+        </p>
+        <ul aria-label="Spezialisten" className="ml-1">
           {agentOrder.map((agent) => <li key={agent} className={branch}>
             <div className="flex min-h-10 items-center justify-between gap-3">
-              <span className="flex min-w-0 items-center gap-2">
-                <Dot agent={agent} />
-                <span className="truncate text-sm font-medium">{agentName(agent)}</span>
-                {agent === "general" && <Badge variant="secondary">Rückfall</Badge>}
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-muted-foreground" title={`${agentToolList(agent).length} Werkzeuge`}>{agentToolList(agent).length}<span className="max-sm:sr-only"> Werkzeuge</span></span>
+              <span className="flex min-w-0 items-center gap-2"><Dot agent={agent} /><span className="truncate text-sm font-medium">{agentName(agent)}</span></span>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{agentToolList(agent).length}<span className="max-sm:sr-only"> Werkzeuge</span></span>
             </div>
+            <ul aria-label={`Werkzeuge im Baum: ${agentName(agent)}`} className="flex flex-wrap gap-1 pb-2">
+              {agentToolList(agent).map((tool) => <ToolChip key={tool} tool={tool} label={toolLabel[tool]} changes={changesData(tool)} />)}
+            </ul>
           </li>)}
+          <li className={branch}>
+            <div className="flex min-h-10 items-center gap-2 text-sm font-medium"><Globe aria-hidden="true" className="size-3.5 text-muted-foreground" />Recherche</div>
+            <ul aria-label="Recherche-Werkzeuge" className="flex flex-wrap gap-1 pb-2">
+              <ToolChip tool="web" label="Websuche" /><ToolChip tool="knowledge_search" label="Finanzwissen" />
+            </ul>
+          </li>
         </ul>
       </li>
+      <li className={branch}>
+        <NodeTitle icon={Cpu} title={fallback.title} detail={fallback.detail} calls={fallback.calls} />
+        <p className="pb-1"><ModelBadge label="Modell" value={local} tone="local" /></p>
+      </li>
     </ul>
-    <p className="mt-3 text-xs text-muted-foreground">Höchstens zwei KI-Aufrufe pro Nachricht; klare Fragen kommen ganz ohne KI aus.</p>
+    <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warning" />ändert Daten – nur nach deiner Bestätigung; der Supervisor nutzt nur lesende Werkzeuge.
+    </p>
+  </div>;
+}
+
+const usd = (value: number) => `${value.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: value > 0 && value < 0.01 ? 4 : 2 })} $`;
+const cents = (value: number) => `${(value * 100).toLocaleString("de-AT", { maximumFractionDigits: 2 })} Cent`;
+
+/** What DeepSeek costs: per question, how many questions the monthly budget covers, and the counters since the server started. */
+function Costs({ status, loading }: { status?: AiStatus; loading: boolean }) {
+  if (loading && !status) return <p className="text-sm text-muted-foreground">Prüfe die Modelle …</p>;
+  const costs = costOverview(status?.usage);
+  const calls = costs.models.reduce((sum, item) => sum + item.calls, 0);
+  const tiles = [
+    { label: "Pro Frage", value: `≈ ${cents(costs.perQuestion)}`, hint: costs.measured ? "gemessen seit Serverstart" : "Richtwert ohne Cache-Treffer" },
+    { label: `Fragen für ${MONTHLY_BUDGET_USD} $ im Monat`, value: `≈ ${costs.perBudget.toLocaleString("de-AT")}`, hint: "zur Spitzenzeit, nachts doppelt so viele" },
+    { label: "Seit Serverstart", value: usd(costs.total), hint: `${calls.toLocaleString("de-AT")} ${calls === 1 ? "Aufruf" : "Aufrufe"} bei DeepSeek` },
+  ];
+  return <div className="space-y-3">
+    <dl aria-label="Kosten" className="grid gap-3 sm:grid-cols-3">
+      {tiles.map((tile) => <div key={tile.label} className="rounded-xl border border-border/60 bg-background/50 p-3">
+        <dt className="text-xs text-muted-foreground">{tile.label}</dt>
+        <dd className="mt-1 text-lg font-semibold tracking-tight tabular-nums">{tile.value}</dd>
+        <dd className="text-2xs text-muted-foreground">{tile.hint}</dd>
+      </div>)}
+    </dl>
+    {costs.models.length > 0 && <ul aria-label="Kosten je Modell" className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+      {costs.models.map((item) => <li key={item.model} className="flex items-baseline justify-between gap-3 border-b border-border/50 py-1.5 text-sm">
+        <span className="text-muted-foreground">{item.model} · {item.calls.toLocaleString("de-AT")}×</span><span className="font-medium tabular-nums">{usd(item.cost)}</span>
+      </li>)}
+    </ul>}
+    <p className="text-xs leading-relaxed text-muted-foreground">Listenpreise von DeepSeek zur Spitzenzeit (Stand 15.11.2026). Wiederholte System-Prompts kommen
+      meist aus dem Cache und kosten einen Bruchteil, die echten Kosten liegen daher eher darunter.</p>
   </div>;
 }
 
@@ -139,6 +209,7 @@ function Agents({ status, runs }: { status?: AiStatus; runs: AssistantRun[] }) {
   const action = routeLabel(status, "action") ?? router;
   const reasoning = routeLabel(status, "reasoning") ?? main;
   const web = routeLabel(status, "web") ?? main;
+  const writer = routeLabel(status, "synthesize") ?? main;
   return <ul className="divide-y divide-border/70">
     {agentOrder.map((agent) => {
       const count = runs.filter((run) => run.agent === agent).length;
@@ -154,9 +225,9 @@ function Agents({ status, runs }: { status?: AiStatus; runs: AssistantRun[] }) {
         <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{agentInfo[agent].scope}</p>
         <p className="mt-1.5 text-xs text-muted-foreground">
           {agent === "general"
-            ? <>Antwort: <span className="text-foreground">{main}</span> · Websuche: <span className="text-foreground">{web}</span> · Smalltalk ohne Modell</>
-            : <>Werkzeugwahl: <span className="text-foreground">{router}</span> · Aktion: <span className="text-foreground">{action}</span> · Antwort: <span className="text-foreground">{main}</span>
-              {" "}· Analyse: <span className="text-foreground">{reasoning}</span></>}
+            ? <>Antwort: <span className="text-foreground">{writer}</span> · Smalltalk: <span className="text-foreground">{main}</span> · Websuche: <span className="text-foreground">{web}</span></>
+            : <>Werkzeugwahl: <span className="text-foreground">{router}</span> · Aktion: <span className="text-foreground">{action}</span> · Antwort: <span className="text-foreground">{writer}</span>
+              {" "}· Steuer-Analyse: <span className="text-foreground">{reasoning}</span></>}
         </p>
       </li>;
     })}
@@ -376,35 +447,178 @@ function Rules({ load, onAction, working }: { load: RulesLoad; onAction: (id: st
   </div>;
 }
 
-/** Read-only admin view of the assistant's orchestrator: tree, agents, recent runs, tools and the feedback file. */
-export function OrchestratorAdmin() {
-  const { state } = useFinance();
-  const runs = useMemo(() => assistantRuns(state.assistantChat ?? []), [state.assistantChat]);
-  const [status, setStatus] = useState<AiStatus>();
-  const [loading, setLoading] = useState(true);
-  const [feedback, setFeedback] = useState<FeedbackLoad>({ state: "loading" });
-  const [rules, setRules] = useState<RulesLoad>({ state: "loading" });
-  const [working, setWorking] = useState<string>();
+type PromptEntry = PromptMeta & { default: string; text: string; custom: boolean };
+type PromptLoad = { state: "loading" } | { state: "ready"; file: string; prompts: PromptEntry[] } | { state: "admin" } | { state: "error" };
+
+async function readPrompts(): Promise<PromptLoad> {
+  try {
+    const response = await fetch("/api/agent-prompts", { cache: "no-store" });
+    if (response.status === 403) return { state: "admin" };
+    if (!response.ok) return { state: "error" };
+    const data = await response.json() as { file?: unknown; prompts?: unknown };
+    return typeof data.file === "string" && Array.isArray(data.prompts) ? { state: "ready", file: data.file, prompts: data.prompts as PromptEntry[] } : { state: "error" };
+  } catch {
+    return { state: "error" };
+  }
+}
+
+const groupName = (group: PromptGroup) => group === "orchestrator" ? "Orchestrator" : group === "supervisor" ? "Supervisor" : agentName(group);
+
+/** Every agent's system prompt: pick one, edit it, save it or put it back to the default; the next chat run uses it. */
+function PromptEditor({ load, onChange }: { load: PromptLoad; onChange: (next: PromptLoad) => void }) {
+  const [selected, setSelected] = useState<PromptId>("supervisor");
+  const [drafts, setDrafts] = useState<Partial<Record<PromptId, string>>>({});
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string }>();
+  const field = useId();
+  if (load.state === "loading") return <p className="text-sm text-muted-foreground">Lade …</p>;
+  if (load.state === "admin") return <p className="text-sm text-muted-foreground">Die Prompts kann nur der Administrator ansehen und bearbeiten.</p>;
+  if (load.state === "error") return <p className="text-sm text-muted-foreground">Die Prompts sind gerade nicht lesbar.</p>;
+  const entry = load.prompts.find((item) => item.id === selected) ?? load.prompts[0];
+  if (!entry) return null;
+  const draft = drafts[entry.id] ?? entry.text;
+  const dirty = draft.trim() !== entry.text.trim();
+  const forget = (id: PromptId) => setDrafts((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== id)));
+  const save = async (body: { id: PromptId; text: string } | { id: PromptId; reset: true }) => {
+    setSaving(true);
+    setNote(undefined);
+    try {
+      const response = await fetch("/api/agent-prompts", { method: "PUT", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify(body) });
+      const data = await response.json() as { prompts?: unknown; error?: unknown };
+      if (!response.ok || !Array.isArray(data.prompts)) throw new Error(typeof data.error === "string" ? data.error : "Speichern hat nicht geklappt.");
+      onChange({ state: "ready", file: load.file, prompts: data.prompts as PromptEntry[] });
+      forget(body.id);
+      setNote({ ok: true, text: "reset" in body ? "Auf Standard zurückgesetzt – gilt ab der nächsten Frage." : "Gespeichert – gilt ab der nächsten Frage." });
+    } catch (error) {
+      setNote({ ok: false, text: error instanceof Error ? error.message : "Speichern hat nicht geklappt." });
+    } finally {
+      setSaving(false);
+    }
+  };
+  const groups = [...new Set(load.prompts.map((item) => item.group))];
+  return <div className="grid gap-5 lg:grid-cols-[13rem_minmax(0,1fr)]">
+    <nav aria-label="Prompts" className="space-y-2">
+      {groups.map((group) => <div key={group}>
+        <p className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">{groupName(group)}</p>
+        <ul className="flex flex-wrap gap-1 lg:flex-col lg:gap-0.5">
+          {load.prompts.filter((item) => item.group === group).map((item) => <li key={item.id}>
+            <button type="button" aria-current={item.id === entry.id ? "true" : undefined} onClick={() => { setSelected(item.id); setNote(undefined); }}
+              className="flex min-h-9 w-full items-center justify-between gap-2 rounded-lg px-2 text-left text-sm transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[current=true]:bg-muted aria-[current=true]:font-medium">
+              <span>{item.label}</span>
+              {(item.custom || drafts[item.id] !== undefined) && <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-primary" />}
+              {item.custom && <span className="sr-only">(angepasst)</span>}
+            </button>
+          </li>)}
+        </ul>
+      </div>)}
+    </nav>
+    <div className="min-w-0 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">{groupName(entry.group)} · {entry.label}</h3>
+        <Badge variant={entry.custom ? "info" : "secondary"}>{entry.custom ? "Angepasst" : "Standard"}</Badge>
+      </div>
+      <p className="text-xs leading-relaxed text-muted-foreground">{entry.hint}</p>
+      <label htmlFor={field} className="sr-only">System-Prompt: {groupName(entry.group)} · {entry.label}</label>
+      <textarea id={field} value={draft} rows={14} maxLength={MAX_PROMPT_LENGTH} spellCheck={false}
+        onChange={(event) => { const value = event.target.value; setDrafts((current) => ({ ...current, [entry.id]: value })); }}
+        className="block min-h-64 w-full resize-y rounded-xl border border-input bg-background/60 p-3 font-mono text-xs leading-relaxed text-foreground shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-2xs tabular-nums text-muted-foreground">{draft.length.toLocaleString("de-AT")} / {MAX_PROMPT_LENGTH.toLocaleString("de-AT")} Zeichen</span>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" size="sm" disabled={saving || !entry.custom && !dirty}
+            onClick={() => entry.custom ? void save({ id: entry.id, reset: true }) : forget(entry.id)}>
+            <RotateCcw aria-hidden="true" />Auf Standard zurücksetzen
+          </Button>
+          <Button type="button" size="sm" disabled={saving || !dirty || !draft.trim()} onClick={() => void save({ id: entry.id, text: draft })}>
+            <Save aria-hidden="true" />Speichern
+          </Button>
+        </div>
+      </div>
+      <p role="status" className={cn("min-h-4 text-xs", note?.ok ? "text-success" : "text-destructive")}>{note?.text}</p>
+      <p className="text-xs leading-relaxed text-muted-foreground">Datei: <code className="break-all rounded bg-muted px-1.5 py-0.5">{load.file}</code>. Werkzeuglisten,
+        JSON-Felder, die Regel für belegte Zahlen und der Datenschutz-Hinweis hängt die App immer an; Namen und IBANs gehen nie an DeepSeek.</p>
+    </div>
+  </div>;
+}
+
+// The header's "Aktualisieren" asks the open subpage to load its data again; the button spins while anything loads.
+const RefreshContext = createContext<{ tick: number; track: (work: Promise<unknown>) => void }>({ tick: 0, track: () => undefined });
+
+function useLoad<T>(read: () => Promise<T>, initial: T): [T, (value: T) => void] {
+  const { tick, track } = useContext(RefreshContext);
+  const [value, setValue] = useState(initial);
   useEffect(() => {
     let alive = true;
-    void readStatus().then((next) => { if (alive) { setStatus(next); setLoading(false); } });
-    void readFeedbackOverview().then((next) => { if (alive) setFeedback(next); });
-    void readRulesOverview().then((next) => { if (alive) setRules(next); });
+    track(read().then((next) => { if (alive) setValue(next); }));
     return () => { alive = false; };
+  }, [read, tick, track]);
+  return [value, setValue];
+}
+
+/** Header and navigation of the orchestrator view; the subpages render below. */
+export function OrchestratorShell({ children }: { children: ReactNode }) {
+  const [tick, setTick] = useState(0);
+  const [pending, setPending] = useState(0);
+  const track = useCallback((work: Promise<unknown>) => {
+    setPending((count) => count + 1);
+    void work.finally(() => setPending((count) => Math.max(0, count - 1)));
   }, []);
+  const value = useMemo(() => ({ tick, track }), [tick, track]);
+  return <div className="mx-auto max-w-4xl">
+    <PageHeading title="Orchestrator" description="Interne Ansicht des Finanz-Assistenten: Aufbau, Prompts, Läufe und Feedback.">
+      <div className="flex flex-wrap gap-2">
+        <Button asChild variant="ghost" size="sm"><Link href="/einstellungen"><ChevronLeft aria-hidden="true" />Einstellungen</Link></Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => setTick((count) => count + 1)} disabled={pending > 0}>
+          <RefreshCw aria-hidden="true" className={cn(pending > 0 && "animate-spin motion-reduce:animate-none")} />Aktualisieren
+        </Button>
+      </div>
+    </PageHeading>
+    <OrchestratorNav />
+    <RefreshContext.Provider value={value}>{children}</RefreshContext.Provider>
+  </div>;
+}
+
+function BuildView() {
+  const [status] = useLoad<AiStatus | undefined>(readStatus, undefined);
+  return <>
+    <Section id="orchestrator-tree" title="Topologie" meta="Orchestrator → Supervisor → Spezialisten → Werkzeuge"><Topology status={status} loading={!status} /></Section>
+    <Section id="orchestrator-models" title="Modelle" meta="Flash plant, V4 Pro schreibt, lokales Qwen als Rückfall"><Models status={status} loading={!status} /></Section>
+    <Section id="orchestrator-costs" title="Kosten" meta={`DeepSeek, Budget ${MONTHLY_BUDGET_USD} $ im Monat`}><Costs status={status} loading={!status} /></Section>
+  </>;
+}
+
+function AgentsView({ runs }: { runs: AssistantRun[] }) {
+  const [status] = useLoad<AiStatus | undefined>(readStatus, undefined);
+  const [prompts, setPrompts] = useLoad<PromptLoad>(readPrompts, { state: "loading" });
+  const custom = prompts.state === "ready" ? prompts.prompts.filter((item) => item.custom).length : 0;
+  return <>
+    <Section id="orchestrator-agents" title="Agenten" meta="4 Spezialisten und der allgemeine Chat"><Agents status={status} runs={runs} /></Section>
+    <Section id="orchestrator-prompts" title="System-Prompts" meta={prompts.state === "ready" ? `${custom} von ${prompts.prompts.length} angepasst` : undefined}>
+      <PromptEditor load={prompts} onChange={setPrompts} />
+    </Section>
+  </>;
+}
+
+function RunsView({ runs }: { runs: AssistantRun[] }) {
+  const times = runs.flatMap((run) => run.ms === undefined ? [] : [run.ms]).sort((a, b) => a - b);
+  const median = times.length ? times[Math.floor(times.length / 2)] : undefined;
+  return <Section id="orchestrator-runs" title="Letzte Läufe"
+    meta={runs.length ? `${runs.length} ${runs.length === 1 ? "Lauf" : "Läufe"}${median !== undefined ? ` · Median ${duration(median)}` : ""}` : undefined}>
+    <Runs runs={runs} />
+  </Section>;
+}
+
+function FeedbackView() {
+  const [feedback] = useLoad<FeedbackLoad>(readFeedbackOverview, { state: "loading" });
+  const [rules, setRules] = useLoad<RulesLoad>(readRulesOverview, { state: "loading" });
+  const [working, setWorking] = useState<string>();
   // While a rule is being checked in the background, the list refreshes itself every few seconds.
   const checking = rules.state === "ready" && rules.data.rules.some((rule) => rule.status === "checking");
   useEffect(() => {
     if (!checking) return;
     const timer = window.setInterval(() => void readRulesOverview().then(setRules), 5000);
     return () => window.clearInterval(timer);
-  }, [checking]);
-  const refresh = () => {
-    setLoading(true);
-    void readStatus().then((next) => { setStatus(next); setLoading(false); });
-    void readFeedbackOverview().then(setFeedback);
-    void readRulesOverview().then(setRules);
-  };
+  }, [checking, setRules]);
   const ruleAction = async (id: string, action: "enable" | "disable" | "recheck") => {
     setWorking(id);
     try {
@@ -415,31 +629,26 @@ export function OrchestratorAdmin() {
     }
   };
   const activeCount = rules.state === "ready" ? rules.data.rules.filter((rule) => rule.status === "active").length : 0;
-  const times = runs.flatMap((run) => run.ms === undefined ? [] : [run.ms]).sort((a, b) => a - b);
-  const median = times.length ? times[Math.floor(times.length / 2)] : undefined;
+  return <>
+    <Section id="orchestrator-feedback" title="Feedback" meta="👍/👎 aus dem Chat, für die Fehlersuche mit Copilot"><Feedback load={feedback} /></Section>
+    <Section id="orchestrator-rules" title="Regeln aus Feedback" meta={rules.state === "ready" ? `${activeCount} aktiv · Prüfung ${rules.data.loop}` : undefined}>
+      <Rules load={rules} working={working} onAction={(id, action) => void ruleAction(id, action)} />
+    </Section>
+  </>;
+}
 
-  return <div className="mx-auto max-w-4xl">
-    <PageHeading title="Orchestrator" description="Interne Ansicht des Finanz-Assistenten – nur lesen.">
-      <div className="flex flex-wrap gap-2">
-        <Button asChild variant="ghost" size="sm"><Link href="/einstellungen"><ChevronLeft aria-hidden="true" />Einstellungen</Link></Button>
-        <Button type="button" variant="outline" size="sm" onClick={refresh} disabled={loading}>
-          <RefreshCw aria-hidden="true" className={cn(loading && "animate-spin motion-reduce:animate-none")} />Aktualisieren
-        </Button>
-      </div>
-    </PageHeading>
-    <div className="space-y-6">
-      <Section id="orchestrator-tree" title="Aufbau"><Tree status={status} loading={loading} /></Section>
-      <Section id="orchestrator-models" title="Modelle" meta="DeepSeek je Aufgabe, lokales Qwen als Rückfall"><Models status={status} loading={loading} /></Section>
-      <Section id="orchestrator-agents" title="Agenten" meta="4 Spezialisten und der allgemeine Chat"><Agents status={status} runs={runs} /></Section>
-      <Section id="orchestrator-runs" title="Letzte Läufe"
-        meta={runs.length ? `${runs.length} ${runs.length === 1 ? "Lauf" : "Läufe"}${median !== undefined ? ` · Median ${duration(median)}` : ""}` : undefined}>
-        <Runs runs={runs} />
-      </Section>
-      <Section id="orchestrator-tools" title="Werkzeuge" meta="Jedes Werkzeug gehört genau einem Agenten"><Tools /></Section>
-      <Section id="orchestrator-feedback" title="Feedback" meta="👍/👎 aus dem Chat, für die Fehlersuche mit Copilot"><Feedback load={feedback} /></Section>
-      <Section id="orchestrator-rules" title="Regeln aus Feedback" meta={rules.state === "ready" ? `${activeCount} aktiv · Prüfung ${rules.data.loop}` : undefined}>
-        <Rules load={rules} working={working} onAction={(id, action) => void ruleAction(id, action)} />
-      </Section>
-    </div>
-  </div>;
+/** One subpage of the admin view of the assistant's orchestrator; it glides in when opened. */
+export function OrchestratorAdmin({ view }: { view: OrchestratorView }) {
+  const { state } = useFinance();
+  const runs = useMemo(() => assistantRuns(state.assistantChat ?? []), [state.assistantChat]);
+  const mode = useMotionMode();
+  return <m.div key={view} className="space-y-6" data-orchestrator-view={view}
+    initial={mode === "full" ? { opacity: 0, y: 8, filter: "blur(2px)" } : false} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+    transition={mode === "full" ? dialogSpring : { duration: 0 }}>
+    {view === "aufbau" ? <BuildView />
+      : view === "agenten" ? <AgentsView runs={runs} />
+        : view === "laeufe" ? <RunsView runs={runs} />
+          : view === "werkzeuge" ? <Section id="orchestrator-tools" title="Werkzeuge" meta="Jedes Werkzeug gehört genau einem Agenten"><Tools /></Section>
+            : <FeedbackView />}
+  </m.div>;
 }
