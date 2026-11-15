@@ -400,6 +400,24 @@
   to { opacity: 1; filter: blur(0); }
 }
 
+/* Finanz-Assistent: the short live status ("Suche…") with a soft light passing over it; plain muted text without motion. */
+.assistant-shimmer {
+  color: var(--muted-foreground);
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-reduce-motion="true"]) .assistant-shimmer {
+    background: linear-gradient(90deg, var(--muted-foreground) 35%, var(--foreground) 50%, var(--muted-foreground) 65%) 0 0 / 250% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: assistant-shimmer 2.2s linear infinite;
+  }
+}
+@keyframes assistant-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: 0% 0; }
+}
+
 :root[data-reduce-motion="true"] .automation-progress-shimmer::after {
   animation: none;
   opacity: 0;

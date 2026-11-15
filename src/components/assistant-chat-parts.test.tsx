@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Dialog } from "radix-ui";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatEmptyState, ComposerButton, createLiveRun, LiveAnswer, MessageActions } from "@/components/assistant-chat-parts";
 import { AnswerDetails } from "@/components/assistant-details";
-import { workStatus } from "@/lib/assistant/status";
+import { statusFor, workStatus } from "@/lib/assistant/status";
 
 // jsdom has no canvas; the orb and the bots simply draw nothing.
 beforeEach(() => { vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null); });
@@ -95,59 +95,64 @@ it("greets with the droid alone and offers starter questions", () => {
   expect(onPick).toHaveBeenCalledWith("Wie viel ist noch frei?");
 });
 
-it("shows only the thinking orb and the current step while an answer is worked on", async () => {
+it("shows only the thinking orb and a word or two while an answer is worked on, then the words in a plain bubble", async () => {
   const live = createLiveRun();
   live.setStatus(workStatus.knowledge);
   const { container } = render(<LiveAnswer live={live} />);
-  expect(screen.getByText("Suche passendes Wissen…")).toBeTruthy();
+  expect(container.querySelector("[data-status-line]")?.textContent).toBe("Suche…");
   expect(container.querySelector("[data-status-line]")?.getAttribute("data-activity")).toBe("searching");
-  // One canvas: the orb in the avatar's place; the bot only appears once the answer is done.
+  // One canvas: the orb in the avatar's place; the bot only appears once the answer is done. No card, no tools, no model.
   const canvases = container.querySelectorAll("canvas");
   expect(canvases).toHaveLength(1);
   expect(canvases[0].closest("[data-orb]")?.getAttribute("data-orb")).toBe("searching");
+  act(() => live.setStatus(statusFor("forecast", "budget")));
+  expect(container.querySelector("[data-status-line]")?.textContent).toBe("Rechne…");
+  act(() => live.setStatus({ ...workStatus.think, agent: "payroll" }));
+  expect(container.querySelector("[data-status-line]")?.textContent).toBe("Denke nach…");
+  act(() => live.setStatus(workStatus.web));
+  expect(container.querySelector("[data-status-line]")?.textContent).toBe("Suche im Web…");
   act(() => live.setStatus({ ...workStatus.answer, agent: "budget" }));
   live.setText("Bis Monatsende");
   live.setText("Bis Monatsende sind 412 € frei");
   expect(await screen.findByText("frei")).toBeTruthy();
+  // Once words stream, only they show; the status line is gone.
+  expect(container.querySelector("[data-status-line]")).toBeNull();
   expect(container.querySelector("[data-orb]")?.getAttribute("data-orb")).toBe("composing");
-  // The specialist at work stays internal: no agent name in the chat.
-  expect(screen.queryByText(/Budget & Prognose/)).toBeNull();
-  // Once a model took the question, the status names it.
-  act(() => live.setStatus((current) => current && { ...current, model: "DeepSeek Flash" }));
-  expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: DeepSeek Flash");
-  act(() => live.setStatus({ ...workStatus.think, agent: "payroll", model: "Lokal (Qwen)" }));
-  expect(screen.getByText("Denke gründlich nach…")).toBeTruthy();
-  expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: Lokal (Qwen)");
+  // The specialist at work stays internal: no agent name, no tool, no model in the chat.
+  expect(container.textContent).not.toMatch(/Budget & Prognose|Kontoprognose|DeepSeek|Werkzeug/);
 });
 
-it("shows each tool call live as running, then done or failed, and bundles models, prompt and calls in one closed Details panel", () => {
-  const live = createLiveRun();
-  live.setStatus(workStatus.web);
-  const { container } = render(<LiveAnswer live={live} />);
-  act(() => { live.startTool("web", "Websuche"); live.startTool("query", "Ausgaben & Einnahmen"); });
-  const chip = (tool: string) => container.querySelector(`[data-tool="${tool}"]`);
-  expect(chip("web")?.getAttribute("data-tool-state")).toBe("running");
-  expect(chip("web")?.textContent).toContain("Läuft");
-  act(() => { live.finishTool("web", "Websuche", true); live.finishTool("query", "Ausgaben & Einnahmen", false); });
-  expect(chip("web")?.textContent).toContain("Erfolgreich");
-  expect(chip("query")?.textContent).toContain("Fehler");
-  act(() => live.reset());
-  expect(container.querySelector("[data-live-tools]")).toBeNull();
-  cleanup();
-
-  render(<AnswerDetails source="KI" prompt="Du bist Finanzblick …"
+it("keeps how an answer came about behind a small closed Details link: models, compact tool lines, a shortened prompt", () => {
+  render(<AnswerDetails source="KI" prompt="Du bist Finanzblick und kennst Monatsplan, Konten und Sparziele des Nutzers."
     models={[{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }, { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" }]}
-    calls={[{ tool: "query", ok: true, summary: "Ausgaben & Einnahmen", args: "Wie viel für Essen im Oktober?", result: "Essen im Oktober: 312 €" }]} />);
-  const toggle = screen.getByRole("button", { name: /^Details\s+DeepSeek V4 Pro\s+1 Werkzeug$/ });
+    calls={[{ tool: "query", ok: true, summary: "Ausgaben & Einnahmen", args: "Wie viel für Essen im Oktober?", result: "Essen im Oktober: 312 €" },
+      { tool: "web", ok: false, summary: "Websuche", args: "Bitcoin Kurs" }]} />);
+  const toggle = screen.getByRole("button", { name: "Details" });
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
-  expect(screen.queryByText("Du bist Finanzblick …")).toBeNull();
+  expect(toggle.getAttribute("title")).toBe("DeepSeek V4 Pro");
+  expect(screen.queryByText(/Du bist Finanzblick/)).toBeNull();
+  expect(screen.queryByText(/Ausgaben & Einnahmen/)).toBeNull();
   fireEvent.click(toggle);
-  const panel = screen.getByRole("region", { name: "Details zur Antwort" });
-  expect(panel.textContent).toContain("Supervisor:DeepSeek Flash");
-  expect(panel.textContent).toContain("Supervisor-Antwort:DeepSeek V4 Pro");
-  expect(panel.textContent).toContain("Du bist Finanzblick …");
-  expect(panel.textContent).toContain("Eingabe: Wie viel für Essen im Oktober?");
-  expect(panel.textContent).toContain("Ergebnis: Essen im Oktober: 312 €");
+  const panel = within(screen.getByRole("region", { name: "Details zur Antwort" }));
+  expect(panel.getByText(/^Modelle:/).closest("p")?.textContent).toBe("Modelle: DeepSeek Flash (Supervisor) · DeepSeek V4 Pro (Supervisor-Antwort)");
+  const [query, web] = within(panel.getByRole("list", { name: "Werkzeuge" })).getAllByRole("listitem");
+  expect(query.textContent).toBe("Ausgaben & Einnahmen (erfolgreich) · Wie viel für Essen im Oktober?");
+  expect(web.textContent).toBe("Websuche (Fehler) · Bitcoin Kurs");
+  // The result only on click; a call without a result is no button.
+  expect(panel.queryByText("Essen im Oktober: 312 €")).toBeNull();
+  expect(within(web).queryByRole("button")).toBeNull();
+  fireEvent.click(within(query).getByRole("button"));
+  expect(panel.getByText("Essen im Oktober: 312 €")).toBeTruthy();
+  // The prompt is clamped to two lines until it is asked for in full.
+  expect(panel.getByText(/^Du bist Finanzblick/).className).toContain("line-clamp-2");
+  fireEvent.click(panel.getByRole("button", { name: "Ganzen Prompt zeigen" }));
+  expect(panel.getByText(/^Du bist Finanzblick/).tagName).toBe("PRE");
+});
+
+it("marks a fallback to the local model with a small dot and says why", () => {
+  render(<AnswerDetails source="KI" models={[{ provider: "local", model: "OpenVINO/Qwen3-8B-int4-cw-ov", task: "synthesize", fallback: true, reason: "Rate-Limit (HTTP 429)" }]} />);
+  const toggle = screen.getByRole("button", { name: "Details (lokales Modell)" });
+  expect(toggle.getAttribute("title")).toBe("DeepSeek nicht verfügbar (Rate-Limit (HTTP 429)) – das lokale Modell hat geantwortet");
 });
 
 it("draws streamed words at most once per frame and clears at once", async () => {

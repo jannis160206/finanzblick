@@ -109,7 +109,7 @@ Beim Streamen wechselt der Rückfall nur vor dem ersten Wort. Bricht DeepSeek mi
 **Sichtbarkeit:**
 
 - Serverlog: `[KI] Antwort → DeepSeek Flash (deepseek-flash) · 1840 ms · 512→64 Token`, beim Rückfall mit dem Grund, z. B. `· Fallback: DeepSeek Rate-Limit (HTTP 429)`.
-- Chat: Die Statuszeile zeigt, welches Modell gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“), darunter die laufenden Werkzeuge. Jede fertige Antwort trägt ein eingeklapptes „Details“ mit dem Modell (beim Rückfall „· Fallback“ und dem Grund als Tooltip), dem System-Prompt und den Werkzeugaufrufen.
+- Chat: Während der Antwort nur Orb und ein Kurztext („Suche…“, „Schreibe…“). Jede fertige Antwort trägt einen kleinen, zugeklappten „Details“-Link mit dem Modell als Tooltip (beim Rückfall ein kleiner gelber Punkt, der Grund im Tooltip); aufgeklappt Modelle, kompakte Werkzeugzeilen und der gekürzte System-Prompt.
 - Admin-Ansicht (Einstellungen → „Assistent-Orchestrator“): Status „KI bereit · DeepSeek Flash · Qwen als Rückfall“ oder die Warnung „Lokal (Qwen) aktiv · DeepSeek …“, der Bereich „Modelle“ mit dem Modell je Aufgabe und in „Letzte Läufe“ die Modelle jedes Laufs.
 - `/api/ai/status` meldet `cloud.available`, `cloud.error`, `local`, `routing` (Modell je Aufgabe) und `usage` (Token je Modell seit Serverstart, für die Kostenschätzung). Den Key prüft es höchstens einmal pro Minute mit `GET /models`.
 

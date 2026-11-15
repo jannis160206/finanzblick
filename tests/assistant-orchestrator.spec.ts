@@ -79,7 +79,7 @@ test.describe("assistant orchestrator", () => {
       await expect(chat.getByText("Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.")).toBeVisible();
       expect(answers.at(-1)).toMatchObject({ agent: "general", supervised: true });
       expect(Object.keys(answers.at(-1)?.facts ?? {})).toEqual(["today"]);
-      await expect(chat.locator('[data-model="deepseek-v4-pro"]').last()).toHaveText("DeepSeek V4 Pro");
+      await expect(chat.locator('[data-model="deepseek-v4-pro"]').last()).toHaveAttribute("title", "DeepSeek V4 Pro");
       await expect(chat.getByRole("group", { name: "Vorschläge von DeepSeek" }).getByRole("button")).toHaveText(["Wie viel Bitcoin wäre vertretbar?", "Was ist ein ETF?"]);
 
       // The payroll tool returns raw data; the supervisor writes the words, the result is a tile below.
@@ -90,28 +90,32 @@ test.describe("assistant orchestrator", () => {
       await expect(payroll).toBeVisible();
       await payroll.getByRole("button", { name: "Mehr" }).click();
       await expect(payroll.getByText(/^Nächste Sonderzahlung/)).toBeVisible();
-      // One closed "Details" panel: the models, the system prompt and the tool call with its question and result.
-      const details = chat.getByRole("button", { name: /^Details\s/ }).last();
-      await expect(details).toHaveAccessibleName(/^Details\s+DeepSeek V4 Pro\s+\d Werkzeuge$/);
+      // Tool calls and the prompt stay out of the conversation, behind one small closed "Details" link.
+      await expect(chat.getByText("Du bist Finanzblick (Test-Prompt).")).toHaveCount(0);
+      await expect(chat.locator("[data-call]")).toHaveCount(0);
+      const details = chat.getByRole("button", { name: "Details", exact: true }).last();
       await expect(details).toHaveAttribute("aria-expanded", "false");
       await details.click();
       const panel = chat.getByRole("region", { name: "Details zur Antwort" });
-      await expect(panel).toContainText("Supervisor:DeepSeek Flash");
-      await expect(panel).toContainText("Supervisor-Antwort:DeepSeek V4 Pro");
-      await expect(panel).toContainText("Du bist Finanzblick (Test-Prompt).");
-      await expect(panel.locator('[data-call="payroll"]')).toContainText("Gehaltsübersicht");
-      await expect(panel).toContainText("Eingabe: Wie viel netto bekomme ich?");
-      await expect(panel).toContainText("Ergebnis:");
+      await expect(panel).toContainText("Modelle: DeepSeek Flash (Supervisor) · DeepSeek V4 Pro (Supervisor-Antwort)");
+      const call = panel.locator('[data-call="payroll"]');
+      await expect(call).toContainText("Gehaltsübersicht");
+      await expect(call).toContainText("· Wie viel netto bekomme ich?");
+      await call.getByRole("button").click();
+      await expect(call.locator("p")).not.toBeEmpty();
+      await expect(panel.getByText("Du bist Finanzblick (Test-Prompt).")).toBeVisible();
       await details.click();
       await expect(panel).toHaveCount(0);
 
       // A forecast: key figures as badges, the trend as a sparkline, the key statement first.
       await ask(page, "Wird mein Konto knapp?");
-      // While the answer is written, the finished tool call shows live with its state.
-      const live = chat.locator('[data-live-answer] [data-tool="forecast"]');
-      await expect(live).toHaveAttribute("data-tool-state", "ok");
-      await expect(live).toHaveText("Kontoprognose· Erfolgreich");
+      // While the answer is worked on: only the orb and a word or two, no tools, no model; gone once the answer is there.
+      const live = chat.locator("[data-live-answer]");
+      await expect(live.locator("[data-status-line]")).toHaveText("Fasse zusammen…");
+      await expect(live.locator("[data-orb]")).toBeVisible();
+      await expect(live).not.toContainText(/Kontoprognose|DeepSeek|Werkzeug/);
       await expect(chat.getByText("Ja, dein Girokonto wird knapp.")).toBeVisible();
+      await expect(live).toHaveCount(0);
       await expect(chat.getByRole("list", { name: "Kennzahlen" }).last()).toBeVisible();
       await expect(chat.getByRole("img", { name: /^Verlauf / }).last()).toBeVisible();
 

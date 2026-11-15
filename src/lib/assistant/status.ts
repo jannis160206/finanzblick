@@ -2,12 +2,11 @@ import type { AgentId } from "./orchestrator";
 import type { AssistantTool } from "./tools";
 
 /**
- * What the assistant is doing right now, shown live while a message is answered: a short text, the kind of work
- * (it picks the animation of the thinking orb) and, once the orchestrator has decided, the agent doing it.
+ * What the assistant is doing right now: a step text (kept with the answer for the feedback file), the kind of work (it
+ * picks the animation of the thinking orb and the few words the chat shows) and, once decided, the agent doing it.
  */
 export type WorkActivity = "listening" | "connecting" | "searching" | "working" | "solving" | "shaping" | "weaving" | "composing";
-/** `model` names the model that answers right now ("DeepSeek Flash", "Lokal (Qwen)"), once it took the question. */
-export type WorkStatus = { text: string; activity: WorkActivity; agent?: AgentId; model?: string };
+export type WorkStatus = { text: string; activity: WorkActivity; agent?: AgentId };
 
 const step = (text: string, activity: WorkActivity): WorkStatus => ({ text, activity });
 
@@ -52,6 +51,16 @@ const agentStatus: Record<AgentId, WorkStatus> = {
   transactions: analyse("Analysiere deine Buchungen…"), contracts: analyse("Prüfe deine Verträge…"), budget: compute("Berechne dein freies Budget…"),
   payroll: compute("Lese deine Lohnabrechnungen…"), general: workStatus.route,
 };
+
+// The chat shows only a word or two while it works; the step texts above stay for the feedback file.
+const shortText: Record<WorkActivity, string> = {
+  listening: "Lese…", connecting: "Überlege…", searching: "Suche…", working: "Analysiere…", solving: "Rechne…", shaping: "Bereite vor…",
+  weaving: "Fasse zusammen…", composing: "Schreibe…",
+};
+const shortStep = new Map<string, string>([[workStatus.think.text, "Denke nach…"], [workStatus.web.text, "Suche im Web…"], [workStatus.compare.text, "Vergleiche…"]]);
+
+/** The short text the chat shows next to the thinking orb ("Suche…", "Rechne…", "Schreibe…"). */
+export const shortStatus = (status: WorkStatus): string => shortStep.get(status.text) ?? shortText[status.activity];
 
 /** The status for the chosen tool, or for the agent when it answers in words; the agent's avatar shows who is at work. */
 export const statusFor = (tool: AssistantTool | undefined, agent: AgentId): WorkStatus => ({ ...(tool ? toolStatus[tool] : agentStatus[agent]), agent });

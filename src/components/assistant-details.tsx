@@ -2,18 +2,57 @@
 
 import { useId, useState } from "react";
 import { AnimatePresence, m } from "motion/react";
-import { Check, ChevronDown, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { exitTween, useMotionMode } from "@/components/ui/premium-dialog/motion";
-import { modelLabel, modelTitle, taskLabel } from "@/lib/ai/models";
+import { modelTitle, taskLabel } from "@/lib/ai/models";
 import { callLabel } from "@/lib/assistant/orchestrator-info";
 import type { AssistantModelUse, AssistantToolCall } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+const ease = [0.32, 0.72, 0, 1] as const;
+const focusRing = "rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 const fallbackTitle = (use: AssistantModelUse) => `DeepSeek nicht verfügbar${use.reason ? ` (${use.reason})` : ""} – das lokale Modell hat geantwortet`;
 
+/** One tool call in a line: outcome, name and the question it got; its result folds out on click. */
+function ToolRow({ call }: { call: AssistantToolCall }) {
+  const [open, setOpen] = useState(false);
+  const result = useId();
+  const head = <>
+    {call.ok ? <Check aria-hidden="true" className="size-3 shrink-0 text-success" /> : <X aria-hidden="true" className="size-3 shrink-0 text-destructive" />}
+    <span className="shrink-0 text-foreground/90">{callLabel(call.tool)}</span>
+    {" "}<span className="sr-only">{call.ok ? "(erfolgreich)" : "(Fehler)"}</span>
+    {call.args && <>{" "}<span className="min-w-0 truncate text-muted-foreground">· {call.args}</span></>}
+  </>;
+  return <li data-call={call.tool}>
+    {call.result
+      ? <button type="button" aria-expanded={open} aria-controls={open ? result : undefined} onClick={() => setOpen((value) => !value)}
+        className={cn("flex min-h-6 w-full min-w-0 items-center gap-1.5 text-left transition-colors hover:text-foreground", focusRing)}>
+        {head}
+        <ChevronRight aria-hidden="true" className={cn("ml-auto size-3 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none", open && "rotate-90")} />
+      </button>
+      : <div className="flex min-h-6 min-w-0 items-center gap-1.5">{head}</div>}
+    {open && call.result && <p id={result} className="mb-1 ml-[1.125rem] break-words text-muted-foreground">{call.result}</p>}
+  </li>;
+}
+
+/** The system prompt, two lines by default; the whole text only on request. */
+function PromptPreview({ prompt }: { prompt: string }) {
+  const [full, setFull] = useState(false);
+  return <div>
+    <p className="text-muted-foreground">Prompt</p>
+    {full
+      ? <pre tabIndex={0} className={cn("mt-0.5 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 font-mono text-2xs text-muted-foreground", focusRing)}>{prompt}</pre>
+      : <p className="mt-0.5 line-clamp-2 break-words font-mono text-muted-foreground/90">{prompt}</p>}
+    <button type="button" aria-expanded={full} onClick={() => setFull((value) => !value)}
+      className={cn("mt-0.5 min-h-6 text-muted-foreground underline decoration-border underline-offset-2 transition-colors hover:text-foreground", focusRing)}>
+      {full ? "Weniger" : "Ganzen Prompt zeigen"}
+    </button>
+  </div>;
+}
+
 /**
- * Everything about how an answer came about, in one closed panel under it: the models (Flash plans, V4 Pro writes), the
- * system prompt of the answer and every tool call with its question and an excerpt of its result.
+ * How an answer came about, behind a small closed "Details" link: the models, the tool calls as compact lines and the system
+ * prompt, shortened. Nothing of it shows in the conversation until it is opened.
  */
 export function AnswerDetails({ source, models, calls, prompt }: {
   source?: "KI" | "Regel"; models?: AssistantModelUse[]; calls?: AssistantToolCall[]; prompt?: string;
@@ -24,51 +63,35 @@ export function AnswerDetails({ source, models, calls, prompt }: {
   const writer = models?.findLast((item) => item.task !== "suggest");
   const tools = calls ?? [];
   if (!source && !models?.length && !tools.length && !prompt) return null;
-  const who = writer ? modelLabel(writer) : source === "KI" ? "KI" : "Regel";
-  return <div className="contents" data-answer-details="">
-    <button type="button" aria-expanded={open} aria-controls={panel} onClick={() => setOpen((value) => !value)}
-      className="inline-flex min-h-7 items-center gap-1 rounded-md text-2xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
+  return <>
+    <button type="button" aria-expanded={open} aria-controls={open ? panel : undefined} onClick={() => setOpen((value) => !value)}
+      data-model={writer?.model} title={writer ? writer.fallback ? fallbackTitle(writer) : modelTitle(writer) : undefined}
+      className={cn("inline-flex min-h-7 items-center gap-1 text-2xs text-muted-foreground/80 transition-colors hover:text-foreground", focusRing)}>
+      Details
+      {writer?.fallback && <>{" "}<span className="sr-only">(lokales Modell)</span><span aria-hidden="true" className="size-1.5 rounded-full bg-warning" /></>}
       <ChevronDown aria-hidden="true" className={cn("size-3 transition-transform duration-200 motion-reduce:transition-none", open && "rotate-180")} />
-      <span>Details</span>{" "}<span aria-hidden="true">·</span>{" "}
-      <span data-model={writer?.model} title={writer?.fallback ? fallbackTitle(writer) : undefined}>{who}{writer?.fallback && " · Fallback"}</span>
-      {tools.length > 0 && <>{" "}<span aria-hidden="true">·</span>{" "}<span>{tools.length === 1 ? "1 Werkzeug" : `${tools.length} Werkzeuge`}</span></>}
     </button>
     <AnimatePresence initial={false}>
-      {open && <m.div id={panel} key="details" role="region" aria-label="Details zur Antwort"
-        className="order-last basis-full space-y-3 rounded-xl border border-border/60 bg-muted/30 p-3 text-xs text-foreground"
-        initial={mode === "full" ? { opacity: 0, y: -4, filter: "blur(2px)" } : { opacity: 0 }} animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-        exit={mode === "full" ? { opacity: 0, y: -4, filter: "blur(2px)", transition: exitTween } : { opacity: 0, transition: exitTween }}
-        transition={{ duration: mode === "none" ? 0 : 0.18, ease: [0.32, 0.72, 0, 1] }}>
-        <section aria-label="Modelle">
-          <h4 className="mb-1 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">Modelle</h4>
-          {models?.length ? <ul className="flex flex-wrap gap-1.5">
-            {models.map((use, index) => <li key={`${use.task}-${index}`} title={use.fallback ? fallbackTitle(use) : undefined}
-              className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs ring-1 ring-inset",
-                use.provider === "local" ? "bg-warning-soft text-warning ring-warning/25" : use.model.includes("pro") ? "bg-primary/10 text-primary ring-primary/20" : "bg-background text-foreground ring-border/60")}>
-              <span className="text-muted-foreground">{taskLabel[use.task]}:</span>{modelTitle(use)}{use.fallback && " · Fallback"}
-            </li>)}
-          </ul> : <p className="text-muted-foreground">{source === "KI" ? "Kein Modell gespeichert." : "Ohne KI – feste Regel der App."}</p>}
-        </section>
-        {prompt && <section aria-label="System-Prompt">
-          <h4 className="mb-1 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">System-Prompt</h4>
-          <pre tabIndex={0} className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-background/70 p-2 font-mono text-2xs leading-relaxed text-muted-foreground ring-1 ring-inset ring-border/60 focus-visible:outline-2 focus-visible:outline-ring">{prompt}</pre>
-        </section>}
-        {tools.length > 0 && <section aria-label="Werkzeuge">
-          <h4 className="mb-1 text-2xs font-semibold uppercase tracking-wide text-muted-foreground">Werkzeuge</h4>
-          <ol className="space-y-1.5">
-            {tools.map((call, index) => <li key={`${call.tool}-${index}`} className="rounded-lg bg-background/70 p-2 ring-1 ring-inset ring-border/60" data-call={call.tool}>
-              <p className="flex items-center gap-1.5 font-medium">
-                {call.ok ? <Check aria-hidden="true" className="size-3.5 text-success" /> : <TriangleAlert aria-hidden="true" className="size-3.5 text-destructive" />}
-                <span>{callLabel(call.tool)}</span><span className="sr-only">{call.ok ? "(erfolgreich)" : "(Fehler)"}</span>
-                <code className="ml-auto truncate font-mono text-2xs font-normal text-muted-foreground">{call.tool}</code>
-              </p>
-              {call.summary !== callLabel(call.tool) && <p className="mt-0.5 text-muted-foreground">{call.summary}</p>}
-              {call.args && <p className="mt-1 break-words"><span className="text-muted-foreground">Eingabe: </span>{call.args}</p>}
-              {call.result && <p className="mt-0.5 line-clamp-4 break-words"><span className="text-muted-foreground">Ergebnis: </span>{call.result}</p>}
-            </li>)}
-          </ol>
-        </section>}
+      {open && <m.div id={panel} key="details" role="region" aria-label="Details zur Antwort" className="order-last basis-full overflow-hidden" data-answer-details=""
+        initial={mode === "full" ? { height: 0, opacity: 0 } : { opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+        exit={mode === "full" ? { height: 0, opacity: 0, transition: exitTween } : { opacity: 0, transition: { duration: mode === "none" ? 0 : 0.12 } }}
+        transition={{ duration: mode === "none" ? 0 : 0.22, ease }}>
+        <div className="mb-0.5 mt-1 space-y-1.5 border-l-2 border-border/70 pl-3 text-2xs leading-relaxed">
+          <p className="break-words">
+            <span className="text-muted-foreground">Modelle: </span>
+            {models?.length ? models.map((use, index) => <span key={`${use.task}-${index}`} title={use.fallback ? fallbackTitle(use) : undefined}>
+              {index > 0 && <span aria-hidden="true" className="text-muted-foreground"> · </span>}
+              <span className={cn(use.provider === "local" && "text-warning")}>{modelTitle(use)}{use.fallback && " (Rückfall)"}</span>
+              <span className="text-muted-foreground"> ({taskLabel[use.task]})</span>
+            </span>) : <span className="text-muted-foreground">{source === "KI" ? "nicht gespeichert" : "keins – feste Regel der App"}</span>}
+          </p>
+          {tools.length > 0 && <div>
+            <p className="text-muted-foreground">Werkzeuge</p>
+            <ul aria-label="Werkzeuge" className="mt-0.5">{tools.map((call, index) => <ToolRow key={`${call.tool}-${index}`} call={call} />)}</ul>
+          </div>}
+          {prompt && <PromptPreview prompt={prompt} />}
+        </div>
       </m.div>}
     </AnimatePresence>
-  </div>;
+  </>;
 }

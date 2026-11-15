@@ -39,7 +39,7 @@ import {
 } from "@/lib/assistant/web-learning";
 import { webEvidence, webFallbackAnswer, webLinks, type WebSearchResult } from "@/lib/web/web-answer";
 import { buildFeedbackEntry, type FeedbackEntry } from "@/lib/assistant/feedback";
-import { callLabel, failedAnswer, lookupTool, toolCall, toolLabel } from "@/lib/assistant/orchestrator-info";
+import { failedAnswer, lookupTool, toolCall, toolLabel } from "@/lib/assistant/orchestrator-info";
 import { AnswerDetails } from "@/components/assistant-details";
 import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
 import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
@@ -71,7 +71,6 @@ import {
   type AppState, type AssistantCard, type AssistantDraft, type AssistantKnowledge, type AssistantMessage, type AssistantModelUse, type AssistantOperation, type AssistantToolCall,
   type WebLinkEntry,
 } from "@/lib/types";
-import { modelTitle } from "@/lib/ai/models";
 import { cn } from "@/lib/utils";
 
 // Tools whose answer depends only on the message text; phrasings for these are learned when the model understood them.
@@ -280,14 +279,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   };
   // The tools the running answer called (lookups, web search); the next answer it writes takes them, plus its own tool.
   const runCalls = useRef<AssistantToolCall[]>([]);
-  // A tool shows as running in the live answer from its start; its result turns it green or red.
-  const beginCall = (tool: string) => {
-    if (running.current) live.startTool(tool, callLabel(tool));
-  };
   const noteCall = (call: AssistantToolCall) => {
-    if (!running.current) return;
-    if (runCalls.current.length < 8) runCalls.current.push(call);
-    live.finishTool(call.tool, callLabel(call.tool), call.ok);
+    if (running.current && runCalls.current.length < 8) runCalls.current.push(call);
   };
   const takeCalls = (own?: AssistantToolCall) => {
     const noted = running.current ? runCalls.current : [];
@@ -651,14 +644,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
       // The general chat keeps the conversation; a specialist only needs the last exchange.
       const context = agent === "general" ? history : history.slice(-2);
-      // The status names the model as soon as it took the question; the thinking model says it thinks first.
+      // The thinking model says it thinks first; which model answers is kept for the answer's details.
       const onModel = (value: unknown) => {
         const use = noteModel(value);
-        if (use) setStatus((current) => use.thinking ? { ...workStatus.think, agent: current?.agent ?? agent, model: modelTitle(use) }
-          : { ...(current ?? step), agent: current?.agent ?? agent, model: modelTitle(use) });
+        if (use?.thinking) setStatus((current) => ({ ...workStatus.think, agent: current?.agent ?? agent }));
       };
       const showText = (text: string) => {
-        setStatus((current) => current?.text === workStatus.think.text ? { ...step, agent: current.agent, model: current.model } : current);
+        setStatus((current) => current?.text === workStatus.think.text ? { ...step, agent: current.agent } : current);
         setStreaming(text);
       };
       const ask = async (past: typeof history) => {
@@ -701,7 +693,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       return cached.value;
     }
     let value: MarketSnapshot | undefined;
-    beginCall(lookupTool.market);
     try {
       const response = await fetch(`/api/market?currencies=${encodeURIComponent(codes)}`, { cache: "no-store", signal: withTimeout(15000, signal) });
       if (response.ok) {
@@ -720,7 +711,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const topics = knowledgeTopics(text, names, true);
     const found: AssistantKnowledge[] = [], fresh: AssistantKnowledge[] = [], used: string[] = [];
     let offline = false;
-    if (topics.length) beginCall(lookupTool.lexicon);
     for (const topic of topics) {
       const stored = findKnowledge(state.assistantKnowledge, topic);
       if (stored && !isStale(stored)) { found.push(stored); used.push(stored.id); continue; }
@@ -750,7 +740,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   async function searchLocalKnowledge(question: string, signal?: AbortSignal): Promise<LocalKnowledgeSearch | undefined> {
     const learned = learnedCandidates(state.assistantKnowledge);
     setStatus((current) => ({ ...(learned.length ? workStatus.recall : workStatus.knowledge), agent: current?.agent }));
-    beginCall(lookupTool.knowledge);
     try {
       const response = await fetch("/api/ai/knowledge", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500), ...(learned.length ? { learned } : {}) }), signal: withTimeout(5000, signal) });
@@ -767,7 +756,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // The automatic web search: only search words leave the device; sources the user rejected for this question are skipped.
   async function searchTheWeb(question: string, signal?: AbortSignal, current?: CurrentKind): Promise<WebSearchResult | undefined> {
     setStatus((current) => ({ ...workStatus.web, agent: current?.agent }));
-    beginCall(WEB_TOOL);
     try {
       const avoid = avoidedSources(state.assistantKnowledge, question);
       const response = await fetch("/api/ai/web-search", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
@@ -818,7 +806,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (!isAssistantTool(step.tool) || changingTools.includes(step.tool) || isDraftTool(step.tool)) continue;
       const tool = step.tool;
       setStatus(statusFor(tool, agent));
-      beginCall(tool);
       try {
         const market = tool === "market" || tool === "depot" ? await loadMarket(step.question, signal) : undefined;
         const knowledge = tool === "knowledge" ? await loadKnowledge(step.question, names, signal) : undefined;
@@ -1629,7 +1616,7 @@ const MessageRow = memo(function MessageRow({ message, state, dashboard, last, l
     {message.card?.kind === "homeoffice" && <div className="pl-11">
       <HomeOfficeCard card={message.card} state={state} disabled={locked} onResult={(result) => act()?.addResult(result, "Regel")} /></div>}
     {message.change && message.status !== "dismissed" && <div className="pl-11">
-      <GlowFrame kind="pending" active={message.status === "preview" && pending}>
+      <GlowFrame active={message.status === "preview" && pending}>
         <ChangeCard message={message} disabled={locked} onApply={() => act()?.applyChange(message)}
           onDismiss={() => act()?.setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts geändert.")}
           onUndo={() => message.change?.logId && act()?.undo(message.change.logId)} />
@@ -1650,7 +1637,7 @@ const MessageRow = memo(function MessageRow({ message, state, dashboard, last, l
           const question = missingQuestion(draft);
           act()?.setMessage(message.id, { draft, status: question ? "question" : "preview", text: question ?? previewText(draft) });
         }} />
-        : <GlowFrame kind="pending" active={message.status === "preview" && pending}>
+        : <GlowFrame active={message.status === "preview" && pending}>
           <DraftCard key={`${message.id}:${JSON.stringify(message.draft)}`} message={message} state={state} dashboard={dashboard} disabled={locked}
             onEdit={() => act()?.setEditing(message.id)}
             onDismiss={() => act()?.setMessage(message.id, { status: "dismissed" }, "Alles klar, ich habe nichts gespeichert.")}
@@ -1722,16 +1709,17 @@ function Bubble({ role, text, source, models, calls, prompt, sources, links, fad
     {handoff ? <HandoffAvatar activity={handoff.activity} live={!!live} /> : <DroidAvatar still={!live} className="mt-0.5" />}
     <div className={cn("min-w-0 rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card", children ? "max-w-[92%] flex-1" : "max-w-[85%]")}>
       <span className="sr-only">Assistent: </span><AnswerProse text={text} />
-      {(details || sources?.length || links?.length) && <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
-        {details && <AnswerDetails source={source} models={models} calls={calls} prompt={prompt} />}
+      {children}
+      {/* The footer: sources like footnotes, then the small closed "Details" link. */}
+      {(details || sources?.length || links?.length) && <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-muted-foreground">
         {sources?.length ? <span>{links?.length ? sources.join(" · ") : `Wissen: ${sources.join(" · ")}`}</span> : null}
         {links?.length ? <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1"><span>Quellen:</span>
           {links.map((link, index) => <a key={link.url} href={link.url} target="_blank" rel="noreferrer noopener" title={link.title}
             className="rounded-sm underline decoration-border underline-offset-2 transition-colors hover:text-foreground hover:decoration-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">
             [{index + 1}] {linkSite(link.url)}<span className="sr-only"> (öffnet in neuem Tab)</span></a>)}
         </span> : null}
+        {details && <AnswerDetails source={source} models={models} calls={calls} prompt={prompt} />}
       </div>}
-      {children}
     </div>
   </div>;
 }

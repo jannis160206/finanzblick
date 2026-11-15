@@ -83,7 +83,7 @@ Siehe [Supervisor](#supervisor-deepseek-flash-plant-v4-pro-schreibt).
   - Nicht bei leeren Ergebnissen: „keine Daten“ bleibt der ehrliche Werkzeugsatz statt eines erfundenen Absatzes.
   - Nicht bei Werkzeugen, deren Text schon die Antwort ist (Überblicke, Rückblicke, Hinweise, „Warum …?“-Erklärungen, Was-wäre-wenn, Gehalt), außer bei Rat- und Meinungsfragen oder wenn nur das Modell das Werkzeug geraten hat.
   - Floskeln am Anfang („Kurz gesagt:“, „Du willst wissen …?“) und doppelte Sätze werden entfernt.
-- **Kennzeichnung:** Unter jeder Antwort steht ein eingeklapptes „Details · DeepSeek V4 Pro · 2 Werkzeuge“ (beim Rückfall „Lokal (Qwen) · Fallback“); siehe [Details und Live-Werkzeugstatus](#details-und-live-werkzeugstatus). Der zuständige Bereich bleibt intern: Er steht als optionales Feld `agent` im Chatverlauf und in der Admin-Ansicht, nicht im Chat.
+- **Kennzeichnung:** Unter jeder Antwort steht nur ein kleiner, zugeklappter Link „Details“ (das Modell als Tooltip, beim Rückfall auf Qwen ein kleiner gelber Punkt); siehe [Details unter der Antwort](#details-unter-der-antwort). Der zuständige Bereich bleibt intern: Er steht als optionales Feld `agent` im Chatverlauf und in der Admin-Ansicht, nicht im Chat.
 
 ## Modelle je Aufgabe
 
@@ -358,14 +358,14 @@ Weiter offen: Tippfehler in Namen („spotfy“) beantwortet der Assistent mit e
 
 ## Live-Status und Chat-Oberfläche
 
-Statt eines festen „Denkt nach“ zeigt der Chat, was gerade passiert. Während eine Antwort entsteht, steht an der Stelle des Bots nur der Denk-Orb; die Statuszeile steht über der laufenden Antwort. Ist die Antwort fertig, verschwinden beide, und der Droide übernimmt. Die Effekte stammen aus den Libraries.dev-Paketen `thinking-orbs`, `bot-avatars`, `border-beam` und `metal-fx`.
+Der Chat wirkt wie ein Gespräch, nicht wie ein Protokoll. Während eine Antwort entsteht, stehen an der Stelle des Bots nur der Denk-Orb und daneben ein, zwei Wörter („Suche…“, „Rechne…“, „Schreibe…“) – ohne Rahmen, Werkzeug-Chips oder Modellnamen. Sobald Wörter kommen, steht nur noch die Antwort in ihrer Blase. Ist sie fertig, verschwindet der Orb, und der Droide übernimmt. Die Effekte stammen aus den Libraries.dev-Paketen `thinking-orbs`, `bot-avatars`, `border-beam` und `metal-fx`.
 
 - **Status je Schritt** (`src/lib/assistant/status.ts`):
   - „Lese deine Nachricht…“, dann „Verstehe deine Frage…“, während der Orchestrator entscheidet. Kennen die Regeln den Spezialisten schon, erscheint sein Schritt sofort, auch während der Server noch Details liest;
   - danach je Werkzeug, z. B. „Analysiere deine Buchungen…“, „Prüfe deine Verträge…“, „Berechne dein freies Budget…“, „Lese deine Lohnabrechnungen…“, „Suche passendes Wissen…“, „Hole aktuelle Marktdaten…“;
   - „Formuliere die Antwort…“ während des Streamings, „Denke gründlich nach…“, solange der Denkmodus läuft.
-  - Neben dem Text steht dezent das Modell, das gerade antwortet („DeepSeek Flash“, „DeepSeek V4 Pro · Denkmodus“, „Lokal (Qwen)“). Der Server meldet zuerst den System-Prompt (`{"prompt": …}`) und dann das Modell (`{"model": …}`), sobald es die Anfrage angenommen hat.
-  - Darunter laufen die Werkzeuge der Antwort als kompakte Chips mit „Läuft“, „Erfolgreich“ oder „Fehler“ (siehe [Details und Live-Werkzeugstatus](#details-und-live-werkzeugstatus)).
+  - Diese Schritt-Texte bleiben intern (Feedback-Datei); der Chat zeigt nur die Kurzform je Art der Arbeit (`shortStatus`): „Lese…“, „Überlege…“, „Suche…“, „Analysiere…“, „Rechne…“, „Bereite vor…“, „Fasse zusammen…“, „Schreibe…“, dazu „Denke nach…“, „Suche im Web…“ und „Vergleiche…“. Ein sanfter Lichtschimmer läuft über den Text (`.assistant-shimmer`), bei reduzierter Bewegung steht er still.
+  - Welches Modell antwortet, steht nicht mehr im Live-Status, sondern in den Details. Der Server meldet zuerst den System-Prompt (`{"prompt": …}`) und dann das Modell (`{"model": …}`), sobald es die Anfrage angenommen hat.
   - Ein Test stellt sicher, dass jedes Werkzeug einen Status hat.
 - **Denk-Orb** (`ThinkingOrb`, 32 px an der Stelle des Bots): Jeder Schritt trägt eine Art von Arbeit, die die Animation wählt:
 
@@ -384,7 +384,7 @@ Statt eines festen „Denkt nach“ zeigt der Chat, was gerade passiert. Währen
 - **Nur der Droide** (`BotAvatar` Typ `droid`, `DroidAvatar`): Seit dem 15.11.2026 hat der Assistent ein einziges Gesicht; Stern, Blume, Kleeblatt und Mech sind entfallen, und welcher Spezialist gearbeitet hat, steht weder am Bot noch unter der Antwort.
 
   Während eine Antwort entsteht, ist kein Bot zu sehen, nur der Orb. Ist sie fertig, schrumpft der Orb mit leichter Unschärfe weg, und der Droide federt an seine Stelle. Eine gestreamte Antwort bleibt dabei stehen, nur das Bild wechselt. Zustände: `default` schaut sich bei der neuesten Antwort um, `working` im leeren Chat, solange man auf eine Startfrage zeigt. Ältere Antworten behalten ihre Pose ohne Animation, damit ein langer Verlauf keine Bilder mehr kostet. Im Verlauf ist der Droide Dekoration; im leeren Chat heißt er „Finanz-Assistent“.
-- **BorderBeam:** ein wandernder Lichtstreifen (`md`, Palette `forest` passend zum Mint der App) um die laufende Antwort; ein langsam atmender Rand (`pulse-inner`) um die neueste Änderung oder Vorschau, die auf „Bestätigen“ wartet. Nach der Entscheidung blendet er aus.
+- **BorderBeam:** ein langsam atmender Rand (`pulse-inner`, Palette `forest` passend zum Mint der App) um die neueste Änderung oder Vorschau, die auf „Bestätigen“ wartet. Nach der Entscheidung blendet er aus. Die laufende Antwort hat seit dem 15.11.2026 keinen Rahmen mehr.
 - **MetalFx:** ein feiner Flüssigmetall-Ring (`circle`, `silver`) um Senden und Stopp, solange der Knopf etwas tun kann. Er liegt als eigene Ebene hinter dem Knopf: Der Knopf selbst hängt nie von WebGL ab und bleibt auch ohne den Effekt sichtbar und bedienbar.
 - **Nachrichten:** neue Nachrichten federn herein (Feder 300/28, leichte Skalierung und Verschiebung, eigene von rechts). Gestreamte Wörter blenden einzeln aus einer leichten Unschärfe ein (CSS, nur `opacity` und `filter`).
 - **Aktionen unter Antworten:** Kopieren (mit „Kopiert“ für Screenreader), Neu generieren (nur bei der letzten KI-Antwort), Hilfreich/Nicht hilfreich. Ältere Antworten zeigen die Leiste auf Geräten mit Maus erst bei Hover oder Fokus.
@@ -395,7 +395,7 @@ Statt eines festen „Denkt nach“ zeigt der Chat, was gerade passiert. Währen
 - **Laden:** Der Chat wird erst beim Öffnen geladen (`next/dynamic`), die vier Pakete also auch.
 - **Flüssig auch mit großem Haushaltsbuch:** Während einer Antwort ändert der Chat den globalen Finanzstand nicht. Frage, Antwort und Gelerntes sammeln sich lokal und gehen gesammelt in den Finanzstand, sobald der Chat ruhig ist (spätestens beim Schließen oder Verlassen der Seite). Status und gestreamte Wörter rendern nur die laufende Zeile, höchstens einmal pro Bild. Details und Messwerte: [PERFORMANCE.md](PERFORMANCE.md#finanz-assistent-flüssiger-chat-november-2026).
 
-**Dateien:** `src/components/assistant-chat-parts.tsx` (Droide, Orb, Übergabe Orb → Droide, laufende Antwort mit eigenem Live-Speicher, Statuszeile, Rahmen, Streaming-Text, Einblenden, leerer Chat, Aktionen, Senden/Stopp), `src/lib/assistant-state.ts` (welche Änderungen nur den Assistenten betreffen), `src/lib/assistant/status.ts` (Text, Art der Arbeit und Agent je Schritt), `src/components/finance-assistant.tsx` (Ablauf, Abbruch, Neu generieren), `src/app/globals.css` (`.assistant-word`).
+**Dateien:** `src/components/assistant-chat-parts.tsx` (Droide, Orb, Übergabe Orb → Droide, laufende Antwort mit eigenem Live-Speicher, Statuszeile, Rahmen, Streaming-Text, Einblenden, leerer Chat, Aktionen, Senden/Stopp), `src/lib/assistant-state.ts` (welche Änderungen nur den Assistenten betreffen), `src/lib/assistant/status.ts` (Text, Art der Arbeit und Agent je Schritt), `src/components/finance-assistant.tsx` (Ablauf, Abbruch, Neu generieren), `src/app/globals.css` (`.assistant-word`, `.assistant-shimmer`).
 
 ## Lokales Finanzwissen (RAG)
 
@@ -580,16 +580,16 @@ Unter dem Text legt die App die Ergebnisse der Spezialisten aus (`AnswerLayout` 
 
 - Eval: Smoke 24/24, Gold 80/80, Deep 15/15.
 
-## Details und Live-Werkzeugstatus
+## Details unter der Antwort
 
-Stand 15.11.2026. Tool-Calls und Prompts sind im Chat sichtbar, ohne die Antwort zu überladen.
+Stand 15.11.2026. Werkzeugaufrufe und Prompts bleiben nachvollziehbar, ohne das Gespräch zu stören (`AnswerDetails` in `src/components/assistant-details.tsx`).
 
-- **Während der Antwort** (`ToolStatus` in `src/components/assistant-chat-parts.tsx`): Jedes Werkzeug erscheint beim Start als Chip „Kontoprognose · Läuft“ (drehendes Symbol) und wechselt zu „Erfolgreich“ (grün, Häkchen) oder „Fehler“ (rot, Warnsymbol); Farbe, Symbol und Wort tragen den Zustand gemeinsam. Erfasst werden die Schritte der Spezialisten (`runWorkers`), Websuche, lokales Finanzwissen, Lexikon und Marktdaten (`beginCall` → `noteCall`). Die Chips gleiten mit Motion herein (bei reduzierter Bewegung ohne).
-- **Nach der Antwort** (`AnswerDetails` in `src/components/assistant-details.tsx`): ein einziges, standardmäßig eingeklapptes „Details · DeepSeek V4 Pro · 3 Werkzeuge“ unter der Nachricht ersetzt die frühere Modellzeile. Aufgeklappt zeigt es:
-  - **Modelle** des Laufs mit Aufgabe („Supervisor: DeepSeek Flash“, „Supervisor-Antwort: DeepSeek V4 Pro“, Rückfall mit Grund);
-  - den **System-Prompt** der Antwort (gekürzt, scrollbar; er enthält keine Fakten, nur Stimme, Regeln und Datenregel);
-  - alle **Werkzeugaufrufe** mit Name, technischem Namen, Ausgang, Eingabe (die Teilfrage) und gekürztem Ergebnis.
-- Quellenlinks [1], [2] bleiben sichtbar neben „Details“. Die Kacheln einer Antwort klappen mit „Mehr“ auf, damit es nur ein „Details“ gibt.
+- **Im Gespräch:** keine Werkzeug-Chips, keine Werkzeug-Karten, kein Prompt. Unter dem Text (und unter den Ergebnis-Kacheln) stehen nur die Quellen [1], [2] und ein kleiner, zugeklappter Link **„Details ⌄“**. Das antwortende Modell steht im Tooltip (`title`, `data-model`); hat das lokale Modell übernommen, markiert ein kleiner gelber Punkt den Link („Details (lokales Modell)“ für Screenreader).
+- **Aufgeklappt** (Höhe und Deckkraft mit Motion; bei reduzierter Bewegung nur eine kurze Überblendung, ohne Bewegung sofort), dezent mit einer Linie links abgesetzt:
+  - eine Zeile **Modelle**: „DeepSeek Flash (Supervisor) · DeepSeek V4 Pro (Supervisor-Antwort)“, ein Rückfall mit Grund im Tooltip;
+  - **Werkzeuge** als kompakte Zeilen: Status (Häkchen grün, Kreuz rot, für Screenreader „erfolgreich“/„Fehler“), Name und gekürzte Eingabe („Monatsplan · Was bleibt mir diesen Monat?“). Das Ergebnis klappt erst auf Klick auf die Zeile auf; Aufrufe ohne Ergebnis sind keine Schaltfläche;
+  - der **Prompt** auf zwei Zeilen gekürzt, ganz (scrollbar) erst mit „Ganzen Prompt zeigen“. Er enthält keine Fakten, nur Stimme, Regeln und Datenregel.
+- Die Kacheln einer Antwort klappen mit „Mehr“ auf, damit es nur ein „Details“ gibt.
 
 ## Agenten-Prompts (JSON)
 
@@ -663,10 +663,10 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `speed.test.ts`: Stimme je Agent, Allgemeinwissen nur im Chat ohne persönliche Daten, `tidyAnswer`.
 - `payroll.test.ts`: Gehaltswerkzeug und Fakten-Ausschnitte.
 - `eval-cases.test.ts`: Eigentümer jeder goldenen Frage; grenzwertige Fragen nie beim falschen Spezialisten.
-- `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten, Gehaltsfrage mit Rohdaten, Kachel und Details-Panel (Modelle, Prompt, Werkzeug mit Eingabe), Kontoprognose mit Live-Werkzeugstatus, Kennzahlen und Sparkline, Datenüberblick ohne IBAN, nur der Droide und keine Spezialisten-Namen, kein horizontales Scrollen – bei 390 px dunkel und 1440 px hell (Supervisor-Pläne und Antworten gemockt, Werkzeuge echt).
+- `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten, Gehaltsfrage mit Rohdaten, Kachel und zugeklappten Details (Prompt und Werkzeuge erst nach dem Aufklappen, Ergebnis per Klick), Kontoprognose mit Live-Status nur aus Orb und Kurztext (keine Werkzeuge, kein Modell), Kennzahlen und Sparkline, Datenüberblick ohne IBAN, nur der Droide und keine Spezialisten-Namen, kein horizontales Scrollen – bei 390 px dunkel und 1440 px hell (Supervisor-Pläne und Antworten gemockt, Werkzeuge echt).
 - `tests/assistant-admin.spec.ts`: Admin-Ansicht nur über die Einstellungen erreichbar, Pfeil klappt die Unterseiten auf, Topologie mit Werkzeugen, Kosten, Prompt speichern und zurücksetzen, Läufe, Werkzeuge, Feedback und Regeln, Umleitung von `/einstellungen/orchestrator`, kein horizontales Scrollen bei 1440 px hell und 390 px dunkel.
 - `agent-prompts-store.test.ts`: Speichern, Anwenden und Zurücksetzen eines Prompts, feste Teile bleiben, beschädigte Datei bleibt unverändert, Ort in Produktion.
-- `assistant-chat-parts.test.tsx`: Live-Werkzeugstatus (Läuft, Erfolgreich, Fehler) und das eingeklappte Details-Panel mit Modellen, Prompt und Werkzeugaufrufen; `orchestrator-admin.test.tsx`: Unterseiten, Baum, Kosten, Prompt-Editor, Aufklapp-Pfeil.
+- `assistant-chat-parts.test.tsx`: Live-Status nur Orb und Kurztext („Suche…“, „Rechne…“, „Denke nach…“), danach nur die Wörter; zugeklappter „Details“-Link mit Modellen, kompakten Werkzeugzeilen (Ergebnis per Klick), gekürztem Prompt und Rückfall-Punkt; `orchestrator-admin.test.tsx`: Unterseiten, Baum, Kosten, Prompt-Editor, Aufklapp-Pfeil.
 - Feedback-Datei: `feedback.test.ts` (Eintrag mit Kontext, Wissen und Websuche, Schwärzung, Ergänzen und Grenze), `feedback-store.test.ts` (Ort, gleichzeitiges Schreiben, beschädigte Datei bleibt, Route mit Schwärzung, ungültige und fremde Anfragen), `assistant-chat-parts.test.tsx` (👍/👎, Kommentarfeld mit Fokus, Enter, Escape schließt nur das Feld), `orchestrator-admin.test.tsx` (Feedback-Bereich, nur Administrator).
 - `orchestrator-info.test.ts`, `orchestrator-admin.test.tsx`: Läufe aus dem Verlauf, Status, Werkzeugaufrufe samt Ausgang (auch für ältere Antworten), Werkzeugliste und Darstellung.
 - Korrekturen aus dem Chat-Test: `conversation.test.ts` (`converseOn`, Budget-Empfehlung), `payroll.test.ts`, `pulse.test.ts`, `copilot.test.ts`, `cancel.test.ts`, `learning.test.ts`, `smalltalk.test.ts`, `phrasing.test.ts`, `speed.test.ts`.
