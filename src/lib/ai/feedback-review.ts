@@ -1,19 +1,20 @@
 import { z } from "zod";
-import { applyEdit, cleanRule, promptAgent, rulesFor, sameRule, type PromptEdit, type RuleText } from "@/lib/assistant/feedback-rules";
+import { isSubagentKey, type SubagentKey } from "@/lib/agents/registry";
+import { applyEdit, cleanRule, sameRule, type PromptEdit, type RuleText } from "@/lib/assistant/feedback-rules";
 import { correctsPrevious } from "@/lib/assistant/learning";
-import type { AgentId } from "@/lib/assistant/orchestrator";
-import { MAX_PROMPT_LENGTH, promptGroupName, promptLabel, promptText, reviewTargets, type PromptId, type PromptOverrides } from "./agent-prompts";
-import { answerFreeQuestion } from "./answer";
+import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
+import type { RepoLive } from "@/lib/server/agent-repo-store";
+import { MAX_PROMPT_LENGTH, promptLabel, promptText, reviewTargets, type PromptId, type PromptOverrides } from "./agent-prompts";
+import { composeWithAgents, describeRoute, routeWithAgents } from "./agent-eval";
 import { interpretAssistantMessage } from "./assistant";
 import { chat, type ChatOptions } from "./client";
 import type { ModelUse } from "./models";
-import { supervise, type Supervision } from "./supervisor";
 import { cleanUntrusted, DATA_RULE } from "./untrusted";
 
 /**
  * The review agent (DeepSeek V4 Pro) works on the feedback in the background: for a 👎 with a concrete comment it finds the
- * prompt that caused the answer – the supervisor's planning, how it writes, the answer rules, or a specialist's voice or tool
- * choice – and changes it by one sentence. It then asks the question again with the changed prompt and judges whether that
+ * prompt that caused the answer – the orchestrator's (delegation and answer), a specialist's, the answer rules or the change
+ * workflow's tool choice – and changes it by one sentence. It then asks the question again with the changed prompt and judges whether that
  * fixes the complaint. Only cleaned, general sentences pass: no names, amounts, links, account numbers or weakened safety rules.
  */
 
@@ -21,7 +22,7 @@ export type ReviewRequest = {
   question: string; answer: string; comment: string; agent?: AgentId;
   /** The messages before the answer, as stored with the feedback. */
   history?: { role: "user" | "assistant"; text: string }[];
-  /** How the answer came about: the orchestrator's path, the tool and the tool calls. */
+  /** How the answer came about: the orchestrator's path, the tool and the tool calls ("agent.budget" for a delegation). */
   via?: string; tool?: string; calls?: string[];
   /** The figures the answer's card showed; the answer is written again from them. */
   facts?: Record<string, string | number>;
@@ -88,11 +89,12 @@ const conversation = (request: ReviewRequest) => request.history?.length
 export async function diagnoseFeedback(request: ReviewRequest, prompts: PromptOverrides = {}, previous?: Attempt, options: ChatOptions = {}):
   Promise<{ diagnosis: Diagnosis; use: ModelUse }> {
   const agent = request.agent ?? "general";
-  const shown: PromptId[] = ["supervisor", "synthesis", "answer-rules", `voice.${agent}`, `tools.${agent}`];
+  const shown: PromptId[] = ["agent.orchestrator", "answer-rules", ...involved(request).map((key): PromptId => `agent.${key}`),
+    ...(request.via === "rule" || request.via === "orchestrator" && request.tool ? [`tools.${agent}` as PromptId] : [])];
   const reply = await chat([
     { role: "system", content: `${promptText("review", prompts).trim()} ${DATA_RULE}` },
     { role: "user", content: [
-      `Antwort kam von: ${agent} (${promptGroupName(agent)})`,
+      `Antwort kam von: ${agent} (${agent === "general" ? "Allgemeiner Chat" : agentLabel[agent]})`,
       before(request),
       conversation(request),
       `Frage: ${cleanUntrusted(request.question, 300)}`,
@@ -106,35 +108,45 @@ export async function diagnoseFeedback(request: ReviewRequest, prompts: PromptOv
   return { diagnosis: cleanDiagnosis(parseJson(reply.content), prompts), use: reply.use };
 }
 
-const describePlan = (plan: Supervision) => plan.kind === "action" ? `Plan: Aktion bei ${plan.agent}`
-  : plan.kind === "ask" ? `Plan: Rückfrage „${plan.question}“`
-    : `Plan: Antwort${plan.steps.length ? ` mit ${plan.steps.map((step) => `${step.tool} („${step.question}“)`).join(", ")}` : " nur aus dem Datenüberblick"}`;
+/** The specialists that worked on the answer: its delegations, or the specialist of its agent. */
+function involved(request: ReviewRequest): SubagentKey[] {
+  const delegated = (request.calls ?? []).flatMap((item) => {
+    const key = /^agent\.([a-z]+)/.exec(item)?.[1];
+    return isSubagentKey(key) ? [key] : [];
+  });
+  const own: SubagentKey = request.agent === undefined || request.agent === "general" ? "research" : request.agent;
+  return [...new Set(delegated.length ? delegated : [own])];
+}
 
 /**
- * The question once more with the changed prompt: the supervisor's plan for a planning change, the specialist's pick for a
- * tool-choice change, otherwise the written answer from the card's figures.
+ * The question once more with the changed prompt, as the agent runtime would take it: who the orchestrator delegates to and with
+ * which tools the specialists start (or the change workflow's pick), and for an answer rule the written answer from the card's
+ * figures. The tools need the user's data in the browser, so they do not run here.
  */
-export async function replayFeedback(request: ReviewRequest, edit: PromptEdit, prompts: PromptOverrides, rules: readonly RuleText[] = [],
+export async function replayFeedback(request: ReviewRequest, edit: PromptEdit, repo: RepoLive, rules: readonly RuleText[] = [],
   options: ChatOptions = {}): Promise<string> {
-  const chatOptions: ChatOptions = { cloudOnly: true, temperature: 0, ...options };
-  // Planned as in the chat: a correction of the previous answer ("… meine ich") with the conversation.
+  const chatOptions: ChatOptions = { temperature: 0, ...options };
+  const asOf = new Date().toISOString().slice(0, 10);
+  // Taken as in the chat: a correction of the previous answer ("… meine ich") with the conversation.
   const correction = !!request.history?.some((item) => item.role === "assistant") && correctsPrevious(request.question);
-  if (edit.id === "supervisor") return describePlan(await supervise({ message: request.question, history: request.history, ...(correction ? { correction } : {}) },
-    { ...chatOptions, prompts, rules: rulesFor(rules, undefined, "routing") }));
   if (edit.id.startsWith("tools.")) {
-    const reply = await interpretAssistantMessage({ message: request.question, asOf: new Date().toISOString().slice(0, 10), history: request.history },
-      { ...chatOptions, prompts, rules });
-    return `${reply.agent}/${reply.tool ?? (reply.steps?.map((step) => step.tool).join("+") || "Antwort")}${reply.question ? ` · Rückfrage „${reply.question}“` : ""}`;
+    const reply = await interpretAssistantMessage({ message: request.question, asOf, delegated: true, ...(request.history?.length ? { history: request.history } : {}) },
+      { ...chatOptions, prompts: repo.prompts, rules });
+    return `Änderung → ${reply.agent}/${reply.tool ?? reply.draft?.action ?? "Antwort"}${reply.question ? ` · Rückfrage „${reply.question}“` : ""}`;
   }
-  const agent = promptAgent(edit.id) ?? request.agent ?? "general";
-  const answer = await answerFreeQuestion({ question: request.question, history: request.history, facts: request.facts ?? {}, agent,
-    supervised: edit.id === "synthesis" || request.via === "supervisor", ...(correction ? { correction } : {}) }, { ...chatOptions, prompts, rules });
-  return answer.text ? `Antwort: ${answer.text}` : "Keine Antwort";
+  if (edit.id === "answer-rules") {
+    const answer = await composeWithAgents({ question: request.question, facts: request.facts ?? {}, ...(request.agent ? { agent: request.agent } : {}), asOf,
+      ...(request.history?.length ? { history: request.history } : {}) }, { ...chatOptions, repo, rules });
+    return answer.text ? `Antwort: ${answer.text}` : "Keine Antwort";
+  }
+  const route = await routeWithAgents({ message: request.question, asOf, ...(request.history?.length ? { history: request.history } : {}),
+    ...(correction ? { correction } : {}) }, { ...chatOptions, repo, rules });
+  return `Orchestrator: ${describeRoute(route)}`;
 }
 
 const verdictPrompt = "Du prüfst für einen privaten Finanz-Assistenten, ob eine Prompt-Änderung die Beschwerde eines Nutzers behebt. Du siehst Frage, " +
-  "Kommentar, die alte Antwort samt Weg und das Ergebnis mit dem geänderten Prompt (ein Plan des Supervisors zeigt, welche Daten und Recherchen er holen " +
-  "lässt – web ist die Websuche; der Datenüberblick des Nutzers fehlt beim Nachtest). Beurteile nur, was im Ergebnis wirklich steht, nicht die Absicht der " +
+  "Kommentar, die alte Antwort samt Weg und das Ergebnis mit dem geänderten Prompt (beim Orchestrator: an welche Spezialisten er mit welcher Aufgabe " +
+  "delegiert und mit welchen Werkzeugen sie beginnen – web ist die Websuche; die Werkzeuge laufen beim Nachtest nicht, und der Datenüberblick fehlt). Beurteile nur, was im Ergebnis wirklich steht, nicht die Absicht der " +
   "Änderung. Zerlege den Kommentar in die einzelnen Forderungen des Nutzers und prüfe jede nach ihrer Absicht, nicht nach dem Wort: erfüllt ist sie, wenn " +
   "das neue Ergebnis sie tut oder einen passenden Schritt dafür enthält. Daten des Nutzers gelten als geholt, wenn ein Lese-Werkzeug sie liefert, das sie " +
   "enthält (contracts = Verträge und Abos, query = Buchungen, Gebühren und Händler, accounts = Konten); eine verlangte Suche oder Recherche braucht einen " +

@@ -1,17 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "node:path";
 import { promptText, type PromptOverrides } from "@/lib/ai/agent-prompts";
 import { AiUnavailableError, cloudPause } from "@/lib/ai/client";
 import { readAiConfig } from "@/lib/ai/config";
 import { diagnoseFeedback, judgeReplay, replayFeedback, type Attempt, type Diagnosis, type ReviewRequest, type Verdict } from "@/lib/ai/feedback-review";
-import { fileResponseCache } from "@/lib/ai/response-cache";
 import { redactSensitive, type StoredFeedback } from "@/lib/assistant/feedback";
 import {
   activeRules, applyEdit, MAX_ACTIVE_RULES, promptAgent, revertEdit, vagueComment, type FeedbackRule, type PromptEdit, type RuleScore, type RuleText,
 } from "@/lib/assistant/feedback-rules";
-import { runGold } from "@/lib/assistant/gold-eval";
 import { agentIds, type AgentId } from "@/lib/assistant/orchestrator";
 import { agentPromptsPath, readPromptOverrides, savePrompt } from "./agent-prompts-store";
+import { readRepo, repoLive, type RepoLive } from "./agent-repo-store";
+import { runGoldEval } from "./eval-runner";
 import { changeRules, readRules, rulesFilePath } from "./rules-store";
 
 /**
@@ -25,13 +24,13 @@ import { changeRules, readRules, rulesFilePath } from "./rules-store";
 
 export type RuleLoopDeps = {
   path?: string;
-  /** The prompts file the change goes into. */
+  /** The agent repo the change goes into. */
   promptsPath?: string;
   cloudReady?: () => boolean;
   diagnose?: (request: ReviewRequest, prompts: PromptOverrides, previous?: Attempt) => Promise<{ diagnosis: Diagnosis }>;
-  replay?: (request: ReviewRequest, edit: PromptEdit, prompts: PromptOverrides, rules: readonly RuleText[]) => Promise<string>;
+  replay?: (request: ReviewRequest, edit: PromptEdit, repo: RepoLive, rules: readonly RuleText[]) => Promise<string>;
   verify?: (request: ReviewRequest, edit: PromptEdit, replay: string) => Promise<Verdict>;
-  evaluate?: (rules: readonly RuleText[], prompts: PromptOverrides) => Promise<RuleScore & { model: string; failed?: string[] }>;
+  evaluate?: (rules: readonly RuleText[], repo: RepoLive, label: string) => Promise<RuleScore & { model: string; failed?: string[] }>;
   now?: () => Date;
 };
 
@@ -60,14 +59,11 @@ export function ruleJob(entry: StoredFeedback): RuleJob | undefined {
 export const ruleLoopEnabled = () => !!readAiConfig().cloud;
 const cloudReady = () => !!readAiConfig().cloud && !cloudPause();
 
-// The gold questions plus the answer cases on DeepSeek's fast model, four at a time; unchanged prompts come from the cache.
-function goldEvaluator(path: string) {
-  const cache = fileResponseCache(join(dirname(path), "ai-cache", "rule-eval"));
-  return async (rules: readonly RuleText[], prompts: PromptOverrides) => {
-    const score = await runGold({ rules, prompts, answers: true, concurrency: 4, chat: { tier: "fast", cloudOnly: true, cache } });
-    return { passed: score.passed, total: score.total, hard: score.hard, model: readAiConfig().cloud?.models.fast ?? "deepseek",
-      failed: score.results.filter((result) => !result.ok).map((result) => result.label) };
-  };
+// The gold questions plus the answer cases on DeepSeek's fast model, logged in the eval history; unchanged prompts come from the cache.
+async function goldEvaluator(rules: readonly RuleText[], repo: RepoLive, label: string) {
+  const run = await runGoldEval(label, { repo, rules });
+  return { passed: run.score?.passed ?? 0, total: run.score?.total ?? 0, hard: run.score?.hard ?? 0, model: run.model ?? "deepseek",
+    failed: run.results.filter((result) => !result.ok).map((result) => result.label) };
 }
 
 let checks: Promise<unknown> = Promise.resolve();
@@ -104,19 +100,20 @@ export function reviewFeedback(job: RuleJob, deps: RuleLoopDeps = {}, force = fa
     await save({ status: "checking" });
     try {
       const request = { ...job, comment };
-      const prompts = await readPromptOverrides(promptsPath);
+      const repo = repoLive(await readRepo(promptsPath));
+      const prompts = repo.prompts;
       const diagnose = deps.diagnose ?? ((input: ReviewRequest, current: PromptOverrides, previous?: Attempt) => diagnoseFeedback(input, current, previous));
       const others = (await readRules(path)).filter((item) => item.id !== base.id);
       const rules = activeRules(others);
       // The review agent's own retest: the same question with the changed prompt. A first proposal that falls short gets one second try.
-      let tried: (Attempt & { verdict: Verdict; next: PromptOverrides }) | undefined;
+      let tried: (Attempt & { verdict: Verdict; next: RepoLive }) | undefined;
       for (let round = 0; round < 2 && !tried?.verdict.fixed; round += 1) {
         const { diagnosis } = await diagnose(request, prompts, tried && { edit: tried.edit, replay: tried.replay, note: tried.verdict.note });
         if (!diagnosis.usable) {
           if (!tried) return save({ status: "unusable", reason: diagnosis.reason.slice(0, 200) });
           break;
         }
-        const next: PromptOverrides = { ...prompts, [diagnosis.edit.id]: applyEdit(promptText(diagnosis.edit.id, prompts), diagnosis.edit) };
+        const next: RepoLive = { ...repo, prompts: { ...prompts, [diagnosis.edit.id]: applyEdit(promptText(diagnosis.edit.id, prompts), diagnosis.edit) } };
         const replay = await (deps.replay ?? replayFeedback)(request, diagnosis.edit, next, rules);
         const verdict = await (deps.verify ?? ((input: ReviewRequest, change: PromptEdit, result: string) => judgeReplay(input, change, result)))(request, diagnosis.edit, replay);
         tried = { edit: diagnosis.edit, replay, note: verdict.note, verdict, next };
@@ -125,14 +122,14 @@ export function reviewFeedback(job: RuleJob, deps: RuleLoopDeps = {}, force = fa
       const { edit, next, verdict } = tried;
       const agent = promptAgent(edit.id);
       const shown: Partial<FeedbackRule> = { kind: "prompt", prompt: edit, rule: edit.after, scope: agent ?? "all",
-        target: edit.id === "supervisor" || edit.id.startsWith("tools.") ? "routing" : "answer" };
+        target: edit.id === "answer-rules" ? "answer" : "routing" };
       const review = { fixed: verdict.fixed, note: verdict.note.slice(0, 200), replay: tried.replay.slice(0, 400) };
       if (!verdict.fixed) return save({ ...shown, review, status: "rejected", reason: `Nachtest: ${verdict.note}`.slice(0, 200) });
       if (others.filter((item) => item.status === "active").length >= MAX_ACTIVE_RULES)
         return save({ ...shown, review, status: "rejected", reason: `Schon ${MAX_ACTIVE_RULES} aktive Änderungen – erst eine zurücknehmen.` });
-      const evaluate = deps.evaluate ?? goldEvaluator(path);
-      const baseline = await evaluate(rules, prompts);
-      const candidate = await evaluate(rules, next);
+      const evaluate = deps.evaluate ?? goldEvaluator;
+      const baseline = await evaluate(rules, repo, "Prüfungs-Agent · ohne Änderung");
+      const candidate = await evaluate(rules, next, `Prüfungs-Agent · mit Änderung (${edit.id})`);
       // Equal or better, and no new safety failure; otherwise the prompt stays as it is.
       const passed = candidate.passed >= baseline.passed && candidate.hard <= baseline.hard;
       const score = (value: RuleScore) => ({ passed: value.passed, total: value.total, hard: value.hard });
@@ -145,7 +142,7 @@ export function reviewFeedback(job: RuleJob, deps: RuleLoopDeps = {}, force = fa
       const current = promptText(edit.id, await readPromptOverrides(promptsPath));
       const changed = current.includes(edit.after) ? current : applyEdit(current, edit);
       if (!changed) return save({ ...shown, review, check, status: "rejected", reason: "Der Prompt wurde inzwischen geändert – bitte erneut prüfen." });
-      await savePrompt(edit.id, changed, promptsPath);
+      await savePrompt(edit.id, changed, promptsPath, { by: "Prüfungs-Agent", note: `Aus 👎: ${comment}`.slice(0, 200) });
       return save({ ...shown, review, check, status: "active", appliedAt: now() });
     } catch (error) {
       if (error instanceof AiUnavailableError) return save({ status: "pending", reason: "DeepSeek nicht verfügbar – später erneut prüfen." });
@@ -169,7 +166,8 @@ export async function setRuleActive(id: string, active: boolean, path = rulesFil
     const changed = active ? text.includes(rule.prompt.after) ? text : applyEdit(text, rule.prompt) : revertEdit(text, rule.prompt);
     // The sentence it replaced is gone: it cannot come back. Taken out by hand already: it is only marked.
     if (active && !changed) return undefined;
-    if (changed && changed !== text) await savePrompt(rule.prompt.id, changed, promptsPath);
+    if (changed && changed !== text) await savePrompt(rule.prompt.id, changed, promptsPath,
+      { by: "Admin", note: `${active ? "Wieder angewandt" : "Zurückgenommen"}: ${rule.prompt.after}`.slice(0, 200) });
   }
   const at = now.toISOString();
   const result: FeedbackRule = { ...rule, status: active ? "active" : "disabled", updatedAt: at, ...(active ? { appliedAt: at } : {}) };

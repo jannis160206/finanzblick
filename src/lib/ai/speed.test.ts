@@ -138,24 +138,12 @@ describe("agent answers", () => {
     expect(system(calls)).toContain("Rede locker");
   });
 
-  it("lets the supervisor write the answer from its workers' results on V4 Pro, still only with backed numbers", async () => {
-    const { calls, fetcher } = stub(() => completion("Eher nicht: Dir bleiben 120 € im Monat. Ein Sparplan mit 80 € wäre drin."));
-    const input = { question: "Passt ein Sparplan in mein Budget?", facts: { today: "2026-11-11" }, agent: "budget" as const, evidence: "Was bleibt mir? Frei: 120 €", supervised: true };
-    expect((await answerFreeQuestion(input, { config, fetcher })).text).toBe("Eher nicht: Dir bleiben 120 € im Monat.");
-    expect(system(calls)).toContain("Der erste Satz ist die Kernaussage");
-    expect(answerTask(input)).toBe("synthesize");
-    expect(answerTask({ ...input, supervised: undefined })).toBe("chat");
-    // Advice is written from computed results without the slow thinking mode; tax questions keep it.
-    expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?" })).toBe("synthesize");
-    expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?", supervised: undefined })).toBe("reasoning");
+  it("picks the model of a local answer by the question: thinking mode for analyses and tax questions, the fast model otherwise", () => {
+    const input = { question: "Passt ein Sparplan in mein Budget?", facts: { today: "2026-11-11" }, agent: "budget" as const, evidence: "Was bleibt mir? Frei: 120 €" };
+    expect(answerTask(input)).toBe("chat");
+    expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?" })).toBe("reasoning");
     expect(answerTask({ ...input, agent: "payroll", question: "Warum zahle ich so viel Lohnsteuer?" })).toBe("reasoning");
-    expect(answerTask({ ...input, agent: "payroll", question: "Wie viel netto bekomme ich?" })).toBe("synthesize");
-    // Only small talk and creative requests without data stay on Flash once the supervisor took the question.
-    const talk = { question: "Hey, wie geht's dir?", facts: { today: "2026-11-11" }, supervised: true };
-    expect(answerTask(talk)).toBe("chat");
-    expect(answerTask({ ...talk, question: "Schreib mir ein Gedicht über den Herbst" })).toBe("chat");
-    expect(answerTask({ ...talk, question: "Erklär mir, was ein ETF ist" })).toBe("synthesize");
-    expect(answerTask({ ...talk, evidence: "Websuche …" })).toBe("web");
+    expect(answerTask({ ...input, evidence: "Websuche …" })).toBe("web");
   });
 
   it("never lets an invented small euro amount through", async () => {
@@ -196,14 +184,12 @@ describe("agent answers", () => {
     expect(visiblePrefix("Dir bleiben **412 €** frei – bei 16 Tagen rund 25,75 € pro ", { left: 412 })).toBe("Dir bleiben **412 €** frei");
   });
 
-  it("builds on the conversation: the last eight messages and, for a correction, the hint to keep the topic", async () => {
+  it("builds a local answer on the conversation so far", async () => {
     const { calls, fetcher } = stub(() => completion("Dein Raiffeisen-Konto kostet dich rund 36 € im Quartal."));
     const history = [{ role: "user" as const, text: "Was kosten mich meine Konten?" }, { role: "assistant" as const, text: "American Express kostet 72 € im Jahr." }];
-    await answerFreeQuestion({ question: "Nein, ich meine mein Raiffeisen-Konto, das kostet ca. 36 € im Quartal", facts: { today: "2026-11-15" }, agent: "budget",
-      supervised: true, correction: true, history }, { config, fetcher });
+    await answerFreeQuestion({ question: "Und mein Raiffeisen-Konto, das kostet ca. 36 € im Quartal?", facts: { today: "2026-11-15" }, agent: "budget", history }, { config, fetcher });
     const user = (calls[0] as unknown as { messages: { content: string }[] }).messages[1].content;
     expect(user).toContain("Verlauf (das bisherige Gespräch):\nIch: Was kosten mich meine Konten?\nAssistent: American Express kostet 72 € im Jahr.");
-    expect(user).toContain("Die Frage korrigiert oder präzisiert deine vorige Antwort");
     expect(system(calls)).toContain("frag nie nach, was dort schon steht");
   });
 

@@ -18,7 +18,9 @@ import { Label } from "@/components/ui/label";
 import { contractDraftResult, executeTool, memoryValue, parseMemory, type AgentHints, type AgentResult } from "@/lib/assistant/agent";
 import { balances } from "@/lib/assistant/accounts";
 import { giroTopUp, topUpText } from "@/lib/assistant/funds";
-import { readAnswerStream } from "@/lib/ai/answer-stream";
+import { readAgentStream, readAnswerStream } from "@/lib/ai/answer-stream";
+import { answerAgent, toolSpec, WEB_TOOL_NAME, type AgentLimits, type SubagentKey } from "@/lib/agents/registry";
+import { runOrchestrator, type RuntimeCall, type RuntimeEvent, type StepRequest, type StepResult, type ToolResult } from "@/lib/agents/runtime";
 import { weeklyBriefing } from "@/lib/assistant/answers";
 import { draftSuggestions, lastDay, mergeDraft, missingField, missingQuestion, parseAssistantMessage } from "@/lib/assistant/intent";
 import { extractMemories } from "@/lib/assistant/memory";
@@ -39,13 +41,13 @@ import {
 } from "@/lib/assistant/web-learning";
 import { webEvidence, webFallbackAnswer, webLinks, type WebSearchResult } from "@/lib/web/web-answer";
 import { buildFeedbackEntry, type FeedbackEntry } from "@/lib/assistant/feedback";
-import { failedAnswer, lookupTool, toolCall, toolLabel } from "@/lib/assistant/orchestrator-info";
+import { delegationCall, failedAnswer, lookupTool, toolCall, toolLabel } from "@/lib/assistant/orchestrator-info";
 import { AnswerDetails } from "@/components/assistant-details";
 import { statusFor, workStatus, type WorkActivity } from "@/lib/assistant/status";
 import { figuresOf, onlyAssistantChanged, parseAssistantChanges } from "@/lib/assistant-state";
 import { confidentHit, knowledgeEvidence, localKnowledgeAnswer } from "@/lib/knowledge-base/query";
 import type { LocalKnowledgeHit, LocalKnowledgeSearch } from "@/lib/knowledge-base/types";
-import { agentEvidence, agentFacts, agentSuggestions, contextFacts, usesPersonalFacts } from "@/lib/assistant/specialist-context";
+import { agentEvidence, agentFacts, agentSuggestions, usesPersonalFacts } from "@/lib/assistant/specialist-context";
 import { currentInfo, type CurrentKind } from "@/lib/assistant/current-info";
 import { topicFollowUps } from "@/lib/assistant/follow-up-topics";
 import { currentAssistantContext, type AssistantPageContext } from "@/lib/assistant-context";
@@ -76,15 +78,12 @@ import { cn } from "@/lib/utils";
 // Tools whose answer depends only on the message text; phrasings for these are learned when the model understood them.
 const learnableTools: AssistantTool[] = ["query", "accounts", "amex", "budget", "briefing", "check", "coach", "depot", "market", "knowledge", "tax", "homeoffice", "explain", "memory", "changes"];
 type KnowledgeHit = { topic: string; title: string; text: string; url: string; source: string };
-type WorkerStep = { tool: string; question: string };
-
-// The supervisor's steps as the workers run them; a question for today's value or an explicit web search always starts with a
-// web search of the question itself, also when the supervisor left it out.
-function workerSteps(raw: unknown, question: string, web: boolean): WorkerStep[] {
-  const steps = (Array.isArray(raw) ? raw : []).filter((step): step is WorkerStep =>
-    !!step && typeof step === "object" && typeof (step as { tool?: unknown }).tool === "string" && typeof (step as { question?: unknown }).question === "string");
-  return (web && !steps.some((step) => step.tool === "web") ? [{ tool: "web", question }, ...steps] : steps).slice(0, 4);
-}
+type AgentRun = { kind: "answer"; text?: string; cards: AssistantCard[]; links: WebLinkEntry[]; sources: string[]; findings: string[]; lead: AgentId }
+  | { kind: "change"; task: string } | { kind: "failed" };
+const isRuntimeCall = (value: unknown): value is RuntimeCall => !!value && typeof value === "object" && typeof (value as RuntimeCall).id === "string"
+  && typeof (value as RuntimeCall).name === "string" && typeof (value as RuntimeCall).arguments === "string";
+const isLimits = (value: unknown): value is AgentLimits => !!value && typeof value === "object"
+  && ["maxSteps", "maxToolCalls", "timeoutMs", "maxTokens"].every((key) => typeof (value as Record<string, unknown>)[key] === "number");
 
 // Shown before the first own message; each one goes straight to a tool.
 const starterPrompts: { text: string; agent: AgentId }[] = [
@@ -280,20 +279,22 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   // The tools the running answer called (lookups, web search); the next answer it writes takes them, plus its own tool.
   const runCalls = useRef<AssistantToolCall[]>([]);
   const noteCall = (call: AssistantToolCall) => {
-    if (running.current && runCalls.current.length < 8) runCalls.current.push(call);
+    if (running.current && runCalls.current.length < 12) runCalls.current.push(call);
   };
   const takeCalls = (own?: AssistantToolCall) => {
     const noted = running.current ? runCalls.current : [];
     runCalls.current = [];
     const calls = own && !noted.some((call) => call.tool === own.tool) ? [...noted, own] : noted;
-    return calls.length ? { calls: calls.slice(-8) } : {};
+    return calls.length ? { calls: calls.slice(-12) } : {};
   };
   // The models that worked on the running answer (routing, action, answer), including a fallback to the local model.
   const runModels = useRef<AssistantModelUse[]>([]);
   const noteModel = (value: unknown) => {
     const parsed = assistantModelUseSchema.safeParse(value);
     if (!parsed.success) return undefined;
-    if (running.current && runModels.current.length < 4) runModels.current.push(parsed.data);
+    // One entry per model and task: a run with many steps keeps its list short.
+    if (running.current && runModels.current.length < 8 && !runModels.current.some((item) => item.model === parsed.data.model && item.task === parsed.data.task
+      && item.provider === parsed.data.provider)) runModels.current.push(parsed.data);
     return parsed.data;
   };
   const takeModels = () => {
@@ -325,9 +326,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const briefed = useRef(false);
   const marketCache = useRef(new Map<string, { at: number; value: MarketSnapshot }>());
-  // Until when the supervisor counts as unavailable (no DeepSeek); meanwhile the fixed shortcuts and the local routing answer.
-  const supervisorDown = useRef(0);
-  // The supervisor's view of the user's data; the server masks names and IBANs before anything goes to DeepSeek.
+  // Until when the agents count as unavailable (no DeepSeek); meanwhile the fixed shortcuts and the local routing answer.
+  const agentsDown = useRef(0);
+  // The orchestrator's view of the user's data; the server masks names and IBANs before anything goes to DeepSeek.
   const dataOverview = (asOf: string) => {
     try {
       return appOverview(assistantFacts(state, dashboard, asOf), state, asOf);
@@ -633,17 +634,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
   async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal,
-    step = workStatus.answer, supervised = false, team: AgentId[] = [], corrects = false) {
+    step = workStatus.answer) {
     try {
       setStatus({ ...step, agent });
-      // After the supervisor's plan V4 Pro sees the facts of every specialist involved, not just the leading one.
-      const facts = supervised ? contextFacts([agent, ...team], state, dashboard, state.settings.asOf, question)
-        : agentFacts(agent, state, dashboard, state.settings.asOf, question);
+      const facts = agentFacts(agent, state, dashboard, state.settings.asOf, question);
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
-      // After the supervisor's plan V4 Pro sees the whole recent conversation; the local model keeps it short to stay fast.
-      const context = supervised ? history : agent === "general" ? history.slice(-4) : history.slice(-2);
+      // The local answer keeps the conversation short to stay fast.
+      const context = agent === "general" ? history.slice(-4) : history.slice(-2);
       // The thinking model says it thinks first; which model answers is kept for the answer's details.
       const onModel = (value: unknown) => {
         const use = noteModel(value);
@@ -656,8 +655,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
-          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 4000) } : {}), ...(supervised ? { supervised: true } : {}),
-            ...(corrects ? { correction: true } : {}) }),
+          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 4000) } : {}) }),
         });
         if (!response.ok) return undefined;
         if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
@@ -672,13 +670,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
       };
       const text = await ask(context);
-      // A correction may repeat what still holds; it keeps its words. Otherwise sentences copied from the previous answer are dropped,
-      // and the local model is asked once more without the history after a full copy – V4 Pro keeps the conversation and its answer.
+      // Sentences copied from the previous answer are dropped; a full copy is asked once more without the history.
       const previous = context.findLast((item) => item.role === "assistant")?.text;
-      if (!text || !context.length || corrects) return text;
+      if (!text || !context.length) return text;
       const fresh = freshPart(text, previous);
       if (fresh) return fresh;
-      if (supervised) return text;
       setStreaming(undefined);
       return await ask([]) ?? text;
     } catch {
@@ -757,18 +753,18 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
   }
 
   // The automatic web search: only search words leave the device; sources the user rejected for this question are skipped.
-  async function searchTheWeb(question: string, signal?: AbortSignal, current?: CurrentKind): Promise<WebSearchResult | undefined> {
+  async function searchTheWeb(question: string, signal?: AbortSignal, current?: CurrentKind, by?: string): Promise<WebSearchResult | undefined> {
     setStatus((current) => ({ ...workStatus.web, agent: current?.agent }));
     try {
       const avoid = avoidedSources(state.assistantKnowledge, question);
       const response = await fetch("/api/ai/web-search", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
         body: JSON.stringify({ question: question.slice(0, 500), ...(avoid.length ? { avoid } : {}), ...(current ? { current } : {}) }), signal: withTimeout(15000, signal) });
       const result = response.ok ? await response.json() as WebSearchResult : undefined;
-      noteCall(toolCall(WEB_TOOL, { ok: !!result, empty: !result?.sources?.length, args: question,
+      noteCall(toolCall(WEB_TOOL, { ok: !!result, empty: !result?.sources?.length, args: question, by,
         result: result?.sources?.length ? `${result.sources.length} Quellen: ${webLinks(result).map((link) => linkSite(link.url)).join(", ")}` : undefined }));
       return result?.sources?.length ? result : undefined;
     } catch {
-      if (!signal?.aborted) noteCall(toolCall(WEB_TOOL, { ok: false }));
+      if (!signal?.aborted) noteCall(toolCall(WEB_TOOL, { ok: false, by }));
       return undefined;
     }
   }
@@ -782,48 +778,112 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     return { text: said ?? webFallbackAnswer(result) ?? "", byModel: !!said, links: webLinks(result) };
   }
 
-  // The supervisor's workers: each step runs one reading tool (or the web search) here on the user's own data and returns raw
-  // data and its card; the supervisor writes the answer. Changing tools and forms never run this way; changes keep their confirmation.
-  async function runWorkers(steps: WorkerStep[], agent: AgentId, names: string[], signal: AbortSignal, current?: CurrentKind):
-    Promise<{ evidence?: string; links: WebLinkEntry[]; cards: AssistantCard[]; findings: string[]; web: boolean }> {
-    const parts: string[] = [];
-    const links: WebLinkEntry[] = [];
+  // The agent runtime (src/lib/agents/runtime.ts): the steps of the orchestrator and its specialists run on the server, their tools
+  // here on the user's own data (AG-UI "frontend tools"). Changing tools never run this way: a change ends the run and goes to the
+  // change workflow with its preview and confirmation.
+  async function runAgents(work: string, history: { role: "user" | "assistant"; text: string }[], signal: AbortSignal,
+    run: { asOf: string; names: string[]; goals: string[]; planned: string[]; correction: boolean; live?: CurrentKind; notes: string[] }): Promise<AgentRun> {
     const cards: AssistantCard[] = [];
+    const links: WebLinkEntry[] = [];
+    const sources: string[] = [];
     const findings: string[] = [];
-    let web = false;
-    let live = current;
-    for (const step of steps) {
-      if (signal.aborted) break;
-      if (step.tool === "web") {
-        // Today's value is fetched live (quotes, news) for the first web step.
-        const found = await searchTheWeb(step.question, signal, currentInfo(step.question)?.kind ?? live);
+    const raw: string[] = [];
+    const used: SubagentKey[] = [];
+    let live = run.live;
+    let written = false;
+    const overview = dataOverview(run.asOf);
+    const step = async (request: StepRequest, stepSignal: AbortSignal): Promise<StepResult> => {
+      const orchestrator = request.agent === "orchestrator";
+      const body = JSON.stringify({ agent: request.agent, asOf: run.asOf, message: request.message.slice(0, 1500), final: request.final,
+        ...(request.question ? { question: request.question.slice(0, 1500) } : {}),
+        turns: request.turns.map((turn) => ({
+          calls: turn.calls.slice(0, 8).map((item) => ({ id: item.id.slice(0, 80), name: item.name.slice(0, 40), arguments: item.arguments.slice(0, 2000) })),
+          results: turn.results.slice(0, 8).map((item) => ({ id: item.id.slice(0, 80), content: item.content.slice(0, 6000) })) })),
+        ...(orchestrator ? { history, context: { goals: run.goals, planned: run.planned }, ...(overview ? { overview } : {}),
+          ...(run.correction ? { correction: true } : {}), ...(run.notes.length ? { notes: run.notes.slice(0, 4) } : {}),
+          ...(raw.length ? { evidence: raw.join("\n\n").slice(-16_000) } : {}) } : {}) });
+      const response = await fetch(orchestrator ? "/api/ai/agent?stream=1" : "/api/ai/agent",
+        { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal: stepSignal, body });
+      if (!response.ok) throw new Error(`Agent-Schritt: HTTP ${response.status}`);
+      if (!orchestrator) {
+        const result = await response.json() as { calls?: unknown; text?: unknown; models?: unknown; limits?: unknown };
+        if (Array.isArray(result.models)) result.models.forEach(noteModel);
+        return { calls: Array.isArray(result.calls) ? result.calls.filter(isRuntimeCall) : [], ...(typeof result.text === "string" ? { text: result.text } : {}),
+          ...(isLimits(result.limits) ? { limits: result.limits } : {}) };
+      }
+      if (!response.body) throw new Error("Agent-Schritt ohne Stream");
+      const result = await readAgentStream(response.body, { onModel: noteModel, onPrompt: notePrompt, onText: (text) => {
+        if (!written) setStatus((current) => ({ ...workStatus.answer, agent: current?.agent }));
+        written = true;
+        setStreaming(text);
+      } });
+      // Words before a tool call were thinking aloud; they disappear again.
+      if (result.calls.length && written) {
+        setStreaming(undefined);
+        written = false;
+      }
+      return { calls: result.calls, ...(result.text ? { text: result.text } : {}), ...(isLimits(result.limits) ? { limits: result.limits } : {}) };
+    };
+    const execute = async (agent: SubagentKey, tool: string, input: string, toolSignal: AbortSignal): Promise<ToolResult> => {
+      const spec = toolSpec(tool);
+      if (!spec || spec.kind !== "read" || !spec.agents.includes(agent)) return { ok: false, content: "Dieses Werkzeug gehört nicht zu dir." };
+      const question = input || work;
+      if (tool === WEB_TOOL_NAME) {
+        // Today's value is fetched live (quotes, news) for the first web search.
+        const found = await searchTheWeb(question, toolSignal, live ?? currentInfo(question)?.kind, agent);
         live = undefined;
-        const text = found ? webEvidence(found, steps.length === 1 ? 1400 : 800) : undefined;
-        if (found && text) {
-          parts.push(text);
-          links.push(...webLinks(found));
-          web = true;
-        }
-        continue;
+        const evidence = found ? webEvidence(found, 1400) : undefined;
+        if (!found || !evidence) return { ok: false, content: "Die Websuche hat nichts gefunden." };
+        // Sources are numbered over the whole run, as the answer cites them.
+        const offset = links.length;
+        links.push(...webLinks(found));
+        const text = evidence.replace(/\[(\d{1,2})\]/g, (_match, number: string) => `[${Number(number) + offset}]`);
+        raw.push(text);
+        return { ok: true, content: text };
       }
-      if (!isAssistantTool(step.tool) || changingTools.includes(step.tool) || isDraftTool(step.tool)) continue;
-      const tool = step.tool;
-      setStatus(statusFor(tool, agent));
+      if (!isAssistantTool(tool)) return { ok: false, content: "Dieses Werkzeug gibt es nicht." };
+      setStatus(statusFor(tool, answerAgent(agent)));
       try {
-        const market = tool === "market" || tool === "depot" ? await loadMarket(step.question, signal) : undefined;
-        const knowledge = tool === "knowledge" ? await loadKnowledge(step.question, names, signal) : undefined;
+        const market = tool === "market" || tool === "depot" ? await loadMarket(question, toolSignal) : undefined;
+        const knowledge = tool === "knowledge" ? await loadKnowledge(question, run.names, toolSignal) : undefined;
+        if (knowledge) sources.push(...knowledge.found.map((entry) => entry.title.slice(0, 80)));
         await afterPaint();
-        const result = executeTool(tool, step.question, { state, dashboard, asOf: state.settings.asOf, market, knowledge, page: pageContext(), insights: extras?.copilot });
-        parts.push(rawData(toolLabel[tool], step.question, result));
-        if (result.card && showsData(result.card) && cards.length < 4) cards.push(result.card);
+        const result = executeTool(tool, question, { state, dashboard, asOf: run.asOf, market, knowledge, page: pageContext(), insights: extras?.copilot });
+        const data = rawData(toolLabel[tool], question, result).slice(0, 3000);
+        raw.push(data);
         if (result.text.trim()) findings.push(result.text);
-        noteCall(toolCall(tool, { ok: !failedAnswer(result.text), args: step.question, result: result.text }));
+        if (result.card && showsData(result.card) && cards.length < 4) cards.push(result.card);
+        const ok = !failedAnswer(result.text);
+        noteCall(toolCall(tool, { ok, args: question, result: result.text, by: agent }));
+        return { ok, content: data };
       } catch {
-        noteCall(toolCall(tool, { ok: false, args: step.question }));
+        noteCall(toolCall(tool, { ok: false, args: question, by: agent }));
+        return { ok: false, content: "Das Werkzeug ist fehlgeschlagen." };
       }
+    };
+    const emit = (event: RuntimeEvent) => {
+      if (event.type === "delegate") {
+        if (!used.includes(event.agent)) used.push(event.agent);
+        setStatus({ ...workStatus.delegate, agent: answerAgent(event.agent) });
+        noteCall(toolCall(delegationCall(event.agent), { args: event.task, by: "orchestrator" }));
+      } else if (event.type === "finding") {
+        // The delegation's entry gets the outcome once the specialist is done.
+        const index = runCalls.current.findLastIndex((item) => item.tool === delegationCall(event.agent));
+        if (index >= 0) runCalls.current[index] = toolCall(delegationCall(event.agent), { ok: event.ok, args: event.task, result: event.text, by: "orchestrator" });
+      } else if (event.type === "step" && event.agent === "orchestrator" && event.index > 0 && !written) {
+        setStatus((current) => ({ ...workStatus.combine, agent: current?.agent }));
+      }
+    };
+    try {
+      setStatus(workStatus.route);
+      const outcome = await runOrchestrator(work, { signal, step, execute, emit });
+      if (outcome.kind === "change") return outcome;
+      return { kind: "answer", ...(outcome.text ? { text: outcome.text } : {}), cards, links: links.slice(0, 4), sources: [...new Set(sources)].slice(0, 5),
+        findings, lead: used[0] ? answerAgent(used[0]) : "general" };
+    } catch {
+      setStreaming(undefined);
+      return { kind: "failed" };
     }
-    return { ...(parts.length ? { evidence: `Rohdaten der Spezialisten (vom Code berechnet bzw. öffentliche Quellen):\n\n${parts.join("\n\n")}`.slice(0, 3200) } : {}),
-      links: links.slice(0, 4), cards, findings, web };
   }
 
   // A confirmed answer from earlier: shown right away and counted as used, so often asked questions stay at the top.
@@ -1053,9 +1113,9 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
-    // With DeepSeek a correction ("Nein, ich meine …", "nicht X, sondern Y") goes to the supervisor with the whole conversation, which
+    // With DeepSeek a correction ("Nein, ich meine …", "nicht X, sondern Y") goes to the orchestrator with the whole conversation, which
     // keeps the earlier topic; no rule reads the corrected words as a new request. Without it, corrections teach the earlier phrasing.
-    const cloud = Date.now() >= supervisorDown.current;
+    const cloud = Date.now() >= agentsDown.current;
     const answered = !!lastAnswer && lastAnswer.status !== "question" && lastAnswer.status !== "preview" && thread.some((item) => item.role === "user");
     const corrects = !pending && cloud && answered && correctsPrevious(text);
     const fix = !pending && !corrects && lastAnswer?.asked ? correction(text) : undefined;
@@ -1088,19 +1148,19 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     work = resolvePronoun(aliased.text, lastAnswer?.card);
     if (aliased.used.length) learn((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
     // Bare words ("Netflix", "500", "Geld") get a short question back; a bare account or goal name shows its balance.
-    // With DeepSeek the supervisor decides every question itself, a rephrasing after 👎 included (as a correction); the fixed
+    // With DeepSeek the orchestrator decides every question itself, a rephrasing after 👎 included (as a correction); the fixed
     // shortcuts and the phrase learning answer only without it. System commands stay.
     const open = !pending && !chosen && (!original || cloud);
-    const supervisorFirst = open && cloud;
-    const corrective = supervisorFirst && (corrects || !!original);
-    const topic = open && !supervisorFirst ? topicClarify(work, state, { accounts: balances(state, dashboard).map((item) => item.name),
+    const agentsFirst = open && cloud;
+    const corrective = agentsFirst && (corrects || !!original);
+    const topic = open && !agentsFirst ? topicClarify(work, state, { accounts: balances(state, dashboard).map((item) => item.name),
       goals: savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name), contracts: contractNames(state, asOf) }) : undefined;
     if (topic && "rewrite" in topic) work = topic.rewrite;
-    const fixed = open ? supervisorFirst ? fixedCommand(work) : fixedReply(work) : undefined;
+    const fixed = open ? agentsFirst ? fixedCommand(work) : fixedReply(work) : undefined;
     // "Erklär das nochmal" after small talk has nothing to explain: ask what is meant.
-    const nothingToExplain = !supervisorFirst && explainAgain(work) && (!lastAnswer || !lastAnswer.card && !lastAnswer.tool && lastAnswer.text.length < 160)
+    const nothingToExplain = !agentsFirst && explainAgain(work) && (!lastAnswer || !lastAnswer.card && !lastAnswer.tool && lastAnswer.text.length < 160)
       ? { text: "Was soll ich dir genauer erklären? Frag mich einfach direkt danach.", suggestions: starterSuggestions } : undefined;
-    const chat = !open ? undefined : supervisorFirst ? fixed : smallTalk(text, { hour: new Date().getHours(), seed: thread.length, now: new Date() }) ?? fixed ??
+    const chat = !open ? undefined : agentsFirst ? fixed : smallTalk(text, { hour: new Date().getHours(), seed: thread.length, now: new Date() }) ?? fixed ??
       nothingToExplain ?? (topic && "reply" in topic ? topic.reply : undefined);
     if (chat) {
       if (fixed?.theme && chat === fixed) setTheme(fixed.theme);
@@ -1113,8 +1173,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
-    // Only while the supervisor is down: the same question as a confirmed answer from earlier is answered right away. With the
-    // supervisor V4 Pro writes the answer and uses the confirmed one as evidence (see the supervised branch).
+    // Only while the agents are down: the same question as a confirmed answer from earlier is answered right away. With the
+    // agents the orchestrator writes the answer and gets the confirmed one as a reliable note.
     // A command or a question for one of the tools ("Zeig mir meinen ETF-Sparplan") always goes to its tool.
     // Today's values (quotes, news, current prices, rates, this year's tax figures) always come from the web, never from local
     // knowledge. The market tool keeps its live ECB and Eurostat data; questions about the user's own figures keep their tools.
@@ -1122,7 +1182,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     const liveTool = live ? detectTool(work, names) : undefined;
     const current = live && (!liveTool || liveTool === "knowledge") ? live : undefined;
     const webFirst = forceWeb || !!current;
-    const remembered = open && !supervisorFirst && !webFirst && !detectTool(work, names) ? recallConfirmed(state.assistantKnowledge, work) : undefined;
+    const remembered = open && !agentsFirst && !webFirst && !detectTool(work, names) ? recallConfirmed(state.assistantKnowledge, work) : undefined;
     if (remembered) {
       setBusy(true);
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() }]);
@@ -1136,7 +1196,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
-    // The recent conversation, so the supervisor and the answer build on it: the last eight messages.
+    // The recent conversation, so the orchestrator and the answer build on it: the last eight messages.
     const history = thread.slice(-8).map((item) => ({ role: item.role, text: item.text.slice(0, item.role === "user" ? 400 : 700) }));
     const goals = savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50);
     const planned = [...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth)
@@ -1154,13 +1214,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       return true;
     };
     let reply: { agent?: unknown; via?: unknown; tool?: unknown; hints?: AgentHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel"; models?: unknown;
-      steps?: unknown; supervised?: unknown; local?: unknown };
+      local?: unknown };
     // "und im September?" reuses the previous question instead of asking the model again.
-    const follow = pending || supervisorFirst ? undefined : resolveFollowUp(work, thread.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
+    const follow = pending || agentsFirst ? undefined : resolveFollowUp(work, thread.filter((item) => item.role === "user").map((item) => item.text), [...goals, ...planned]);
     // Phrasings learned earlier are understood right away, without asking the model again.
-    const learned = pending || follow || supervisorFirst || detectTool(work, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, work);
+    const learned = pending || follow || agentsFirst || detectTool(work, [...goals, ...planned]) ? undefined : matchPhrase(state.assistantPhrases, work);
     // Two questions in one message are answered one after the other, each by its own agent.
-    const parts = pending || follow || original || chosen || supervisorFirst ? undefined : splitQuestion(work, [...goals, ...planned]);
+    const parts = pending || follow || original || chosen || agentsFirst ? undefined : splitQuestion(work, [...goals, ...planned]);
     if (parts) {
       for (const part of parts) {
         const partAgent: AgentId = part.tool ? toolOwner[part.tool] : routeBySignals(part.text, [...goals, ...planned])?.agent ?? "general";
@@ -1201,6 +1261,48 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setStatus(undefined);
       return;
     }
+    // With DeepSeek the agent runtime answers: the orchestrator delegates to the specialists, who run their tools here on the
+    // user's data, and writes the answer. A change goes to the change workflow below; without DeepSeek the local path answers.
+    let delegated = false;
+    if (agentsFirst && !pending) {
+      const confirmed = webFirst ? undefined : recallConfirmed(state.assistantKnowledge, work);
+      const computed = arithmetic(work);
+      const notes = [
+        computed ? `Rechner: ${computed}` : "",
+        confirmed ? `Vom Nutzer bestätigte frühere Antwort auf diese Frage (verlässlich; schreib sie mit den heutigen Daten neu): ${confirmed.text.slice(0, 1200)}` : "",
+        current ? "Die Frage nach einem aktuellen Wert: lass recherche ihn live nachschlagen und nenne keine Werte aus dem Gedächtnis." : "",
+        forceWeb ? "Der Nutzer will ausdrücklich eine Websuche: lass recherche suchen." : "",
+      ].filter(Boolean);
+      const done = await runAgents(work, history, signal, { asOf, names, goals, planned, correction: corrective, live: current?.kind, notes });
+      if (halted()) return;
+      if (done.kind === "change") delegated = true;
+      else if (done.kind === "answer") {
+        const { text: said, cards, links, sources, findings, lead } = done;
+        await settle();
+        if (halted(lead)) return;
+        const run = { agent: lead, via: "orchestrator" as const };
+        const personal = usesPersonalFacts(lead, work) || cards.length > 0;
+        const webAnswer = links.length > 0 && !personal;
+        if (said) addResult({ text: said, ...(cards.length ? { cards } : {}),
+          suggestions: webAnswer ? ["Das hat geholfen", ...onTopicFallback(work, lead).slice(0, 2)] : onTopicFallback(work, lead) }, "KI",
+          { tool: webAnswer ? WEB_TOOL : "free", asked: work, ...run, ms: elapsed(), ...(links.length ? { links } : {}),
+            // 👍/👎 on an answer built from a confirmed one count for that entry.
+            ...(confirmed ? { sources: [recallLabel(confirmed)], knowledgeId: confirmed.id } : sources.length ? { sources } : {}),
+            // Kept as general knowledge only without the user's figures; today's values never (see answer memory).
+            ...(confirmed ? {} : webAnswer ? keepAnswer(work, said, "web", links) : !personal ? keepAnswer(work, said, "answer") : {}) });
+        else {
+          if (!signal.aborted) noteCall(toolCall("free", { ok: false }));
+          // Without words from the model the tools' own findings speak, with their cards.
+          addResult({ text: findings[0] ?? "Gerade kann ich keine Antwort formulieren. Versuch es gleich noch einmal.", ...(cards.length ? { cards } : {}),
+            suggestions: onTopicFallback(work, lead) }, "Regel", { tool: "free", asked: work, ...run, ms: elapsed() });
+        }
+        const memories = extractMemories(work, state, undefined);
+        if (memories.length) remember(memories);
+        setStreaming(undefined);
+        setStatus(undefined);
+        return;
+      } else agentsDown.current = Date.now() + 120_000;
+    }
     if (follow) reply = { tool: follow.tool, source: "Regel" };
     else if (learned && isAssistantTool(learned.tool)) {
       reply = { tool: learned.tool, source: "Regel" };
@@ -1211,14 +1313,15 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setStatus(early?.tool && !isDraftTool(early.tool) ? statusFor(early.tool, early.agent) : workStatus.route);
       const response = await fetch("/api/ai/assistant", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
+        // `delegated`: the orchestrator handed a change to the change workflow; it reads the details and shows a preview.
         body: JSON.stringify({ message: work, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned },
-          ...(supervisorFirst ? { overview: dataOverview(asOf) } : {}), ...(corrective ? { correction: true } : {}) }),
+          ...(delegated ? { delegated: true } : {}), ...(delegated && corrective ? { correction: true } : {}) }),
       });
       if (!response.ok) throw new Error();
       reply = await response.json();
       if (Array.isArray(reply.models)) reply.models.forEach(noteModel);
       // Without DeepSeek the server routed locally; the fixed shortcuts answer the next questions, and after two minutes it is tried again.
-      if (reply.local === true) supervisorDown.current = Date.now() + 120_000;
+      if (reply.local === true) agentsDown.current = Date.now() + 120_000;
     } catch {
       // Same orchestrator rules as the server, without the model; whatever stays unclear goes to the general chat.
       const decision = routeByRules(work, [...goals, ...planned]);
@@ -1265,78 +1368,6 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       notes.push(`Gemerkt: Mit „${alias.from}“ meinst du „${alias.to}“.`);
     }
     const withNotes = (result: AgentResult): AgentResult => notes.length ? { ...result, text: `${notes.join(" ")}\n\n${result.text}` } : result;
-    // The supervisor asks back only when a detail is missing that no data and no search can give; the answer goes with the question.
-    if (!tool && !reply.draft && reply.via === "supervisor" && typeof reply.question === "string" && reply.question.trim()) {
-      await settle();
-      if (halted(agent)) return;
-      addResult(withNotes({ text: reply.question.trim().slice(0, 300) }), "KI", { ...run, asked: work, clarify: work, ms: elapsed() });
-      setStatus(undefined);
-      return;
-    }
-    // The supervisor's answer: its workers fetch the raw data (tools on the user's own data, the local knowledge, the web), and it
-    // writes the answer; the results are laid out as key figures and tiles below the text.
-    if (reply.supervised === true && !tool && !reply.draft) {
-      const steps = workerSteps(reply.steps, work, !!current || forceWeb);
-      const wisdom = !current && (steps.some((step) => step.tool === "knowledge" || step.tool === "web") || wantsKnowledge(work, { agent }))
-        ? await searchLocalKnowledge(work, signal) : undefined;
-      if (halted(agent)) return;
-      const recalled = wisdom ? confidentHit(wisdom.hits, wisdom.mode) : undefined;
-      // A confirmed answer from earlier is the most reliable evidence, but V4 Pro still writes the answer with today's data.
-      const confirmed = recalled?.learned && !webFirst ? learnedAnswer(recalled) : undefined;
-      const found = await runWorkers(steps, agent, [...goals, ...planned], signal, current?.kind);
-      if (halted(agent)) return;
-      const hints = found.web ? correctionNotes(state.assistantKnowledge, work) : [];
-      const team = [...new Set(steps.flatMap((step) => (toolOwner as Partial<Record<string, AgentId>>)[step.tool] ?? []))];
-      const computed = arithmetic(work);
-      const evidence = [
-        computed ? `Rechner (vom Code berechnet, verlässlich): ${computed}` : "",
-        confirmed ? `Vom Nutzer bestätigte frühere Antwort auf diese Frage (verlässlich, übernimm den Inhalt in eigenen Worten): ${confirmed.result.text.slice(0, 1200)}` : "",
-        current && !found.web ? "Die Live-Abfrage (Kurse, Nachrichten, Websuche) hat gerade nichts geliefert. Sag das ehrlich und nenne keine Werte aus dem Gedächtnis." : "",
-        found.evidence, hints.length ? `Hinweis des Nutzers zu früheren Antworten auf diese Frage: ${hints.join(" ")}` : "",
-        knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work),
-      ].filter(Boolean).join("\n\n") || undefined;
-      let links = confirmed?.links?.length ? [...confirmed.links, ...found.links].slice(0, 4) : found.links;
-      let free = await freeAnswer(work, history, agent, evidence, signal, workStatus.combine, true, team, corrective);
-      if (halted(agent)) return;
-      // An answer that admits not knowing gets one more web search, then the supervisor writes again.
-      if (unsureAnswer(free) && !found.web) {
-        const web = await searchTheWeb(work, signal);
-        if (halted(agent)) return;
-        if (web) {
-          setStreaming(undefined);
-          links = webLinks(web);
-          free = await freeAnswer(work, history, agent, [webEvidence(web, 1200), evidence].filter(Boolean).join("\n\n"), signal, workStatus.combine, true, team, corrective) ?? free;
-          if (halted(agent)) return;
-        }
-      }
-      await settle();
-      if (halted(agent)) return;
-      const cards = found.cards;
-      const personal = usesPersonalFacts(agent, work) || cards.length > 0;
-      const webAnswer = links.length > 0 && !personal;
-      if (free) addResult(withNotes({ text: free, ...(cards.length ? { cards } : {}),
-        suggestions: webAnswer ? ["Das hat geholfen", ...onTopicFallback(work, agent).slice(0, 2)] : onTopicFallback(work, agent) }), "KI",
-        { tool: webAnswer ? WEB_TOOL : "free", asked: work, ...run, ms: elapsed(), ...(links.length ? { links } : {}),
-          ...(wisdom?.hits.length && steps.some((step) => step.tool === "knowledge") ? { sources: wisdom.hits.map((hit) => hit.title) } : {}),
-          // 👍/👎 on an answer built from a confirmed one count for that entry.
-          ...(confirmed ? { sources: [confirmed.label], ...(confirmed.knowledgeId ? { knowledgeId: confirmed.knowledgeId } : {}) }
-            // Kept as general knowledge only without the user's figures; today's values never (see answer memory).
-            : webAnswer ? keepAnswer(work, free, "web", links) : !personal ? keepAnswer(work, free, "answer") : {}) });
-      else if (confirmed) {
-        addResult(withNotes(confirmed.result), "Regel", { tool: LEARNED_TOOL, asked: work, agent: "general", via, ms: elapsed(),
-          sources: [confirmed.label], knowledgeId: confirmed.knowledgeId, ...(confirmed.links?.length ? { links: confirmed.links } : {}) });
-      } else {
-        if (!signal.aborted) noteCall(toolCall("free", { ok: false }));
-        // Without words from the model the workers' own findings speak, with their cards.
-        addResult(withNotes({ text: found.findings[0] ?? "Gerade kann ich keine Antwort formulieren. Versuch es gleich noch einmal.", ...(cards.length ? { cards } : {}),
-          suggestions: onTopicFallback(work, agent) }), "Regel", { tool: "free", asked: work, ...run, ms: elapsed() });
-      }
-      const memories = extractMemories(work, state, undefined);
-      if (memories.length) remember(memories);
-      setStreaming(undefined);
-      setStatus(undefined);
-      return;
-    }
     const parsed = !tool && reply.draft && !route.skipDraft ? assistantDraftSchema.safeParse(reply.draft) : undefined;
     const writes = !tool && !parsed?.success;
     // The orchestrator decides whether general finance knowledge helps (curated chunks and the user's confirmed answers)

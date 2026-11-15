@@ -8,8 +8,8 @@ import { DATA_RULE } from "./untrusted";
 // version); every prompt stays static per agent, so the model server's prefix cache keeps it warm and only the short dynamic
 // part (date, names, message) is processed per request.
 
-/** The orchestrator's model fallback: one word, and "chat" whenever it is unsure. */
-export const orchestratorPrompt = (prompts?: PromptOverrides): string => promptText("orchestrator", prompts);
+/** The local routing without DeepSeek: one word, and "chat" whenever it is unsure. */
+export const orchestratorPrompt = (prompts?: PromptOverrides): string => promptText("router", prompts);
 
 type Scope = { fields: string; needs: { names?: boolean; categories?: boolean } };
 
@@ -65,10 +65,9 @@ const grounding = "Zahlen zu seinen Finanzen nimmst du nur aus den Fakten (JSON)
   "und lass weg, was dort nicht steht. Empfiehl keine einzelnen Aktien, Fonds oder Anbieter. ";
 
 /**
- * The system prompt an agent writes its answer with: its voice, the supervisor's part when it writes from its workers' raw
- * results, the shared answer rules, then the fixed grounding and data rule, plus the rules learned from feedback.
+ * The system prompt the local model writes an answer with (without DeepSeek): the agent's voice, the shared answer rules, then
+ * the fixed grounding and data rule, plus the rules learned from feedback.
  */
-export function answerPrompt(agent: AgentId, rules: readonly string[] = [], supervised = false, prompts?: PromptOverrides): string {
-  return promptPart(`voice.${agent}`, prompts) + (supervised ? promptPart("synthesis", prompts) : "") + promptPart("answer-rules", prompts) +
-    grounding + DATA_RULE + rulesSection(rules);
+export function answerPrompt(agent: AgentId, rules: readonly string[] = [], prompts?: PromptOverrides): string {
+  return promptPart(`voice.${agent}`, prompts) + promptPart("answer-rules", prompts) + grounding + DATA_RULE + rulesSection(rules);
 }

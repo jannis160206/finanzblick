@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { interpretAssistantMessage } from "@/lib/ai/assistant";
 import {
-  agentCases, deepActionCases, deepAnswerCases, deepSupervisorCases, goldRouterCases, injectionCases, routerCases, smokeAnswerCases, smokeRouterCases,
+  agentCases, deepActionCases, deepAnswerCases, deepAdviceCases, goldRouterCases, injectionCases, routerCases, smokeAnswerCases, smokeRouterCases,
 } from "./eval-cases";
 import { toolOwner } from "./orchestrator";
 
@@ -48,7 +48,7 @@ describe("eval tiers stay small and cheap", () => {
     // Two pings, the routing questions and the short answers.
     expect(2 + smokeRouterCases.length + smokeAnswerCases.length).toBeGreaterThanOrEqual(20);
     expect(2 + smokeRouterCases.length + smokeAnswerCases.length).toBeLessThanOrEqual(30);
-    const deep = deepActionCases.length + deepSupervisorCases.length + deepAnswerCases.length;
+    const deep = deepActionCases.length + deepAdviceCases.length + deepAnswerCases.length;
     expect(deep).toBeGreaterThanOrEqual(10);
     expect(deep).toBeLessThanOrEqual(15);
   });

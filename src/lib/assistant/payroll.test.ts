@@ -4,7 +4,7 @@ import { currency } from "@/lib/format";
 import { payrollEmployer, payrollFixture } from "../../../tests/fixtures/payroll-state";
 import { payrollAnswer, payrollFacts, payrollQuestion } from "./payroll";
 import { detectTool } from "./tools";
-import { agentEvidence, agentFacts, contextFacts } from "./specialist-context";
+import { agentEvidence, agentFacts } from "./specialist-context";
 
 const year2026 = () => {
   const state = payrollFixture();
@@ -112,15 +112,6 @@ describe("specialist context", () => {
     expect(recent.every((item, index) => item.date <= today && (index === 0 || recent[index - 1].date >= item.date))).toBe(true);
     expect(JSON.stringify(recent)).not.toMatch(/AT\d{2}\s?\d{4}/);
     expect(agentFacts("payroll", state, dashboard, today, "Wie viel netto?")).toHaveProperty("payroll.latestPayslip.net", 2780);
-    // After the supervisor's plan V4 Pro sees the facts of every specialist whose tool ran; a tight limit drops helpers' details first.
-    const team = contextFacts(["budget", "contracts", "transactions"], state, dashboard, today, "Passt ein Sparplan zu mir?");
-    expect(team).toHaveProperty("currentMonth");
-    expect(team).toHaveProperty("subscriptions");
-    expect(team).toHaveProperty("spendingByMonthAndCategory");
-    const tight = contextFacts(["budget", "transactions"], state, dashboard, today, "Passt ein Sparplan zu mir?", 100);
-    expect(tight).not.toHaveProperty("spendingByMonthAndCategory");
-    expect(tight).toHaveProperty("giroForecast12Months");
-    expect(tight).toHaveProperty("overview");
     expect(agentEvidence("payroll", state, dashboard, today, "Wie viel netto?")).toContain("netto");
     expect(agentEvidence("general", state, dashboard, today, "Hallo")).toBeUndefined();
   });

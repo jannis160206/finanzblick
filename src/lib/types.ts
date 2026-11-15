@@ -721,6 +721,8 @@ export const assistantToolCallSchema = z.object({
   summary: z.string().max(80),
   args: z.string().max(200).optional(),
   result: z.string().max(400).optional(),
+  // The agent that made the call: the orchestrator delegating, or the specialist using its tool.
+  by: z.string().max(20).optional(),
 }).strict();
 export type AssistantToolCall = z.infer<typeof assistantToolCallSchema>;
 // One model that worked on an answer: DeepSeek in the cloud or the local model, for which task, and whether it stepped in as fallback.
@@ -743,7 +745,7 @@ export const assistantMessageSchema = z.object({
   // A contract being created step by step in the chat.
   contractDraft: contractDraftSchema.optional(),
   card: assistantCardSchema.optional(),
-  // The supervisor's answer: the results its workers fetched, laid out as key figures and tiles below the text.
+  // The orchestrator's answer: the results its specialists fetched, laid out as key figures and tiles below the text.
   cards: z.array(assistantCardSchema).max(4).optional(),
   change: assistantChangeSchema.optional(),
   // "Mach das rückgängig": the change the user still has to confirm.
@@ -755,7 +757,7 @@ export const assistantMessageSchema = z.object({
   // The agent the orchestrator chose for this answer (same names as `agentIds` in assistant/orchestrator).
   agent: z.enum(["transactions", "contracts", "budget", "payroll", "general"]).optional(),
   // How the orchestrator decided (`RouteVia`) and roughly how long the answer took, for the read-only admin view.
-  via: z.enum(["rule", "signal", "model", "fallback", "supervisor"]).optional(),
+  via: z.enum(["rule", "signal", "model", "fallback", "supervisor", "orchestrator"]).optional(),
   ms: z.number().int().nonnegative().max(3_600_000).optional(),
   // Titles of the general finance knowledge an answer drew on; shown under it.
   sources: z.array(z.string().max(80)).max(5).optional(),
@@ -773,9 +775,9 @@ export const assistantMessageSchema = z.object({
   // The live status steps of the run that produced this answer, for the feedback file.
   steps: z.array(z.string().max(80)).max(12).optional(),
   // The tools the run called for this answer, in order (lookups, web search, the answering tool), for "Letzte Läufe" in the admin view.
-  calls: z.array(assistantToolCallSchema).max(8).optional(),
+  calls: z.array(assistantToolCallSchema).max(12).optional(),
   // The models of the run (routing, action, answer), in order; shown under the answer and in "Letzte Läufe".
-  models: z.array(assistantModelUseSchema).max(4).optional(),
+  models: z.array(assistantModelUseSchema).max(8).optional(),
   // The system prompt the answer was written with (shortened), for the "Details" panel; only the newest answers keep it.
   prompt: z.string().max(MAX_PROMPT_PREVIEW).optional(),
   correcting: z.string().max(1000).optional(),

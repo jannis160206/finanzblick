@@ -472,6 +472,106 @@ export async function* chatStream(messages: ChatMessage[], options: ChatOptions 
   options.cache?.set(cacheKey(use, messages, options, true), { content: text, toolCalls: [], use });
 }
 
+type ToolDelta = { index: number; id?: string; name?: string; arguments?: string };
+
+// Tool call pieces of a streamed step: name and id come first, the JSON arguments in parts.
+function parseToolDeltas(buffer: string): ToolDelta[] {
+  const found: ToolDelta[] = [];
+  for (const line of buffer.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    try {
+      const event = JSON.parse(line.slice(5).trim()) as { choices?: { delta?: { tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[] };
+      for (const call of event.choices?.[0]?.delta?.tool_calls ?? [])
+        found.push({ index: call.index ?? 0, ...(call.id ? { id: call.id } : {}), ...(call.function?.name ? { name: call.function.name } : {}),
+          ...(call.function?.arguments ? { arguments: call.function.arguments } : {}) });
+    } catch {
+      // Keep-alive, [DONE] or malformed lines carry no call.
+    }
+  }
+  return found;
+}
+
+/** A step of an agent: the text pieces as they stream, then the tool calls it made (empty when it answered in words). */
+export type AgentStreamPiece = { text: string } | { calls: ToolCall[] };
+
+/**
+ * One streamed step of an agent in a tool loop, DeepSeek only: text pieces as they come (an empty one first, once the model
+ * took the request, so `options.trace` names it), then the tool calls. Names and IBANs are masked as in every cloud call, in
+ * the text as well as in the arguments. Without DeepSeek it throws, and the caller falls back to the local path.
+ */
+export async function* chatAgentStream(messages: ChatMessage[], options: ChatOptions = {}): AsyncGenerator<AgentStreamPiece> {
+  const config = options.config ?? readAiConfig();
+  const route = plan(config, options);
+  if (!route.target) throw cloudMissing(route);
+  const target = route.target;
+  const use: ModelUse = { provider: "deepseek", model: target.model, task: route.task, ...(target.thinking ? { thinking: true } : {}) };
+  const key = cacheKey(use, messages, options, true);
+  const cached = options.cache?.get(key);
+  if (cached) {
+    finish(options, cached.use);
+    yield { text: "" };
+    if (cached.content) yield { text: cached.content };
+    yield { calls: cached.toolCalls };
+    return;
+  }
+  const started = Date.now();
+  const guard = createPseudonymizer(privateNames());
+  let response: Response;
+  try {
+    response = await postCloud(target, maskMessages(messages, guard), options, true);
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    const failure = error instanceof CloudError ? error : new CloudError("bad", "Antwort nicht lesbar");
+    logFailure(route.task, target.model, failure);
+    pauseCloud(failure);
+    throw unavailable(failure, true);
+  }
+  finish(options, use);
+  yield { text: "" };
+  if (!response.body) throw new AiUnavailableError("Die KI hat keine Antwort gestreamt.");
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  let buffer = "";
+  let held = "";
+  let text = "";
+  let usage: Usage | undefined;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      const chunk = buffer + (value ?? "") + (done ? "\n" : "");
+      const parsed = parseSse(chunk);
+      for (const delta of parseToolDeltas(chunk.slice(0, chunk.length - parsed.rest.length))) {
+        const call = calls.get(delta.index) ?? { id: "", name: "", arguments: "" };
+        calls.set(delta.index, { id: delta.id ?? call.id, name: call.name + (delta.name ?? ""), arguments: call.arguments + (delta.arguments ?? "") });
+      }
+      buffer = parsed.rest;
+      usage = parsed.usage ?? usage;
+      for (const delta of parsed.deltas) {
+        const [ready, rest] = splitRevealable(held + delta);
+        held = rest;
+        if (ready) {
+          const piece = guard.reveal(ready);
+          text += piece;
+          yield { text: piece };
+        }
+      }
+      if (parsed.done || done) break;
+    }
+    if (held) {
+      const piece = guard.reveal(held);
+      text += piece;
+      yield { text: piece };
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  logCall(use, Date.now() - started, countUsage(target.model, usage));
+  const toolCalls: ToolCall[] = [...calls.entries()].sort(([a], [b]) => a - b).filter(([, call]) => call.name)
+    .map(([index, call]) => ({ id: call.id || `call_${index}`, type: "function", function: { name: call.name, arguments: guard.reveal(call.arguments) } }));
+  options.cache?.set(key, { content: text, toolCalls, use });
+  yield { calls: toolCalls };
+}
+
 export type CloudStatus = {
   provider: "deepseek";
   available: boolean;

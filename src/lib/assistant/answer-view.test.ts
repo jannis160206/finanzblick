@@ -33,7 +33,7 @@ describe("answer layout data", () => {
     expect(trendOf(plan)).toBeUndefined();
   });
 
-  it("hands the supervisor raw data: figures written out with their tone, the trend and the tool's finding", () => {
+  it("hands the agents raw data: figures written out with their tone, the trend and the tool's finding", () => {
     const data = rawData("Monatsplan", "Was bleibt mir?", { text: "Dir bleiben 1.989 € im November.", card: { ...plan, chart: chart("Saldo", [10, 20]).chart } })
       .replace(/\u00a0/g, " ");
     expect(data).toContain("[Monatsplan] Was bleibt mir?");
@@ -43,8 +43,8 @@ describe("answer layout data", () => {
     expect(data).toContain("Befund: Dir bleiben 1.989 € im November.");
   });
 
-  it("keeps only system commands as fixed replies; answers to questions are left to the supervisor", () => {
-    // Arithmetic is computed by the code but worded by the supervisor's answer; only without DeepSeek it is the reply itself.
+  it("keeps only system commands as fixed replies; answers to questions are left to the orchestrator", () => {
+    // Arithmetic is computed by the code but worded by the orchestrator's answer; only without DeepSeek it is the reply itself.
     expect(fixedCommand("15 % von 2400")).toBeUndefined();
     expect(fixedReply("15 % von 2400")?.text).toBe("15 % von 2.400 sind 360.");
     expect(arithmetic("Rechne 1200 / 12")).toBe("1200 / 12 = 100");

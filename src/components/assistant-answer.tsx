@@ -10,7 +10,7 @@ import { currency as format } from "@/lib/format";
 import type { AppState, AssistantCard } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-// The answer layout: the supervisor's words on top, the workers' results below as key figures and a bento grid of tiles.
+// The answer layout: the orchestrator's words on top, the specialists' results below as key figures and a bento grid of tiles.
 // Colours come from the semantic tokens (success, destructive, warning), so light and dark mode follow the design system.
 
 const toneText: Record<Tone, string> = {

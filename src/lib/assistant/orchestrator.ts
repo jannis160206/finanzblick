@@ -5,10 +5,10 @@ import { fixedCommand, fixedReply } from "./fixed-replies";
 import { assistantTools, detectTool, mentionsName, type AssistantTool } from "./tools";
 
 /**
- * Thin orchestrator plus supervisor and workers. The orchestrator does no work of its own: fixed rules keep only changes and
- * commands (see `orchestrate`); every other message goes to the supervisor (DeepSeek V4 Pro), which decides what to look up
- * or research, lets the specialists' reading tools fetch the raw data and writes the answer. Four specialists own their tools
- * without overlap. Without DeepSeek the local routing below decides: rules, signal words, then one word from the local model.
+ * The agents' domains and the local routing. With DeepSeek the agent runtime answers (src/lib/agents): fixed rules keep only
+ * system commands (see `orchestrate`), everything else goes to the orchestrator, which delegates to the specialists. Four
+ * specialists own their tools without overlap. Without DeepSeek the local routing below decides: rules, signal words, then
+ * one word from the local model.
  */
 export const agentIds = ["transactions", "contracts", "budget", "payroll", "general"] as const;
 export type AgentId = typeof agentIds[number];
@@ -110,7 +110,7 @@ export function wantsWebSearch(input: string, context: { tool?: AssistantTool; h
 export const unsureAnswer = (text: string | undefined) => !text?.trim() ||
   /\b(?:weiß ich (?:leider )?nicht|weiss ich (?:leider )?nicht|kann ich (?:dir )?(?:leider )?nicht (?:sicher |genau )?sagen|bin (?:mir )?(?:da )?nicht (?:ganz )?sicher|keine (?:aktuellen |genauen |verlässlichen )?(?:informationen|infos|daten|angaben|zahlen)|nicht in meinen (?:daten|unterlagen)|habe ich (?:leider )?keine (?:aktuellen )?(?:infos|informationen|daten|zahlen))\b/i.test(text);
 
-export const routeVias = ["rule", "signal", "model", "fallback", "supervisor"] as const;
+export const routeVias = ["rule", "signal", "model", "fallback", "supervisor", "orchestrator"] as const;
 export type RouteVia = typeof routeVias[number];
 export const isRouteVia = (value: unknown): value is RouteVia => typeof value === "string" && (routeVias as readonly string[]).includes(value);
 export type RouteDecision = { agent: AgentId; tool?: AssistantTool; via: RouteVia };
@@ -137,22 +137,22 @@ export function routeByRules(input: string, names: string[] = []): RouteDecision
   return routeBySignals(text, names);
 }
 
-// Tools that compute from an amount; without one they could only ask for it, so the supervisor answers from the user's data instead.
+// Tools that compute from an amount; without one they could only ask for it.
 export const amountTools: readonly AssistantTool[] = ["funds", "affordability", "depot", "loan"];
 
-export type Handoff = { to: "specialist"; decision: RouteDecision } | { to: "supervisor"; hint?: AssistantTool };
+export type Handoff = { to: "specialist"; decision: RouteDecision } | { to: "agents"; hint?: AssistantTool };
 
 /**
- * The thin orchestrator: it only decides who takes over. Fixed rules keep only system commands (date and time, navigation,
- * theme and device settings, actions that only work on their own page); every other message – questions, small talk,
- * corrections, changes – goes to the supervisor with the conversation. A tool the rules recognised goes along only as a
- * hint; a change the supervisor hands back is filled in by its specialist and keeps its preview and confirmation.
+ * The thin entry: it only decides who takes over. Fixed rules keep only system commands (date and time, navigation, theme and
+ * device settings, actions that only work on their own page); every other message – questions, small talk, corrections,
+ * changes – goes to the agents (the orchestrator with the conversation). A tool the rules recognised goes along as a hint for
+ * the local routing and the change workflow.
  */
 export function orchestrate(input: string, names: string[] = []): Handoff {
   const text = normalizeMessage(input);
   if (fixedCommand(text)) return { to: "specialist", decision: { agent: "general", via: "rule" } };
   const tool = detectTool(text, names);
-  return { to: "supervisor", ...(tool ? { hint: tool } : {}) };
+  return { to: "agents", ...(tool ? { hint: tool } : {}) };
 }
 
 // The router model answers with one of these words; anything else counts as unsure.

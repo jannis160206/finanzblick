@@ -37,30 +37,6 @@ export function agentFacts(agent: AgentId, state: AppState, dashboard: Dashboard
   return facts;
 }
 
-// Dropped first when a combined context grows too large: details the overview already summarizes.
-const expendable: readonly (keyof AssistantFacts)[] = ["possibleDuplicateFixedCosts", "possibleDuplicateCharges", "largestLastMonth", "accountRules",
-  "healthCheck", "upcoming", "giroForecast12Months", "spendingByMonthAndCategory", "yearToDate", "largestThisMonth"];
-
-/**
- * Context for an answer V4 Pro writes after the supervisor's plan: the detailed facts of the leading agent and of every
- * specialist whose tool ran, plus the overview of all app data. Rich enough for a personal answer; once it grows past the
- * limit, details of the helping specialists that the overview already summarizes are dropped, never the leading agent's own.
- */
-export function contextFacts(agents: readonly AgentId[], state: AppState, dashboard: Dashboard, today: string, question: string, limit = 9000): Record<string, unknown> {
-  const team = [...new Set(agents)].filter((agent) => usesPersonalFacts(agent, question));
-  if (!team.length) return { today };
-  const all = assistantFacts(state, dashboard, today);
-  const facts: Record<string, unknown> = Object.fromEntries([...new Set(team.flatMap((agent) => factKeys[agent]))].map((key) => [key, all[key]]));
-  facts.overview = appOverview(all, state, today);
-  if (team.includes("payroll")) facts.payroll = payrollFacts(state, today);
-  const own = new Set<string>(factKeys[team[0]]);
-  for (const key of expendable) {
-    if (JSON.stringify(facts).length <= limit) break;
-    if (!own.has(key)) delete facts[key];
-  }
-  return facts;
-}
-
 // The read tool each specialist consults before it answers in words; its result is quoted, never recalculated.
 const contextTools: Partial<Record<AgentId, (state: AppState, dashboard: Dashboard, today: string, question: string) => AgentResult>> = {
   transactions: (state, _dashboard, today, question) => monthReview(state, question, today),

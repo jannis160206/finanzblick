@@ -230,11 +230,11 @@ describe("privacy and tokens", () => {
   });
 
   it("reports the models of an interpretation", async () => {
-    const { fetcher } = stub(() => completion("{\"spezialist\":\"umsaetze\",\"art\":\"antwort\",\"schritte\":[{\"werkzeug\":\"query\",\"frage\":\"Essen im Oktober\"}]}"));
-    const reply = await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober fürs Essen ausgegeben?", asOf: "2026-11-14" }, { config, fetcher });
-    expect(reply).toMatchObject({ supervised: true, steps: [{ tool: "query" }], source: "KI", models: [{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }] });
-    const offline = await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober fürs Essen ausgegeben?", asOf: "2026-11-14" },
-      { config: { ...local, enabled: false }, fetcher });
+    const { fetcher } = stub(() => completion("{\"tool\":\"edit\",\"goal\":\"Japan\"}"));
+    const change = { message: "Erhöhe Japan auf 4.000 €", asOf: "2026-11-14", context: { goals: ["Japan"], planned: [] }, delegated: true };
+    const reply = await interpretAssistantMessage(change, { config, fetcher });
+    expect(reply).toMatchObject({ tool: "edit", source: "KI", models: [{ provider: "deepseek", task: "action" }] });
+    const offline = await interpretAssistantMessage({ ...change, delegated: undefined }, { config: { ...local, enabled: false }, fetcher });
     expect(offline.models).toBeUndefined();
   });
 });

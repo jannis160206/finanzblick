@@ -1,11 +1,10 @@
 import { z } from "zod";
 import { rulesFor, type RuleText } from "@/lib/assistant/feedback-rules";
-import { detectSmallTalk } from "@/lib/assistant/smalltalk";
 import { blocksToMarkdown, parseBlocks, type Block, type ListBlock } from "@/lib/assistant/markdown";
-import { agentIds, chatRequest, type AgentId } from "@/lib/assistant/orchestrator";
+import { agentIds, type AgentId } from "@/lib/assistant/orchestrator";
 import { MAX_PROMPT_PREVIEW } from "@/lib/types";
 import { chat, chatStream, stripThinking, type ChatMessage, type ChatOptions } from "./client";
-import { analysisQuestion, needsReasoning, taxQuestion, type AiTask, type ModelUse } from "./models";
+import { needsReasoning, type AiTask, type ModelUse } from "./models";
 import type { PromptOverrides } from "./agent-prompts";
 import { answerPrompt } from "./specialists";
 import { numbersBacked } from "./summary";
@@ -18,12 +17,8 @@ export const answerRequestSchema = z.object({
   facts: z.record(z.string(), z.unknown()),
   // What a finance tool already computed for this question; the model may quote it.
   evidence: z.string().max(4000).optional(),
-  // The agent the orchestrator chose; it decides the voice. Without one the general chat answers.
+  // The agent the local routing chose; it decides the voice. Without one the general chat answers.
   agent: z.enum(agentIds).optional(),
-  // The supervisor planned the lookups and now writes the answer from all of their results.
-  supervised: z.boolean().optional(),
-  // The question corrects or narrows the previous answer ("Nein, ich meine …").
-  correction: z.boolean().optional(),
 }).strict();
 export type AnswerRequest = z.infer<typeof answerRequestSchema>;
 
@@ -46,43 +41,26 @@ export type AnswerOptions = ChatOptions & { rules?: readonly RuleText[]; prompts
 function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, evidence?: string, rules?: readonly RuleText[], prompts?: PromptOverrides): ChatMessage[] {
   const agent = input.agent ?? "general";
   return [
-    { role: "system", content: answerPrompt(agent, rulesFor(rules, agent, "answer"), input.supervised, prompts) },
+    { role: "system", content: answerPrompt(agent, rulesFor(rules, agent, "answer"), prompts) },
     { role: "user", content: [
       `Fakten (JSON):\n${JSON.stringify(facts)}`,
-      evidence ? `${input.supervised ? "Ergebnisse der Spezialisten" : "Werkzeug-Ergebnis"} zu dieser Frage (verlässlich berechnet):\n${evidence}` : "",
+      evidence ? `Werkzeug-Ergebnis zu dieser Frage (verlässlich berechnet):\n${evidence}` : "",
       input.history?.length ? `Verlauf (das bisherige Gespräch):\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
-      input.correction ? "Die Frage korrigiert oder präzisiert deine vorige Antwort: Nimm die Korrektur an, ohne dich lang zu entschuldigen, bleib beim Thema " +
-        "aus dem Verlauf und beantworte die eigentlich gemeinte Frage neu." : "",
       `Frage: ${input.question}`,
     ].filter(Boolean).join("\n\n") },
   ];
 }
 
-// Room for a short list or a small comparison table; the general chat is a little livelier, the supervisor gets the most room.
-const answerOptions = (agent: AgentId = "general", supervised = false) => supervised ? { maxTokens: 700, temperature: 0.3 }
-  : agent === "general" ? { maxTokens: 400, temperature: 0.4 } : { maxTokens: 400, temperature: 0.3 };
+// Room for a short list or a small comparison table; the general chat is a little livelier.
+const answerOptions = (agent: AgentId = "general") => agent === "general" ? { maxTokens: 400, temperature: 0.4 } : { maxTokens: 400, temperature: 0.3 };
 
 /**
- * Web search summaries and ordinary questions take the fast model, analyses and tax questions the thinking mode. The supervisor
- * writes from results its workers already computed, so V4 Pro answers without the slow thinking mode, except for tax analyses
- * ("Warum zahle ich so viel Lohnsteuer?"); "Wie viel netto bekomme ich?" is a figure the payroll tool already computed.
+ * The answers of the local path (without the agent runtime): web search summaries and ordinary questions take the fast model,
+ * analyses and tax questions the thinking mode.
  */
-export function answerTask(input: Pick<AnswerRequest, "question" | "agent" | "evidence" | "supervised"> & { facts?: Record<string, unknown> }): AiTask {
+export function answerTask(input: Pick<AnswerRequest, "question" | "agent" | "evidence"> & { facts?: Record<string, unknown> }): AiTask {
   if (input.evidence?.startsWith("Websuche")) return "web";
-  if (input.supervised) {
-    if (briefTalk(input)) return "chat";
-    return taxQuestion(input.question, input.agent) && analysisQuestion(input.question) ? "reasoning" : "synthesize";
-  }
   return needsReasoning(input.question, input.agent) ? "reasoning" : "chat";
-}
-
-/**
- * Greetings, thanks and creative requests without data or lookups need no analysis: the fast model writes them. Everything
- * else the supervisor answers – analysis, summary, assessment, research, explanation – V4 Pro writes.
- */
-export function briefTalk(input: Pick<AnswerRequest, "question" | "agent" | "evidence"> & { facts?: Record<string, unknown> }): boolean {
-  const personal = Object.keys(input.facts ?? {}).some((key) => !PERSONAL.has(key));
-  return (input.agent ?? "general") === "general" && !input.evidence && !personal && (!!detectSmallTalk(input.question) || chatRequest(input.question));
 }
 
 // Amounts written inside texts (tool results, health check) and the user's own numbers in the question count as backed, too.
@@ -210,7 +188,7 @@ function fitted(blocks: readonly Block[]): string {
 }
 
 // An answer whose amounts, links and account numbers are all backed; whatever is not is dropped, block by block.
-function groundedText(content: string, source: object, check: (sentence: string, source: object) => boolean = backed) {
+export function groundedText(content: string, source: object, check: (sentence: string, source: object) => boolean = backed) {
   const raw = unwrapJson(stripThinking(content));
   if (raw.startsWith("{")) return undefined;
   const kept = fitted(groundBlocks(parseBlocks(tidyAnswer(raw)), (sentence) => check(sentence, source), (code) => chatBacked(code, source)));
@@ -220,6 +198,15 @@ function groundedText(content: string, source: object, check: (sentence: string,
 // Small models sometimes repeat the user's question in the middle of the answer; that sentence is dropped.
 const plainWords = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 const echoes = (sentence: string, question: string) => !!question.trim() && plainWords(sentence) === plainWords(question);
+
+/**
+ * The grounding of an answer about the user's money: every amount, link and account number must be in the facts, the
+ * evidence or the question; the orchestrator's answer is checked the same way against its specialists' raw results.
+ */
+export function groundingFor(question: string, facts: Record<string, unknown>, evidence?: string) {
+  return { source: backing(facts, evidence, question),
+    check: (sentence: string, source: object) => !echoes(sentence, question) && backed(sentence, source) };
+}
 
 function prepare(input: AnswerRequest) {
   const facts = cleanFacts(input.facts, 1500);
@@ -233,7 +220,7 @@ function prepare(input: AnswerRequest) {
 export async function answerFreeQuestion(input: AnswerRequest, options: AnswerOptions = {}): Promise<{ text?: string; source: "KI"; models: ModelUse[]; prompt: string }> {
   const { facts, evidence, source, check } = prepare(input);
   const messages = answerMessages(input, facts, evidence, options.rules, options.prompts);
-  const answer = await chat(messages, { task: answerTask({ ...input, facts }), ...answerOptions(input.agent, input.supervised), ...options });
+  const answer = await chat(messages, { task: answerTask({ ...input, facts }), ...answerOptions(input.agent), ...options });
   const text = groundedText(answer.content, source, check);
   return { ...(text ? { text } : {}), source: "KI", models: [answer.use], prompt: systemPrompt(messages) };
 }
@@ -294,7 +281,7 @@ export async function* streamFreeAnswer(input: AnswerRequest, options: AnswerOpt
   let named = 0;
   const messages = answerMessages(input, facts, evidence, options.rules, options.prompts);
   yield { prompt: systemPrompt(messages) };
-  for await (const piece of chatStream(messages, { task: answerTask({ ...input, facts }), ...answerOptions(input.agent, input.supervised), ...options, trace })) {
+  for await (const piece of chatStream(messages, { task: answerTask({ ...input, facts }), ...answerOptions(input.agent), ...options, trace })) {
     while (named < trace.length) yield { model: trace[named++] };
     content += piece;
     const visible = visiblePrefix(content, source, check);

@@ -1,18 +1,20 @@
 // Which model answers which kind of work, and how a model is named in the UI. Pure: used by server and browser.
 
 /** The kinds of model work; the orchestrator picks one per call. */
-export const aiTasks = ["chat", "route", "action", "reasoning", "categorize", "web", "extract", "document", "suggest", "rule", "supervise", "synthesize"] as const;
+export const aiTasks = ["chat", "route", "action", "reasoning", "categorize", "web", "extract", "document", "suggest", "rule", "supervise", "synthesize",
+  "orchestrate", "delegate"] as const;
 export type AiTask = (typeof aiTasks)[number];
 export type ModelTier = "fast" | "pro" | "reasoning";
 export type AiProvider = "deepseek" | "local";
 
 /**
- * Cloud tier per task: the fast model routes, classifies and picks tools (the supervisor's plan included), V4 Pro writes the
- * answers and plans changes, the thinking mode serves tax analyses.
+ * Cloud tier per task: the orchestrator (V4 Pro) delegates and writes the answers, the specialists (Flash) fetch the data with
+ * their tools; V4 Pro also reads changes and reviews feedback, the thinking mode serves tax analyses. An agent's own setting in
+ * the agent repo overrides the tier. `supervise` and `synthesize` belong to answers of earlier versions in the chat history.
  */
 export const taskTier: Record<AiTask, ModelTier> = {
-  chat: "fast", route: "fast", categorize: "fast", web: "fast", extract: "fast", document: "fast", suggest: "fast", supervise: "fast",
-  action: "pro", rule: "pro", synthesize: "pro", reasoning: "reasoning",
+  chat: "fast", route: "fast", categorize: "fast", web: "fast", extract: "fast", document: "fast", suggest: "fast", supervise: "fast", delegate: "fast",
+  action: "pro", rule: "pro", synthesize: "pro", orchestrate: "pro", reasoning: "reasoning",
 };
 
 /** DeepSeek's list prices in US$ per million tokens at peak time (off-peak is half), as of 15.11.2026. */
@@ -30,11 +32,14 @@ export function estimateCost(model: string, usage: { input: number; cached: numb
 
 export const MONTHLY_BUDGET_USD = 5;
 type Tokens = { calls: number; input: number; output: number; cached: number };
-// One typical question without cache hits: Flash plans and writes the follow-ups, V4 Pro writes the answer.
+// One typical question without cache hits: the orchestrator delegates and writes (two V4 Pro steps), one specialist fetches
+// the data (two Flash steps), Flash writes the follow-ups.
 const typicalQuestion: { model: string; input: number; cached: number; output: number }[] = [
-  { model: "deepseek-flash", input: 3000, cached: 0, output: 120 },
+  { model: "deepseek-v4-pro", input: 3500, cached: 0, output: 120 },
+  { model: "deepseek-v4-pro", input: 5000, cached: 0, output: 400 },
+  { model: "deepseek-flash", input: 1800, cached: 0, output: 80 },
+  { model: "deepseek-flash", input: 2600, cached: 0, output: 200 },
   { model: "deepseek-flash", input: 800, cached: 0, output: 60 },
-  { model: "deepseek-v4-pro", input: 4000, cached: 0, output: 400 },
 ];
 
 /**
@@ -51,17 +56,19 @@ export function costOverview(usage: Record<string, Tokens> = {}) {
   const flash = average("deepseek-flash");
   const pro = average("deepseek-v4-pro");
   const measured = flash !== undefined && pro !== undefined;
-  const perQuestion = measured ? pro + 2 * flash : typicalQuestion.reduce((sum, item) => sum + estimateCost(item.model, item), 0);
+  const perQuestion = measured ? 2 * pro + 3 * flash : typicalQuestion.reduce((sum, item) => sum + estimateCost(item.model, item), 0);
   return { models, total: models.reduce((sum, item) => sum + item.cost, 0), perQuestion, perBudget: Math.floor(MONTHLY_BUDGET_USD / perQuestion), measured };
 }
 
 export const taskLabel: Record<AiTask, string> = {
   chat: "Antwort", route: "Werkzeugwahl", action: "Aktion", reasoning: "Analyse", categorize: "Kategorisierung",
   web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Prüfungs-Agent", supervise: "Supervisor", synthesize: "Supervisor-Antwort",
+  orchestrate: "Orchestrator", delegate: "Spezialist",
 };
 
 /** Work only DeepSeek does; without it the chat keeps its fixed suggestions, routes locally and rule checks wait. Never the local model. */
-export const cloudOnlyTasks: Partial<Record<AiTask, string>> = { suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek", supervise: "Lokales Routing" };
+export const cloudOnlyTasks: Partial<Record<AiTask, string>> = { suggest: "Feste Vorschläge", rule: "Wartet auf DeepSeek", supervise: "Lokales Routing",
+  orchestrate: "Lokaler Rückfall", delegate: "Lokaler Rückfall" };
 
 /** One model call as the server reports it: who answered, for what, and whether it was the local fallback. */
 export type ModelUse = {
@@ -93,7 +100,7 @@ export const modelTitle = (use: Pick<ModelUse, "provider" | "model" | "thinking"
 
 const reasoningWords = /\b(?:warum|wieso|weshalb|analysier\w*|analyse|vergleich\w*|berechn\w*|rechne|steuer\w*|lohnsteuer|einkommensteuer|veranlagung|absetz\w*|abschreib\w*|grenzsteuer\w*|progression|sechstel|lohnt (?:sich|es)|sollte ich|soll ich|was passiert,? wenn|was wäre,? wenn|strategie|langfristig|vor- und nachteile|pro und contra|optimier\w*)\b/i;
 
-/** A tax question for the payroll specialist; it keeps the thinking mode even when the supervisor writes the answer. */
+/** A tax question for the payroll specialist; it keeps the thinking mode even when the orchestrator writes the answer. */
 export const taxQuestion = (question: string, agent?: string) =>
   agent === "payroll" && /\b(?:\w*steuer\w*|netto|brutto|sv|sozialversicherung|\w*sechstel|veranlagung|absetz\w*|progression)\b/i.test(question);
 

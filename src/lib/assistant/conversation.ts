@@ -113,8 +113,8 @@ export function conversationRoute(input: { text: string; tool?: AssistantTool; r
 const toneWord = { good: "positiv", warn: "Achtung", bad: "negativ", info: "" } as const;
 
 /**
- * A worker's result as raw data for the supervisor: the card's figures line by line with their tone, the trend of its chart
- * and the tool's finding, amounts written out so the answer check counts them as backed. The supervisor writes the words.
+ * A tool's result as raw data for the agents: the card's figures line by line with their tone, the trend of its chart
+ * and the tool's finding, amounts written out so the answer check counts them as backed. The orchestrator writes the words.
  */
 export function rawData(label: string, question: string, result: AgentResult, max = 750): string {
   const card = result.card;

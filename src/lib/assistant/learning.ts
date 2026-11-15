@@ -29,7 +29,7 @@ export function correction(input: string): { text: string } | undefined {
  * A message that corrects or narrows the previous answer instead of asking something new: "Nein, ich meine mein
  * Raiffeisen-Konto", "Also Raiffeisen jedes Quartal meine ich", "nicht im Oktober, sondern im September", "Doch, ich habe Netflix",
  * "Es geht um die Miete".
- * The supervisor then keeps the earlier topic and only changes what is corrected.
+ * The orchestrator then keeps the earlier topic and only changes what is corrected.
  */
 export function correctsPrevious(input: string): boolean {
   const text = input.toLowerCase().replace(/\s+/g, " ").trim();

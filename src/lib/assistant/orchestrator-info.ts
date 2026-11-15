@@ -93,19 +93,29 @@ const excerpt = (value: string | undefined, max: number) => value?.replace(/\s+/
  * operations of its change, never from arguments, amounts or the user's words. `empty`: a lookup that worked but found nothing.
  * `args` and `result` (the question the tool got, an excerpt of what it returned) are only shown in the answer's "Details".
  */
-export function toolCall(tool: string, { ok = true, change, empty = false, args, result }:
-  { ok?: boolean; change?: Pick<AssistantChange, "operations">; empty?: boolean; args?: string; result?: string } = {}): AssistantToolCall {
-  const summary = (change ? changeAction(change.operations) : undefined) ?? (empty ? emptyAction[tool] : undefined) ?? callAction[tool] ?? callLabel(tool);
+// The orchestrator's delegations are recorded as "agent.<specialist>".
+const delegateName: Record<string, string> = {
+  transactions: "Umsätze", contracts: "Verträge", budget: "Budget & Prognose", payroll: "Gehalt & Steuern", research: "Recherche & Wissen",
+};
+export const delegationCall = (agent: string) => `agent.${agent}`;
+
+export function toolCall(tool: string, { ok = true, change, empty = false, args, result, by }:
+  { ok?: boolean; change?: Pick<AssistantChange, "operations">; empty?: boolean; args?: string; result?: string; by?: string } = {}): AssistantToolCall {
+  const delegated = tool.startsWith("agent.") ? delegateName[tool.slice(6)] : undefined;
+  const summary = (delegated ? `Frage ${delegated}` : undefined) ?? (change ? changeAction(change.operations) : undefined) ?? (empty ? emptyAction[tool] : undefined)
+    ?? callAction[tool] ?? callLabel(tool);
   const shown = { args: excerpt(args, 200), result: excerpt(result, 400) };
-  return { tool: tool.slice(0, 40), ok, summary: summary.slice(0, 80), ...(shown.args ? { args: shown.args } : {}), ...(shown.result ? { result: shown.result } : {}) };
+  return { tool: tool.slice(0, 40), ok, summary: summary.slice(0, 80), ...(shown.args ? { args: shown.args } : {}), ...(shown.result ? { result: shown.result } : {}),
+    ...(by ? { by: by.slice(0, 20) } : {}) };
 }
 
-export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Signalwort", model: "Modell", fallback: "Rückfall", supervisor: "Supervisor" };
+export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Signalwort", model: "Modell", fallback: "Rückfall", supervisor: "Supervisor",
+  orchestrator: "Orchestrator" };
 
 /** The thin orchestrator's decision steps, in the order it tries them. */
 export const orchestratorSteps: { title: string; detail: string; calls: string }[] = [
   { title: "Regeln", detail: "Nur Systembefehle und laufende Formulare: Datum und Uhrzeit, Navigation, Design, Ja/Nein unter einer Vorschau", calls: "0 KI" },
-  { title: "Supervisor", detail: "DeepSeek Flash plant mit dem Datenüberblick, die Spezialisten holen Daten oder recherchieren, DeepSeek V4 Pro schreibt jede Analyse", calls: "2 KI" },
+  { title: "Orchestrator", detail: "DeepSeek V4 Pro delegiert per Tool-Call an die Spezialisten (DeepSeek Flash, eigene Werkzeug-Schleife) und schreibt die Antwort", calls: "2–6 KI" },
   { title: "Lokaler Rückfall", detail: "Ohne DeepSeek: feste Wege, Signalwörter, dann ein Wort vom lokalen Modell", calls: "0–1 KI" },
 ];
 
@@ -129,7 +139,8 @@ export type CallState = "ok" | "failed" | "pending" | "applied" | "dismissed" | 
 export const callStateLabel: Record<CallState, string> = {
   ok: "Erfolgreich", failed: "Fehlgeschlagen", pending: "Wartet auf Bestätigung", applied: "Übernommen", dismissed: "Verworfen", undone: "Rückgängig gemacht",
 };
-export type RunCall = { tool: string; label: string; summary: string; state: CallState };
+/** `by`: the orchestrator for a delegation, or the specialist that called the tool; missing for older runs. */
+export type RunCall = { tool: string; label: string; summary: string; state: CallState; by?: string };
 /** A model that worked on the run: its label, the task ("Werkzeugwahl", "Antwort" …) and whether it stepped in as fallback. */
 export type RunModel = { label: string; model: string; task: string; fallback: boolean; reason?: string };
 export type AssistantRun = {
@@ -162,7 +173,33 @@ const changeState: Record<NonNullable<AssistantMessage["status"]>, CallState> = 
 function runCalls(reply: AssistantMessage): RunCall[] {
   const calls = reply.calls ?? (reply.tool ? [toolCall(reply.tool, { ok: !failedAnswer(reply.text), change: reply.change })] : []);
   return calls.map((call) => ({ tool: call.tool, label: callLabel(call.tool), summary: call.summary,
-    state: !call.ok ? "failed" : isAssistantTool(call.tool) && changesData(call.tool) && reply.status ? changeState[reply.status] : "ok" }));
+    state: !call.ok ? "failed" : isAssistantTool(call.tool) && changesData(call.tool) && reply.status ? changeState[reply.status] : "ok",
+    ...(call.by ? { by: call.by } : {}) }));
+}
+
+/** The specialist a delegation went to ("agent.budget" → "budget"). */
+export const delegatedAgent = (tool: string) => tool.startsWith("agent.") ? tool.slice(6) : undefined;
+
+/** One step of the orchestrator in a run: a delegation (or its own call) with the tool calls the specialist made for it. */
+export type RunTraceStep = { agent?: string; call?: RunCall; calls: RunCall[] };
+
+/**
+ * The run as a trace: the orchestrator's calls in order, each delegation with the calls of its specialist nested below.
+ * Calls without `by` (older runs, lookups outside the agents) stay flat.
+ */
+export function runTrace(calls: readonly RunCall[]): { steps: RunTraceStep[]; flat: RunCall[] } {
+  const steps: RunTraceStep[] = [];
+  const flat: RunCall[] = [];
+  for (const call of calls) {
+    if (!call.by) flat.push(call);
+    else if (call.by === "orchestrator") steps.push({ ...(delegatedAgent(call.tool) ? { agent: delegatedAgent(call.tool) } : {}), call, calls: [] });
+    else {
+      const step = steps.findLast((item) => item.agent === call.by);
+      if (step) step.calls.push(call);
+      else steps.push({ agent: call.by, calls: [call] });
+    }
+  }
+  return { steps, flat };
 }
 
 const runModel = (use: ModelUse): RunModel => ({ label: modelTitle(use), model: use.model, task: taskLabel[use.task], fallback: !!use.fallback,
@@ -181,8 +218,8 @@ export function assistantRuns(chat: readonly AssistantMessage[], limit = 50): As
     runs.push({
       id: message.id, at: message.at, question: message.text, status: statusOf(reply),
       ...(isAgent(reply.agent) ? { agent: reply.agent } : {}), ...(reply.via ? { via: reply.via } : {}),
-      ...(ms !== undefined ? { ms } : {}), calls: replies.flatMap(runCalls).slice(0, 8),
-      models: replies.flatMap((item) => item.models ?? []).slice(0, 4).map(runModel),
+      ...(ms !== undefined ? { ms } : {}), calls: replies.flatMap(runCalls).slice(0, 12),
+      models: replies.flatMap((item) => item.models ?? []).slice(0, 8).map(runModel),
     });
   });
   return runs.reverse().slice(0, limit);

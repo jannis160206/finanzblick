@@ -12,7 +12,6 @@ import { readAiConfig } from "./config";
 import type { AiTask, ModelUse } from "./models";
 import type { PromptOverrides } from "./agent-prompts";
 import { interpretPrompt, orchestratorPrompt, scopeNeeds } from "./specialists";
-import { supervise, type Supervision, type SupervisorStep } from "./supervisor";
 import { cleanUntrusted } from "./untrusted";
 
 export const assistantRequestSchema = z.object({
@@ -20,30 +19,26 @@ export const assistantRequestSchema = z.object({
   asOf: dateSchema,
   pending: assistantDraftSchema.optional(),
   history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(800) }).strict()).max(8).optional(),
-  // The message corrects or narrows the previous answer ("Nein, ich meine …"): no rule decides it, the supervisor keeps the topic.
+  // The message corrects or narrows the previous answer ("Nein, ich meine …"); without DeepSeek no rule reads it as a new request.
   correction: z.boolean().optional(),
+  // The orchestrator handed a change to the change workflow: the details are read here, the preview asks first.
+  delegated: z.boolean().optional(),
   // Names the model may refer to; nothing else from the data leaves the browser.
   context: z.object({
     goals: z.array(z.string().max(80)).max(50),
     planned: z.array(z.string().max(100)).max(60),
   }).strict().optional(),
-  // A compact overview of the user's data for the supervisor; built in the browser, names and IBANs are masked before DeepSeek.
-  overview: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHints = { goal?: string; planned?: string; category?: string; merchant?: string };
 /** Model options plus the active rules learned from feedback (the server loads them; the eval passes its own). */
 export type AssistantOptions = ChatOptions & { rules?: readonly RuleText[]; prompts?: PromptOverrides };
-/** `agent` answers the message; `via` says who decided (rule, supervisor, or locally: signal word, model, fallback). */
+/** `agent` answers the message; `via` says who decided (rule, the orchestrator for a change, or locally: signal word, model, fallback). */
 export type AssistantReply = {
   agent: AgentId; via: RouteVia; tool?: AssistantTool; hints?: AssistantHints; draft?: AssistantDraft; question?: string; source: "KI" | "Regel";
   /** The models that worked on the message (cloud model or the local fallback). */
   models?: ModelUse[];
-  /** The supervisor's reading steps for its answer: a tool (or the web) and a sub-question each, run by the workers in the browser. */
-  steps?: SupervisorStep[];
-  /** The supervisor writes the final answer from the steps' results. */
-  supervised?: true;
-  /** The supervisor was needed but DeepSeek is unavailable: the local routing decided, and the browser answers as before. */
+  /** The agents were meant to answer but are unavailable: the local routing decided, and the browser answers as without DeepSeek. */
   local?: true;
 };
 
@@ -147,22 +142,8 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
   return models.length ? { ...reply, models } : reply;
 }
 
-// The supervisor's plan; undefined when DeepSeek is unavailable or gave nothing readable, so the local routing takes over.
-async function supervisorPlan(input: AssistantRequest, hint: AssistantTool | undefined, options: AssistantOptions): Promise<Supervision | undefined> {
-  try {
-    return await supervise({ message: input.message, history: input.history, context: input.context, overview: input.overview, hint,
-      ...(input.correction ? { correction: true } : {}) },
-      { ...options, rules: rulesFor(options.rules, undefined, "routing") });
-  } catch (error) {
-    if (options.signal?.aborted) throw error;
-    return undefined;
-  }
-}
-
-function fromPlan(plan: Exclude<Supervision, { kind: "action" }>): AssistantReply {
-  if (plan.kind === "ask") return { agent: plan.agent, via: "supervisor", question: plan.question, source: "KI" };
-  return { agent: plan.agent, via: "supervisor", ...(plan.steps.length ? { steps: plan.steps } : {}), supervised: true, source: "KI" };
-}
+/** A change the orchestrator handed to the change workflow, with the specialist that fills it in. */
+type ChangePlan = { kind: "action"; agent: AgentId };
 
 async function interpret(request: AssistantRequest, options: AssistantOptions): Promise<AssistantReply> {
   // Casual spellings ("wv", "fuer", "3k", "Juli 27") are normalized once so rules, model and grounding see the same text.
@@ -170,30 +151,27 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
   const parsed = parseAssistantMessage(input.message, input.asOf);
   const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
   const detected = detectTool(input.message, names);
-  // Thin orchestrator: only system commands by rule, every other message to the supervisor. An open draft stays with its specialist;
-  // a correction goes to the supervisor without the rules' hint, which read the corrected words as a new request.
-  const handoff: ReturnType<typeof orchestrate> | undefined = input.pending ? undefined : input.correction ? { to: "supervisor" } : orchestrate(input.message, names);
-  const plan = handoff?.to === "supervisor" ? await supervisorPlan(input, handoff.hint, options) : undefined;
-  // A correction never opens a form or a change unless the user asks for one in so many words.
-  if (plan?.kind === "action" && input.correction && !actionWords.test(input.message)) return fromPlan({ kind: "answer", agent: plan.agent, steps: [] });
-  if (plan && plan.kind !== "action") return fromPlan(plan);
+  // System commands by rule; an open draft stays with its specialist. A change the orchestrator handed over goes to the change
+  // workflow; any other message only comes here without DeepSeek (or when the agents failed) and is routed locally.
+  const handoff: ReturnType<typeof orchestrate> | undefined = input.pending || input.delegated ? undefined : orchestrate(input.message, names);
+  const plan: ChangePlan | undefined = input.delegated && !input.pending
+    ? { kind: "action", agent: detected ? toolOwner[detected] : routeBySignals(input.message, names)?.agent ?? "general" } : undefined;
   // Without DeepSeek a correction is answered in words with the conversation, never by the tool its words look like.
   if (input.correction && !plan) return { agent: routeBySignals(input.message, names)?.agent ?? "general", via: "fallback", source: "Regel", local: true };
-  // From here on the specialists decide: a change, an open draft, or the local routing because DeepSeek is unavailable.
-  const local = handoff?.to === "supervisor" && !plan ? { local: true as const } : {};
+  const local = handoff?.to === "agents" ? { local: true as const } : {};
   const reply = await specialist(input, parsed, names, detected, handoff, plan, options);
   return { ...reply, ...local };
 }
 
 async function specialist(input: AssistantRequest, parsed: ReturnType<typeof parseAssistantMessage>, names: string[], detected: AssistantTool | undefined,
-  handoff: ReturnType<typeof orchestrate> | undefined, plan: Extract<Supervision, { kind: "action" }> | undefined, options: AssistantOptions): Promise<AssistantReply> {
+  handoff: ReturnType<typeof orchestrate> | undefined, plan: ChangePlan | undefined, options: AssistantOptions): Promise<AssistantReply> {
   // "Schreib mir ein Gedicht über Sparen" is a chat request, not a savings goal.
   if (!input.pending && !plan && chatRequest(input.message)) return { agent: "general", via: "rule", source: "Regel" };
-  // A change the supervisor handed over is filled in by its specialist; a reading tool the rules saw does not override it.
+  // A change the orchestrator handed over is filled in by its specialist; a reading tool the rules saw does not override it.
   const ruleTool = plan && detected && !changingTools.includes(detected) ? undefined : detected;
-  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model, also after the supervisor's plan.
+  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model, also after a handover.
   if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
-    return { agent: toolOwner[ruleTool], via: plan ? "supervisor" : "rule", tool: ruleTool, hints: {}, source: plan ? "KI" : "Regel" };
+    return { agent: toolOwner[ruleTool], via: plan ? "orchestrator" : "rule", tool: ruleTool, hints: {}, source: plan ? "KI" : "Regel" };
   // A plain answer to the open draft's question ("3000 €", "bis Juni 2027", "Urlaub in Japan") needs no model: the rules fill it in.
   if (input.pending && !ruleTool) {
     const quick = mergeDraft(input.pending, { ...parsed, action: parsed.action ?? input.pending.action }, {}, input.message, input.asOf);
@@ -202,9 +180,9 @@ async function specialist(input: AssistantRequest, parsed: ReturnType<typeof par
       return { agent: toolOwner[quick.action], via: "rule", tool: quick.action, hints: {}, draft: quick, ...(question ? { question } : {}), source: "Regel" };
     }
   }
-  // The specialist who works on it: the supervisor's choice for a change, an open draft's owner, the orchestrator's clear case,
-  // and without the supervisor the local routing (rule tool, small talk and signal words).
-  const decision: RouteDecision | undefined = plan ? { agent: ruleTool ? toolOwner[ruleTool] : plan.agent, via: "supervisor" }
+  // The specialist who works on it: for a handed-over change the tool's owner, an open draft's owner, a system command, and
+  // without DeepSeek the local routing (rule tool, small talk and signal words).
+  const decision: RouteDecision | undefined = plan ? { agent: ruleTool ? toolOwner[ruleTool] : plan.agent, via: "orchestrator" }
     : input.pending ? { agent: toolOwner[input.pending.action], via: "rule" }
     : handoff?.to === "specialist" ? handoff.decision
     : ruleTool ? { agent: toolOwner[ruleTool], tool: ruleTool, via: "rule" } : routeByRules(input.message, names);

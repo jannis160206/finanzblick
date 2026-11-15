@@ -13,6 +13,7 @@ const step = (text: string, activity: WorkActivity): WorkStatus => ({ text, acti
 export const workStatus = {
   read: step("Lese deine Nachricht…", "listening"),
   route: step("Verstehe deine Frage…", "connecting"),
+  delegate: step("Verteile die Aufgaben…", "connecting"),
   combine: step("Führe die Ergebnisse zusammen…", "weaving"),
   knowledge: step("Suche passendes Wissen…", "searching"),
   market: step("Hole aktuelle Marktdaten…", "searching"),

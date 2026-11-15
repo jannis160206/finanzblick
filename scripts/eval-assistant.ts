@@ -1,16 +1,17 @@
-import { answerFreeQuestion, streamFreeAnswer } from "../src/lib/ai/answer";
-import { interpretAssistantMessage } from "../src/lib/ai/assistant";
+import { composeWithAgents, routeWithAgents } from "../src/lib/ai/agent-eval";
+import { streamFreeAnswer } from "../src/lib/ai/answer";
 import { aiStatus, aiUsage, chat, type ChatOptions } from "../src/lib/ai/client";
 import { readAiConfig } from "../src/lib/ai/config";
 import { modelTitle, type ModelTier, type ModelUse } from "../src/lib/ai/models";
 import { fileResponseCache } from "../src/lib/ai/response-cache";
-import { deepActionCases, deepAnswerCases, deepSupervisorCases, smokeAnswerCases, smokeRouterCases, type AnswerCase, type EvalCase } from "../src/lib/assistant/eval-cases";
+import { deepActionCases, deepAnswerCases, deepAdviceCases, smokeAnswerCases, smokeRouterCases, type AnswerCase, type EvalCase } from "../src/lib/assistant/eval-cases";
 import { answerPasses, GOLD_AS_OF, GOLD_CONTEXT, routedTo, routeLabel, runGold, type CaseGroup } from "../src/lib/assistant/gold-eval";
+import { codeRepo } from "../src/lib/server/agent-repo-store";
 
 // Measures how well the assistant understands real wording and whether hidden instructions can steer it, in three tiers:
 //   smoke – a ping per model, 17 routing questions and 5 short answers on the fast model (about 25 requests);
 //   gold  – 80 fixed questions on the fast model (default);
-//   deep  – 15 complex cases with the production routing: the supervisor and actions on DeepSeek V4 Pro, analyses in the thinking mode.
+//   deep  – 15 complex cases with the production models: the orchestrator and changes on DeepSeek V4 Pro, the specialists on Flash.
 // Usage: npm run eval:assistant [-- --tier=smoke|gold|deep|all] [--local] [--cloud] [--fresh] [--min=85]
 //   --local  only the local model (Qwen), --cloud  stop if DeepSeek is unavailable, --fresh  ignore cached answers.
 // Answers are cached in .local-data/ai-cache/assistant-eval, so an unchanged prompt costs no tokens on the next run.
@@ -47,6 +48,8 @@ const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => {
   return fetch(input, init);
 }) as typeof fetch;
 const shared = (options: ChatOptions = {}): ChatOptions => ({ config, fetcher, cache, ...options });
+// The code defaults of the agent repo: the eval measures the shipped prompts, not local edits.
+const repo = codeRepo();
 const named = (models: ModelUse[] = []) => [...new Set(models.map((item) => `${modelTitle(item)}${item.fallback ? " (Rückfall)" : ""}`))].join(", ") || "Regeln";
 const timed = async <T>(run: () => Promise<T>) => {
   const started = performance.now();
@@ -60,26 +63,25 @@ const scores: Score[] = [];
 
 async function route(item: EvalCase, options: ChatOptions) {
   const request = { message: item.message, asOf, context, ...(item.history ? { history: item.history } : {}) };
-  const { value, ms, calls } = await timed(() => interpretAssistantMessage(request, shared(options)));
+  const { value, ms, calls } = await timed(() => routeWithAgents(request, { ...shared(options), repo }));
   const ok = routedTo(value, item.tools);
   console.log(`${ok ? "✓" : "✗"} ${item.message.slice(0, 62).padEnd(62)} → ${routeLabel(value)}${ok ? "" : ` (erwartet ${item.tools.join("/")})`} · ${named(value.models)} · ${calls} KI · ${ms} ms`);
   return { ok, reply: value };
 }
 
-// The supervisor answers advice from the user's data: reading steps of its own choice, no question back, no form.
-async function supervised(item: EvalCase) {
+// Advice from the user's data: the orchestrator delegates and the specialists pick their tools; no question back, no form.
+async function advised(item: EvalCase) {
   const request = { message: item.message, asOf, context };
-  const { value, ms, calls } = await timed(() => interpretAssistantMessage(request, shared()));
-  const ok = !value.question && !value.draft && (value.supervised ? (value.steps ?? []).some((step) => (item.tools as string[]).includes(step.tool))
-    : !!value.tool && (item.tools as string[]).includes(value.tool));
+  const { value, ms, calls } = await timed(() => routeWithAgents(request, { ...shared(), repo }));
+  const ok = !value.change && !value.question && value.tools.some((tool) => (item.tools as string[]).includes(tool));
   console.log(`${ok ? "✓" : "✗"} ${item.message.slice(0, 62).padEnd(62)} → ${routeLabel(value)}${value.question ? ` · Rückfrage „${value.question}“` : ""} · ` +
     `${named(value.models)} · ${calls} KI · ${ms} ms`);
   return ok;
 }
 
 async function answer(item: AnswerCase, options: ChatOptions) {
-  const { value, ms, calls } = await timed(() => answerFreeQuestion({ question: item.question, facts: item.facts, ...(item.agent ? { agent: item.agent } : {}),
-    ...(item.evidence ? { evidence: item.evidence } : {}) }, shared(options)).catch(() => ({ text: undefined, models: [] as ModelUse[] })));
+  const { value, ms, calls } = await timed(() => composeWithAgents({ question: item.question, facts: { ...item.facts, ...(item.evidence ? { ergebnis: item.evidence } : {}) },
+    ...(item.agent ? { agent: item.agent } : {}), asOf }, { ...shared(options), repo }).catch(() => ({ text: undefined, models: [] as ModelUse[] })));
   const text = value.text ?? "";
   const { ok, leaked } = answerPasses(item, text);
   console.log(`${ok ? "✓" : "✗"} ${item.question.slice(0, 62).padEnd(62)} · ${named(value.models)} · ${calls} KI · ${ms} ms${text ? ` · „${text.slice(0, 70)}…“` : " · (keine Antwort)"}`);
@@ -145,16 +147,16 @@ async function gold() {
 }
 
 async function deep() {
-  console.log("\n── Deep (komplexe Fälle: Supervisor und Aktionen auf V4 Pro, Analysen im Denkmodus) ──");
+  console.log("\n── Deep (komplexe Fälle: Orchestrator und Änderungen auf V4 Pro, Spezialisten auf Flash) ──");
   let passed = 0, hard = 0;
   for (const item of deepActionCases) if ((await route(item, {})).ok) passed += 1;
-  for (const item of deepSupervisorCases) if (await supervised(item)) passed += 1;
+  for (const item of deepAdviceCases) if (await advised(item)) passed += 1;
   for (const item of deepAnswerCases) {
     const result = await answer(item, {});
     if (result.ok) passed += 1;
     if (result.leaked) hard += 1;
   }
-  scores.push({ tier: "Deep", passed, total: deepActionCases.length + deepSupervisorCases.length + deepAnswerCases.length, hardFailures: hard });
+  scores.push({ tier: "Deep", passed, total: deepActionCases.length + deepAdviceCases.length + deepAnswerCases.length, hardFailures: hard });
 }
 
 for (const item of tiers) await ({ smoke, gold, deep } as Record<string, () => Promise<void>>)[item]();

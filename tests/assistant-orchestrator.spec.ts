@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { SECURITY_ACTIVATION_KEY } from "../src/lib/security-mode";
 import { payrollFixture } from "./fixtures/payroll-state";
 
-// Nur synthetische Daten. Die Pläne des Supervisors, die Antworten und die Folgefragen der KI sind gemockt; die Werkzeuge laufen echt.
+// Nur synthetische Daten. Die Schritte des Orchestrators und der Spezialisten, die Antworten und die Folgefragen der KI sind gemockt;
+// die Werkzeuge laufen echt im Browser.
 const storageKey = "finanzdashboard.v1";
 
 async function prepare(page: Page, width: number, theme: "light" | "dark") {
@@ -29,108 +30,125 @@ test.describe("assistant orchestrator", () => {
   test.skip(process.env.FINANZBLICK_AUTH === "true", "Seeds the browser-mode store.");
 
   for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
-    test(`lets the supervisor answer every question with the droid and lays out the results at ${width}px (${theme})`, async ({ page }, testInfo) => {
+    test(`lets the orchestrator answer every question through its specialists with the droid at ${width}px (${theme})`, async ({ page }, testInfo) => {
       await prepare(page, width, theme);
-      // The supervisor's plans are mocked (DeepSeek Flash makes them in production); the workers run the real tools on synthetic data.
-      const plans: Record<string, object> = {
-        "Hallo": { agent: "general", steps: [] },
-        "Was hältst du von Bitcoin?": { agent: "general", steps: [] },
-        "Wie viel netto bekomme ich?": { agent: "payroll", steps: [{ tool: "payroll", question: "Wie viel netto bekomme ich?" }] },
-        "Wird mein Konto knapp?": { agent: "budget", steps: [{ tool: "forecast", question: "Wird mein Konto knapp?" }] },
-        "Nein, ich meine das Sparkonto": { agent: "budget", steps: [] },
+      // The agents' steps are mocked (DeepSeek in production); the specialists' tools run for real on synthetic data in the browser.
+      type Call = { id: string; name: string; arguments: string };
+      type Step = { agent: string; message: string; turns: { calls: Call[]; results: { id: string; content: string }[] }[]; overview?: Record<string, unknown>;
+        history?: { role: string; text: string }[]; correction?: boolean; evidence?: string };
+      const pro = { provider: "deepseek", model: "deepseek-v4-pro", task: "orchestrate" };
+      const flash = { provider: "deepseek", model: "deepseek-flash", task: "delegate" };
+      const limits = { maxSteps: 5, maxToolCalls: 8, timeoutMs: 120_000, maxTokens: 900 };
+      const call = (id: string, name: string, args: Record<string, string>): Call => ({ id, name, arguments: JSON.stringify(args) });
+      // What the orchestrator delegates first (none: it answers right away), what the specialist calls, and the final words.
+      const plans: Record<string, { delegate?: Call; tool?: Call; finding?: string; text: string }> = {
+        "Hallo": { text: "Hallo! Schön, dass du da bist." },
+        "Was hältst du von Bitcoin?": { text: "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst." },
+        "Wie viel netto bekomme ich?": { delegate: call("o1", "gehalt", { aufgabe: "Nettogehalt laut letzter Lohnabrechnung" }),
+          tool: call("s1", "payroll", { frage: "Wie viel netto bekomme ich?" }), finding: "Netto laut letzter Abrechnung: 2.780 €.",
+          text: "Du bekommst 2.780 € netto im Monat." },
+        "Wird mein Konto knapp?": { delegate: call("o1", "budget", { aufgabe: "Prognose des Girokontos bis zum Gehalt" }),
+          tool: call("s1", "forecast", { frage: "Wird mein Konto knapp?" }), finding: "Das Girokonto wird vor dem Gehalt knapp.",
+          text: "Ja, dein Girokonto wird knapp.\n\nPlan die Sparrate erst nach dem Gehalt ein." },
+        "Nein, ich meine das Sparkonto": { text: "Am Sparkonto ist alles im grünen Bereich, da bleibt genug übrig." },
       };
-      const routed: { message: string; overview?: Record<string, unknown>; correction?: boolean; history?: { role: string; text: string }[] }[] = [];
-      await page.route("**/api/ai/assistant", async (route) => {
-        const body = route.request().postDataJSON() as { message: string; overview?: Record<string, unknown> };
-        routed.push(body);
-        await route.fulfill({ json: { ...plans[body.message], via: "supervisor", supervised: true, source: "KI",
-          models: [{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }] } });
+      const steps: Step[] = [];
+      let task = "";
+      const ndjson = (events: object[]) => ({ contentType: "application/x-ndjson; charset=utf-8", body: `${events.map((event) => JSON.stringify(event)).join("\n")}\n` });
+      await page.route("**/api/ai/agent**", async (route) => {
+        const body = route.request().postDataJSON() as Step;
+        steps.push(body);
+        if (body.agent === "orchestrator") {
+          task = body.message;
+          const plan = plans[body.message];
+          const head = [{ limits }, { prompt: "Du bist der Orchestrator (Test-Prompt)." }, { model: pro }];
+          if (plan.delegate && !body.turns.length) return route.fulfill(ndjson([...head, { calls: [plan.delegate] }]));
+          // The forecast's answer takes a moment, so the live status can be seen.
+          if (body.message === "Wird mein Konto knapp?") await new Promise((resolve) => setTimeout(resolve, 1500));
+          return route.fulfill(ndjson([...head, { delta: plan.text.slice(0, 6) }, { done: true, ok: true, text: plan.text }]));
+        }
+        const plan = plans[task];
+        return route.fulfill({ json: body.turns.length ? { calls: [], text: plan.finding, models: [flash] } : { calls: [plan.tool], models: [flash], limits } });
       });
-      const answers: { question: string; agent?: string; facts?: Record<string, unknown>; evidence?: string; supervised?: boolean; correction?: boolean;
-        history?: { role: string; text: string }[] }[] = [];
-      const replies: Record<string, string> = {
-        "Hallo": "Hallo! Schön, dass du da bist.",
-        "Was hältst du von Bitcoin?": "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.",
-        "Wie viel netto bekomme ich?": "Du bekommst 2.780 € netto im Monat.",
-        "Wird mein Konto knapp?": "Ja, dein Girokonto wird knapp.\n\nPlan die Sparrate erst nach dem Gehalt ein.",
-        "Nein, ich meine das Sparkonto": "Am Sparkonto ist alles im grünen Bereich, da bleibt genug übrig.",
-      };
-      await page.route("**/api/ai/answer**", async (route) => {
-        const body = route.request().postDataJSON() as (typeof answers)[number];
-        answers.push(body);
-        const text = replies[body.question] ?? "Okay.";
-        // The forecast's answer takes a moment, so its finished tool call can be seen live.
-        if (body.question === "Wird mein Konto knapp?") await new Promise((resolve) => setTimeout(resolve, 1500));
-        await route.fulfill({ contentType: "application/x-ndjson; charset=utf-8",
-          body: [{ prompt: "Du bist Finanzblick (Test-Prompt)." }, { model: { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" } },
-            { delta: text.slice(0, 6) }, { done: true, ok: true, text }]
-            .map((event) => JSON.stringify(event)).join("\n") + "\n" });
+      // Questions never take the change workflow or the old answer route.
+      const legacy: string[] = [];
+      await page.route(/\/api\/ai\/(assistant|answer)/, async (route) => {
+        legacy.push(route.request().url());
+        await route.fulfill({ status: 503, json: { error: "nicht erwartet" } });
       });
       await page.goto("/");
       await page.getByRole("button", { name: /^Finanz-Assistent öffnen/ }).click();
       const chat = page.getByRole("region", { name: "Chat mit dem Finanz-Assistenten" });
+      const lead = () => steps.filter((step) => step.agent === "orchestrator");
 
-      // Even small talk goes to the supervisor and DeepSeek writes the answer; no fixed reply.
+      // Even small talk goes to the orchestrator and DeepSeek writes the answer; no fixed reply.
       await ask(page, "Hallo");
       await expect(chat.getByText("Hallo! Schön, dass du da bist.")).toBeVisible();
-      // The supervisor sees an overview of the user's data: amounts, accounts and bookings, but no IBAN.
-      expect(Object.keys(routed[0].overview ?? {})).toEqual(expect.arrayContaining(["accounts", "thisMonth", "budgets", "subscriptions", "goals", "recentBookings"]));
-      expect(JSON.stringify(routed[0].overview)).not.toMatch(/\bAT\d{2}(?: ?\d{4}){4}/);
+      // The orchestrator sees an overview of the user's data: amounts, accounts and bookings, but no IBAN.
+      expect(Object.keys(lead()[0].overview ?? {})).toEqual(expect.arrayContaining(["accounts", "thisMonth", "budgets", "subscriptions", "goals", "recentBookings"]));
+      expect(JSON.stringify(lead()[0].overview)).not.toMatch(/\bAT\d{2}(?: ?\d{4}){4}/);
 
-      // Nothing about own money: the general chat sees no personal facts.
       await ask(page, "Was hältst du von Bitcoin?");
       await expect(chat.getByText("Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.")).toBeVisible();
-      expect(answers.at(-1)).toMatchObject({ agent: "general", supervised: true });
-      expect(Object.keys(answers.at(-1)?.facts ?? {})).toEqual(["today"]);
       await expect(chat.locator('[data-model="deepseek-v4-pro"]').last()).toHaveAttribute("title", "DeepSeek V4 Pro");
       await expect(chat.getByRole("group", { name: "Vorschläge von DeepSeek" }).getByRole("button")).toHaveText(["Wie viel Bitcoin wäre vertretbar?", "Was ist ein ETF?"]);
 
-      // The payroll tool returns raw data; the supervisor writes the words, the result is a tile below.
+      // The orchestrator delegates to the payroll specialist, whose tool returns raw data; the orchestrator writes the words, the result is a tile.
       await ask(page, "Wie viel netto bekomme ich?");
       await expect(chat.getByText("Du bekommst 2.780 € netto im Monat.")).toBeVisible();
-      expect(answers.at(-1)?.evidence).toMatch(/^Rohdaten der Spezialisten[\s\S]*\[Gehaltsübersicht\] Wie viel netto bekomme ich\?/);
+      const specialist = steps.filter((step) => step.agent === "payroll");
+      // Two steps of the specialist with the orchestrator's task: its tool call, then its findings.
+      expect(specialist.map((step) => step.message)).toEqual(["Nettogehalt laut letzter Lohnabrechnung", "Nettogehalt laut letzter Lohnabrechnung"]);
+      // A specialist gets only its task and its tools' results: no conversation, no data overview.
+      expect(specialist[0].history).toBeUndefined();
+      expect(specialist[0].overview).toBeUndefined();
+      expect(specialist[1].turns[0].results[0].content).toMatch(/^\[Gehaltsübersicht\] Wie viel netto bekomme ich\?/);
+      const final = lead().at(-1)!;
+      expect(final.turns[0].results).toEqual([{ id: "o1", content: "Netto laut letzter Abrechnung: 2.780 €." }]);
+      expect(final.evidence).toMatch(/\[Gehaltsübersicht\] Wie viel netto bekomme ich\?/);
       const payroll = chat.getByRole("list", { name: "Ergebnisse" }).last().getByRole("article", { name: /^Gehalt · / });
       await expect(payroll).toBeVisible();
       await payroll.getByRole("button", { name: "Mehr" }).click();
       await expect(payroll.getByText(/^Nächste Sonderzahlung/)).toBeVisible();
       // Tool calls and the prompt stay out of the conversation, behind one small closed "Details" link.
-      await expect(chat.getByText("Du bist Finanzblick (Test-Prompt).")).toHaveCount(0);
+      await expect(chat.getByText("Du bist der Orchestrator (Test-Prompt).")).toHaveCount(0);
       await expect(chat.locator("[data-call]")).toHaveCount(0);
       const details = chat.getByRole("button", { name: "Details", exact: true }).last();
       await expect(details).toHaveAttribute("aria-expanded", "false");
       await details.click();
       const panel = chat.getByRole("region", { name: "Details zur Antwort" });
-      await expect(panel).toContainText("Modelle: DeepSeek Flash (Supervisor) · DeepSeek V4 Pro (Supervisor-Antwort)");
-      const call = panel.locator('[data-call="payroll"]');
-      await expect(call).toContainText("Gehaltsübersicht");
-      await expect(call).toContainText("· Wie viel netto bekomme ich?");
-      await call.getByRole("button").click();
-      await expect(call.locator("dd").first()).toHaveText("Wie viel netto bekomme ich?");
-      await expect(call.locator("dt")).toHaveText(["Eingabe", "Ergebnis"]);
-      await expect(panel.getByText("Du bist Finanzblick (Test-Prompt).")).toBeVisible();
+      await expect(panel).toContainText("Modelle: DeepSeek V4 Pro (Orchestrator) · DeepSeek Flash (Spezialist)");
+      await expect(panel.locator('[data-call="agent.payroll"]')).toBeVisible();
+      const tool = panel.locator('[data-call="payroll"]');
+      await expect(tool).toContainText("Gehaltsübersicht");
+      await expect(tool).toContainText("· Wie viel netto bekomme ich?");
+      await tool.getByRole("button").click();
+      await expect(tool.locator("dd").first()).toHaveText("Wie viel netto bekomme ich?");
+      await expect(tool.locator("dt")).toHaveText(["Eingabe", "Ergebnis"]);
+      await expect(panel.getByText("Du bist der Orchestrator (Test-Prompt).")).toBeVisible();
       await details.click();
       await expect(panel).toHaveCount(0);
 
       // A forecast: key figures as badges, the trend as a sparkline, the key statement first.
       await ask(page, "Wird mein Konto knapp?");
-      // While the answer is worked on: only the orb and a word or two, no tools, no model; gone once the answer is there.
+      // While the orchestrator combines the results: only the orb and a word or two, no tools, no model; gone once the answer is there.
       const live = chat.locator("[data-live-answer]");
       await expect(live.locator("[data-status-line]")).toHaveText("Fasse zusammen…");
       await expect(live.locator("[data-orb]")).toBeVisible();
-      await expect(live).not.toContainText(/Kontoprognose|DeepSeek|Werkzeug/);
+      await expect(live).not.toContainText(/Kontoprognose|DeepSeek|Werkzeug|Budget & Prognose/);
       await expect(chat.getByText("Ja, dein Girokonto wird knapp.")).toBeVisible();
       await expect(live).toHaveCount(0);
       await expect(chat.getByRole("list", { name: "Kennzahlen" }).last()).toBeVisible();
       await expect(chat.getByRole("img", { name: /^Verlauf / }).last()).toBeVisible();
 
-      // A correction keeps the topic: no rule, the supervisor and the answer get the flag and the conversation so far.
+      // A correction keeps the topic: no rule, the orchestrator gets the flag and the conversation so far.
       await ask(page, "Nein, ich meine das Sparkonto");
       await expect(chat.getByText("Am Sparkonto ist alles im grünen Bereich, da bleibt genug übrig.")).toBeVisible();
-      expect(routed.at(-1)).toMatchObject({ message: "Nein, ich meine das Sparkonto", correction: true });
-      expect(routed.at(-1)?.history?.map((item) => item.text)).toEqual(expect.arrayContaining(["Wird mein Konto knapp?", "Wie viel netto bekomme ich?"]));
-      expect(routed.at(-1)?.history?.length).toBeLessThanOrEqual(8);
-      expect(answers.at(-1)).toMatchObject({ question: "Nein, ich meine das Sparkonto", correction: true, supervised: true });
-      expect(answers.at(-1)?.history?.some((item) => item.role === "assistant" && item.text.startsWith("Ja, dein Girokonto wird knapp."))).toBe(true);
+      expect(lead().at(-1)).toMatchObject({ message: "Nein, ich meine das Sparkonto", correction: true });
+      expect(lead().at(-1)?.history?.map((item) => item.text)).toEqual(expect.arrayContaining(["Wird mein Konto knapp?", "Wie viel netto bekomme ich?"]));
+      expect(lead().at(-1)?.history?.some((item) => item.role === "assistant" && item.text.startsWith("Ja, dein Girokonto wird knapp."))).toBe(true);
+      expect(lead().at(-1)?.history?.length).toBeLessThanOrEqual(8);
+      expect(legacy).toEqual([]);
 
       // Only the droid, and which specialist worked stays internal.
       const bots = await chat.locator("[data-bot-avatar]").evaluateAll((items) => [...new Set(items.map((item) => item.getAttribute("data-bot-avatar")))]);
@@ -145,8 +163,8 @@ test.describe("assistant orchestrator", () => {
 
   test("takes a new command after a name question as its own and saves a contract after a plain No", async ({ page }) => {
     await prepare(page, 1440, "light");
-    // The rule flows without DeepSeek: the server is unreachable, so the browser's own rules route (with DeepSeek the supervisor decides).
-    await page.route("**/api/ai/assistant", (route) => route.fulfill({ status: 503, json: { error: "nicht erreichbar" } }));
+    // The rule flows without DeepSeek: the server is unreachable, so the browser's own rules route (with DeepSeek the orchestrator decides).
+    await page.route(/\/api\/ai\/(assistant|agent)/, (route) => route.fulfill({ status: 503, json: { error: "nicht erreichbar" } }));
     await page.goto("/");
     await page.getByRole("button", { name: /^Finanz-Assistent öffnen/ }).click();
     const chat = page.getByRole("region", { name: "Chat mit dem Finanz-Assistenten" });

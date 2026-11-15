@@ -110,7 +110,7 @@ export function fixedReply(input: string, now = new Date()): FixedReply | undefi
 
 /**
  * Only the system commands among the fixed replies: date and time, switching the theme or a device setting, opening a page,
- * and actions that only work on their own page. Everything else – arithmetic included – goes to the supervisor.
+ * and actions that only work on their own page. Everything else – arithmetic included – goes to the orchestrator.
  */
 export function fixedCommand(input: string, now = new Date()): FixedReply | undefined {
   const found = fixed(input, now);
@@ -122,7 +122,7 @@ const askDate = /^(?:welche[rns]? (?:tag|datum) (?:ist|haben wir)(?: heute)?|was
 const askTime = /^(?:wie (?:spät|spaet) ist es|wie ?viel uhr (?:ist es|haben wir)|uhrzeit)(?: (?:jetzt|gerade|bitte))?[\s?!.]*$/;
 
 /**
- * "Was ist 15 % von 2400?", "Rechne 1200 / 12": the result the code computed, as a sentence. The supervisor's answer gets it as
+ * "Was ist 15 % von 2400?", "Rechne 1200 / 12": the result the code computed, as a sentence. The orchestrator's answer gets it as
  * evidence, so the model words it but never calculates; without DeepSeek it is the reply itself.
  */
 export function arithmetic(input: string): string | undefined {

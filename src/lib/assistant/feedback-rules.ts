@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { contentWords } from "@/lib/knowledge-base/query";
-import { isPromptId, type PromptId } from "@/lib/ai/agent-prompts";
+import { currentPromptId, isPromptId, type PromptId } from "@/lib/ai/agent-prompts";
 import { looksInjected, maskContacts } from "@/lib/ai/untrusted";
 import type { StoredFeedback } from "./feedback";
 import { agentIds, type AgentId } from "./orchestrator";
@@ -48,7 +48,8 @@ export const feedbackRuleSchema = z.object({
   kind: z.enum(["rule", "prompt"]).optional(),
   // The change: a sentence appended to the prompt, or one sentence of it replaced. `rule` repeats the new sentence for display.
   prompt: z.object({
-    id: z.custom<PromptId>((value) => isPromptId(value)), mode: z.enum(["append", "replace"]), before: z.string().max(600).optional(), after: z.string().max(240),
+    // Ids of earlier versions ("supervisor") are read as the prompt that took over.
+    id: z.preprocess((value) => currentPromptId(value) ?? value, z.custom<PromptId>((value) => isPromptId(value))), mode: z.enum(["append", "replace"]), before: z.string().max(600).optional(), after: z.string().max(240),
   }).strict().optional(),
   // The review agent asked the question again with the changed prompt and judged whether that fixes the complaint.
   review: z.object({ fixed: z.boolean(), note: z.string().max(200), replay: z.string().max(400).optional() }).strict().optional(),
@@ -159,14 +160,14 @@ export function revertEdit(text: string, edit: PromptEdit): string | undefined {
   return base.replace(spaced, "").trim();
 }
 
-/** The agent a prompt belongs to; the supervisor's prompts and the answer rules shape every agent's answers. */
+/** The agent a prompt belongs to; the orchestrator's prompt and the answer rules shape every answer. */
 export const promptAgent = (id: PromptId): AgentId | undefined => {
   const agent = id.split(".")[1];
   return (agentIds as readonly string[]).includes(agent) ? agent as AgentId : undefined;
 };
 
 /**
- * The 👍/👎 given while a learned change was live, on answers it could shape (its agent's, or every answer for the supervisor
+ * The 👍/👎 given while a learned change was live, on answers it could shape (its agent's, or every answer for the orchestrator
  * and the answer rules); computed from the feedback file whenever it is shown, so a changed vote never counts twice.
  */
 export function votesSince(rule: FeedbackRule, entries: readonly StoredFeedback[]): { up: number; down: number } | undefined {

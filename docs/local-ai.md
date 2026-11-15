@@ -60,15 +60,15 @@ Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das l
 | Aufgabe | Modell | Beispiele |
 | --- | --- | --- |
 | Antwort (normaler Chat) | `deepseek-flash` | freie Antworten, Smalltalk, Monatszusammenfassung, Hintergrund-Agent |
-| Werkzeugwahl | `deepseek-flash` | der Spezialist liest Werkzeug-Hinweise und Entwürfe; ohne Supervisor das lokale Routing |
+| Werkzeugwahl | `deepseek-flash` | der Änderungs-Workflow liest Werkzeug-Hinweise und Entwürfe; ohne DeepSeek das lokale Routing |
 | Aktion (mehrere Schritte, Änderungen) | `deepseek-v4-pro` | offener Entwurf, ändernde Regel-Werkzeuge, mehrere Befehle in einer Nachricht, „anlegen/ändern/lösche…“, `npm run ai:agent` |
 | Analyse und Steuern | `deepseek-v4-pro` im Denkmodus | „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen an Gehalt & Steuern |
 | Kategorisierung | `deepseek-flash` | offene Prüfungen in Achterpaketen |
 | Websuche | `deepseek-flash` | Zusammenfassung der Suchtreffer |
 | Auslesen | `deepseek-flash` | Kassenbon-Artikel, Logo-Suche |
 | Folgefragen | `deepseek-flash` | 2–3 Vorschläge zum selben Thema unter jeder Antwort; ohne DeepSeek feste Vorschläge zum Thema, nie Qwen |
-| Supervisor | `deepseek-flash` | jede Frage, die kein Befehl ist: sieht den Datenüberblick, wählt 0–4 Lese-Werkzeuge, lokales Wissen oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
-| Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt jede Analyse, Zusammenfassung, Bewertung, Recherche und Erklärung aus den Rohdaten der Spezialisten; Steuer-Analysen im Denkmodus; Smalltalk ohne Daten auf `deepseek-flash` |
+| Orchestrator | `deepseek-v4-pro` (ohne Denkmodus) | jede Frage, die kein Befehl ist: sieht Verlauf und Datenüberblick, delegiert an die Spezialisten-Agenten oder den Änderungs-Workflow und schreibt jede Antwort; ohne DeepSeek lokales Routing, nie Qwen |
+| Spezialist | `deepseek-flash` | Spezialisten-Agenten (Umsätze, Verträge, Budget & Prognose, Gehalt & Steuern, Recherche & Wissen) wählen ihre Lese-Werkzeuge und geben Befunde zurück; Stufe je Agent im Agent-Repo |
 | Prüfungs-Agent | `deepseek-v4-pro` | 👎-Kommentar → Satz im Prompt des zuständigen Agenten, Nachtest, danach Gold-Eval auf Flash; ohne DeepSeek wartet er |
 | PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
 | Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |
@@ -96,7 +96,9 @@ DEEPSEEK_API_KEY=sk-…
 | `FINANZBLICK_AI_LOG` | an | `off` schaltet die `[KI]`-Zeilen im Serverlog ab |
 | `FINANZBLICK_KNOWLEDGE_VECTORS` | `data/assistant-knowledge.sqlite`, in Produktion neben der Datenbank | sqlite-vec-Datei mit den Vektoren gespeicherter Antworten (absoluter Pfad, `off` = nur im Speicher) |
 | `FINANZBLICK_RULES_FILE` | neben der Feedback-Datei | Regeln aus 👎-Kommentaren (absoluter Pfad) |
-| `FINANZBLICK_AGENT_PROMPTS` | `config/agent-prompts.json`, in Produktion neben der Datenbank | bearbeitete Agenten-Prompts (absoluter Pfad); ohne Datei gelten die Standards im Code |
+| `FINANZBLICK_AGENT_REPO` | `config/agent-repo.json`, in Produktion neben der Datenbank | Agent-Repo: Prompts, Modell-Stufen, Limits, Werkzeug-Beschreibungen und Wissen mit Versionen (absoluter Pfad); ohne Datei gelten die Standards im Code |
+| `FINANZBLICK_AGENT_PROMPTS` | `config/agent-prompts.json`, in Produktion neben der Datenbank | alte Prompt-Datei; wird einmal ins Agent-Repo übernommen, das ohne `FINANZBLICK_AGENT_REPO` daneben liegt |
+| `FINANZBLICK_EVALS_FILE` | neben der Feedback-Datei | Verlauf der Eval-Läufe (absoluter Pfad) |
 
 **Rückfall:** Schlägt ein DeepSeek-Aufruf fehl, beantwortet Qwen dieselbe Anfrage sofort. Damit nicht jede Nachricht erst auf einen Fehler wartet, pausiert DeepSeek danach:
 

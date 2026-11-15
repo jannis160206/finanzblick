@@ -112,27 +112,27 @@ describe("thin orchestrator", () => {
     ["Wie spät ist es?", "general"],
     ["Öffne die Verträge", "general"],
     ["Lösche alle meine Buchungen", "general"],
-    // Changes go to the supervisor with the rules' tool as a hint; its specialist fills in the preview, which still needs a "Ja".
-    ["Lösche die Buchung MediaMarkt vom 24.10.", "supervisor:booking"],
-    ["neuer laptop 1200 € in 6 raten ab jänner", "supervisor:expense"],
-    ["Setze Tanken im Dezember auf 150 €", "supervisor:edit"],
-    ["kündige netflix", "supervisor:cancel"],
+    // Changes go to the agents with the rules' tool as a hint; the change workflow fills in the preview, which still needs a "Ja".
+    ["Lösche die Buchung MediaMarkt vom 24.10.", "agents:booking"],
+    ["neuer laptop 1200 € in 6 raten ab jänner", "agents:expense"],
+    ["Setze Tanken im Dezember auf 150 €", "agents:edit"],
+    ["kündige netflix", "agents:cancel"],
     // Arithmetic, too: the code computes the result and hands it to the answer as evidence.
-    ["15 % von 2400", "supervisor"],
-    // Every other message goes to the supervisor, which decides what to look up: questions, small talk, terms, today's values.
-    ["Hallo!", "supervisor"],
-    ["Schreib mir ein Gedicht über Sparen", "supervisor"],
-    ["Was ist der aktuelle Bitcoin-Preis?", "supervisor:knowledge"],
-    ["Was ist ein ETF?", "supervisor:knowledge"],
-    ["Welche Abos habe ich?", "supervisor:contracts"],
-    ["Kann ich mir im Mai einen Fernseher um 900 € leisten?", "supervisor:funds"],
-    ["Lohnt sich ein Bitcoin-Sparplan für mein Budget?", "supervisor:depot"],
-    ["Sollte ich das Lebensmittelbudget erhöhen?", "supervisor:budget_plan"],
-    ["Wie viel sollte ich für die Pension zurücklegen?", "supervisor:savings_goal"],
-    ["Bin ich gut für Weihnachten aufgestellt?", "supervisor"],
+    ["15 % von 2400", "agents"],
+    // Every other message goes to the agents; the orchestrator decides what to look up: questions, small talk, terms, today's values.
+    ["Hallo!", "agents"],
+    ["Schreib mir ein Gedicht über Sparen", "agents"],
+    ["Was ist der aktuelle Bitcoin-Preis?", "agents:knowledge"],
+    ["Was ist ein ETF?", "agents:knowledge"],
+    ["Welche Abos habe ich?", "agents:contracts"],
+    ["Kann ich mir im Mai einen Fernseher um 900 € leisten?", "agents:funds"],
+    ["Lohnt sich ein Bitcoin-Sparplan für mein Budget?", "agents:depot"],
+    ["Sollte ich das Lebensmittelbudget erhöhen?", "agents:budget_plan"],
+    ["Wie viel sollte ich für die Pension zurücklegen?", "agents:savings_goal"],
+    ["Bin ich gut für Weihnachten aufgestellt?", "agents"],
   ])("%s → %s", (text, expected) => {
     const handoff = orchestrate(text, names);
-    expect(handoff.to === "supervisor" ? `supervisor${handoff.hint ? `:${handoff.hint}` : ""}`
+    expect(handoff.to === "agents" ? `agents${handoff.hint ? `:${handoff.hint}` : ""}`
       : [handoff.decision.agent, handoff.decision.tool].filter(Boolean).join("/")).toBe(expected);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, m } from "motion/react";
@@ -11,21 +11,29 @@ import { cn } from "@/lib/utils";
 
 const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-/** The subpages of the orchestrator view; the highlight glides to the open one. */
+/** The subpages of the orchestrator view; the highlight glides to the open one. A page's own subpages (an agent) keep its tab active. */
 export function OrchestratorNav() {
   const pathname = usePathname();
   const mode = useMotionMode();
+  const list = useRef<HTMLUListElement>(null);
+  // On narrow screens the tabs scroll sideways; the open one stays in view.
+  useEffect(() => {
+    if (!pathname) return;
+    const tabs = list.current;
+    const item = tabs?.querySelector<HTMLElement>("[aria-current=page]")?.parentElement;
+    if (tabs && item && tabs.scrollWidth > tabs.clientWidth) tabs.scrollLeft = item.offsetLeft - (tabs.clientWidth - item.offsetWidth) / 2;
+  }, [pathname]);
   return <nav aria-label="Orchestrator-Bereiche" className="mb-6">
-    <ul className="flex flex-wrap gap-1 rounded-2xl border border-border/70 bg-card p-1 shadow-card">
+    <ul ref={list} className="relative flex gap-1 overflow-x-auto rounded-2xl border border-border/70 bg-card p-1 shadow-card [scrollbar-width:none] md:flex-wrap">
       {orchestratorPages.map((page) => {
         const href = orchestratorHref(page.slug);
-        const active = pathname === href;
-        return <li key={page.slug} className="relative">
+        const active = pathname === href || !!pathname?.startsWith(`${href}/`);
+        return <li key={page.slug} className="relative shrink-0">
           {active && (mode === "full"
             ? <m.span layoutId="orchestrator-nav-active" aria-hidden="true" className="absolute inset-0 rounded-xl bg-primary/12" transition={dialogSpring} />
             : <span aria-hidden="true" className="absolute inset-0 rounded-xl bg-primary/12" />)}
           <Link href={href} aria-current={active ? "page" : undefined} title={page.description}
-            className={cn("relative flex min-h-10 items-center rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-[current=page]:text-foreground", focusRing)}>
+            className={cn("relative flex min-h-10 items-center whitespace-nowrap rounded-xl px-3 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground aria-[current=page]:text-foreground", focusRing)}>
             {page.label}
           </Link>
         </li>;
@@ -41,7 +49,7 @@ export function OrchestratorSettingsLinks({ className }: { className?: string })
   const mode = useMotionMode();
   return <div className={className}>
     <div className="flex items-center gap-0.5">
-      <Link href={orchestratorHref("aufbau")} title="Aufbau, Agenten-Prompts, Läufe und Feedback des Finanz-Assistenten"
+      <Link href={orchestratorHref("uebersicht")} title="Topologie, Daten, Wissen, Läufe, Evals, Agenten, Werkzeuge und Feedback des Finanz-Assistenten"
         className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:text-foreground lg:px-3", focusRing)}>
         <Workflow aria-hidden="true" className="size-3.5" />Assistent-Orchestrator
       </Link>
