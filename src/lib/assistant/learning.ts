@@ -25,6 +25,20 @@ export function correction(input: string): { text: string } | undefined {
   return undefined;
 }
 
+/**
+ * A message that corrects or narrows the previous answer instead of asking something new: "Nein, ich meine mein
+ * Raiffeisen-Konto", "nicht im Oktober, sondern im September", "Doch, ich habe Netflix", "Es geht um die Miete".
+ * The supervisor then keeps the earlier topic and only changes what is corrected.
+ */
+export function correctsPrevious(input: string): boolean {
+  const text = input.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!text || text.length > 600) return false;
+  return /^(?:nein|nö|noe|nee|ne,|doch|falsch|stimmt (?:so )?nicht|nicht ganz|nicht (?:das|den|die|so)|eher nicht|passt nicht|eigentlich|gemeint war|(?:ich )?(?:meinte|meine|wollte)|das (?:meinte|wollte) ich)\b/.test(text)
+    || /\b(?:ich mein(?:e|te)|meinte ich|gemeint (?:ist|war|hab\w*)|ich (?:rede|sprech\w*|frag\w*|wollte) (?:von|nach|über|wissen)|es geht (?:mir )?(?:um|nicht um)|eigentlich (?:wollte|meinte|ging)|falsch verstanden)\b/.test(text)
+    || /\bnicht\b[^.?!]{1,80}\bsondern\b/.test(text)
+    || /^(?:das|der|die|es) (?:ist|war) (?:doch |eigentlich )?(?:falsch|nicht richtig|nicht das|für)\b/.test(text);
+}
+
 const fillerWords = new Set(["was", "wie", "viel", "wieviel", "ich", "mir", "mich", "mein", "meine", "meinen", "meiner", "der", "die", "das", "den",
   "dem", "ein", "eine", "einen", "und", "oder", "ist", "sind", "hab", "habe", "hat", "bei", "fuer", "mit", "von", "vom", "zum", "zur", "noch", "schon",
   "man", "kann", "bitte", "denn", "mal", "nicht", "gibt", "auch", "wer", "wann", "warum", "welche", "welcher", "welches"]);

@@ -37,20 +37,23 @@ test.describe("assistant orchestrator", () => {
         "Was hältst du von Bitcoin?": { agent: "general", steps: [] },
         "Wie viel netto bekomme ich?": { agent: "payroll", steps: [{ tool: "payroll", question: "Wie viel netto bekomme ich?" }] },
         "Wird mein Konto knapp?": { agent: "budget", steps: [{ tool: "forecast", question: "Wird mein Konto knapp?" }] },
+        "Nein, ich meine das Sparkonto": { agent: "budget", steps: [] },
       };
-      const routed: { message: string; overview?: Record<string, unknown> }[] = [];
+      const routed: { message: string; overview?: Record<string, unknown>; correction?: boolean; history?: { role: string; text: string }[] }[] = [];
       await page.route("**/api/ai/assistant", async (route) => {
         const body = route.request().postDataJSON() as { message: string; overview?: Record<string, unknown> };
         routed.push(body);
         await route.fulfill({ json: { ...plans[body.message], via: "supervisor", supervised: true, source: "KI",
           models: [{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }] } });
       });
-      const answers: { question: string; agent?: string; facts?: Record<string, unknown>; evidence?: string; supervised?: boolean }[] = [];
+      const answers: { question: string; agent?: string; facts?: Record<string, unknown>; evidence?: string; supervised?: boolean; correction?: boolean;
+        history?: { role: string; text: string }[] }[] = [];
       const replies: Record<string, string> = {
         "Hallo": "Hallo! Schön, dass du da bist.",
         "Was hältst du von Bitcoin?": "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.",
         "Wie viel netto bekomme ich?": "Du bekommst 2.780 € netto im Monat.",
         "Wird mein Konto knapp?": "Ja, dein Girokonto wird knapp.\n\nPlan die Sparrate erst nach dem Gehalt ein.",
+        "Nein, ich meine das Sparkonto": "Am Sparkonto ist alles im grünen Bereich, da bleibt genug übrig.",
       };
       await page.route("**/api/ai/answer**", async (route) => {
         const body = route.request().postDataJSON() as (typeof answers)[number];
@@ -120,6 +123,15 @@ test.describe("assistant orchestrator", () => {
       await expect(chat.getByRole("list", { name: "Kennzahlen" }).last()).toBeVisible();
       await expect(chat.getByRole("img", { name: /^Verlauf / }).last()).toBeVisible();
 
+      // A correction keeps the topic: no rule, the supervisor and the answer get the flag and the conversation so far.
+      await ask(page, "Nein, ich meine das Sparkonto");
+      await expect(chat.getByText("Am Sparkonto ist alles im grünen Bereich, da bleibt genug übrig.")).toBeVisible();
+      expect(routed.at(-1)).toMatchObject({ message: "Nein, ich meine das Sparkonto", correction: true });
+      expect(routed.at(-1)?.history?.map((item) => item.text)).toEqual(expect.arrayContaining(["Wird mein Konto knapp?", "Wie viel netto bekomme ich?"]));
+      expect(routed.at(-1)?.history?.length).toBeLessThanOrEqual(8);
+      expect(answers.at(-1)).toMatchObject({ question: "Nein, ich meine das Sparkonto", correction: true, supervised: true });
+      expect(answers.at(-1)?.history?.some((item) => item.role === "assistant" && item.text.startsWith("Ja, dein Girokonto wird knapp."))).toBe(true);
+
       // Only the droid, and which specialist worked stays internal.
       const bots = await chat.locator("[data-bot-avatar]").evaluateAll((items) => [...new Set(items.map((item) => item.getAttribute("data-bot-avatar")))]);
       expect(bots).toEqual(["droid"]);
@@ -133,6 +145,8 @@ test.describe("assistant orchestrator", () => {
 
   test("takes a new command after a name question as its own and saves a contract after a plain No", async ({ page }) => {
     await prepare(page, 1440, "light");
+    // The rule flows without DeepSeek: the server is unreachable, so the browser's own rules route (with DeepSeek the supervisor decides).
+    await page.route("**/api/ai/assistant", (route) => route.fulfill({ status: 503, json: { error: "nicht erreichbar" } }));
     await page.goto("/");
     await page.getByRole("button", { name: /^Finanz-Assistent öffnen/ }).click();
     const chat = page.getByRole("region", { name: "Chat mit dem Finanz-Assistenten" });

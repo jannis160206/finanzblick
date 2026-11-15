@@ -108,13 +108,17 @@ describe("routing without the model", () => {
 
 describe("thin orchestrator", () => {
   it.each<[string, string]>([
-    // Only clear changes and commands stay with the rules: they keep their preview and confirmation.
-    ["Lösche die Buchung MediaMarkt vom 24.10.", "transactions/booking"],
-    ["neuer laptop 1200 € in 6 raten ab jänner", "budget/expense"],
-    ["Setze Tanken im Dezember auf 150 €", "budget/edit"],
-    ["kündige netflix", "supervisor:cancel"],
-    ["15 % von 2400", "general"],
+    // Only system commands stay with the rules: date and time, navigation, settings and actions that only work on their page.
+    ["Wie spät ist es?", "general"],
+    ["Öffne die Verträge", "general"],
     ["Lösche alle meine Buchungen", "general"],
+    // Changes go to the supervisor with the rules' tool as a hint; its specialist fills in the preview, which still needs a "Ja".
+    ["Lösche die Buchung MediaMarkt vom 24.10.", "supervisor:booking"],
+    ["neuer laptop 1200 € in 6 raten ab jänner", "supervisor:expense"],
+    ["Setze Tanken im Dezember auf 150 €", "supervisor:edit"],
+    ["kündige netflix", "supervisor:cancel"],
+    // Arithmetic, too: the code computes the result and hands it to the answer as evidence.
+    ["15 % von 2400", "supervisor"],
     // Every other message goes to the supervisor, which decides what to look up: questions, small talk, terms, today's values.
     ["Hallo!", "supervisor"],
     ["Schreib mir ein Gedicht über Sparen", "supervisor"],

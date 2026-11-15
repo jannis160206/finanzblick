@@ -2,7 +2,7 @@ import { z } from "zod";
 import { assistantDraftSchema, dateSchema, type AssistantDraft } from "@/lib/types";
 import { groundModelExtraction, mergeDraft, missingField, missingQuestion, parseAssistantMessage, type ModelExtraction } from "@/lib/assistant/intent";
 import { normalizeMessage } from "@/lib/assistant/normalize";
-import { agentTools, chatRequest, orchestrate, parseAgent, routeByRules, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
+import { agentTools, chatRequest, orchestrate, parseAgent, routeByRules, routeBySignals, toolOwner, type AgentId, type RouteDecision, type RouteVia } from "@/lib/assistant/orchestrator";
 import { detectTool, isAssistantTool, isDraftTool, matchName, splitCommands, type AssistantTool } from "@/lib/assistant/tools";
 import { changingTools } from "@/lib/assistant/conversation";
 import { categories } from "@/lib/categories";
@@ -19,7 +19,9 @@ export const assistantRequestSchema = z.object({
   message: z.string().trim().min(1).max(1000),
   asOf: dateSchema,
   pending: assistantDraftSchema.optional(),
-  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(500) }).strict()).max(6).optional(),
+  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(800) }).strict()).max(8).optional(),
+  // The message corrects or narrows the previous answer ("Nein, ich meine …"): no rule decides it, the supervisor keeps the topic.
+  correction: z.boolean().optional(),
   // Names the model may refer to; nothing else from the data leaves the browser.
   context: z.object({
     goals: z.array(z.string().max(80)).max(50),
@@ -148,7 +150,8 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
 // The supervisor's plan; undefined when DeepSeek is unavailable or gave nothing readable, so the local routing takes over.
 async function supervisorPlan(input: AssistantRequest, hint: AssistantTool | undefined, options: AssistantOptions): Promise<Supervision | undefined> {
   try {
-    return await supervise({ message: input.message, history: input.history, context: input.context, overview: input.overview, hint },
+    return await supervise({ message: input.message, history: input.history, context: input.context, overview: input.overview, hint,
+      ...(input.correction ? { correction: true } : {}) },
       { ...options, rules: rulesFor(options.rules, undefined, "routing") });
   } catch (error) {
     if (options.signal?.aborted) throw error;
@@ -167,10 +170,15 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
   const parsed = parseAssistantMessage(input.message, input.asOf);
   const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
   const detected = detectTool(input.message, names);
-  // Thin orchestrator: clear changes and commands by rule, every other message to the supervisor. An open draft stays with its specialist.
-  const handoff = input.pending ? undefined : orchestrate(input.message, names);
+  // Thin orchestrator: only system commands by rule, every other message to the supervisor. An open draft stays with its specialist;
+  // a correction goes to the supervisor without the rules' hint, which read the corrected words as a new request.
+  const handoff: ReturnType<typeof orchestrate> | undefined = input.pending ? undefined : input.correction ? { to: "supervisor" } : orchestrate(input.message, names);
   const plan = handoff?.to === "supervisor" ? await supervisorPlan(input, handoff.hint, options) : undefined;
+  // A correction never opens a form or a change unless the user asks for one in so many words.
+  if (plan?.kind === "action" && input.correction && !actionWords.test(input.message)) return fromPlan({ kind: "answer", agent: plan.agent, steps: [] });
   if (plan && plan.kind !== "action") return fromPlan(plan);
+  // Without DeepSeek a correction is answered in words with the conversation, never by the tool its words look like.
+  if (input.correction && !plan) return { agent: routeBySignals(input.message, names)?.agent ?? "general", via: "fallback", source: "Regel", local: true };
   // From here on the specialists decide: a change, an open draft, or the local routing because DeepSeek is unavailable.
   const local = handoff?.to === "supervisor" && !plan ? { local: true as const } : {};
   const reply = await specialist(input, parsed, names, detected, handoff, plan, options);
@@ -183,9 +191,9 @@ async function specialist(input: AssistantRequest, parsed: ReturnType<typeof par
   if (!input.pending && !plan && chatRequest(input.message)) return { agent: "general", via: "rule", source: "Regel" };
   // A change the supervisor handed over is filled in by its specialist; a reading tool the rules saw does not override it.
   const ruleTool = plan && detected && !changingTools.includes(detected) ? undefined : detected;
-  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.
-  if (!plan && ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
-    return { agent: toolOwner[ruleTool], via: "rule", tool: ruleTool, hints: {}, source: "Regel" };
+  // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model, also after the supervisor's plan.
+  if (ruleTool && !input.pending && !isDraftTool(ruleTool) && !hintTools.includes(ruleTool))
+    return { agent: toolOwner[ruleTool], via: plan ? "supervisor" : "rule", tool: ruleTool, hints: {}, source: plan ? "KI" : "Regel" };
   // A plain answer to the open draft's question ("3000 €", "bis Juni 2027", "Urlaub in Japan") needs no model: the rules fill it in.
   if (input.pending && !ruleTool) {
     const quick = mergeDraft(input.pending, { ...parsed, action: parsed.action ?? input.pending.action }, {}, input.message, input.asOf);
@@ -217,7 +225,7 @@ async function specialist(input: AssistantRequest, parsed: ReturnType<typeof par
       needs.names && input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
       needs.categories ? `Kategorien: ${categories.join(", ")}` : "",
       input.pending ? `Offener Entwurf: ${JSON.stringify(input.pending)}` : "",
-      input.history?.length ? `Verlauf:\n${historyLines(input, 2).join("\n")}` : "",
+      input.history?.length ? `Verlauf:\n${historyLines(input, 4).join("\n")}` : "",
       `In der Nachricht gefundene Beträge: ${parsed.numbers.join(", ") || "keine"}`,
       `Nachricht: ${input.message}`,
     ].filter(Boolean).join("\n") },

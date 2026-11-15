@@ -14,7 +14,8 @@ describe("assistant AI interpretation", () => {
   });
 
   it("keeps model roles that the message backs and drops invented numbers", async () => {
-    chat.mockResolvedValue({ content: JSON.stringify({ action: "savings_goal", name: "Japan", amount: 3000, startCapital: 500, monthly: 278 }) });
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ spezialist: "budget", art: "aktion" }) })
+      .mockResolvedValueOnce({ content: JSON.stringify({ action: "savings_goal", name: "Japan", amount: 3000, startCapital: 500, monthly: 278 }) });
     const reply = await interpretAssistantMessage({ message: "Japan 3.000 € bis Juli 2027 sparen, 500 € habe ich schon am Sparkonto", asOf: "2026-10-07" });
     expect(reply).toMatchObject({ source: "KI", tool: "savings_goal", draft: { action: "savings_goal", name: "Japan", amount: 3000, startCapital: 500, fromAccount: "Sparkonto", date: "2027-07-31" } });
   });
@@ -33,15 +34,17 @@ describe("assistant AI interpretation", () => {
   });
 
   it("routes agent tools and keeps only hints the message and context back", async () => {
-    chat.mockResolvedValue({ content: JSON.stringify({ tool: "edit", goal: "Japan", planned: "Erfunden", merchant: "Billa", category: "Gibtsnicht" }) });
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ spezialist: "budget", art: "aktion" }) })
+      .mockResolvedValueOnce({ content: JSON.stringify({ tool: "edit", goal: "Japan", planned: "Erfunden", merchant: "Billa", category: "Gibtsnicht" }) });
     const reply = await interpretAssistantMessage({ message: "Erhöhe Japan auf 4.000 €", asOf: "2026-10-07", context: { goals: ["Japan"], planned: [] } });
-    expect(reply).toEqual({ agent: "budget", via: "rule", source: "KI", tool: "edit", hints: { goal: "Japan" } });
+    expect(reply).toEqual({ agent: "budget", via: "supervisor", source: "KI", tool: "edit", hints: { goal: "Japan" } });
   });
 
-  it("lets clear rule words win over the model tool", async () => {
-    chat.mockResolvedValue({ content: JSON.stringify({ tool: "query" }) });
+  it("lets clear rule words win over the model tool; a change without model hints costs only the supervisor's plan", async () => {
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ spezialist: "chat", art: "aktion" }) });
     const reply = await interpretAssistantMessage({ message: "Mach das rückgängig", asOf: "2026-10-07" });
-    expect(reply.tool).toBe("undo");
+    expect(reply).toMatchObject({ tool: "undo", via: "supervisor" });
+    expect(chat).toHaveBeenCalledTimes(1);
     chat.mockRejectedValue(new AiUnavailableError());
     expect((await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober für Lebensmittel ausgegeben?", asOf: "2026-10-07" })).tool).toBe("query");
   });
@@ -59,11 +62,38 @@ describe("orchestrator", () => {
     expect(chat).toHaveBeenCalledTimes(3);
   });
 
-  it("keeps clear changes with their specialist, without the supervisor", async () => {
-    chat.mockResolvedValueOnce({ content: JSON.stringify({ tool: "edit", goal: "Japan" }) });
-    expect(await interpretAssistantMessage(request("Erhöhe Japan auf 4.000 €"))).toMatchObject({ agent: "budget", via: "rule", tool: "edit" });
-    const [, options] = chat.mock.calls[0] as [unknown, { task: string }];
+  it("hands clear changes to the supervisor first; its specialist fills them in with the tool the rules saw", async () => {
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ spezialist: "budget", art: "aktion" }) }).mockResolvedValueOnce({ content: JSON.stringify({ tool: "edit", goal: "Japan" }) });
+    expect(await interpretAssistantMessage(request("Erhöhe Japan auf 4.000 €"))).toMatchObject({ agent: "budget", via: "supervisor", tool: "edit" });
+    const [[plan, planOptions], [, options]] = chat.mock.calls as [[{ content: string }[], { task: string }], [unknown, { task: string }]];
+    expect(planOptions.task).toBe("supervise");
+    expect(plan[1].content).toContain("Die Regeln würden edit nehmen");
     expect(options.task).toBe("action");
+    // Only system commands skip it.
+    chat.mockClear();
+    expect(await interpretAssistantMessage(request("Wie spät ist es?"))).toMatchObject({ agent: "general", via: "rule" });
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it("keeps the topic on a correction: the whole conversation, V4 Pro plans, no rule tool and no form unless a change is asked for", async () => {
+    const message = "Nein das ist für American Express ich meine mein Raiffeisen Bankkonto das mich im quartal 36€ kostet ca.";
+    const history = [
+      { role: "user" as const, text: "Welche Kontogebühren zahle ich?" },
+      { role: "assistant" as const, text: "Für American Express zahlst du 72 € im Jahr." },
+    ];
+    // The rules alone would open the account rules form ("Konto … für …").
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ spezialist: "budget", art: "aktion" }) });
+    const reply = await interpretAssistantMessage({ ...request(message), history, correction: true });
+    expect(reply).toEqual({ agent: "budget", via: "supervisor", source: "KI", supervised: true });
+    expect(chat).toHaveBeenCalledTimes(1);
+    const [messages, options] = chat.mock.calls[0] as [{ content: string }[], { task: string; tier: string }];
+    expect(options).toMatchObject({ task: "supervise", tier: "pro" });
+    expect(messages[1].content).toContain("Korrektur: Die Nachricht korrigiert");
+    expect(messages[1].content).toContain("Assistent: Für American Express zahlst du 72 € im Jahr.");
+    expect(messages[1].content).not.toContain("Die Regeln würden");
+    // Without DeepSeek it is answered in words with the conversation, never by the form its words look like.
+    chat.mockRejectedValue(new AiUnavailableError());
+    expect(await interpretAssistantMessage({ ...request(message), history, correction: true })).toEqual({ agent: "general", via: "fallback", source: "Regel", local: true });
   });
 
   it("lets the supervisor answer advice from reading steps instead of asking for an amount", async () => {

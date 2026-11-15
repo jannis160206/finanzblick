@@ -58,5 +58,10 @@ describe("supervisor", () => {
     expect(body.messages?.[1].content).toContain('Datenüberblick (JSON): {"freeUntilSalary":{"freeUntilSalary":412.5}}');
     expect(body.messages?.[1].content).toContain("Die Regeln würden funds nehmen");
     await expect(supervise({ message: "x" }, { config: { ...config, cloud: undefined }, fetcher })).rejects.toThrow(AiUnavailableError);
+    // The last eight messages of the conversation go along, the older ones not.
+    const history = Array.from({ length: 10 }, (_, index) => ({ role: index % 2 ? "assistant" as const : "user" as const, text: `Nachricht ${index + 1}` }));
+    await supervise({ message: "Und im September?", history }, { config, fetcher });
+    expect(body.messages?.[1].content).toContain("Ich: Nachricht 3\nAssistent: Nachricht 4");
+    expect(body.messages?.[1].content).not.toContain("Nachricht 2\n");
   });
 });

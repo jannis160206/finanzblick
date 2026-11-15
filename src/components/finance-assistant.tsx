@@ -56,12 +56,12 @@ import { findKnowledge, isStale, knowledgeListQuestion, knowledgeTopics, learnPh
 import { resolveFollowUp, resolvePronoun } from "@/lib/assistant/followup";
 import { splitQuestion } from "@/lib/assistant/combined";
 import { clarifyChoices } from "@/lib/assistant/intents";
-import { explainAgain, fixedCommand, fixedReply, topicClarify, type DeviceSetting, type FixedReply } from "@/lib/assistant/fixed-replies";
+import { arithmetic, explainAgain, fixedCommand, fixedReply, topicClarify, type DeviceSetting, type FixedReply } from "@/lib/assistant/fixed-replies";
 import { useInteractionSoundsControl } from "@/components/interaction-sounds";
 import { setNotificationsEnabled } from "@/components/pwa-notifications";
 import { getSecuritySnapshot, setSecurityMode } from "@/lib/security-mode";
 import { detectContracts } from "@/lib/contracts";
-import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
+import { aliasTeaching, applyAliases, correction, correctsPrevious, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "@/lib/assistant/learning";
 import { addMonths, type Dashboard } from "@/lib/calc";
 import { currency, dateLabel, monthLabel } from "@/lib/format";
 import { preserveGoalOpeningBalances, savingsGoals } from "@/lib/goals";
@@ -633,7 +633,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
 
   // Anything no tool covers gets a short answer from the chosen agent, built only from its own facts and computed evidence.
   async function freeAnswer(question: string, history: { role: "user" | "assistant"; text: string }[], agent: AgentId, evidence?: string, signal?: AbortSignal,
-    step = workStatus.answer, supervised = false, team: AgentId[] = []) {
+    step = workStatus.answer, supervised = false, team: AgentId[] = [], corrects = false) {
     try {
       setStatus({ ...step, agent });
       // After the supervisor's plan V4 Pro sees the facts of every specialist involved, not just the leading one.
@@ -642,8 +642,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       // Knowledge learned earlier is used here too, so free answers can explain terms.
       const known = relevantKnowledge(state.assistantKnowledge, question);
       if (known.length) Object.assign(facts, { wissen: known.map((entry) => ({ begriff: entry.title, erklaerung: entry.text.slice(0, 600), quelle: entry.source })) });
-      // The general chat keeps the conversation; a specialist only needs the last exchange.
-      const context = agent === "general" ? history : history.slice(-2);
+      // After the supervisor's plan V4 Pro sees the whole recent conversation; the local model keeps it short to stay fast.
+      const context = supervised ? history : agent === "general" ? history.slice(-4) : history.slice(-2);
       // The thinking model says it thinks first; which model answers is kept for the answer's details.
       const onModel = (value: unknown) => {
         const use = noteModel(value);
@@ -656,7 +656,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const ask = async (past: typeof history) => {
         const response = await fetch("/api/ai/answer?stream=1", {
           method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
-          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 4000) } : {}), ...(supervised ? { supervised: true } : {}) }),
+          body: JSON.stringify({ question, history: past, facts, agent, ...(evidence ? { evidence: evidence.slice(0, 4000) } : {}), ...(supervised ? { supervised: true } : {}),
+            ...(corrects ? { correction: true } : {}) }),
         });
         if (!response.ok) return undefined;
         if (response.body && response.headers.get("content-type")?.includes("ndjson")) {
@@ -671,11 +672,13 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         return typeof answer.text === "string" && answer.text.trim() ? answer.text.trim() : undefined;
       };
       const text = await ask(context);
-      // Sentences copied from the previous answer are dropped; a full copy is asked once more without the history.
+      // A correction may repeat what still holds; it keeps its words. Otherwise sentences copied from the previous answer are dropped,
+      // and the local model is asked once more without the history after a full copy – V4 Pro keeps the conversation and its answer.
       const previous = context.findLast((item) => item.role === "assistant")?.text;
-      if (!text || !context.length) return text;
+      if (!text || !context.length || corrects) return text;
       const fresh = freshPart(text, previous);
       if (fresh) return fresh;
+      if (supervised) return text;
       setStreaming(undefined);
       return await ask([]) ?? text;
     } catch {
@@ -1050,8 +1053,12 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
-    // Corrections teach the earlier phrasing: "Nein, ich meinte …", or the answer to "Was hast du gemeint?".
-    const fix = !pending && lastAnswer?.asked ? correction(text) : undefined;
+    // With DeepSeek a correction ("Nein, ich meine …", "nicht X, sondern Y") goes to the supervisor with the whole conversation, which
+    // keeps the earlier topic; no rule reads the corrected words as a new request. Without it, corrections teach the earlier phrasing.
+    const cloud = Date.now() >= supervisorDown.current;
+    const answered = !!lastAnswer && lastAnswer.status !== "question" && lastAnswer.status !== "preview" && thread.some((item) => item.role === "user");
+    const corrects = !pending && cloud && answered && correctsPrevious(text);
+    const fix = !pending && !corrects && lastAnswer?.asked ? correction(text) : undefined;
     if (fix && !fix.text && lastAnswer) {
       // Question and reply first: the rating's global write then takes all three in one update.
       save((items) => [...items, { id: newId(), role: "user", text, at: Date.now() },
@@ -1081,9 +1088,11 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     work = resolvePronoun(aliased.text, lastAnswer?.card);
     if (aliased.used.length) learn((current) => ({ ...current, assistantAliases: countAliases(current.assistantAliases, aliased.used) }));
     // Bare words ("Netflix", "500", "Geld") get a short question back; a bare account or goal name shows its balance.
-    const open = !pending && !original && !chosen;
-    // With DeepSeek the supervisor decides every question itself; the fixed shortcuts answer only without it. Commands stay.
-    const supervisorFirst = open && Date.now() >= supervisorDown.current;
+    // With DeepSeek the supervisor decides every question itself, a rephrasing after 👎 included (as a correction); the fixed
+    // shortcuts and the phrase learning answer only without it. System commands stay.
+    const open = !pending && !chosen && (!original || cloud);
+    const supervisorFirst = open && cloud;
+    const corrective = supervisorFirst && (corrects || !!original);
     const topic = open && !supervisorFirst ? topicClarify(work, state, { accounts: balances(state, dashboard).map((item) => item.name),
       goals: savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name), contracts: contractNames(state, asOf) }) : undefined;
     if (topic && "rewrite" in topic) work = topic.rewrite;
@@ -1127,7 +1136,8 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       setBusy(false);
       return;
     }
-    const history = thread.slice(-6).map((item) => ({ role: item.role, text: item.text.slice(0, 500) }));
+    // The recent conversation, so the supervisor and the answer build on it: the last eight messages.
+    const history = thread.slice(-8).map((item) => ({ role: item.role, text: item.text.slice(0, item.role === "user" ? 400 : 700) }));
     const goals = savingsGoals(state).filter((goal) => !goal.completedAt).map((goal) => goal.name.slice(0, 80)).slice(0, 50);
     const planned = [...new Set(plannedOccurrences(state.plannedOneOffs).filter((item) => item.date.slice(0, 7) >= dashboard.currentMonth)
       .map((item) => item.name.slice(0, 100)))].slice(0, 60);
@@ -1202,7 +1212,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       const response = await fetch("/api/ai/assistant", {
         method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", signal,
         body: JSON.stringify({ message: work, asOf, ...(pending ? { pending } : {}), history, context: { goals, planned },
-          ...(supervisorFirst ? { overview: dataOverview(asOf) } : {}) }),
+          ...(supervisorFirst ? { overview: dataOverview(asOf) } : {}), ...(corrective ? { correction: true } : {}) }),
       });
       if (!response.ok) throw new Error();
       reply = await response.json();
@@ -1277,14 +1287,16 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
       if (halted(agent)) return;
       const hints = found.web ? correctionNotes(state.assistantKnowledge, work) : [];
       const team = [...new Set(steps.flatMap((step) => (toolOwner as Partial<Record<string, AgentId>>)[step.tool] ?? []))];
+      const computed = arithmetic(work);
       const evidence = [
+        computed ? `Rechner (vom Code berechnet, verlässlich): ${computed}` : "",
         confirmed ? `Vom Nutzer bestätigte frühere Antwort auf diese Frage (verlässlich, übernimm den Inhalt in eigenen Worten): ${confirmed.result.text.slice(0, 1200)}` : "",
         current && !found.web ? "Die Live-Abfrage (Kurse, Nachrichten, Websuche) hat gerade nichts geliefert. Sag das ehrlich und nenne keine Werte aus dem Gedächtnis." : "",
         found.evidence, hints.length ? `Hinweis des Nutzers zu früheren Antworten auf diese Frage: ${hints.join(" ")}` : "",
         knowledgeEvidence(wisdom?.hits ?? []), agentEvidence(agent, state, dashboard, asOf, work),
       ].filter(Boolean).join("\n\n") || undefined;
       let links = confirmed?.links?.length ? [...confirmed.links, ...found.links].slice(0, 4) : found.links;
-      let free = await freeAnswer(work, history, agent, evidence, signal, workStatus.combine, true, team);
+      let free = await freeAnswer(work, history, agent, evidence, signal, workStatus.combine, true, team, corrective);
       if (halted(agent)) return;
       // An answer that admits not knowing gets one more web search, then the supervisor writes again.
       if (unsureAnswer(free) && !found.web) {
@@ -1293,7 +1305,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
         if (web) {
           setStreaming(undefined);
           links = webLinks(web);
-          free = await freeAnswer(work, history, agent, [webEvidence(web, 1200), evidence].filter(Boolean).join("\n\n"), signal, workStatus.combine, true, team) ?? free;
+          free = await freeAnswer(work, history, agent, [webEvidence(web, 1200), evidence].filter(Boolean).join("\n\n"), signal, workStatus.combine, true, team, corrective) ?? free;
           if (halted(agent)) return;
         }
       }

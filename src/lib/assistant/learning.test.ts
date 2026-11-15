@@ -4,7 +4,7 @@ import { calculateDashboard } from "@/lib/calc";
 import { appStateSchema, plannedOneOffSchema, savingsGoalSchema, type AppState } from "@/lib/types";
 import { executeTool } from "./agent";
 import { knowledgeList, learnPhrase, matchPhrase } from "./knowledge";
-import { aliasTeaching, applyAliases, correction, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "./learning";
+import { aliasTeaching, applyAliases, correction, correctsPrevious, countAliases, learnAlias, openGaps, pickName, recordGap, rephrases, resolveGap, unknownTarget, unlearnPhrase } from "./learning";
 import { detectTool } from "./tools";
 
 const asOf = "2026-10-07";
@@ -34,6 +34,13 @@ describe("corrections", () => {
   });
   it("leaves ordinary messages alone", () => {
     expect(correction("Wie viel hab ich im Oktober fürs Essen ausgegeben?")).toBeUndefined();
+  });
+  it("recognises a correction of the previous answer in its many forms, and every correction the phrase learning knows", () => {
+    for (const text of ["Nein das ist für American Express ich meine mein Raiffeisen Bankkonto das mich im quartal 36€ kostet ca.", "nicht im Oktober, sondern im September",
+      "Doch, ich habe Netflix", "Es geht um die Miete", "Ich meinte die Versicherung", "Das ist falsch", "Du hast mich falsch verstanden", "eigentlich wollte ich den Strom",
+      "Nein, das meinte ich nicht", "falsch, ich wollte wissen wie viel ich für Essen ausgebe"]) expect(correctsPrevious(text), text).toBe(true);
+    for (const text of ["Wie viel hab ich im Oktober fürs Essen ausgegeben?", "Und im September?", "Lege ein Sparziel Japan an", "Danke!", "Was ist ein ETF?"])
+      expect(correctsPrevious(text), text).toBe(false);
   });
 });
 

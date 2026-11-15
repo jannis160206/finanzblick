@@ -1,9 +1,8 @@
-import { adviceQuestion, changingTools, isQuestion } from "./conversation";
 import { normalizeMessage } from "./normalize";
 import { changingFacts, explicitWeb, foldText, ownData, publicTerms, statedYear } from "./public-facts";
 import { detectSmallTalk } from "./smalltalk";
 import { fixedCommand, fixedReply } from "./fixed-replies";
-import { assistantTools, detectTool, isDraftTool, mentionsName, type AssistantTool } from "./tools";
+import { assistantTools, detectTool, mentionsName, type AssistantTool } from "./tools";
 
 /**
  * Thin orchestrator plus supervisor and workers. The orchestrator does no work of its own: fixed rules keep only changes and
@@ -141,34 +140,18 @@ export function routeByRules(input: string, names: string[] = []): RouteDecision
 // Tools that compute from an amount; without one they could only ask for it, so the supervisor answers from the user's data instead.
 export const amountTools: readonly AssistantTool[] = ["funds", "affordability", "depot", "loan"];
 
-/**
- * Whether a tool the rules recognised answers the message by itself. Advice, opinions and worries want judgment; a
- * purchase, savings plan or loan without any amount and a form opened by a plain question would only ask back.
- */
-export function needsSupervisor(input: string, tool: AssistantTool): boolean {
-  const text = normalizeMessage(input).toLowerCase();
-  if (adviceQuestion(text)) return true;
-  const amount = /\d/.test(text);
-  return !amount && (amountTools.includes(tool) || isDraftTool(tool) && isQuestion(text));
-}
-
 export type Handoff = { to: "specialist"; decision: RouteDecision } | { to: "supervisor"; hint?: AssistantTool };
 
-/** A clear change or command: a tool that changes data or opens a form, asked for as a command with what it needs. */
-export const commandTool = (text: string, tool: AssistantTool | undefined): tool is AssistantTool =>
-  !!tool && (changingTools.includes(tool) || isDraftTool(tool)) && !chatRequest(text) && !needsSupervisor(text, tool);
-
 /**
- * The thin orchestrator: it only decides who takes over. Fixed rules keep only clear changes and commands, which keep their
- * preview and confirmation; every other message – questions, small talk, terms, research – goes to the supervisor, which
- * decides itself what to look up. A reading tool the rules recognised goes along only as a hint.
+ * The thin orchestrator: it only decides who takes over. Fixed rules keep only system commands (date and time, navigation,
+ * theme and device settings, actions that only work on their own page); every other message – questions, small talk,
+ * corrections, changes – goes to the supervisor with the conversation. A tool the rules recognised goes along only as a
+ * hint; a change the supervisor hands back is filled in by its specialist and keeps its preview and confirmation.
  */
 export function orchestrate(input: string, names: string[] = []): Handoff {
   const text = normalizeMessage(input);
-  // Arithmetic, theme, navigation and actions that only work on their own page: commands the chat answers itself.
   if (fixedCommand(text)) return { to: "specialist", decision: { agent: "general", via: "rule" } };
   const tool = detectTool(text, names);
-  if (commandTool(text, tool)) return { to: "specialist", decision: { agent: toolOwner[tool], tool, via: "rule" } };
   return { to: "supervisor", ...(tool ? { hint: tool } : {}) };
 }
 

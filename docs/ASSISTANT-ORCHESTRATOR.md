@@ -15,7 +15,7 @@ Stand: 15.11.2026
 
 Thin Orchestrator mit Supervisor-Worker-Muster, ohne Framework, im bestehenden TypeScript-Code:
 
-- **Thin Orchestrator** (`orchestrate` in `src/lib/assistant/orchestrator.ts`): macht keine Facharbeit, sondern entscheidet nur, wer übernimmt. Feste Regeln gibt es nur noch für klare Änderungen und Befehle; jede andere Nachricht bekommt der Supervisor, ein erkanntes Werkzeug nur als Hinweis.
+- **Thin Orchestrator** (`orchestrate` in `src/lib/assistant/orchestrator.ts`): macht keine Facharbeit, sondern entscheidet nur, wer übernimmt. Feste Regeln gibt es nur noch für Systembefehle (Datum, Uhrzeit, Navigation, Einstellungen) und laufende Formulare; jede andere Nachricht – auch Änderungen, Rechnen und Korrekturen – bekommt der Supervisor samt Gesprächsverlauf, ein erkanntes Werkzeug nur als Hinweis.
 - **Supervisor** (`src/lib/ai/supervisor.ts`): DeepSeek Flash bekommt einen Überblick über alle App-Daten, entscheidet bei jeder Anfrage selbst, welche Daten oder Recherchen nötig sind, und lässt die Spezialisten sie holen; DeepSeek V4 Pro schreibt danach jede Analyse-, Erklärungs- und Beratungsantwort.
 - **Spezialisten (Worker):** führen ihre Werkzeuge aus (der Code rechnet im Browser auf den eigenen Daten) und geben Rohdaten zurück; formuliert wird nur vom Supervisor. Änderungen füllt der zuständige Spezialist aus; sie laufen wie bisher nur über Vorschau und Bestätigung.
 - **Chat-UI:** nur der Droide; welcher Spezialist gearbeitet hat, bleibt intern (Admin-Ansicht).
@@ -34,13 +34,13 @@ Siehe [Supervisor](#supervisor-deepseek-flash-plant-v4-pro-schreibt).
 
 **Dateien**
 
-- `src/lib/assistant/orchestrator.ts`: Agenten, Werkzeug-Eigentümer, Thin Orchestrator (`orchestrate`, `needsSupervisor`), lokales Routing (Signalwörter, `routeByRules`, `parseAgent`).
+- `src/lib/assistant/orchestrator.ts`: Agenten, Werkzeug-Eigentümer, Thin Orchestrator (`orchestrate`), lokales Routing (Signalwörter, `routeByRules`, `parseAgent`).
 - `src/lib/ai/supervisor.ts`: Supervisor-Prompt (alle Spezialisten mit ihren Werkzeugen), Prüfung des Plans (`cleanSupervision`).
 - `src/lib/ai/specialists.ts`: Ein-Wort-Prompt für das lokale Routing, Werkzeug-Prompt je Spezialist, Stimme je Agent und Zusatz für die Supervisor-Antwort.
 - `src/lib/ai/assistant.ts`: Ablauf auf dem Server.
 - `src/lib/assistant/specialist-context.ts`: Fakten-Ausschnitt und Kontext-Werkzeug je Agent.
 - `src/lib/assistant/payroll.ts`: neues Werkzeug für Gehalt & Steuern.
-- `src/lib/assistant/fixed-replies.ts`: feste Befehle (`fixedCommand`: Rechnen, Farbschema, Geräte-Einstellungen, Navigation, Links für Aktionen, die nur auf ihrer Seite gehen); die übrigen festen Antworten und Rückfragen auf einzelne Wörter nur noch ohne DeepSeek.
+- `src/lib/assistant/fixed-replies.ts`: Systembefehle (`fixedCommand`: Datum und Uhrzeit, Farbschema, Geräte-Einstellungen, Navigation, Links für Aktionen, die nur auf ihrer Seite gehen), Rechnen (`arithmetic`: das Ergebnis des Codes als Evidenz für V4 Pro); die übrigen festen Antworten und Rückfragen auf einzelne Wörter nur noch ohne DeepSeek.
 - `src/lib/assistant/answer-view.ts`, `src/components/assistant-answer.tsx`: Antwort-Layout (Kennzahlen, Kacheln, Trends, Töne).
 - `src/lib/ai/private-names.ts`: Name des angemeldeten Nutzers je Anfrage, für die Maskierung vor DeepSeek.
 - `src/lib/assistant/scope.ts`: erkennt fachfremde Themen und antwortet mit einem freundlichen Nein.
@@ -49,19 +49,18 @@ Siehe [Supervisor](#supervisor-deepseek-flash-plant-v4-pro-schreibt).
 
 ## Ablauf und KI-Aufrufe
 
-1. **Befehle (0 Aufrufe, Thin Orchestrator):** nur klare Änderungen und Befehle laufen ohne Supervisor:
-   - Änderungen und Formulare mit allem, was sie brauchen („Lösche die Buchung MediaMarkt vom 24.10.“, „neuer laptop 1200 € in 6 raten“, „Setze Tanken im Dezember auf 150 €“) gehen an ihren Spezialisten und zeigen wie bisher Vorschau und Bestätigung;
-   - feste Befehle im Chat (`fixedCommand`): Datum und Uhrzeit („Welcher Tag ist heute?“, „Wie spät ist es?“ – nicht „… in Tokio“), Rechnen („15 % von 2400“ – der Code rechnet, nicht das Modell), Farbschema, Geräte-Einstellungen, „Öffne die Verträge“ und Aktionen, die nur auf ihrer Seite gehen („Lösche alle Buchungen“ mit Link);
-   - offene Entwürfe, „Ja“/„Nein“ unter einer Vorschau, Rückgängig, Feedback und gelernte eigene Wörter („Mit Japan meine ich Motorrad“).
-2. **Supervisor (1 Aufruf, DeepSeek Flash):** jede andere Nachricht – Fragen, Rat, Smalltalk, Begriffe, Recherche, aktuelle Werte. Er bekommt den Datenüberblick und entscheidet selbst, was die Antwort braucht:
+1. **Systembefehle (0 Aufrufe, Thin Orchestrator):** nur sie laufen ohne Supervisor:
+   - feste Befehle im Chat (`fixedCommand`): Datum und Uhrzeit („Welcher Tag ist heute?“, „Wie spät ist es?“ – nicht „… in Tokio“), Farbschema, Geräte-Einstellungen, „Öffne die Verträge“ und Aktionen, die nur auf ihrer Seite gehen („Lösche alle Buchungen“ mit Link);
+   - laufende Formulare: offene Entwürfe, „Ja“/„Nein“ unter einer Vorschau, Rückgängig, Feedback und gelernte eigene Wörter („Mit Japan meine ich Motorrad“).
+2. **Supervisor (1 Aufruf, DeepSeek Flash; Korrekturen V4 Pro):** jede andere Nachricht – Fragen, Änderungen, Rechnen, Korrekturen, Rat, Smalltalk, Begriffe, Recherche, aktuelle Werte. Er bekommt die letzten acht Nachrichten und den Datenüberblick und entscheidet selbst, was die Antwort braucht:
    - `antwort`: 0–4 Lese-Schritte mit je einer Teilfrage – Werkzeuge der Spezialisten auf den eigenen Daten, `knowledge` (lokales Finanzwissen) oder `web`; reicht der Überblick, keiner;
-   - `aktion`: Der zuständige Spezialist liest die Details aus (Werkzeug-Prompt, V4 Pro); Vorschau und Bestätigung wie bisher;
+   - `aktion`: Der zuständige Spezialist übernimmt das Werkzeug, das die Regeln erkennen, und liest Details mit seinem Werkzeug-Prompt (V4 Pro) aus, etwa „Lösche die Buchung MediaMarkt vom 24.10.“ oder „Setze Tanken im Dezember auf 150 €“; Vorschau und Bestätigung wie bisher;
    - `rueckfrage`: nur, wenn eine Angabe fehlt, die weder in den Daten noch im Internet steht.
 3. **Spezialisten (Worker):** Die Schritte laufen im Browser auf den eigenen Daten (`runWorkers`). Jedes Werkzeug liefert Rohdaten (`rawData`: Zahlen Zeile für Zeile mit Ton, Verlauf, Befund) und seine Karte; einen eigenen Antworttext zeigen sie nicht mehr. Begriffe und Recherche gehen immer auch an die Websuche, aktuelle Werte zuerst live.
 4. **Antwort (1 Aufruf, gestreamt, DeepSeek V4 Pro):** Der Supervisor schreibt aus Rohdaten, den Fakten aller beteiligten Spezialisten (`contextFacts`), Datenüberblick, lokalem Wissen und Webquellen die Antwort – bei jeder Analyse, Zusammenfassung, Bewertung, Recherche und Erklärung; nur Begrüßung, Dank und kreative Bitten ohne Daten schreibt Flash (`briefTalk`); darunter legt die App die Ergebnisse als Kennzahlen und Kacheln aus (siehe [Antwort-Layout](#antwort-layout)). Gibt die Antwort zu, etwas nicht zu wissen, sucht er einmal im Web und schreibt neu.
 5. **Lokaler Rückfall ohne DeepSeek:** Fällt der Supervisor aus (kein Key, Pause, Fehler, unlesbarer Plan), meldet der Server `local`, und der Chat nutzt zwei Minuten lang die früheren festen Wege: Smalltalk, feste Antworten, Themen-Rückfragen, kombinierte Fragen, Folgefragen, gelernte Formulierungen, Regeln, Signalwörter genau eines Spezialisten, sonst ein Wort vom Modell (`umsaetze`, `vertraege`, `budget`, `gehalt`, `chat`). Qwen antwortet, Werkzeuge zeigen ihren eigenen Text.
 
-**Damit:** Jede Frage kostet einen Flash-Aufruf für den Plan (1,2–1,8 s, der Prompt kommt meist aus dem Cache) und eine Antwort von V4 Pro; nur Befehle und Systemfragen kommen ohne Modell aus. Eine Änderung kostet einen Aufruf für den Spezialisten. Kosten: siehe [Kosten](#kosten).
+**Damit:** Jede Frage kostet einen Flash-Aufruf für den Plan (1,2–1,8 s, der Prompt kommt meist aus dem Cache) und eine Antwort von V4 Pro; nur Systembefehle und laufende Formulare kommen ohne Modell aus. Eine Änderung kostet zusätzlich den Plan (rund 1 s mehr als früher); einen Aufruf für den Spezialisten (V4 Pro) nur, wenn er Details lesen muss (Buchungen, Monatswerte, Regeln, Entwürfe) oder die Regeln das Werkzeug nicht kennen. Kosten: siehe [Kosten](#kosten).
 
 ## Antwortverhalten
 
@@ -77,7 +76,7 @@ Siehe [Supervisor](#supervisor-deepseek-flash-plant-v4-pro-schreibt).
   - Begrüßung und Dank beantwortet er sofort mit natürlichen Sätzen, ohne Modell.
 - **Spezialisten:**
   - Strikt an Fakten und Werkzeug-Ergebnis gebunden; jede Zahl muss belegt sein (`numbersBacked`). Zahlen aus der Frage selbst gelten als belegt („Kann man mit 3000 netto …?“).
-  - Sie sehen nur den letzten Wortwechsel, der Chat den Verlauf.
+  - Sie sehen die letzten vier Nachrichten, der Supervisor und seine Antwort die letzten acht (siehe [Korrekturen und Gesprächsverlauf](#korrekturen-und-gesprächsverlauf)).
 - **Wann das Modell den Werkzeugtext umformuliert (`converseOn`):**
   - Nicht bei leeren Ergebnissen: „keine Daten“ bleibt der ehrliche Werkzeugsatz statt eines erfundenen Absatzes.
   - Nicht bei Werkzeugen, deren Text schon die Antwort ist (Überblicke, Rückblicke, Hinweise, „Warum …?“-Erklärungen, Was-wäre-wenn, Gehalt), außer bei Rat- und Meinungsfragen oder wenn nur das Modell das Werkzeug geraten hat.
@@ -93,6 +92,7 @@ Ist ein DeepSeek-Key hinterlegt, wählt `src/lib/ai/client.ts` das Modell nach d
 | Aufgabe zerlegen: Spezialisten, Lese-Werkzeuge, Aktion oder Rückfrage | Supervisor | DeepSeek Flash (nur DeepSeek, sonst lokales Routing) |
 | Antwort aus den Ergebnissen der Spezialisten: Analyse, Zusammenfassung, Bewertung, Recherche, Erklärung | Supervisor-Antwort | DeepSeek V4 Pro ohne Denkmodus (Steuer-Analysen an Gehalt & Steuern im Denkmodus); Smalltalk und kreative Bitten ohne Daten: DeepSeek Flash |
 | Werkzeug-Hinweise und Entwürfe lesen, lokales Routing | Werkzeugwahl | DeepSeek Flash |
+| Korrektur der vorigen Antwort („Nein, ich meine …“): Plan mit Verlauf | Supervisor | DeepSeek V4 Pro (ohne Denkmodus) |
 | Offener Entwurf, ändernde Regel-Werkzeuge, mehrere Befehle, „anlegen/ändern/lösche…“ | Aktion | DeepSeek V4 Pro (ohne Denkmodus) |
 | Freie Antwort | Antwort | DeepSeek Flash |
 | „Warum…“, „Lohnt sich…“, „Sollte ich…“, Vergleiche, Steuerfragen | Analyse | DeepSeek V4 Pro im Denkmodus |
@@ -537,8 +537,8 @@ Der Assistent arbeitet freier: Aktuelle Werte holt er immer frisch aus dem Inter
 
 Der Assistent entscheidet bei jeder Anfrage selbst, welche Daten oder Recherchen nötig sind, holt sie und antwortet konkret (`src/lib/ai/supervisor.ts`, Aufgaben „Supervisor“ und „Supervisor-Antwort“). Stand 15.11.2026.
 
-- **Wer ihn bekommt:** jede Nachricht außer klaren Änderungen und Befehlen (siehe [Ablauf](#ablauf-und-ki-aufrufe)), auch Smalltalk, Gedichte, Begriffe und aktuelle Werte. Ein Werkzeug, das die Regeln erkennen, bekommt er als Hinweis; Rat, Rechner ohne Betrag und Formulare aus einer Frage ohne Zahl (`needsSupervisor`) landen immer bei ihm.
-- **Was er sieht:** die Nachricht, bis zu vier Verlaufszeilen (Antworten des Assistenten bereinigt), die Namen der Sparziele und geplanten Ausgaben und den **Datenüberblick** (`appOverview`, rund 1.500 Zeichen): Konten und Summe, dieser Monat mit Budgets und überzogenen Posten, Ausgaben nach Kategorie (dieser und letzter Monat), Jahr bis heute mit Top-Kategorien, frei bis zum Gehalt, Abos (Liste, Summe), Anstehendes, Sparziele, Giro-Prognose, Amex, Gehalt, Auffälliges und die letzten 12 Buchungen. Im statischen Prompt stehen alle Spezialisten mit ihren Werkzeugen und die Regeln aus Feedback (Wirkung Werkzeugwahl).
+- **Wer ihn bekommt:** jede Nachricht außer Systembefehlen und laufenden Formularen (siehe [Ablauf](#ablauf-und-ki-aufrufe)), auch Änderungen, Rechnen, Korrekturen, Smalltalk, Gedichte, Begriffe und aktuelle Werte. Ein Werkzeug, das die Regeln erkennen, bekommt er als Hinweis; bei einer Korrektur keinen, weil die Regeln nur die neue Nachricht sehen.
+- **Was er sieht:** die Nachricht, die letzten acht Nachrichten (Nutzer bis 400, Antworten des Assistenten bereinigt bis 500 Zeichen), die Namen der Sparziele und geplanten Ausgaben und den **Datenüberblick** (`appOverview`, rund 1.500 Zeichen): Konten und Summe, dieser Monat mit Budgets und überzogenen Posten, Ausgaben nach Kategorie (dieser und letzter Monat), Jahr bis heute mit Top-Kategorien, frei bis zum Gehalt, Abos (Liste, Summe), Anstehendes, Sparziele, Giro-Prognose, Amex, Gehalt, Auffälliges und die letzten 12 Buchungen. Im statischen Prompt stehen alle Spezialisten mit ihren Werkzeugen und die Regeln aus Feedback (Wirkung Werkzeugwahl).
 - **Was er entscheidet** (JSON, geprüft in `cleanSupervision`):
   - Spezialist und Art (`antwort`, `aktion`, `rueckfrage`; das frühere `werkzeug` zählt als Antwort mit einem Schritt);
   - 0–4 Lese-Schritte mit Teilfrage in der Ich-Form – nur Werkzeuge, die nichts ändern, `knowledge` oder `web`;
@@ -578,6 +578,17 @@ Unter dem Text legt die App die Ergebnisse der Spezialisten aus (`AnswerLayout` 
 | „Lösch die Buchung vom 3.8. über 249 €“ | Befehl, kein Supervisor | Werkzeug sucht die Buchung, Vorschau und Bestätigung wie bisher |
 
 - Eval: Smoke 24/24, Gold 80/80, Deep 15/15.
+
+## Korrekturen und Gesprächsverlauf
+
+Stand 15.11.2026. Vorher wurde „Nein, das ist für American Express, ich meine mein Raiffeisen-Konto, das im Quartal ca. 36 € kostet“ als neuer Befehl gelesen (Kontoregel-Formular), und der Supervisor sah nur vier Verlaufszeilen.
+
+- **Verlauf:** Der Chat schickt die letzten acht Nachrichten (Nutzer bis 400, Assistent bis 700 Zeichen); Supervisor und V4 Pro bekommen alle acht, der Werkzeug-Prompt eines Spezialisten vier, Qwen im lokalen Rückfall vier (Chat) bzw. zwei (Spezialist). Namen und IBANs werden wie immer vor DeepSeek maskiert.
+- **Korrektur erkennen** (`correctsPrevious` in `src/lib/assistant/learning.ts`): „Nein …“, „Doch …“, „Falsch …“, „Stimmt nicht …“, „Ich meine/meinte …“, „Gemeint war …“, „Es geht um …“, „nicht X, sondern Y“, „Das ist doch für …“ – nur direkt nach einer fertigen Antwort, nicht unter einer offenen Vorschau oder Rückfrage (dort gelten „Ja“/„Nein“ wie bisher).
+- **Was dann passiert:** Keine Regel und kein neuer Befehl. Die ganze Nachricht geht mit `correction: true` an den Supervisor, der mit V4 Pro plant: Er liest im Verlauf, worum es ging, behält Thema, Zeitraum und Konto bei und tauscht nur, was korrigiert wurde. Eine Aktion plant er dabei nur, wenn die Nachricht selbst etwas ändern will („…, lösch sie“); sonst wird daraus eine Antwort. Die Antwort von V4 Pro bekommt den Verlauf und den Hinweis, dass die Frage die vorige Antwort korrigiert; was noch stimmt, darf sie wiederholen.
+- **Fortsetzungen:** Supervisor und Antwort-Regeln sagen: auf dem Gespräch aufbauen, Bezüge („das“, „dort“, „und im Oktober?“) aus dem Verlauf nehmen und nie nach etwas fragen, das dort schon steht. Wird eine Antwort mit 👎 abgelehnt, geht die nächste Nachricht ebenfalls als Korrektur an den Supervisor.
+- **Rechnen:** „15 % von 2400“ geht an den Supervisor; der Code rechnet (`arithmetic`) und gibt das Ergebnis als verlässliche Evidenz mit, V4 Pro formuliert. Ohne DeepSeek bleibt es die feste Antwort.
+- **Ohne DeepSeek:** Korrekturen laufen wie früher über die lokale Erkennung (`correction`), die nur den Teil nach „ich meine“ neu routet.
 
 ## Formatierung (Markdown)
 
@@ -658,23 +669,24 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `orchestrator.test.ts`:
   - höchstens vier Spezialisten, jedes Werkzeug mit genau einem Eigentümer;
   - typische und grenzwertige Fragen;
-  - Thin Orchestrator: nur Änderungen und feste Befehle per Regel, jede andere Nachricht (Smalltalk, Begriffe, Abfragen, Rat) an den Supervisor;
+  - Thin Orchestrator: nur Systembefehle per Regel, jede andere Nachricht (Änderungen, Rechnen, Smalltalk, Begriffe, Abfragen, Rat) an den Supervisor;
   - Rückfall bei Unklarheit.
 - `assistant.test.ts`:
   - Smalltalk und kreative Bitten über den Supervisor, ohne DeepSeek per Regel (`local`);
-  - klare Änderungen ohne Supervisor beim Spezialisten;
+  - Änderungen über den Plan `aktion` beim Spezialisten, ohne Modellaufruf, wenn das Werkzeug keine Details liest;
+  - eine Korrektur geht ohne Regel-Hinweis mit Verlauf an den Supervisor auf V4 Pro und wird zur Antwort statt zu einem neuen Befehl;
   - Supervisor beantwortet Rat mit Lese-Schritten statt Rückfrage;
   - ohne Supervisor genau ein Ein-Wort-Aufruf mit Rückfall;
   - eine Änderung geht an den Spezialisten, der nur eigene Werkzeuge sieht.
-- `supervisor.test.ts`: nur lesende Schritte, höchstens vier, Monatsplan statt Rechner ohne Betrag, Websuche zu jedem Begriff, echte Rückfrage, Antwort statt Rückfrage nach Preis oder Laufzeit, Flash mit Team, Datenüberblick und Regel-Hinweis, nur DeepSeek.
-- `speed.test.ts`/`payroll.test.ts`: V4 Pro schreibt jede Analyse und Erklärung, Flash nur Smalltalk ohne Daten; Kontext aller beteiligten Spezialisten mit Größengrenze. `fixed-replies.test.ts`: Datum und Uhrzeit als Systembefehl.
+- `supervisor.test.ts`: acht Nachrichten Verlauf, nur lesende Schritte, höchstens vier, Monatsplan statt Rechner ohne Betrag, Websuche zu jedem Begriff, echte Rückfrage, Antwort statt Rückfrage nach Preis oder Laufzeit, Flash mit Team, Datenüberblick und Regel-Hinweis, nur DeepSeek.
+- `speed.test.ts`/`payroll.test.ts`: V4 Pro schreibt jede Analyse und Erklärung, Flash nur Smalltalk ohne Daten; Kontext aller beteiligten Spezialisten mit Größengrenze. `fixed-replies.test.ts`: Datum und Uhrzeit als Systembefehl; `speed.test.ts`: Verlauf und Korrektur-Hinweis in der Antwort; `learning.test.ts`: `correctsPrevious`.
 - `answer-view.test.ts`: Kennzahlen mit Tönen, Trend-Farbe je Art der Reihe, Rohdaten für den Supervisor, nur Befehle als feste Antworten; `assistant-answer.test.tsx`: Kennzahlen, Kacheln, Sparkline, Details, Kernaussage und Beträge im Text.
 - `cloud.test.ts`: der Name des Nutzers (Konto und `FINANZBLICK_PRIVATE_NAMES`) geht nie an DeepSeek, Händler und Beträge schon.
 - `speed.test.ts`: Stimme je Agent, Allgemeinwissen nur im Chat ohne persönliche Daten, `tidyAnswer` mit Markdown, Belegprüfung je Listenpunkt und Tabellenzeile, Streaming Zeile für Zeile, belegter Satzanfang.
 - `markdown.test.ts`: Blöcke, Inline-Formatierung, nicht geschlossene Marker, sichere Links, Syntax-Farben; `assistant-answer.test.tsx`: Überschrift, Liste, Tabelle, Code ohne rohe Zeichen, Streaming.
 - `payroll.test.ts`: Gehaltswerkzeug und Fakten-Ausschnitte.
 - `eval-cases.test.ts`: Eigentümer jeder goldenen Frage; grenzwertige Fragen nie beim falschen Spezialisten.
-- `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten, Gehaltsfrage mit Rohdaten, Kachel und zugeklappten Details (Prompt und Werkzeuge erst nach dem Aufklappen, Ergebnis per Klick), Kontoprognose mit Live-Status nur aus Orb und Kurztext (keine Werkzeuge, kein Modell), Kennzahlen und Sparkline, Datenüberblick ohne IBAN, nur der Droide und keine Spezialisten-Namen, kein horizontales Scrollen – bei 390 px dunkel und 1440 px hell (Supervisor-Pläne und Antworten gemockt, Werkzeuge echt).
+- `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten, Gehaltsfrage mit Rohdaten, Kachel und zugeklappten Details (Prompt und Werkzeuge erst nach dem Aufklappen, Ergebnis per Klick), Kontoprognose mit Live-Status nur aus Orb und Kurztext (keine Werkzeuge, kein Modell), Kennzahlen und Sparkline, Datenüberblick ohne IBAN, nur der Droide und keine Spezialisten-Namen, „Nein, ich meine das Sparkonto“ als Korrektur mit Verlauf an Supervisor und Antwort, kein horizontales Scrollen – bei 390 px dunkel und 1440 px hell (Supervisor-Pläne und Antworten gemockt, Werkzeuge echt).
 - `tests/assistant-admin.spec.ts`: Admin-Ansicht nur über die Einstellungen erreichbar, Pfeil klappt die Unterseiten auf, Topologie mit Werkzeugen, Kosten, Prompt speichern und zurücksetzen, Läufe, Werkzeuge, Feedback und Regeln, Umleitung von `/einstellungen/orchestrator`, kein horizontales Scrollen bei 1440 px hell und 390 px dunkel.
 - `agent-prompts-store.test.ts`: Speichern, Anwenden und Zurücksetzen eines Prompts, feste Teile bleiben, beschädigte Datei bleibt unverändert, Ort in Produktion.
 - `assistant-chat-parts.test.tsx`: Live-Status nur Orb und Kurztext („Suche…“, „Rechne…“, „Denke nach…“), danach nur die Wörter; zugeklappter „Details“-Link mit Modellen, kompakten Werkzeugzeilen (Ergebnis per Klick), gekürztem Prompt und Rückfall-Punkt; `orchestrator-admin.test.tsx`: Unterseiten, Baum, Kosten, Prompt-Editor, Aufklapp-Pfeil.
@@ -697,7 +709,7 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 
 ## Grenzen
 
-- Der Supervisor kostet bei unklaren Fragen 1–2 s, bevor die Arbeit beginnt; eindeutige Fragen bleiben ohne Modell. Ohne DeepSeek gilt das lokale Routing mit knappen Signalwörtern; was sie nicht eindeutig zuordnen, entscheidet ein Wort von Qwen oder, im Zweifel, der Chat.
+- Der Supervisor kostet 1–2 s, bevor die Arbeit beginnt, auch bei Änderungen; nur Systembefehle bleiben ohne Modell. Der längere Verlauf kostet pro Frage etwas mehr Eingabe-Token. Ohne DeepSeek gilt das lokale Routing mit knappen Signalwörtern; was sie nicht eindeutig zuordnen, entscheidet ein Wort von Qwen oder, im Zweifel, der Chat.
 - Der Supervisor plant auf Flash; befolgt er die Planungsregeln nicht (etwa eine Rückfrage nach dem Preis), fängt `cleanSupervision` die bekannten Fälle ab. Fehlt etwas, schreibt V4 Pro trotzdem eine Antwort aus Fakten und Überblick.
 - Ein angepasster Prompt gilt sofort, wird aber nicht automatisch gegen die Gold-Eval geprüft; `npm run eval:assistant` nutzt die Standards.
 - Bestehende Regelfehler einzelner Werkzeuge bleiben, wo sie keine falsche Zuständigkeit verursachen.

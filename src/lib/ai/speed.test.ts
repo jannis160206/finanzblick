@@ -196,6 +196,17 @@ describe("agent answers", () => {
     expect(visiblePrefix("Dir bleiben **412 €** frei – bei 16 Tagen rund 25,75 € pro ", { left: 412 })).toBe("Dir bleiben **412 €** frei");
   });
 
+  it("builds on the conversation: the last eight messages and, for a correction, the hint to keep the topic", async () => {
+    const { calls, fetcher } = stub(() => completion("Dein Raiffeisen-Konto kostet dich rund 36 € im Quartal."));
+    const history = [{ role: "user" as const, text: "Was kosten mich meine Konten?" }, { role: "assistant" as const, text: "American Express kostet 72 € im Jahr." }];
+    await answerFreeQuestion({ question: "Nein, ich meine mein Raiffeisen-Konto, das kostet ca. 36 € im Quartal", facts: { today: "2026-11-15" }, agent: "budget",
+      supervised: true, correction: true, history }, { config, fetcher });
+    const user = (calls[0] as unknown as { messages: { content: string }[] }).messages[1].content;
+    expect(user).toContain("Verlauf (das bisherige Gespräch):\nIch: Was kosten mich meine Konten?\nAssistent: American Express kostet 72 € im Jahr.");
+    expect(user).toContain("Die Frage korrigiert oder präzisiert deine vorige Antwort");
+    expect(system(calls)).toContain("frag nie nach, was dort schon steht");
+  });
+
   it("checks every list item and table row on its own and streams Markdown line by line", async () => {
     const facts = { rent: 700, food: 320, left: 412 };
     const answer = ["Dir bleiben **412 €**.", "", "- Miete 700 €", "- Handy 999 €", "", "| Posten | Betrag |", "|---|---:|", "| Miete | 700 € |",

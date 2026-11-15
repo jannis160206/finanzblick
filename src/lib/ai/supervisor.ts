@@ -32,7 +32,16 @@ export type SupervisorInput = {
   overview?: Record<string, unknown>;
   /** The tool the fixed rules recognised; the supervisor may keep it or decide otherwise. */
   hint?: AssistantTool;
+  /** The message corrects or narrows the previous answer ("Nein, ich meine …"). */
+  correction?: boolean;
 };
+
+/** How much of the conversation the supervisor and the answer see: the last eight messages. */
+export const HISTORY_MESSAGES = 8;
+// Corrections need the whole conversation understood: V4 Pro plans them, everything else the fast model.
+const correctionNote = "Korrektur: Die Nachricht korrigiert oder präzisiert deine vorige Antwort. Lies im Verlauf, worum es ging, behalte Thema, " +
+  "Zeitraum, Konto und Händler bei und ändere nur, was der Nutzer korrigiert; hol nur Daten, die dafür noch fehlen. Wähle art antwort – eine aktion nur, " +
+  "wenn er ausdrücklich etwas anlegen, ändern oder löschen lassen will.";
 
 const team = agentIds.map((agent) => `${agentWords[agent]} (${agentLabel[agent]}): ` + agentTools(agent).filter((tool) => tool !== "ask")
   .map((tool) => `${tool}${changingTools.includes(tool) ? "*" : ""} = ${toolDescriptions[tool]}`).join("; ")).join("\n") +
@@ -118,8 +127,8 @@ function overviewLine(overview: Record<string, unknown> | undefined): string {
 /** One call to the supervisor; DeepSeek only. Without it (or without a readable plan) the caller routes locally. */
 export async function supervise(input: SupervisorInput, options: ChatOptions & { rules?: readonly string[]; prompts?: PromptOverrides } = {}): Promise<Supervision> {
   const { rules = [], prompts, ...chatOptions } = options;
-  const history = (input.history ?? []).slice(-4)
-    .map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text.slice(0, 300) : cleanUntrusted(item.text, 300)}`);
+  const history = (input.history ?? []).slice(-HISTORY_MESSAGES)
+    .map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text.slice(0, 400) : cleanUntrusted(item.text, 500)}`);
   const reply = await chat([
     { role: "system", content: supervisorPrompt(prompts) + rulesSection(rules) },
     { role: "user", content: [
@@ -128,9 +137,10 @@ export async function supervise(input: SupervisorInput, options: ChatOptions & {
       input.context?.planned.length ? `Geplante Ausgaben: ${input.context.planned.join(", ")}` : "",
       history.length ? `Verlauf:\n${history.join("\n")}` : "",
       input.hint ? `Die Regeln würden ${input.hint} nehmen (${toolDescriptions[input.hint]}).` : "",
+      input.correction ? correctionNote : "",
       `Nachricht: ${input.message}`,
     ].filter(Boolean).join("\n") },
-  ], { task: "supervise", cloudOnly: true, maxTokens: 320, temperature: 0, ...chatOptions });
+  ], { task: "supervise", cloudOnly: true, maxTokens: 320, temperature: 0, ...(input.correction ? { tier: "pro" as const } : {}), ...chatOptions });
   const plan = cleanSupervision(parseJson(reply.content), input.hint, input.message);
   if (!plan) throw new AiUnavailableError("Der Supervisor hat keinen lesbaren Plan geliefert.");
   return plan;

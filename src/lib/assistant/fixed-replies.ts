@@ -109,8 +109,8 @@ export function fixedReply(input: string, now = new Date()): FixedReply | undefi
 }
 
 /**
- * Only the commands among the fixed replies: arithmetic (the code calculates, not the model), switching the theme or a device
- * setting, opening a page, and actions that only work on their own page. Answers to questions go to the supervisor.
+ * Only the system commands among the fixed replies: date and time, switching the theme or a device setting, opening a page,
+ * and actions that only work on their own page. Everything else – arithmetic included – goes to the supervisor.
  */
 export function fixedCommand(input: string, now = new Date()): FixedReply | undefined {
   const found = fixed(input, now);
@@ -121,6 +121,20 @@ export function fixedCommand(input: string, now = new Date()): FixedReply | unde
 const askDate = /^(?:welche[rns]? (?:tag|datum) (?:ist|haben wir)(?: heute)?|was für ein tag ist heute|der wievielte ist heute|den wievielten haben wir(?: heute)?|(?:heutiges )?datum)[\s?!.]*$/;
 const askTime = /^(?:wie (?:spät|spaet) ist es|wie ?viel uhr (?:ist es|haben wir)|uhrzeit)(?: (?:jetzt|gerade|bitte))?[\s?!.]*$/;
 
+/**
+ * "Was ist 15 % von 2400?", "Rechne 1200 / 12": the result the code computed, as a sentence. The supervisor's answer gets it as
+ * evidence, so the model words it but never calculates; without DeepSeek it is the reply itself.
+ */
+export function arithmetic(input: string): string | undefined {
+  const lower = normalizeMessage(input).toLowerCase().trim();
+  if (!lower || lower.length > 120) return undefined;
+  const percent = percentOf.exec(lower);
+  if (percent) return `${format(number(percent[1]))} % von ${format(number(percent[2]))} sind ${format(number(percent[1]) * number(percent[2]) / 100)}.`;
+  const math = expression.exec(lower);
+  const result = math ? evaluate(math[1].trim()) : undefined;
+  return math && result !== undefined ? `${math[1].trim().replace(/\s*([+\-*/×÷:])\s*/g, " $1 ")} = ${format(result)}` : undefined;
+}
+
 function fixed(input: string, now: Date): { reply: FixedReply; command: boolean } | undefined {
   const lower = normalizeMessage(input).toLowerCase().trim();
   if (!lower || lower.length > 120) return undefined;
@@ -128,11 +142,8 @@ function fixed(input: string, now: Date): { reply: FixedReply; command: boolean 
   const answer = (reply: FixedReply) => ({ reply, command: false });
   if (askTime.test(lower)) return command({ text: `Es ist ${now.toLocaleTimeString("de-AT", { hour: "2-digit", minute: "2-digit" })} Uhr.` });
   if (askDate.test(lower)) return command({ text: `Heute ist ${now.toLocaleDateString("de-AT", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}.` });
-  const percent = percentOf.exec(lower);
-  if (percent) return command({ text: `${format(number(percent[1]))} % von ${format(number(percent[2]))} sind ${format(number(percent[1]) * number(percent[2]) / 100)}.` });
-  const math = expression.exec(lower);
-  const result = math ? evaluate(math[1].trim()) : undefined;
-  if (math && result !== undefined) return command({ text: `${math[1].trim().replace(/\s*([+\-*/×÷:])\s*/g, " $1 ")} = ${format(result)}` });
+  const computed = arithmetic(input);
+  if (computed) return answer({ text: computed });
   // Films, weather, recipes, general facts, jokes: not this assistant's job.
   const away = offTopicReply(input);
   if (away) return answer(away);

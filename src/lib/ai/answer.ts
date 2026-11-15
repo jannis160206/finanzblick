@@ -13,7 +13,8 @@ import { cleanFacts, cleanUntrusted, contactsBacked } from "./untrusted";
 
 export const answerRequestSchema = z.object({
   question: z.string().trim().min(1).max(1000),
-  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(500) }).strict()).max(6).optional(),
+  // The conversation so far (the last eight messages), so the answer builds on it.
+  history: z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().max(800) }).strict()).max(8).optional(),
   facts: z.record(z.string(), z.unknown()),
   // What a finance tool already computed for this question; the model may quote it.
   evidence: z.string().max(4000).optional(),
@@ -21,6 +22,8 @@ export const answerRequestSchema = z.object({
   agent: z.enum(agentIds).optional(),
   // The supervisor planned the lookups and now writes the answer from all of their results.
   supervised: z.boolean().optional(),
+  // The question corrects or narrows the previous answer ("Nein, ich meine …").
+  correction: z.boolean().optional(),
 }).strict();
 export type AnswerRequest = z.infer<typeof answerRequestSchema>;
 
@@ -47,7 +50,9 @@ function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, ev
     { role: "user", content: [
       `Fakten (JSON):\n${JSON.stringify(facts)}`,
       evidence ? `${input.supervised ? "Ergebnisse der Spezialisten" : "Werkzeug-Ergebnis"} zu dieser Frage (verlässlich berechnet):\n${evidence}` : "",
-      input.history?.length ? `Verlauf:\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
+      input.history?.length ? `Verlauf (das bisherige Gespräch):\n${input.history.map((item) => `${item.role === "user" ? "Ich" : "Assistent"}: ${item.role === "user" ? item.text : cleanUntrusted(item.text)}`).join("\n")}` : "",
+      input.correction ? "Die Frage korrigiert oder präzisiert deine vorige Antwort: Nimm die Korrektur an, ohne dich lang zu entschuldigen, bleib beim Thema " +
+        "aus dem Verlauf und beantworte die eigentlich gemeinte Frage neu." : "",
       `Frage: ${input.question}`,
     ].filter(Boolean).join("\n\n") },
   ];

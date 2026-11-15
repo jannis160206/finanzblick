@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AssistantCard } from "@/lib/types";
 import { answerKpis, tileLines, trendOf } from "./answer-view";
 import { rawData } from "./conversation";
-import { fixedCommand, fixedReply } from "./fixed-replies";
+import { arithmetic, fixedCommand, fixedReply } from "./fixed-replies";
 
 const plan: AssistantCard = { kind: "answer", title: "Monatsplan · November 2026", total: 1989, lines: [
   { label: "Einnahmen", value: 3000, detail: "laut Plan" },
@@ -43,8 +43,11 @@ describe("answer layout data", () => {
     expect(data).toContain("Befund: Dir bleiben 1.989 € im November.");
   });
 
-  it("keeps only commands as fixed replies; answers to questions are left to the supervisor", () => {
-    expect(fixedCommand("15 % von 2400")?.text).toContain("360");
+  it("keeps only system commands as fixed replies; answers to questions are left to the supervisor", () => {
+    // Arithmetic is computed by the code but worded by the supervisor's answer; only without DeepSeek it is the reply itself.
+    expect(fixedCommand("15 % von 2400")).toBeUndefined();
+    expect(fixedReply("15 % von 2400")?.text).toBe("15 % von 2.400 sind 360.");
+    expect(arithmetic("Rechne 1200 / 12")).toBe("1200 / 12 = 100");
     expect(fixedCommand("Wechsel in den Dark Mode")?.theme).toBe("dark");
     expect(fixedCommand("Öffne die Verträge")?.card?.page?.href).toBeTruthy();
     expect(fixedReply("Ich bin pleite")).toBeDefined();
