@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Dialog } from "radix-ui";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ChatEmptyState, ComposerButton, createLiveRun, LiveAnswer, MessageActions } from "@/components/assistant-chat-parts";
@@ -83,13 +83,13 @@ it("closes only the comment field on Escape, not the assistant dialog around it"
   expect(onOpenChange).not.toHaveBeenCalled();
 });
 
-it("greets with the orchestrator and its specialists and offers starter questions", () => {
+it("greets with the droid alone and offers starter questions", () => {
   const onPick = vi.fn();
-  render(<ChatEmptyState prompts={[{ text: "Zeige mir meine Verträge", agent: "contracts" }, { text: "Wie viel ist noch frei?", agent: "budget" }]}
-    disabled={false} onPick={onPick} />);
+  const { container } = render(<ChatEmptyState prompts={[{ text: "Zeige mir meine Verträge" }, { text: "Wie viel ist noch frei?" }]} disabled={false} onPick={onPick} />);
   expect(screen.getByRole("heading", { name: "Wobei kann ich dir helfen?" })).toBeTruthy();
-  expect(within(screen.getByRole("list", { name: "Dein Assistenten-Team" })).getAllByRole("img").map((bot) => bot.getAttribute("aria-label")))
-    .toEqual(["Umsätze", "Verträge", "Orchestrator", "Budget & Prognose", "Gehalt & Steuern"]);
+  // One bot only, the droid; which specialist works on an answer stays internal.
+  expect([...container.querySelectorAll("[data-bot-avatar]")].map((bot) => bot.getAttribute("data-bot-avatar"))).toEqual(["droid"]);
+  expect(screen.getByRole("img", { name: "Finanz-Assistent" })).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Wie viel ist noch frei?" }));
   expect(onPick).toHaveBeenCalledWith("Wie viel ist noch frei?");
 });
@@ -109,11 +109,11 @@ it("shows only the thinking orb and the current step while an answer is worked o
   live.setText("Bis Monatsende sind 412 € frei");
   expect(await screen.findByText("frei")).toBeTruthy();
   expect(container.querySelector("[data-orb]")?.getAttribute("data-orb")).toBe("composing");
-  expect(screen.getByText("Budget & Prognose · KI")).toBeTruthy();
-  // Once a model took the question, the status names it and the answer is signed with it.
+  // The specialist at work stays internal: no agent name in the chat.
+  expect(screen.queryByText(/Budget & Prognose/)).toBeNull();
+  // Once a model took the question, the status names it.
   act(() => live.setStatus((current) => current && { ...current, model: "DeepSeek Flash" }));
   expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: DeepSeek Flash");
-  expect(screen.getByText("Budget & Prognose · DeepSeek Flash")).toBeTruthy();
   act(() => live.setStatus({ ...workStatus.think, agent: "payroll", model: "Lokal (Qwen)" }));
   expect(screen.getByText("Denke gründlich nach…")).toBeTruthy();
   expect(container.querySelector("[data-status-model]")?.textContent).toBe("Modell: Lokal (Qwen)");

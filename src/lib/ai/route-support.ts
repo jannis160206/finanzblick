@@ -1,11 +1,13 @@
 import { z } from "zod";
-import { authorizeApi } from "@/lib/server/auth";
+import { authorizeApi, requestUserName } from "@/lib/server/auth";
 import { accountErrorResponse, jsonResponse, readJsonBody } from "@/lib/server/http";
 import { AiUnavailableError } from "./client";
+import { accountName, withPrivateNames } from "./private-names";
 
 const busy = globalThis as typeof globalThis & { finanzblickAiBusy?: Set<string> };
 
-type Admitted<T> = { input: T; release: () => void };
+// `names`: the signed-in user's name, masked in every model call of the request.
+type Admitted<T> = { input: T; release: () => void; names: string[] };
 
 async function admit<T>(request: Request, kind: string, schema: z.ZodType<T>, maxBytes: number): Promise<Admitted<T> | Response> {
   const denied = await authorizeApi(request);
@@ -24,7 +26,7 @@ async function admit<T>(request: Request, kind: string, schema: z.ZodType<T>, ma
   const running = (busy.finanzblickAiBusy ??= new Set());
   if (running.has(kind)) return jsonResponse({ error: "Die lokale KI arbeitet bereits." }, 429);
   running.add(kind);
-  return { input: input.data, release: () => running.delete(kind) };
+  return { input: input.data, release: () => running.delete(kind), names: accountName(await requestUserName(request)) };
 }
 
 function failure(error: unknown, request: Request, kind: string): Response {
@@ -42,7 +44,7 @@ export async function handleAiPost<T>(
   const admitted = await admit(request, kind, schema, maxBytes);
   if (admitted instanceof Response) return admitted;
   try {
-    return jsonResponse(await run(admitted.input, request.signal));
+    return jsonResponse(await withPrivateNames(admitted.names, () => run(admitted.input, request.signal)));
   } catch (error) {
     return failure(error, request, kind);
   } finally {
@@ -57,6 +59,11 @@ export async function handleAiStream<T>(
 ): Promise<Response> {
   const admitted = await admit(request, kind, schema, maxBytes);
   if (admitted instanceof Response) return admitted;
+  // The whole stream runs in the request's scope, so the user's name is masked in every model call.
+  return withPrivateNames(admitted.names, () => stream(admitted, request, kind, run));
+}
+
+async function stream<T>(admitted: Admitted<T>, request: Request, kind: string, run: (input: T, signal: AbortSignal) => AsyncGenerator<unknown>): Promise<Response> {
   const events = run(admitted.input, request.signal);
   let first: IteratorResult<unknown>;
   try {

@@ -50,10 +50,20 @@ describe("assistant AI interpretation", () => {
 describe("orchestrator", () => {
   const request = (message: string) => ({ message, asOf: "2026-10-07", context: { goals: ["Japan"], planned: [] } });
 
-  it("answers messages without a money topic in the general chat, without any model call", async () => {
-    expect(await interpretAssistantMessage(request("Erzähl mir einen Witz"))).toEqual({ agent: "general", via: "rule", source: "Regel" });
-    expect(await interpretAssistantMessage(request("Schreib mir ein Gedicht über Sparen"))).toEqual({ agent: "general", via: "rule", source: "Regel" });
-    expect(chat).not.toHaveBeenCalled();
+  it("lets the supervisor decide small talk and creative requests, too; without DeepSeek the rules answer them without a model", async () => {
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ spezialist: "chat", art: "antwort", schritte: [] }) });
+    expect(await interpretAssistantMessage(request("Schreib mir ein Gedicht über Sparen"))).toEqual({ agent: "general", via: "supervisor", source: "KI", supervised: true });
+    chat.mockRejectedValue(new AiUnavailableError());
+    expect(await interpretAssistantMessage(request("Schreib mir ein Gedicht über Sparen"))).toEqual({ agent: "general", via: "rule", source: "Regel", local: true });
+    expect(await interpretAssistantMessage(request("Erzähl mir einen Witz"))).toEqual({ agent: "general", via: "rule", source: "Regel", local: true });
+    expect(chat).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps clear changes with their specialist, without the supervisor", async () => {
+    chat.mockResolvedValueOnce({ content: JSON.stringify({ tool: "edit", goal: "Japan" }) });
+    expect(await interpretAssistantMessage(request("Erhöhe Japan auf 4.000 €"))).toMatchObject({ agent: "budget", via: "rule", tool: "edit" });
+    const [, options] = chat.mock.calls[0] as [unknown, { task: string }];
+    expect(options.task).toBe("action");
   });
 
   it("lets the supervisor answer advice from reading steps instead of asking for an amount", async () => {
@@ -72,14 +82,14 @@ describe("orchestrator", () => {
 
   it("routes locally without the supervisor: one word from the model, the general chat when unsure", async () => {
     chat.mockRejectedValueOnce(new AiUnavailableError()).mockResolvedValueOnce({ content: "umsaetze" });
-    expect(await interpretAssistantMessage(request("Ich hab das Gefühl, ich gebe zu viel aus"))).toEqual({ agent: "transactions", via: "model", source: "KI" });
+    expect(await interpretAssistantMessage(request("Ich hab das Gefühl, ich gebe zu viel aus"))).toEqual({ agent: "transactions", via: "model", source: "KI", local: true });
     const [messages, options] = chat.mock.calls[1] as [{ content: string }[], { maxTokens: number }];
     expect(messages[0].content).toContain("Wenn du nicht sicher bist, antworte chat");
     expect(options.maxTokens).toBeLessThanOrEqual(8);
     chat.mockRejectedValueOnce(new AiUnavailableError()).mockResolvedValueOnce({ content: "Das ist schwer zu sagen, vielleicht budget oder gehalt." });
-    expect(await interpretAssistantMessage(request("Ich bin gestresst wegen Geld"))).toEqual({ agent: "general", via: "fallback", source: "Regel" });
+    expect(await interpretAssistantMessage(request("Ich bin gestresst wegen Geld"))).toEqual({ agent: "general", via: "fallback", source: "Regel", local: true });
     chat.mockRejectedValue(new AiUnavailableError());
-    expect(await interpretAssistantMessage(request("Ich bin gestresst wegen Geld"))).toEqual({ agent: "general", via: "fallback", source: "Regel" });
+    expect(await interpretAssistantMessage(request("Ich bin gestresst wegen Geld"))).toEqual({ agent: "general", via: "fallback", source: "Regel", local: true });
   });
 
   it("hands a change to its specialist, who interprets with its own tools only", async () => {

@@ -168,6 +168,16 @@ export function aiRouting(config = readAiConfig()): { task: AiTask; use: ModelUs
 
 // Personal details never leave the device in clear text: names, IBANs, e-mails, phone, card and account numbers become
 // placeholders before the cloud call and are put back into its answer.
+const listedNames = (value: string | undefined) => (value ?? "").split(/[,;]/).map((item) => item.replace(/\s+/g, " ").trim()).filter((item) => item.length >= 2);
+/**
+ * Names masked in every cloud call besides the detected people: the user's own from FINANZBLICK_PRIVATE_NAMES (and
+ * MCP_PRIVATE_NAMES) and, inside an API request, the signed-in account's name (see private-names.ts).
+ */
+export function privateNames(env: Record<string, string | undefined> = process.env): string[] {
+  const request = (globalThis as { finanzblickRequestNames?: () => string[] }).finanzblickRequestNames?.() ?? [];
+  return [...new Set([...listedNames(env.FINANZBLICK_PRIVATE_NAMES), ...listedNames(env.MCP_PRIVATE_NAMES), ...request])];
+}
+
 function maskMessages(messages: ChatMessage[], guard: Pseudonymizer): ChatMessage[] {
   return messages.map((message) => {
     if (message.role === "system") return message;
@@ -296,7 +306,7 @@ export async function chat(messages: ChatMessage[], options: ChatOptions = {}): 
     const cached = options.cache?.get(cacheKey(use, messages, options, false));
     if (cached) return { ...cached, use: finish(options, cached.use) };
     const started = Date.now();
-    const guard = createPseudonymizer();
+    const guard = createPseudonymizer(privateNames());
     try {
       const response = await postCloud(target, maskMessages(messages, guard), options, false);
       const parsed = completionSchema.parse(await response.json());
@@ -404,7 +414,7 @@ export async function* chatStream(messages: ChatMessage[], options: ChatOptions 
       return;
     }
     const started = Date.now();
-    const guard = createPseudonymizer();
+    const guard = createPseudonymizer(privateNames());
     let response: Response | undefined;
     try {
       response = await postCloud(target, maskMessages(messages, guard), options, true);

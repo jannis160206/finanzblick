@@ -50,6 +50,7 @@ Optionale Variablen in `.env.local`:
 | `FINANZBLICK_WEB_SEARCH` | an | `off` schaltet die automatische Websuche des Finanz-Assistenten ab |
 | `FINANZBLICK_SEARXNG_URL` | – | eigene SearXNG-Instanz (JSON-Format aktiviert) statt DuckDuckGo und Bing, z. B. `http://127.0.0.1:8888` |
 | `BRAVE_SEARCH_API_KEY` | – | Brave-Search-API statt DuckDuckGo und Bing, wenn kein SearXNG gesetzt ist |
+| `FINANZBLICK_PRIVATE_NAMES` | – | Eigene Namen (z. B. „Anna Berger, A. Berger“), die nie an DeepSeek gehen; der Name des angemeldeten Kontos zählt automatisch |
 | `FINANZBLICK_FEEDBACK_FILE` | `data/assistant-feedback.json`, in Produktion neben der Datenbank | Absoluter Pfad der Feedback-Datei des Finanz-Assistenten |
 
 ## DeepSeek je Aufgabe, Qwen als Rückfall
@@ -66,8 +67,8 @@ Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das l
 | Websuche | `deepseek-flash` | Zusammenfassung der Suchtreffer |
 | Auslesen | `deepseek-flash` | Kassenbon-Artikel, Logo-Suche |
 | Folgefragen | `deepseek-flash` | 2–3 Vorschläge zum selben Thema unter jeder Antwort; ohne DeepSeek feste Vorschläge zum Thema, nie Qwen |
-| Supervisor | `deepseek-v4-pro` | zerlegt unklare Fragen: Spezialisten, bis zu drei Lese-Werkzeuge oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
-| Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt die Antwort aus den Ergebnissen der Spezialisten; Steuerfragen im Denkmodus |
+| Supervisor | `deepseek-v4-pro` | jede Frage, die kein Befehl ist: sieht den Datenüberblick, wählt 0–4 Lese-Werkzeuge, lokales Wissen oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
+| Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt jede Antwort aus den Rohdaten der Spezialisten; Steuer-Analysen im Denkmodus |
 | Regel aus Feedback | `deepseek-v4-pro` | 👎-Kommentar → Regel, danach Gold-Eval auf Flash; ohne DeepSeek wartet sie |
 | PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
 | Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |

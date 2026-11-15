@@ -58,7 +58,8 @@ const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+(?=[^a-zäöüß]
 export function freshPart(answer: string, previous?: string): string {
   if (!previous) return answer;
   const before = sentencesOf(previous).map(words);
-  return sentencesOf(answer).filter((sentence) => !before.some((old) => similar(words(sentence), old))).join(" ").trim();
+  return answer.split("\n\n").map((paragraph) => sentencesOf(paragraph).filter((sentence) => !before.some((old) => similar(words(sentence), old))).join(" ").trim())
+    .filter(Boolean).join("\n\n");
 }
 
 // A question rather than a command: "Wann bin ich pleite?", "Kommt noch was Großes?".
@@ -91,6 +92,27 @@ export function conversationRoute(input: { text: string; tool?: AssistantTool; r
   const skipDraft = !!draftAction && (draftAction !== ruleTool || draftAction === "expense") && question && !numbers.length;
   if (!tool) return { converse: skipDraft, skipDraft };
   return { tool, converse: conversational || guessed, skipDraft: false };
+}
+
+const toneWord = { good: "positiv", warn: "Achtung", bad: "negativ", info: "" } as const;
+
+/**
+ * A worker's result as raw data for the supervisor: the card's figures line by line with their tone, the trend of its chart
+ * and the tool's finding, amounts written out so the answer check counts them as backed. The supervisor writes the words.
+ */
+export function rawData(label: string, question: string, result: AgentResult, max = 750): string {
+  const card = result.card;
+  const parts = [`[${label}] ${question}`];
+  if (card) {
+    parts.push(`${card.title}${card.total !== undefined ? ` · Summe ${currency(card.total)}` : ""}`);
+    for (const line of card.lines.slice(0, 14)) parts.push(`- ${line.label}${line.value !== undefined ? `: ${currency(line.value)}` : ""}` +
+      `${line.detail ? ` (${line.detail})` : ""}${line.tone && toneWord[line.tone] ? ` [${toneWord[line.tone]}]` : ""}`);
+    for (const series of card.chart?.series ?? []) parts.push(`Verlauf ${series.name}: ${series.points.map((point) => `${point.label} ${currency(point.value)}`).join(" → ")}`);
+    if (card.note) parts.push(`Hinweis: ${card.note}`);
+  }
+  if (result.text.trim()) parts.push(`Befund: ${result.text.replace(/\s+/g, " ").trim().slice(0, card ? 220 : 500)}`);
+  const text = parts.join("\n");
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 // The tool's own result, as plain text the model may quote; amounts are written out so they count as backed.

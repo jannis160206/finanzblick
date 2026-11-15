@@ -2,7 +2,7 @@ import { z } from "zod";
 import { rulesFor, type RuleText } from "@/lib/assistant/feedback-rules";
 import { agentIds, type AgentId } from "@/lib/assistant/orchestrator";
 import { chat, chatStream, stripThinking, type ChatMessage, type ChatOptions } from "./client";
-import { needsReasoning, taxQuestion, type AiTask, type ModelUse } from "./models";
+import { analysisQuestion, needsReasoning, taxQuestion, type AiTask, type ModelUse } from "./models";
 import { answerPrompt } from "./specialists";
 import { numbersBacked } from "./summary";
 import { cleanFacts, cleanUntrusted, contactsBacked } from "./untrusted";
@@ -55,11 +55,12 @@ const answerOptions = (agent: AgentId = "general", supervised = false) => superv
 
 /**
  * Web search summaries and ordinary questions take the fast model, analyses and tax questions the thinking mode. The supervisor
- * writes from results its workers already computed, so V4 Pro answers without the slow thinking mode, except for tax questions.
+ * writes from results its workers already computed, so V4 Pro answers without the slow thinking mode, except for tax analyses
+ * ("Warum zahle ich so viel Lohnsteuer?"); "Wie viel netto bekomme ich?" is a figure the payroll tool already computed.
  */
 export function answerTask(input: Pick<AnswerRequest, "question" | "agent" | "evidence" | "supervised">): AiTask {
   if (input.evidence?.startsWith("Websuche")) return "web";
-  if (input.supervised) return taxQuestion(input.question, input.agent) ? "reasoning" : "synthesize";
+  if (input.supervised) return taxQuestion(input.question, input.agent) && analysisQuestion(input.question) ? "reasoning" : "synthesize";
   return needsReasoning(input.question, input.agent) ? "reasoning" : "chat";
 }
 
@@ -89,10 +90,16 @@ export function answerCheck(agent: AgentId | undefined, facts: Record<string, un
   return (agent ?? "general") === "general" && !personal ? chatBacked : backed;
 }
 
-// Plain chat text: no Markdown emphasis, headings or list markers, one paragraph per answer.
+// Plain chat text: no Markdown emphasis, headings or list markers; paragraphs separated by a blank line stay (at most three).
 export function tidyAnswer(text: string): string {
+  const paragraphs = text.split(/\r?\n\s*\r?\n/).map((paragraph, index) => tidyParagraph(paragraph, index === 0)).filter(Boolean);
+  return [...paragraphs.slice(0, 2), paragraphs.slice(2).join(" ")].filter(Boolean).join("\n\n");
+}
+
+function tidyParagraph(text: string, first: boolean): string {
   const plain = text.split(/\r?\n/).map((line) => line.replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "").trim()).filter(Boolean).join(" ")
     .replace(/\*\*(.+?)\*\*|__(.+?)__/g, "$1$2").replace(/`([^`]*)`/g, "$1");
+  if (!first) return plain;
   // Stock openers ("Kurz gesagt:", "Gute Frage!") and echoing the question ("Du willst wissen, …?") add nothing in a chat.
   const rest = plain.replace(/^(?:kurz gesagt|kurz und knapp|gute frage|klar doch|na klar|gerne?)\s*[:!,.–-]\s*/i, "")
     .replace(/^(?:(?:okay|ok|alles klar|klar),?\s+)?du (?:willst|möchtest|moechtest|fragst|fragst dich|meinst)\b[^?.!]{0,160}\?\s+(?=\S)/i, "")
@@ -104,14 +111,14 @@ export function tidyAnswer(text: string): string {
 // A dot before a lowercase word ("am 25.8. und …", "z. B. etwas") ends no sentence.
 const sentences = (text: string) => text.split(/(?<=[.!?])\s+(?=[^a-zäöüß])/).filter(Boolean);
 
-// Sentences with an invented amount, link or account number are dropped; the rest of the answer survives.
+// Sentences with an invented amount, link or account number are dropped; the rest of the answer survives, paragraph by paragraph.
 function groundedText(content: string, source: object, check: (sentence: string, source: object) => boolean = backed) {
-  const text = tidyAnswer(unwrapJson(stripThinking(content))).replace(/\s+/g, " ").trim().slice(0, 1200);
+  const text = tidyAnswer(unwrapJson(stripThinking(content))).slice(0, 1400);
   if (text.startsWith("{")) return undefined;
   // Small models sometimes loop; a sentence said twice is kept once.
   const seen = new Set<string>();
-  const kept = sentences(text).filter((sentence) => check(sentence, source))
-    .filter((sentence) => { const key = sentence.toLowerCase(); return !seen.has(key) && !!seen.add(key); }).join(" ").trim();
+  const kept = text.split("\n\n").map((paragraph) => sentences(paragraph.replace(/\s+/g, " ").trim()).filter((sentence) => check(sentence, source))
+    .filter((sentence) => { const key = sentence.toLowerCase(); return !seen.has(key) && !!seen.add(key); }).join(" ").trim()).filter(Boolean).join("\n\n");
   return kept.length >= 2 && /\p{L}/u.test(kept) ? kept : undefined;
 }
 

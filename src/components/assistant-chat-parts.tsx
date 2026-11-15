@@ -4,22 +4,14 @@ import { type ComponentPropsWithoutRef, type FormEvent, type ReactNode, useEffec
 import { AnimatePresence, m } from "motion/react";
 import { useTheme } from "next-themes";
 import { BorderBeam } from "border-beam";
-import { BotAvatar, type BotAvatarState, type BotAvatarType } from "bot-avatars";
+import { BotAvatar, type BotAvatarState } from "bot-avatars";
 import { MetalFx } from "metal-fx";
 import { ThinkingOrb } from "thinking-orbs";
 import { ArrowUp, Check, Copy, MessageSquarePlus, RefreshCw, Square, ThumbsDown, ThumbsUp } from "lucide-react";
 import { dialogSpring, exitTween, useMotionMode } from "@/components/ui/premium-dialog/motion";
-import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
 import { workStatus, type WorkActivity, type WorkStatus } from "@/lib/assistant/status";
 import { cn } from "@/lib/utils";
 
-/** Each agent has its own bot: the star is the orchestrator (and the general chat it falls back to), every specialist a shape of its own. */
-export const agentAvatar: Record<AgentId, BotAvatarType> = {
-  general: "star", transactions: "droid", contracts: "flower", budget: "clover", payroll: "mech",
-};
-export const agentName: Record<AgentId, string> = {
-  general: "Orchestrator", transactions: "Umsätze", contracts: "Verträge", budget: "Budget & Prognose", payroll: "Gehalt & Steuern",
-};
 
 // BorderBeam and MetalFx only follow the system theme on their own; the app has its own switch.
 function useAppTheme(): "dark" | "light" {
@@ -27,14 +19,15 @@ function useAppTheme(): "dark" | "light" {
 }
 
 /**
- * An agent's bot. `working` hops while it computes, `default` looks around, `sleeping` dozes until it is needed.
- * `still` keeps the pose without motion (older messages, reduced motion); without a label it is decoration.
+ * The assistant's one face, the droid; which specialist worked on an answer stays internal. `working` hops while it computes,
+ * `default` looks around, `sleeping` dozes. `still` keeps the pose without motion (older messages, reduced motion); without a
+ * label it is decoration.
  */
-export function AgentAvatar({ agent, state = "default", size = 32, still, label, className }: {
-  agent: AgentId; state?: BotAvatarState; size?: number; still?: boolean; label?: string; className?: string;
+export function DroidAvatar({ state = "default", size = 32, still, label, className }: {
+  state?: BotAvatarState; size?: number; still?: boolean; label?: string; className?: string;
 }) {
   const mode = useMotionMode();
-  return <BotAvatar type={agentAvatar[agent]} state={state} size={size} paused={still || mode !== "full"} interactive={!still && mode === "full"}
+  return <BotAvatar type="droid" state={state} size={size} paused={still || mode !== "full"} interactive={!still && mode === "full"}
     className={cn("shrink-0", className)} {...(label ? { "aria-label": label, title: label } : { "aria-hidden": true })} />;
 }
 
@@ -143,7 +136,6 @@ export function LiveAnswer({ live }: { live: LiveRunStore }) {
         {text ? <div className="rounded-2xl border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
           <StatusLine status={status} className="mb-1.5" />
           <span className="sr-only">Assistent: </span><StreamingText text={text} />
-          {status.agent && status.agent !== "general" && <span className="mt-1.5 block text-2xs text-muted-foreground">{agentLabel[status.agent]} · {status.model?.replace(" · Denkmodus", "") ?? "KI"}</span>}
         </div>
           : <div className="rounded-2xl border border-border/60 bg-card px-4 py-2.5 shadow-card"><StatusLine status={status} /></div>}
       </GlowFrame>
@@ -151,11 +143,11 @@ export function LiveAnswer({ live }: { live: LiveRunStore }) {
   </div>;
 }
 
-/** The orb that worked on an answer gives way to the bot of the agent who wrote it; afterwards only the bot stays. */
-export function HandoffAvatar({ agent, activity, live }: { agent: AgentId; activity: WorkActivity; live: boolean }) {
+/** The orb that worked on an answer gives way to the droid; afterwards only the droid stays. */
+export function HandoffAvatar({ activity, live }: { activity: WorkActivity; live: boolean }) {
   const mode = useMotionMode();
   const [orb, setOrb] = useState(true);
-  if (mode !== "full") return <AgentAvatar agent={agent} still={!live} className="mt-0.5" />;
+  if (mode !== "full") return <DroidAvatar still={!live} className="mt-0.5" />;
   return <span className="relative mt-0.5 grid size-8 shrink-0 place-items-center" data-handoff="">
     {orb && <m.span className="absolute inset-0 grid place-items-center" initial={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
       animate={{ opacity: 0, scale: 0.4, filter: "blur(4px)" }} transition={{ duration: 0.26, ease: [0.32, 0.72, 0, 1] }} onAnimationComplete={() => setOrb(false)}>
@@ -163,7 +155,7 @@ export function HandoffAvatar({ agent, activity, live }: { agent: AgentId; activ
     </m.span>}
     <m.span className="inline-flex" initial={{ opacity: 0, scale: 0.5, filter: "blur(4px)" }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }}
       transition={{ ...dialogSpring, delay: 0.08 }}>
-      <AgentAvatar agent={agent} still={!live} />
+      <DroidAvatar still={!live} />
     </m.span>
   </span>;
 }
@@ -200,33 +192,26 @@ export function MessageEnter({ animate, mine, children, className, ...rest }: {
     animate={{ opacity: 1, y: 0, x: 0, scale: 1 }} transition={mode === "full" ? dialogSpring : { duration: 0.18 }}>{children}</m.div>;
 }
 
-const team: AgentId[] = ["transactions", "contracts", "general", "budget", "payroll"];
-
-/** Calm start: the orchestrator with its four specialists, who wake up when a matching question is pointed at. */
+/** Calm start: the droid, which looks up when a suggestion is pointed at. */
 export function ChatEmptyState({ prompts, disabled, onPick }: {
-  prompts: { text: string; agent: AgentId }[]; disabled: boolean; onPick: (text: string) => void;
+  prompts: { text: string }[]; disabled: boolean; onPick: (text: string) => void;
 }) {
   const mode = useMotionMode();
-  const [pointed, setPointed] = useState<AgentId>();
+  const [pointed, setPointed] = useState(false);
   const item = (index: number) => mode === "full"
     ? { initial: { opacity: 0, y: 8, scale: 0.96 }, animate: { opacity: 1, y: 0, scale: 1 }, transition: { ...dialogSpring, delay: 0.06 + index * 0.05 } }
     : mode === "reduced" ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { duration: 0.2 } } : { initial: false as const };
   return <section className="flex flex-col items-center px-2 pt-4 pb-2 text-center" aria-labelledby="assistant-welcome">
-    <ul className="flex items-end justify-center gap-2.5 sm:gap-3.5" aria-label="Dein Assistenten-Team">
-      {team.map((agent, index) => <m.li key={agent} {...item(index)} className="flex">
-        <AgentAvatar agent={agent} size={agent === "general" ? 64 : 40} label={agentName[agent]}
-          state={agent === "general" || pointed === agent ? "default" : "sleeping"} />
-      </m.li>)}
-    </ul>
-    <m.h2 {...item(5)} id="assistant-welcome" className="mt-5 text-lg font-semibold tracking-tight text-balance">Wobei kann ich dir helfen?</m.h2>
-    <m.p {...item(6)} className="mt-1.5 max-w-[46ch] text-sm leading-relaxed text-pretty text-muted-foreground">
-      Ich gebe deine Frage an den passenden Spezialisten weiter – für Umsätze, Verträge, Budget oder Gehalt. Gerechnet wird mit deinen echten Zahlen, geändert nur, was du bestätigst.
+    <m.div {...item(0)} className="flex"><DroidAvatar size={64} label="Finanz-Assistent" state={pointed ? "working" : "default"} /></m.div>
+    <m.h2 {...item(1)} id="assistant-welcome" className="mt-5 text-lg font-semibold tracking-tight text-balance">Wobei kann ich dir helfen?</m.h2>
+    <m.p {...item(2)} className="mt-1.5 max-w-[46ch] text-sm leading-relaxed text-pretty text-muted-foreground">
+      Ich schaue in deine Zahlen, rechne nach oder recherchiere im Netz – und antworte dir direkt. Geändert wird nur, was du bestätigst.
     </m.p>
     <ul className="mt-5 flex flex-wrap justify-center gap-2" aria-label="Vorschläge zum Start">
-      {prompts.map((prompt, index) => <m.li key={prompt.text} {...item(7 + index)}>
+      {prompts.map((prompt, index) => <m.li key={prompt.text} {...item(3 + index)}>
         <button type="button" disabled={disabled} onClick={() => onPick(prompt.text)}
-          onPointerEnter={() => setPointed(prompt.agent)} onPointerLeave={() => setPointed(undefined)}
-          onFocus={() => setPointed(prompt.agent)} onBlur={() => setPointed(undefined)}
+          onPointerEnter={() => setPointed(true)} onPointerLeave={() => setPointed(false)}
+          onFocus={() => setPointed(true)} onBlur={() => setPointed(false)}
           className="min-h-10 rounded-full border border-border bg-card px-4 text-sm text-foreground/85 shadow-card transition-[background-color,border-color,color,transform] duration-150 hover:border-primary/50 hover:bg-primary/8 hover:text-foreground active:scale-[0.97] disabled:opacity-50 motion-reduce:active:scale-100">
           {prompt.text}
         </button>

@@ -103,11 +103,12 @@ describe("specialist context", () => {
     expect(budget).not.toHaveProperty("subscriptions");
     const contracts = agentFacts("contracts", state, dashboard, today, "Welche Abos?");
     expect(Object.keys(contracts)).toEqual(["today", "subscriptions", "priceIncreases", "possibleDuplicateFixedCosts", "memory", "overview"]);
-    // The overview lets every agent answer across topics: accounts, this month, subscriptions, goals, forecast and the latest bookings.
-    expect(Object.keys(contracts.overview as object)).toEqual(["accounts", "totalOnAllAccounts", "thisMonth", "freeUntilSalary", "subscriptions", "goals",
-      "giroForecast", "amex", "salary", "notable", "recentBookings"]);
+    // The overview lets every agent answer across topics: accounts, this month with budgets and categories, the year, contracts, goals,
+    // forecast, salary and the latest bookings.
+    expect(Object.keys(contracts.overview as object)).toEqual(["accounts", "totalOnAllAccounts", "thisMonth", "budgets", "spendingByCategory", "yearToDate",
+      "freeUntilSalary", "subscriptions", "upcoming", "goals", "giroForecast", "amex", "salary", "notable", "recentBookings"]);
     const recent = (contracts.overview as { recentBookings: { date: string; name: string }[] }).recentBookings;
-    expect(recent.length).toBeLessThanOrEqual(8);
+    expect(recent.length).toBeLessThanOrEqual(12);
     expect(recent.every((item, index) => item.date <= today && (index === 0 || recent[index - 1].date >= item.date))).toBe(true);
     expect(JSON.stringify(recent)).not.toMatch(/AT\d{2}\s?\d{4}/);
     expect(agentFacts("payroll", state, dashboard, today, "Wie viel netto?")).toHaveProperty("payroll.latestPayslip.net", 2780);

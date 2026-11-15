@@ -54,6 +54,9 @@ const reasoningWords = /\b(?:warum|wieso|weshalb|analysier\w*|analyse|vergleich\
 export const taxQuestion = (question: string, agent?: string) =>
   agent === "payroll" && /\b(?:\w*steuer\w*|netto|brutto|sv|sozialversicherung|\w*sechstel|veranlagung|absetz\w*|progression)\b/i.test(question);
 
+/** "Warum …", "Lohnt sich …", comparisons and strategies: questions that want an analysis rather than a figure. */
+export const analysisQuestion = (question: string) => reasoningWords.test(question);
+
 /** Analyses, tax questions and "should I …" advice get the thinking model; short or casual questions stay fast. */
 export function needsReasoning(question: string, agent?: string): boolean {
   const text = question.trim();

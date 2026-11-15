@@ -7,6 +7,7 @@ import {
 } from "./client";
 import { readAiConfig, readCloudConfig, type AiConfig } from "./config";
 import { modelLabel, modelTitle, needsReasoning, type ModelUse } from "./models";
+import { accountName, withPrivateNames } from "./private-names";
 
 const env = { DEEPSEEK_API_KEY: "sk-test-1234567890" };
 const config: AiConfig = readAiConfig(env);
@@ -192,6 +193,18 @@ describe("privacy and tokens", () => {
     expect(reply.content).toBe("Die Überweisung an Max Mustermann ging auf AT611904300234573201.");
   });
 
+  it("never sends the user's own name: the signed-in account and FINANZBLICK_PRIVATE_NAMES are masked, amounts and shops stay", async () => {
+    const { calls, fetcher } = stub(() => completion("Person-1, bei Billa hast du 42 € ausgegeben."));
+    const names = accountName("anna.berger");
+    expect(names).toEqual(["Anna Berger"]);
+    expect(accountName("admin")).toEqual([]);
+    const reply = await withPrivateNames(names, () => chat([{ role: "user", content: "Ich bin Anna Berger. Wie viel war Billa (42 €)?" }], { config, fetcher }));
+    const sent = JSON.stringify(calls[0].body.messages);
+    expect(sent).not.toMatch(/anna|berger/i);
+    expect(sent).toContain("Billa (42 €)");
+    expect(reply.content).toBe("Anna Berger, bei Billa hast du 42 € ausgegeben.");
+  });
+
   it("streams placeholders whole, even when a chunk splits them, and counts the streamed tokens", async () => {
     const { calls, fetcher } = stub(() => sse(["Das ging an Pers", "on-1", " am 3.11."], { prompt_tokens: 50, completion_tokens: 9 }));
     const pieces: string[] = [];
@@ -215,9 +228,9 @@ describe("privacy and tokens", () => {
   });
 
   it("reports the models of an interpretation", async () => {
-    const { fetcher } = stub(() => completion("{\"tool\":\"query\",\"category\":\"Lebensmittel\"}"));
+    const { fetcher } = stub(() => completion("{\"spezialist\":\"umsaetze\",\"art\":\"antwort\",\"schritte\":[{\"werkzeug\":\"query\",\"frage\":\"Essen im Oktober\"}]}"));
     const reply = await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober fürs Essen ausgegeben?", asOf: "2026-11-14" }, { config, fetcher });
-    expect(reply).toMatchObject({ tool: "query", source: "KI", models: [{ provider: "deepseek", model: "deepseek-flash", task: "route" }] });
+    expect(reply).toMatchObject({ supervised: true, steps: [{ tool: "query" }], source: "KI", models: [{ provider: "deepseek", model: "deepseek-v4-pro", task: "supervise" }] });
     const offline = await interpretAssistantMessage({ message: "Wie viel hab ich im Oktober fürs Essen ausgegeben?", asOf: "2026-11-14" },
       { config: { ...local, enabled: false }, fetcher });
     expect(offline.models).toBeUndefined();

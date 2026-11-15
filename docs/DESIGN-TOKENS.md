@@ -198,3 +198,14 @@ Auf der Umsatzseite nutzen alle Pop-ups diese Bausteine: Buchungsdetails mit Akt
 Umsatzseite: Auszugsablage mit Icon-Kachel (`data-dragging` → Rahmen in Primärfarbe, `scale-[1.01]`, Kachel hebt sich), `LedgerSummary` (drei Karten Einnahmen/Ausgaben/Saldo), `SelectionCheckbox` mit gezeichnetem Haken bzw. Strich für „teilweise“, Kartenliste (`rounded-2xl`, `shadow-xs`, Tageskopf ohne Balken), Tabellenaktionen mit `pointer-fine:opacity-0` bis Hover/Fokus, Seitenwechsel blendet den Tabellenkörper ein (`fade-in`, bei reduzierter Bewegung aus) und `LedgerFooter` mit `pageWindow()` (max. 7 Seitenfelder, Lücken als „…“).
 
 Bewegung: `full` (Federn, gestaffelte Inhalte 35 ms), `reduced` (nur Opacity 120 ms; System- **und** App-Einstellung), `none` (Tests: sofortiges Ein-/Aushängen).
+
+## Antwort-Layout des Finanz-Assistenten (`src/components/assistant-answer.tsx`)
+
+| Baustein | Tokens und Verhalten |
+|---|---|
+| Kernaussage | erster Absatz `font-medium text-foreground`, weitere `text-foreground/90`, Abstand `space-y-2`; Beträge und Prozente `font-semibold tabular-nums`, negative `text-destructive`, mit „+“ `text-success` |
+| KPI-Badge | `rounded-xl px-3 py-2 ring-1 ring-inset`; Ton positiv `bg-success-soft text-success ring-success/20`, negativ `bg-destructive-soft text-destructive ring-destructive/20`, Achtung `bg-warning-soft text-warning ring-warning/25`, neutral `bg-muted/40 ring-border/60`; Ton zusätzlich als Text für Screenreader |
+| Bento-Grid | Container-Query `@container`: Kennzahlen 2 Spalten, ab `@lg` 4; Kacheln 1 Spalte, ab `@sm` 2 (eine ungerade letzte Kachel über beide); Kachel `rounded-xl border border-border/60 bg-background/50 p-3` |
+| Sparkline | SVG 96 × 28, Linie 1,75 px mit Fläche `opacity-10` in `currentColor`; Ton wie KPI, neutral in `text-primary`; Trend-Chip mit `TrendingUp`/`TrendingDown`/`Minus` |
+| Farbpunkte in Kacheln | `size-1.5 rounded-full`: `bg-success`, `bg-destructive`, `bg-warning`, neutral `bg-muted-foreground/40` |
+

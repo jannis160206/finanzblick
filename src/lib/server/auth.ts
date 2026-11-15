@@ -27,6 +27,17 @@ export async function requireAccount(): Promise<AccountUser> {
   return user;
 }
 
+/** The signed-in account's login name for an API request; undefined without account mode or session. */
+export async function requestUserName(request: Request): Promise<string | undefined> {
+  try {
+    if (!isAccountMode()) return undefined;
+    const { database } = await getAccountRuntime();
+    return database.currentUser(requestSessionToken(request))?.username;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function authorizeApi(request: Request): Promise<Response | null> {
   try {
     if (!isAccountMode()) return null;

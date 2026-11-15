@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { SECURITY_ACTIVATION_KEY } from "../src/lib/security-mode";
 import { payrollFixture } from "./fixtures/payroll-state";
 
-// Nur synthetische Daten. Die freie Antwort und die Folgefragen der KI sind gemockt; Routing und Werkzeuge laufen echt.
+// Nur synthetische Daten. Die Pläne des Supervisors, die Antworten und die Folgefragen der KI sind gemockt; die Werkzeuge laufen echt.
 const storageKey = "finanzdashboard.v1";
 
 async function prepare(page: Page, width: number, theme: "light" | "dark") {
@@ -29,43 +29,77 @@ test.describe("assistant orchestrator", () => {
   test.skip(process.env.FINANZBLICK_AUTH === "true", "Seeds the browser-mode store.");
 
   for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
-    test(`routes small talk, a general question and a payroll question to the right agent at ${width}px (${theme})`, async ({ page }, testInfo) => {
+    test(`lets the supervisor answer every question with the droid and lays out the results at ${width}px (${theme})`, async ({ page }, testInfo) => {
       await prepare(page, width, theme);
-      const answers: { agent?: string; facts?: Record<string, unknown> }[] = [];
+      // The supervisor's plans are mocked (DeepSeek V4 Pro decides them in production); the workers run the real tools on synthetic data.
+      const plans: Record<string, object> = {
+        "Hallo": { agent: "general", steps: [] },
+        "Was hältst du von Bitcoin?": { agent: "general", steps: [] },
+        "Wie viel netto bekomme ich?": { agent: "payroll", steps: [{ tool: "payroll", question: "Wie viel netto bekomme ich?" }] },
+        "Wird mein Konto knapp?": { agent: "budget", steps: [{ tool: "forecast", question: "Wird mein Konto knapp?" }] },
+      };
+      const routed: { message: string; overview?: Record<string, unknown> }[] = [];
+      await page.route("**/api/ai/assistant", async (route) => {
+        const body = route.request().postDataJSON() as { message: string; overview?: Record<string, unknown> };
+        routed.push(body);
+        await route.fulfill({ json: { ...plans[body.message], via: "supervisor", supervised: true, source: "KI",
+          models: [{ provider: "deepseek", model: "deepseek-v4-pro", task: "supervise" }] } });
+      });
+      const answers: { question: string; agent?: string; facts?: Record<string, unknown>; evidence?: string; supervised?: boolean }[] = [];
+      const replies: Record<string, string> = {
+        "Hallo": "Hallo! Schön, dass du da bist.",
+        "Was hältst du von Bitcoin?": "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.",
+        "Wie viel netto bekomme ich?": "Du bekommst 2.780 € netto im Monat.",
+        "Wird mein Konto knapp?": "Ja, dein Girokonto wird knapp.\n\nPlan die Sparrate erst nach dem Gehalt ein.",
+      };
       await page.route("**/api/ai/answer**", async (route) => {
-        answers.push(route.request().postDataJSON());
-        await route.fulfill({
-          contentType: "application/x-ndjson; charset=utf-8",
-          body: [{ model: { provider: "deepseek", model: "deepseek-flash", task: "chat" } }, { delta: "Spannend, aber ziemlich schwankend." },
-            { done: true, ok: true, text: "Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst." }]
-            .map((event) => JSON.stringify(event)).join("\n") + "\n",
-        });
+        const body = route.request().postDataJSON() as (typeof answers)[number];
+        answers.push(body);
+        const text = replies[body.question] ?? "Okay.";
+        await route.fulfill({ contentType: "application/x-ndjson; charset=utf-8",
+          body: [{ model: { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" } }, { delta: text.slice(0, 6) }, { done: true, ok: true, text }]
+            .map((event) => JSON.stringify(event)).join("\n") + "\n" });
       });
       await page.goto("/");
       await page.getByRole("button", { name: /^Finanz-Assistent öffnen/ }).click();
       const chat = page.getByRole("region", { name: "Chat mit dem Finanz-Assistenten" });
 
-      // Small talk: answered instantly by the general chat, without the model.
+      // Even small talk goes to the supervisor and DeepSeek writes the answer; no fixed reply.
       await ask(page, "Hallo");
-      await expect(chat.getByText(/^(?:Guten Morgen|Hallo|Guten Abend)! /)).toBeVisible();
+      await expect(chat.getByText("Hallo! Schön, dass du da bist.")).toBeVisible();
+      // The supervisor sees an overview of the user's data: amounts, accounts and bookings, but no IBAN.
+      expect(Object.keys(routed[0].overview ?? {})).toEqual(expect.arrayContaining(["accounts", "thisMonth", "budgets", "subscriptions", "goals", "recentBookings"]));
+      expect(JSON.stringify(routed[0].overview)).not.toMatch(/\bAT\d{2}(?: ?\d{4}){4}/);
 
-      // Nothing about own money: the general chat answers in its own voice and sees no personal facts.
+      // Nothing about own money: the general chat sees no personal facts.
       await ask(page, "Was hältst du von Bitcoin?");
       await expect(chat.getByText("Spannend, aber ziemlich schwankend. Nur mit Geld, das du länger nicht brauchst.")).toBeVisible();
-      expect(answers.at(-1)).toMatchObject({ agent: "general", facts: { today: expect.any(String) } });
+      expect(answers.at(-1)).toMatchObject({ agent: "general", supervised: true });
       expect(Object.keys(answers.at(-1)?.facts ?? {})).toEqual(["today"]);
-      // The answer names the model that wrote it instead of a plain "KI".
-      await expect(chat.locator('[data-model="deepseek-flash"]').last()).toHaveText("DeepSeek Flash");
-      // DeepSeek's follow-up questions replace the fixed ones under the newest answer.
+      await expect(chat.locator('[data-model="deepseek-v4-pro"]').last()).toHaveText("DeepSeek V4 Pro");
       await expect(chat.getByRole("group", { name: "Vorschläge von DeepSeek" }).getByRole("button")).toHaveText(["Wie viel Bitcoin wäre vertretbar?", "Was ist ein ETF?"]);
 
-      // A payroll question goes to the Gehalt & Steuern specialist; its tool computes the numbers, no model needed.
+      // The payroll tool returns raw data; the supervisor writes the words, the result is a tile below.
       await ask(page, "Wie viel netto bekomme ich?");
-      const payroll = chat.getByRole("article", { name: /^Gehalt · / });
+      await expect(chat.getByText("Du bekommst 2.780 € netto im Monat.")).toBeVisible();
+      expect(answers.at(-1)?.evidence).toMatch(/^Rohdaten der Spezialisten[\s\S]*\[Gehaltsübersicht\] Wie viel netto bekomme ich\?/);
+      const payroll = chat.getByRole("list", { name: "Ergebnisse" }).last().getByRole("article", { name: /^Gehalt · / });
       await expect(payroll).toBeVisible();
-      await expect(chat.getByText("Gehalt & Steuern", { exact: true }).last()).toBeVisible();
+      await payroll.getByRole("button", { name: "Details" }).click();
       await expect(payroll.getByText(/^Nächste Sonderzahlung/)).toBeVisible();
-      expect(answers).toHaveLength(1);
+
+      // A forecast: key figures as badges, the trend as a sparkline, the key statement first.
+      await ask(page, "Wird mein Konto knapp?");
+      await expect(chat.getByText("Ja, dein Girokonto wird knapp.")).toBeVisible();
+      await expect(chat.getByRole("list", { name: "Kennzahlen" }).last()).toBeVisible();
+      await expect(chat.getByRole("img", { name: /^Verlauf / }).last()).toBeVisible();
+
+      // Only the droid, and which specialist worked stays internal.
+      const bots = await chat.locator("[data-bot-avatar]").evaluateAll((items) => [...new Set(items.map((item) => item.getAttribute("data-bot-avatar")))]);
+      expect(bots).toEqual(["droid"]);
+      const signatures = await chat.locator("[data-model]").allInnerTexts();
+      expect(signatures.length).toBeGreaterThan(0);
+      expect(signatures.filter((label) => /Gehalt & Steuern|Budget & Prognose|Umsätze|Verträge/.test(label))).toEqual([]);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
       await page.screenshot({ path: testInfo.outputPath(`assistant-${width}-${theme}.png`) });
     });

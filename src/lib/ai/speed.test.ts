@@ -142,13 +142,14 @@ describe("agent answers", () => {
     const { calls, fetcher } = stub(() => completion("Eher nicht: Dir bleiben 120 € im Monat. Ein Sparplan mit 80 € wäre drin."));
     const input = { question: "Passt ein Sparplan in mein Budget?", facts: { today: "2026-11-11" }, agent: "budget" as const, evidence: "Was bleibt mir? Frei: 120 €", supervised: true };
     expect((await answerFreeQuestion(input, { config, fetcher })).text).toBe("Eher nicht: Dir bleiben 120 € im Monat.");
-    expect(system(calls)).toContain("führe ihre Ergebnisse zu einer Antwort zusammen");
+    expect(system(calls)).toContain("Der erste Satz ist die Kernaussage");
     expect(answerTask(input)).toBe("synthesize");
     expect(answerTask({ ...input, supervised: undefined })).toBe("chat");
     // Advice is written from computed results without the slow thinking mode; tax questions keep it.
     expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?" })).toBe("synthesize");
     expect(answerTask({ ...input, question: "Lohnt sich ein Sparplan für mich?", supervised: undefined })).toBe("reasoning");
     expect(answerTask({ ...input, agent: "payroll", question: "Warum zahle ich so viel Lohnsteuer?" })).toBe("reasoning");
+    expect(answerTask({ ...input, agent: "payroll", question: "Wie viel netto bekomme ich?" })).toBe("synthesize");
   });
 
   it("never lets an invented small euro amount through", async () => {

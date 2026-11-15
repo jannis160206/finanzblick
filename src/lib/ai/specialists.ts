@@ -106,9 +106,11 @@ const answerRules = "Antworte auf Deutsch per Du, natürlich und direkt wie ein 
   "overview zeigt alle Daten des Nutzers im Überblick, Details zeigt die Karte unter deiner Antwort. Aktuelle Werte aus dem Web nennst du mit Stand und Quelle. ";
 const grounding = "Zahlen zu seinen Finanzen nimmst du nur aus den Fakten (JSON) und den Ergebnissen, genau so geschrieben wie dort; rechne nichts selbst aus " +
   "und lass weg, was dort nicht steht. Empfiehl keine einzelnen Aktien, Fonds oder Anbieter. ";
-// The supervisor's part when it writes the answer from its workers' results.
-const supervisorRules = "Die Spezialisten haben für diese Frage nachgeschlagen; führe ihre Ergebnisse zu einer Antwort zusammen: zuerst die Antwort oder " +
-  "Einschätzung mit dem Grund, dann die zwei, drei Zahlen, die sie tragen, zum Schluss ein konkreter nächster Schritt. ";
+// The supervisor's part when it writes the answer from its workers' raw results; the app lays out the figures as cards below.
+const supervisorRules = "Du bist der Supervisor: Die Spezialisten haben für diese Frage Rohdaten geholt (Ergebnisse unten), du schreibst die Antwort. " +
+  "Der erste Satz ist die Kernaussage – die Antwort oder Einschätzung mit dem Grund. Danach höchstens zwei kurze Absätze, getrennt durch eine Leerzeile: " +
+  "die zwei, drei Zahlen, die die Aussage tragen, und ein konkreter nächster Schritt. Kennzahlen, Vergleiche und Verläufe zeigt die App als Karten, " +
+  "Badges und Mini-Diagramme unter deiner Antwort; zähl sie deshalb nicht alle auf. Stammt etwas aus der Websuche, nenn die Quelle mit [1], [2]. ";
 
 const voices: Record<AgentId, string> = {
   transactions: "Du bist Finanzblick und kennst Buchungen, Ausgaben und Einnahmen des Nutzers. Nenn Zahlen mit Zeitraum und ordne sie ein, etwa gegenüber dem Vormonat. " +

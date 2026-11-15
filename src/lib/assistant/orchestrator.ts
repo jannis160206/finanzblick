@@ -1,17 +1,15 @@
-import { adviceQuestion, isQuestion } from "./conversation";
-import { currentInfo } from "./current-info";
+import { adviceQuestion, changingTools, isQuestion } from "./conversation";
 import { normalizeMessage } from "./normalize";
 import { changingFacts, explicitWeb, foldText, ownData, publicTerms, statedYear } from "./public-facts";
 import { detectSmallTalk } from "./smalltalk";
-import { fixedReply } from "./fixed-replies";
+import { fixedCommand, fixedReply } from "./fixed-replies";
 import { assistantTools, detectTool, isDraftTool, mentionsName, type AssistantTool } from "./tools";
 
 /**
- * Thin orchestrator plus supervisor and workers. The orchestrator does no work of its own: fixed rules decide only the
- * clear cases (see `orchestrate`), everything else goes to the supervisor (DeepSeek V4 Pro), which splits the task among
- * the specialists, runs their reading tools and writes the answer. Four specialists own their tools without overlap; the
- * general chat answers everything else. Without DeepSeek the local routing below decides: signal words, then one word
- * from the local model.
+ * Thin orchestrator plus supervisor and workers. The orchestrator does no work of its own: fixed rules keep only changes and
+ * commands (see `orchestrate`); every other message goes to the supervisor (DeepSeek V4 Pro), which decides what to look up
+ * or research, lets the specialists' reading tools fetch the raw data and writes the answer. Four specialists own their tools
+ * without overlap. Without DeepSeek the local routing below decides: rules, signal words, then one word from the local model.
  */
 export const agentIds = ["transactions", "contracts", "budget", "payroll", "general"] as const;
 export type AgentId = typeof agentIds[number];
@@ -142,7 +140,6 @@ export function routeByRules(input: string, names: string[] = []): RouteDecision
 
 // Tools that compute from an amount; without one they could only ask for it, so the supervisor answers from the user's data instead.
 export const amountTools: readonly AssistantTool[] = ["funds", "affordability", "depot", "loan"];
-const firstPerson = words(String.raw`ich|mir|mich|mein\p{L}*|wir|uns|unser\p{L}*`);
 
 /**
  * Whether a tool the rules recognised answers the message by itself. Advice, opinions and worries want judgment; a
@@ -157,21 +154,22 @@ export function needsSupervisor(input: string, tool: AssistantTool): boolean {
 
 export type Handoff = { to: "specialist"; decision: RouteDecision } | { to: "supervisor"; hint?: AssistantTool };
 
+/** A clear change or command: a tool that changes data or opens a form, asked for as a command with what it needs. */
+export const commandTool = (text: string, tool: AssistantTool | undefined): tool is AssistantTool =>
+  !!tool && (changingTools.includes(tool) || isDraftTool(tool)) && !chatRequest(text) && !needsSupervisor(text, tool);
+
 /**
- * The thin orchestrator: it only decides who takes over. Fixed rules cover the clear cases – small talk, creative and
- * fixed requests, today's values for the web search, general "man" questions, messages without any money topic, and clear
- * commands and lookups that bring everything they need. Everything else goes to the supervisor, a recognised tool as a hint.
+ * The thin orchestrator: it only decides who takes over. Fixed rules keep only clear changes and commands, which keep their
+ * preview and confirmation; every other message – questions, small talk, terms, research – goes to the supervisor, which
+ * decides itself what to look up. A reading tool the rules recognised goes along only as a hint.
  */
 export function orchestrate(input: string, names: string[] = []): Handoff {
   const text = normalizeMessage(input);
-  const lower = text.toLowerCase();
-  const general: Handoff = { to: "specialist", decision: { agent: "general", via: "rule" } };
-  if (detectSmallTalk(text) || chatRequest(text) || fixedReply(text)) return general;
+  // Arithmetic, theme, navigation and actions that only work on their own page: commands the chat answers itself.
+  if (fixedCommand(text)) return { to: "specialist", decision: { agent: "general", via: "rule" } };
   const tool = detectTool(text, names);
-  if ((!tool || tool === "knowledge") && (asksForWebSearch(text) || currentInfo(text))) return general;
-  if (tool) return needsSupervisor(text, tool) ? { to: "supervisor", hint: tool } : { to: "specialist", decision: { agent: toolOwner[tool], tool, via: "rule" } };
-  if (generalQuestion(lower) || !aboutMoney(text) && !firstPerson.test(lower)) return general;
-  return { to: "supervisor" };
+  if (commandTool(text, tool)) return { to: "specialist", decision: { agent: toolOwner[tool], tool, via: "rule" } };
+  return { to: "supervisor", ...(tool ? { hint: tool } : {}) };
 }
 
 // The router model answers with one of these words; anything else counts as unsure.

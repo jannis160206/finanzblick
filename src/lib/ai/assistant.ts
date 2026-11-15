@@ -24,6 +24,8 @@ export const assistantRequestSchema = z.object({
     goals: z.array(z.string().max(80)).max(50),
     planned: z.array(z.string().max(100)).max(60),
   }).strict().optional(),
+  // A compact overview of the user's data for the supervisor; built in the browser, names and IBANs are masked before DeepSeek.
+  overview: z.record(z.string(), z.unknown()).optional(),
 }).strict();
 export type AssistantRequest = z.infer<typeof assistantRequestSchema>;
 export type AssistantHints = { goal?: string; planned?: string; category?: string; merchant?: string };
@@ -38,6 +40,8 @@ export type AssistantReply = {
   steps?: SupervisorStep[];
   /** The supervisor writes the final answer from the steps' results. */
   supervised?: true;
+  /** The supervisor was needed but DeepSeek is unavailable: the local routing decided, and the browser answers as before. */
+  local?: true;
 };
 
 const modelSchema = z.object({
@@ -143,7 +147,7 @@ export async function interpretAssistantMessage(request: AssistantRequest, optio
 // The supervisor's plan; undefined when DeepSeek is unavailable or gave nothing readable, so the local routing takes over.
 async function supervisorPlan(input: AssistantRequest, hint: AssistantTool | undefined, options: AssistantOptions): Promise<Supervision | undefined> {
   try {
-    return await supervise({ message: input.message, history: input.history, context: input.context, hint },
+    return await supervise({ message: input.message, history: input.history, context: input.context, overview: input.overview, hint },
       { ...options, rules: rulesFor(options.rules, undefined, "routing") });
   } catch (error) {
     if (options.signal?.aborted) throw error;
@@ -151,8 +155,7 @@ async function supervisorPlan(input: AssistantRequest, hint: AssistantTool | und
   }
 }
 
-function fromPlan(plan: Exclude<Supervision, { kind: "action" }>, input: AssistantRequest): AssistantReply {
-  if (plan.kind === "tool") return { agent: plan.agent, via: "supervisor", tool: plan.tool, hints: groundHints(plan, input), source: "KI" };
+function fromPlan(plan: Exclude<Supervision, { kind: "action" }>): AssistantReply {
   if (plan.kind === "ask") return { agent: plan.agent, via: "supervisor", question: plan.question, source: "KI" };
   return { agent: plan.agent, via: "supervisor", ...(plan.steps.length ? { steps: plan.steps } : {}), supervised: true, source: "KI" };
 }
@@ -162,13 +165,21 @@ async function interpret(request: AssistantRequest, options: AssistantOptions): 
   const input: AssistantRequest = { ...request, message: normalizeMessage(request.message) };
   const parsed = parseAssistantMessage(input.message, input.asOf);
   const names = [...(input.context?.goals ?? []), ...(input.context?.planned ?? [])];
-  // "Schreib mir ein Gedicht über Sparen" is a chat request, not a savings goal.
-  if (!input.pending && chatRequest(input.message)) return { agent: "general", via: "rule", source: "Regel" };
   const detected = detectTool(input.message, names);
-  // Thin orchestrator: clear cases by rule, everything else to the supervisor. An open draft stays with its specialist.
+  // Thin orchestrator: clear changes and commands by rule, every other message to the supervisor. An open draft stays with its specialist.
   const handoff = input.pending ? undefined : orchestrate(input.message, names);
   const plan = handoff?.to === "supervisor" ? await supervisorPlan(input, handoff.hint, options) : undefined;
-  if (plan && plan.kind !== "action") return fromPlan(plan, input);
+  if (plan && plan.kind !== "action") return fromPlan(plan);
+  // From here on the specialists decide: a change, an open draft, or the local routing because DeepSeek is unavailable.
+  const local = handoff?.to === "supervisor" && !plan ? { local: true as const } : {};
+  const reply = await specialist(input, parsed, names, detected, handoff, plan, options);
+  return { ...reply, ...local };
+}
+
+async function specialist(input: AssistantRequest, parsed: ReturnType<typeof parseAssistantMessage>, names: string[], detected: AssistantTool | undefined,
+  handoff: ReturnType<typeof orchestrate> | undefined, plan: Extract<Supervision, { kind: "action" }> | undefined, options: AssistantOptions): Promise<AssistantReply> {
+  // "Schreib mir ein Gedicht über Sparen" is a chat request, not a savings goal.
+  if (!input.pending && !plan && chatRequest(input.message)) return { agent: "general", via: "rule", source: "Regel" };
   // A change the supervisor handed over is filled in by its specialist; a reading tool the rules saw does not override it.
   const ruleTool = plan && detected && !changingTools.includes(detected) ? undefined : detected;
   // Clear non-draft commands whose tool reads no model hints are answered without waiting for the model.

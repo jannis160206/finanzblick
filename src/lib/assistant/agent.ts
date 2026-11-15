@@ -42,7 +42,7 @@ import type { AssistantPageContext } from "@/lib/assistant-context";
 import type { CopilotInsight } from "@/lib/copilot-insights";
 
 export type AgentHints = { goal?: string; planned?: string; category?: string; merchant?: string };
-export type AgentResult = { text: string; card?: AssistantCard; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[];
+export type AgentResult = { text: string; card?: AssistantCard; cards?: AssistantCard[]; change?: AssistantChange; undoId?: string; suggestions?: string[]; choices?: string[];
   /** A contract the chat is creating step by step; the message keeps it until it is saved or dropped. */
   contractDraft?: ContractDraft };
 type Context = { state: AppState; dashboard: Dashboard; asOf: string; hints?: AgentHints; previous?: string[]; market?: MarketSnapshot;

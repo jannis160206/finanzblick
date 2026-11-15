@@ -99,9 +99,9 @@ export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Sign
 
 /** The thin orchestrator's decision steps, in the order it tries them. */
 export const orchestratorSteps: { title: string; detail: string; calls: string }[] = [
-  { title: "Regeln", detail: "Nur Eindeutiges: Begrüßung, kreative und fachfremde Bitten, aktuelle Werte, klare Befehle und Abfragen", calls: "0 KI" },
-  { title: "Supervisor", detail: "DeepSeek V4 Pro teilt die Frage auf Spezialisten und Lese-Werkzeuge auf und schreibt die Antwort", calls: "1–2 KI" },
-  { title: "Lokaler Rückfall", detail: "Ohne DeepSeek: Signalwörter, dann ein Wort vom lokalen Modell", calls: "0–1 KI" },
+  { title: "Regeln", detail: "Nur Änderungen und Befehle: Vorschau mit Bestätigung, Rechnen, Navigation, Design", calls: "0 KI" },
+  { title: "Supervisor", detail: "DeepSeek V4 Pro sieht den Datenüberblick, lässt Daten holen oder recherchieren und schreibt jede Antwort", calls: "2 KI" },
+  { title: "Lokaler Rückfall", detail: "Ohne DeepSeek: feste Wege, Signalwörter, dann ein Wort vom lokalen Modell", calls: "0–1 KI" },
 ];
 
 export const agentOrder: readonly AgentId[] = [...specialistIds, "general"];

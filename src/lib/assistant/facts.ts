@@ -97,17 +97,23 @@ export type AssistantFacts = ReturnType<typeof assistantFacts>;
  * Names are cleaned of account and card numbers; transfers between own accounts are left out.
  */
 export function appOverview(facts: AssistantFacts, state: AppState, today: string) {
-  const recent = ledger(state).filter(({ row }) => row.date <= today).sort((a, b) => b.row.date.localeCompare(a.row.date)).slice(0, 8)
+  const recent = ledger(state).filter(({ row }) => row.date <= today).sort((a, b) => b.row.date.localeCompare(a.row.date)).slice(0, 12)
     .map(({ row, category }) => ({ date: row.date, name: redactSensitive(row.merchantAlias?.trim() || row.description.trim()).slice(0, 40), amount: round(row.amount), category }));
   const subscriptions = facts.subscriptions;
+  const months = Object.keys(facts.spendingByMonthAndCategory).filter((month) => month <= today.slice(0, 7)).sort().slice(-2);
   return {
     accounts: facts.balances.slice(0, 12).map((item) => ({ name: item.name, amount: item.amount })),
     totalOnAllAccounts: facts.totalOnAllAccounts,
     thisMonth: { month: facts.currentMonth.month, income: facts.currentMonth.income, fixedCosts: facts.currentMonth.fixedCosts, spentSoFar: facts.currentMonth.spentSoFar,
       surplus: facts.currentMonth.surplus, budgetsOver: facts.currentMonth.budgets.filter((item) => item.status === "over").map((item) => item.name) },
+    budgets: facts.currentMonth.budgets.slice(0, 10),
+    spendingByCategory: Object.fromEntries(months.map((month) => [month, facts.spendingByMonthAndCategory[month]])),
+    yearToDate: { income: facts.yearToDate.income, spending: facts.yearToDate.spending, averagePerMonth: facts.yearToDate.averageSpendingPerMonth,
+      topCategories: facts.yearToDate.topCategories.slice(0, 5).map((item) => ({ category: item.category, total: item.total })) },
     freeUntilSalary: facts.safeToSpendToday,
     subscriptions: { count: subscriptions.length, perMonth: round(subscriptions.reduce((sum, item) => sum + item.monthly, 0)),
-      largest: [...subscriptions].sort((a, b) => b.monthly - a.monthly).slice(0, 3) },
+      list: [...subscriptions].sort((a, b) => b.monthly - a.monthly).slice(0, 12) },
+    upcoming: facts.upcoming.slice(0, 6),
     goals: facts.goals.slice(0, 8).map((goal) => ({ name: goal.name, target: goal.target, saved: goal.saved, date: goal.date })),
     giroForecast: facts.giroForecast12Months,
     amex: { open: facts.amex.open, stillToTransfer: facts.amex.stillToTransfer },

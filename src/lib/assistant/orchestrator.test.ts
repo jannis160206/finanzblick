@@ -108,23 +108,24 @@ describe("routing without the model", () => {
 
 describe("thin orchestrator", () => {
   it.each<[string, string]>([
-    // Clear cases stay with the rules: no model call.
-    ["Hallo!", "general"],
-    ["Schreib mir ein Gedicht über Sparen", "general"],
-    ["Was ist der aktuelle Bitcoin-Preis?", "general"],
-    ["Wie hoch ist der Großglockner?", "general"],
-    ["Kann man mit 3000 netto in Wien gut leben?", "general"],
-    ["Welche Abos habe ich?", "contracts/contracts"],
-    ["Kann ich mir im Mai einen Fernseher um 900 € leisten?", "budget/funds"],
+    // Only clear changes and commands stay with the rules: they keep their preview and confirmation.
     ["Lösche die Buchung MediaMarkt vom 24.10.", "transactions/booking"],
     ["neuer laptop 1200 € in 6 raten ab jänner", "budget/expense"],
-    // Advice, a calculator without an amount, a form opened by a question and every unclear money question go to the supervisor.
+    ["Setze Tanken im Dezember auf 150 €", "budget/edit"],
+    ["kündige netflix", "supervisor:cancel"],
+    ["15 % von 2400", "general"],
+    ["Lösche alle meine Buchungen", "general"],
+    // Every other message goes to the supervisor, which decides what to look up: questions, small talk, terms, today's values.
+    ["Hallo!", "supervisor"],
+    ["Schreib mir ein Gedicht über Sparen", "supervisor"],
+    ["Was ist der aktuelle Bitcoin-Preis?", "supervisor:knowledge"],
+    ["Was ist ein ETF?", "supervisor:knowledge"],
+    ["Welche Abos habe ich?", "supervisor:contracts"],
+    ["Kann ich mir im Mai einen Fernseher um 900 € leisten?", "supervisor:funds"],
     ["Lohnt sich ein Bitcoin-Sparplan für mein Budget?", "supervisor:depot"],
-    ["Kann ich mir ein neues Handy leisten?", "supervisor:funds"],
     ["Sollte ich das Lebensmittelbudget erhöhen?", "supervisor:budget_plan"],
     ["Wie viel sollte ich für die Pension zurücklegen?", "supervisor:savings_goal"],
     ["Bin ich gut für Weihnachten aufgestellt?", "supervisor"],
-    ["Ich bin gestresst wegen Geld", "supervisor"],
   ])("%s → %s", (text, expected) => {
     const handoff = orchestrate(text, names);
     expect(handoff.to === "supervisor" ? `supervisor${handoff.hint ? `:${handoff.hint}` : ""}`

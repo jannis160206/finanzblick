@@ -738,6 +738,8 @@ export const assistantMessageSchema = z.object({
   // A contract being created step by step in the chat.
   contractDraft: contractDraftSchema.optional(),
   card: assistantCardSchema.optional(),
+  // The supervisor's answer: the results its workers fetched, laid out as key figures and tiles below the text.
+  cards: z.array(assistantCardSchema).max(4).optional(),
   change: assistantChangeSchema.optional(),
   // "Mach das rückgängig": the change the user still has to confirm.
   undoId: agentIdSchema.optional(),

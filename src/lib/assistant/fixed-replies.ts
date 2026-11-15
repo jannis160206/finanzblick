@@ -105,43 +105,58 @@ function evaluate(source: string): number | undefined {
 const format = (value: number) => new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(value);
 
 export function fixedReply(input: string): FixedReply | undefined {
+  return fixed(input)?.reply;
+}
+
+/**
+ * Only the commands among the fixed replies: arithmetic (the code calculates, not the model), switching the theme or a device
+ * setting, opening a page, and actions that only work on their own page. Answers to questions go to the supervisor.
+ */
+export function fixedCommand(input: string): FixedReply | undefined {
+  const found = fixed(input);
+  return found?.command ? found.reply : undefined;
+}
+
+function fixed(input: string): { reply: FixedReply; command: boolean } | undefined {
   const lower = normalizeMessage(input).toLowerCase().trim();
   if (!lower || lower.length > 120) return undefined;
+  const command = (reply: FixedReply) => ({ reply, command: true });
+  const answer = (reply: FixedReply) => ({ reply, command: false });
   const percent = percentOf.exec(lower);
-  if (percent) return { text: `${format(number(percent[1]))} % von ${format(number(percent[2]))} sind ${format(number(percent[1]) * number(percent[2]) / 100)}.` };
+  if (percent) return command({ text: `${format(number(percent[1]))} % von ${format(number(percent[2]))} sind ${format(number(percent[1]) * number(percent[2]) / 100)}.` });
   const math = expression.exec(lower);
   const result = math ? evaluate(math[1].trim()) : undefined;
-  if (math && result !== undefined) return { text: `${math[1].trim().replace(/\s*([+\-*/×÷:])\s*/g, " $1 ")} = ${format(result)}` };
+  if (math && result !== undefined) return command({ text: `${math[1].trim().replace(/\s*([+\-*/×÷:])\s*/g, " $1 ")} = ${format(result)}` });
   // Films, weather, recipes, general facts, jokes: not this assistant's job.
   const away = offTopicReply(input);
-  if (away) return away;
+  if (away) return answer(away);
   const elsewhere = /\?\s*$/.test(lower) && !/^(?:kannst|könntest|koenntest|würdest|wuerdest) du\b/.test(lower) ? undefined : appOnly.find(([pattern]) => pattern.test(lower));
-  if (elsewhere) return { text: elsewhere[1], card: { kind: "answer", title: elsewhere[2], lines: [], page: { label: `${elsewhere[2]} öffnen`, href: elsewhere[3] } } };
-  if (instructions.test(lower)) return { text: "Meine internen Anweisungen behalte ich für mich. Frag mich aber gern alles zu deinen Finanzen.",
-    suggestions: ["Was kannst du alles?", "Was bleibt mir diesen Monat?"] };
-  if (distress.test(lower)) return { text: "Oh, das ist unangenehm. Lass uns gemeinsam schauen, was bis zum nächsten Gehalt noch ansteht – dann weißt du, woran du bist.",
-    suggestions: ["Reicht mein Geld bis zum Gehalt?", "Welche Fixkosten kommen noch?", "Wo kann ich sparen?"] };
-  if (invent.test(lower)) return { text: "Erfinden mag ich nichts – ich rechne nur mit deinen echten Daten. Soll ich dir stattdessen deinen echten Stand zeigen?",
-    suggestions: ["Wie sieht mein Kontostand aus?", "Was bleibt mir diesen Monat?"] };
-  if (deleteAll.test(lower)) return {
+  if (elsewhere) return command({ text: elsewhere[1], card: { kind: "answer", title: elsewhere[2], lines: [], page: { label: `${elsewhere[2]} öffnen`, href: elsewhere[3] } } });
+  if (instructions.test(lower)) return answer({ text: "Meine internen Anweisungen behalte ich für mich. Frag mich aber gern alles zu deinen Finanzen.",
+    suggestions: ["Was kannst du alles?", "Was bleibt mir diesen Monat?"] });
+  if (distress.test(lower)) return answer({ text: "Oh, das ist unangenehm. Lass uns gemeinsam schauen, was bis zum nächsten Gehalt noch ansteht – dann weißt du, woran du bist.",
+    suggestions: ["Reicht mein Geld bis zum Gehalt?", "Welche Fixkosten kommen noch?", "Wo kann ich sparen?"] });
+  if (invent.test(lower)) return answer({ text: "Erfinden mag ich nichts – ich rechne nur mit deinen echten Daten. Soll ich dir stattdessen deinen echten Stand zeigen?",
+    suggestions: ["Wie sieht mein Kontostand aus?", "Was bleibt mir diesen Monat?"] });
+  if (deleteAll.test(lower)) return command({
     text: "Alles auf einmal lösche ich per Chat nicht. Einzelne Buchungen lösche ich gern – nenn mir Datum und Betrag, zum Beispiel „Lösch die Buchung vom 3.8. über 249 €“. Ein Backup findest du in den Einstellungen.",
     card: { kind: "answer", title: "Umsätze", lines: [], page: { label: "Umsätze öffnen", href: "/umsaetze" } },
-  };
+  });
   if (theme.test(lower) && /wechsel|aktivier|schalt|mach|stell|änder|aender|bitte|^(?:dark|light|dunkel|hell|nacht)/.test(lower)) {
     const dark = !/\blight\b|hell/.test(lower);
-    return { text: dark ? "Erledigt – jetzt im dunklen Farbschema. Zurück geht's oben rechts mit dem Sonnen-Symbol." : "Erledigt – jetzt im hellen Farbschema. Zurück geht's oben rechts mit dem Mond-Symbol.",
-      theme: dark ? "dark" : "light" };
+    return command({ text: dark ? "Erledigt – jetzt im dunklen Farbschema. Zurück geht's oben rechts mit dem Sonnen-Symbol." : "Erledigt – jetzt im hellen Farbschema. Zurück geht's oben rechts mit dem Mond-Symbol.",
+      theme: dark ? "dark" : "light" });
   }
   if (/\bstichtag\w*\b/.test(lower) && /\b(?:stell|setz|änder|aender|verschieb|mach)\w*/.test(lower))
-    return { text: "Der Stichtag läuft automatisch mit dem heutigen Datum mit – ändern musst du ihn nie. Für einen anderen Monat frag einfach direkt, z. B. „Wie war mein Oktober?“.",
-      suggestions: ["Wie war mein Oktober?", "Was bleibt mir diesen Monat?"] };
+    return command({ text: "Der Stichtag läuft automatisch mit dem heutigen Datum mit – ändern musst du ihn nie. Für einen anderen Monat frag einfach direkt, z. B. „Wie war mein Oktober?“.",
+      suggestions: ["Wie war mein Oktober?", "Was bleibt mir diesen Monat?"] });
   const device = deviceSetting(lower);
-  if (device) return { text: device.text, device: device.device,
-    card: { kind: "answer", title: "Einstellungen", lines: [], page: { label: "Einstellungen öffnen", href: "/einstellungen" } } };
+  if (device) return command({ text: device.text, device: device.device,
+    card: { kind: "answer", title: "Einstellungen", lines: [], page: { label: "Einstellungen öffnen", href: "/einstellungen" } } });
   const match = navigate.exec(lower);
   const page = match?.[1] ?? match?.[2];
   const target = page ? pages.find(([pattern]) => pattern.test(page)) : undefined;
-  if (target) return { text: `Hier geht's ${target[3]}.`, card: { kind: "answer", title: target[2], lines: [], page: { label: `${target[2]} öffnen`, href: target[1] } } };
+  if (target) return command({ text: `Hier geht's ${target[3]}.`, card: { kind: "answer", title: target[2], lines: [], page: { label: `${target[2]} öffnen`, href: target[1] } } });
   return undefined;
 }
 
