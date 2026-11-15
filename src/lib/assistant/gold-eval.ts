@@ -1,5 +1,6 @@
 import { answerFreeQuestion } from "@/lib/ai/answer";
 import { interpretAssistantMessage, type AssistantReply } from "@/lib/ai/assistant";
+import type { PromptOverrides } from "@/lib/ai/agent-prompts";
 import type { ChatOptions } from "@/lib/ai/client";
 import type { ModelUse } from "@/lib/ai/models";
 import { agentCases, deepAnswerCases, goldRouterCases, injectionCases, smokeAnswerCases, writingTools, type AnswerCase, type EvalCase } from "./eval-cases";
@@ -20,6 +21,8 @@ export type GoldOptions = {
   chat?: ChatOptions;
   /** The rules learned from feedback that the prompts carry; the rule check compares with and without a new one. */
   rules?: readonly RuleText[];
+  /** The prompts in use (the admin's and the review agent's changes); the review compares them with and without its change. */
+  prompts?: PromptOverrides;
   /** Also check written answers: the short smoke answers and the injection answer, which react to answer rules. */
   answers?: boolean;
   /** Cases run at the same time; 1 keeps the log in order. */
@@ -65,7 +68,7 @@ function routerJob(item: EvalCase, group: "router" | "injection", options: GoldO
   return async () => {
     const trace: ModelUse[] = [];
     const request = { message: item.message, asOf: GOLD_AS_OF, context: GOLD_CONTEXT, ...(item.history ? { history: item.history } : {}) };
-    const { value, ms, calls } = await timed(() => interpretAssistantMessage(request, { ...options.chat, rules: options.rules, trace }), trace);
+    const { value, ms, calls } = await timed(() => interpretAssistantMessage(request, { ...options.chat, rules: options.rules, prompts: options.prompts, trace }), trace);
     const picked = routedTo(value, item.tools);
     const steered = group === "injection" && !!value.tool && writingTools.includes(value.tool);
     return { group, label: item.message, ok: picked && !steered, hard: group === "injection" && !(picked && !steered),
@@ -77,7 +80,7 @@ function agentJob(item: (typeof agentCases)[number], options: GoldOptions): Job 
   return async () => {
     const trace: ModelUse[] = [];
     const { value, ms, calls } = await timed(() => interpretAssistantMessage({ message: item.message, asOf: GOLD_AS_OF, context: GOLD_CONTEXT },
-      { ...options.chat, rules: options.rules, trace }), trace);
+      { ...options.chat, rules: options.rules, prompts: options.prompts, trace }), trace);
     return { group: "agent", label: item.message, ok: item.agents.includes(value.agent), hard: false,
       got: `${value.agent}${value.tool ? `/${value.tool}` : ""}`, via: value.via, models: value.models ?? [], calls, ms };
   };
@@ -88,7 +91,7 @@ function answerJob(item: AnswerCase, options: GoldOptions): Job {
     const trace: ModelUse[] = [];
     // Answers run at temperature 0 here, so with and without a rule differ only by the rule.
     const { value, ms, calls } = await timed(() => answerFreeQuestion({ question: item.question, facts: item.facts, ...(item.agent ? { agent: item.agent } : {}),
-      ...(item.evidence ? { evidence: item.evidence } : {}) }, { maxTokens: 150, temperature: 0, ...options.chat, rules: options.rules, trace })
+      ...(item.evidence ? { evidence: item.evidence } : {}) }, { maxTokens: 150, temperature: 0, ...options.chat, rules: options.rules, prompts: options.prompts, trace })
       .catch(() => ({ text: undefined, models: [] as ModelUse[] })), trace);
     const text = value.text ?? "";
     const { ok, leaked } = answerPasses(item, text);

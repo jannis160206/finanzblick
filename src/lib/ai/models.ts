@@ -57,7 +57,7 @@ export function costOverview(usage: Record<string, Tokens> = {}) {
 
 export const taskLabel: Record<AiTask, string> = {
   chat: "Antwort", route: "Werkzeugwahl", action: "Aktion", reasoning: "Analyse", categorize: "Kategorisierung",
-  web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Regel aus Feedback", supervise: "Supervisor", synthesize: "Supervisor-Antwort",
+  web: "Websuche", extract: "Erkennung", document: "Dokument", suggest: "Folgefragen", rule: "Prüfungs-Agent", supervise: "Supervisor", synthesize: "Supervisor-Antwort",
 };
 
 /** Work only DeepSeek does; without it the chat keeps its fixed suggestions, routes locally and rule checks wait. Never the local model. */

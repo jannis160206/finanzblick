@@ -104,10 +104,18 @@ export const viaLabel: Record<RouteVia, string> = { rule: "Regel", signal: "Sign
 
 /** The thin orchestrator's decision steps, in the order it tries them. */
 export const orchestratorSteps: { title: string; detail: string; calls: string }[] = [
-  { title: "Regeln", detail: "Nur Änderungen und Systembefehle: Vorschau mit Bestätigung, Datum und Uhrzeit, Rechnen, Navigation, Design", calls: "0 KI" },
+  { title: "Regeln", detail: "Nur Systembefehle und laufende Formulare: Datum und Uhrzeit, Navigation, Design, Ja/Nein unter einer Vorschau", calls: "0 KI" },
   { title: "Supervisor", detail: "DeepSeek Flash plant mit dem Datenüberblick, die Spezialisten holen Daten oder recherchieren, DeepSeek V4 Pro schreibt jede Analyse", calls: "2 KI" },
   { title: "Lokaler Rückfall", detail: "Ohne DeepSeek: feste Wege, Signalwörter, dann ein Wort vom lokalen Modell", calls: "0–1 KI" },
 ];
+
+/** Beside the chat: the review agent works on the votes in the background and adjusts the prompts. */
+export const reviewStep = {
+  title: "Prüfungs-Agent",
+  detail: "Liest jedes 👍/👎 im Hintergrund. Bei 👎 mit Kommentar ändert er den Prompt des zuständigen Agenten um einen Satz, stellt die Frage erneut und " +
+    "prüft mit der Gold-Eval; erst dann gilt die Änderung",
+  calls: "2–3 KI + Eval",
+};
 
 export const agentOrder: readonly AgentId[] = [...specialistIds, "general"];
 export const agentToolList = (agent: AgentId) => agentTools(agent).filter((tool) => tool !== "ask" || agent === "general");

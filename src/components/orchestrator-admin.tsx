@@ -4,8 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useS
 import Link from "next/link";
 import { m } from "motion/react";
 import {
-  Ban, Check, CheckCheck, ChevronLeft, Clock, Cpu, Download, Globe, Inbox, ListChecks, MessageSquareText, RefreshCw, RotateCcw, Save, Sparkles, ThumbsDown,
-  ThumbsUp, Undo2, Workflow, X, type LucideIcon,
+  Ban, Check, CheckCheck, ChevronLeft, ClipboardCheck, Clock, Cpu, Download, Globe, Inbox, ListChecks, MessageSquareText, RefreshCw, RotateCcw, Save, Sparkles,
+  ThumbsDown, ThumbsUp, Undo2, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import { OrchestratorNav } from "@/components/orchestrator-nav";
 import { dialogSpring, useMotionMode } from "@/components/ui/premium-dialog/motion";
@@ -17,11 +17,11 @@ import { Button } from "@/components/ui/button";
 import { askAssistant } from "@/lib/assistant-bus";
 import { agentLabel, type AgentId } from "@/lib/assistant/orchestrator";
 import {
-  agentInfo, agentOrder, agentToolList, assistantRuns, callStateLabel, changesData, orchestratorSteps, runStatusLabel, toolLabel, viaLabel,
+  agentInfo, agentOrder, agentToolList, assistantRuns, callStateLabel, changesData, orchestratorSteps, reviewStep, runStatusLabel, toolLabel, viaLabel,
   type AssistantRun, type CallState, type RunCall, type RunModel, type RunStatus,
 } from "@/lib/assistant/orchestrator-info";
 import { costOverview, MONTHLY_BUDGET_USD, taskLabel, type AiTask } from "@/lib/ai/models";
-import { MAX_PROMPT_LENGTH, type PromptGroup, type PromptId, type PromptMeta } from "@/lib/ai/agent-prompts";
+import { MAX_PROMPT_LENGTH, promptGroupName, promptLabel, type PromptId, type PromptMeta } from "@/lib/ai/agent-prompts";
 import type { OrchestratorView } from "@/lib/assistant/orchestrator-pages";
 import { MAX_ACTIVE_RULES, statusLabel, type FeedbackRule, type RuleStatus } from "@/lib/assistant/feedback-rules";
 import { cn } from "@/lib/utils";
@@ -166,6 +166,14 @@ function Topology({ status, loading }: { status?: AiStatus; loading: boolean }) 
         <p className="pb-1"><ModelBadge label="Modell" value={local} tone="local" /></p>
       </li>
     </ul>
+    <div role="group" aria-label="Im Hintergrund" className="mt-4 rounded-xl border border-border/70 bg-muted/30 px-3 pb-2">
+      <NodeTitle icon={ClipboardCheck} title={reviewStep.title} detail={reviewStep.detail} calls={reviewStep.calls} />
+      <p className="flex flex-wrap gap-1.5">
+        <ModelBadge label="Prüft" value={routeLabel(status, "rule") ?? "DeepSeek V4 Pro"} tone="pro" />
+        <ModelBadge label="Eval" value={routeLabel(status, "supervise") ?? "DeepSeek Flash"} />
+        <ModelBadge label="Ändert" value="System-Prompts der Agenten" />
+      </p>
+    </div>
     <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-warning" />ändert Daten – nur nach deiner Bestätigung; der Supervisor nutzt nur lesende Werkzeuge.
     </p>
@@ -389,8 +397,10 @@ function Feedback({ load }: { load: FeedbackLoad }) {
   </div>;
 }
 
-type RulesOverview = { file: string; loop: string; count: Partial<Record<RuleStatus, number>>; rules: FeedbackRule[] };
+type LearnedChange = FeedbackRule & { votes?: { up: number; down: number } };
+type RulesOverview = { file: string; loop: string; count: Partial<Record<RuleStatus, number>>; rules: LearnedChange[] };
 type RulesLoad = { state: "loading" } | { state: "ready"; data: RulesOverview } | { state: "admin" } | { state: "error" };
+type RuleAction = "enable" | "disable" | "recheck";
 
 async function readRulesOverview(): Promise<RulesLoad> {
   try {
@@ -409,39 +419,65 @@ const ruleTone: Record<RuleStatus, "success" | "info" | "warning" | "secondary" 
 };
 const scopeName = (rule: FeedbackRule) => !rule.scope || rule.scope === "all" ? "alle Bereiche" : rule.scope === "general" ? "Allgemeiner Chat" : agentLabel[rule.scope];
 const score = (value: { passed: number; total: number; hard: number }) => `${value.passed}/${value.total}${value.hard ? ` · ${value.hard} Sicherheitsfehler` : ""}`;
+const changeTarget = (rule: FeedbackRule) => rule.kind === "prompt" && rule.prompt ? `Prompt ${rule.prompt.mode === "replace" ? "geändert" : "ergänzt"} · ${promptLabel(rule.prompt.id)}`
+  : rule.rule ? `Regel · ${rule.target === "routing" ? "Werkzeugwahl" : "Antworten"} · ${scopeName(rule)}` : undefined;
 
-/** Rules learned from 👎 comments: what each says, where it applies, how the gold eval went and a switch for the admin. */
-function Rules({ load, onAction, working }: { load: RulesLoad; onAction: (id: string, action: "enable" | "disable" | "recheck") => void; working?: string }) {
+function ChangeButton({ rule, loop, working, onAction }: { rule: LearnedChange; loop: string; working?: string; onAction: (id: string, action: RuleAction) => void }) {
+  const prompt = rule.kind === "prompt";
+  const props = { type: "button" as const, size: "sm" as const, className: "shrink-0", disabled: working === rule.id };
+  if (rule.status === "active") return <Button {...props} variant="outline" onClick={() => onAction(rule.id, "disable")}
+    aria-label={`${prompt ? "Änderung zurücknehmen" : "Regel deaktivieren"}: ${rule.rule}`}>{prompt ? <Undo2 aria-hidden="true" /> : <Ban aria-hidden="true" />}
+    {prompt ? "Zurücknehmen" : "Deaktivieren"}</Button>;
+  if (rule.status === "disabled" && rule.check?.passed) return <Button {...props} variant="outline" onClick={() => onAction(rule.id, "enable")}
+    aria-label={`${prompt ? "Änderung wieder anwenden" : "Regel aktivieren"}: ${rule.rule}`}><Check aria-hidden="true" />{prompt ? "Wieder anwenden" : "Aktivieren"}</Button>;
+  if (["pending", "error", "rejected", "unusable"].includes(rule.status)) return <Button {...props} variant="ghost" disabled={props.disabled || loop.startsWith("aus")}
+    onClick={() => onAction(rule.id, "recheck")}><RefreshCw aria-hidden="true" />Erneut prüfen</Button>;
+  return null;
+}
+
+/**
+ * What the review agent learned from 👎 comments: which prompt it changed and how, its retest, the gold eval, the votes since,
+ * and a switch to take a change back.
+ */
+function Learned({ load, onAction, working }: { load: RulesLoad; onAction: (id: string, action: RuleAction) => void; working?: string }) {
   return <div className="space-y-4 text-sm">
-    <p className="text-muted-foreground">Ein 👎 mit konkretem Kommentar wird zu einem Regelvorschlag von DeepSeek. Aktiv wird er nur, wenn die Gold-Eval
-      (80 Fragen und 6 Antworten) mit der Regel gleich gut oder besser bleibt; vage Kommentare wie „war schlecht“ werden nicht verwendet.
-      Aktive Regeln ergänzen die Prompts der betroffenen Agenten, höchstens {MAX_ACTIVE_RULES}.</p>
+    <p className="text-muted-foreground">Jedes 👍 und 👎 geht an den Prüfungs-Agent (DeepSeek V4 Pro). Bei einem 👎 mit konkretem Kommentar sucht er den Prompt,
+      der schuld ist – Planung, Antwort, Antwortregeln, Stimme oder Werkzeugwahl eines Agenten – und ändert ihn um einen Satz. Dann prüft er zweimal: Er stellt
+      die Frage mit dem geänderten Prompt erneut und beurteilt, ob die Beschwerde behoben ist, und die Gold-Eval (80 Fragen und 6 Antworten) muss gleich gut
+      oder besser bleiben. Erst dann gilt die Änderung, ab der nächsten Frage; vage Kommentare wie „war schlecht“ ändern nichts. Höchstens {MAX_ACTIVE_RULES} Änderungen sind aktiv.</p>
     {load.state === "loading" ? <p className="text-muted-foreground">Lade …</p>
-      : load.state === "admin" ? <p className="text-muted-foreground">Die Regeln kann nur der Administrator ansehen und schalten.</p>
-        : load.state === "error" ? <p className="text-muted-foreground">Die Regel-Datei ist gerade nicht lesbar.</p>
-          : !load.data.rules.length ? <p className="text-muted-foreground">Noch keine Regeln. Ein 👎 mit Kommentar unter einer Antwort startet die Prüfung.</p>
-            : <ul aria-label="Regeln aus Feedback" className="divide-y divide-border/70">
-              {load.data.rules.map((rule) => <li key={rule.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                    <Badge variant={ruleTone[rule.status]}>{statusLabel[rule.status]}</Badge>
-                    {rule.rule && <span>{rule.target === "routing" ? "Werkzeugwahl" : "Antworten"} · {scopeName(rule)}</span>}
-                    <time dateTime={rule.updatedAt} className="tabular-nums">{timeFormat.format(new Date(rule.updatedAt))}</time>
+      : load.state === "admin" ? <p className="text-muted-foreground">Die Änderungen kann nur der Administrator ansehen und zurücknehmen.</p>
+        : load.state === "error" ? <p className="text-muted-foreground">Die Datei des Prüfungs-Agents ist gerade nicht lesbar.</p>
+          : !load.data.rules.length ? <p className="text-muted-foreground">Noch nichts gelernt. Ein 👎 mit Kommentar unter einer Antwort startet die Prüfung.</p>
+            : <ul aria-label="Änderungen des Prüfungs-Agents" className="divide-y divide-border/70">
+              {load.data.rules.map((rule) => {
+                const target = changeTarget(rule);
+                return <li key={rule.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <Badge variant={ruleTone[rule.status]}>{statusLabel[rule.status]}</Badge>
+                      {target && <span>{target}</span>}
+                      <time dateTime={rule.updatedAt} className="tabular-nums">{timeFormat.format(new Date(rule.updatedAt))}</time>
+                    </div>
+                    {rule.rule ? <p className="font-medium break-words">{rule.rule}</p>
+                      : <p className="text-muted-foreground">{rule.status === "checking" ? "Der Prüfungs-Agent sieht sich den Kommentar an …"
+                        : rule.status === "pending" ? "Wartet auf DeepSeek." : "Keine Änderung"}</p>}
+                    {rule.prompt?.mode === "replace" && rule.prompt.before && <p className="break-words text-xs text-muted-foreground">Statt: „{rule.prompt.before}“</p>}
+                    <p className="break-words text-xs text-muted-foreground">Aus dem Kommentar: „{rule.comment}“</p>
+                    {rule.review && <p className={cn("break-words text-xs", rule.review.fixed ? "text-muted-foreground" : "text-warning")}>
+                      Nachtest: {rule.review.fixed ? "behoben" : "nicht behoben"} – {rule.review.note}</p>}
+                    {rule.check && <p className="text-xs tabular-nums text-muted-foreground">Gold-Eval ohne → mit {rule.kind === "prompt" ? "Änderung" : "Regel"}: {score(rule.check.baseline)} → {score(rule.check.candidate)}</p>}
+                    {rule.check?.worse?.length ? <p className="break-words text-xs text-muted-foreground">Schlechter bei: {rule.check.worse.map((label) => `„${label}“`).join(", ")}</p> : null}
+                    {rule.votes && <p className="flex flex-wrap items-center gap-x-2 text-xs tabular-nums text-muted-foreground">
+                      <span>{rule.status === "active" ? "Seit der Änderung" : "Solange sie galt"}:</span>
+                      <span className="inline-flex items-center gap-1"><ThumbsUp aria-hidden="true" className="size-3.5" /><span className="sr-only">Hilfreich: </span>{rule.votes.up}</span>
+                      <span className="inline-flex items-center gap-1"><ThumbsDown aria-hidden="true" className="size-3.5" /><span className="sr-only">Nicht hilfreich: </span>{rule.votes.down}</span>
+                    </p>}
+                    {rule.reason && <p className={cn("text-xs", rule.status === "rejected" || rule.status === "error" ? "text-warning" : "text-muted-foreground")}>{rule.reason}</p>}
                   </div>
-                  {rule.rule ? <p className="font-medium break-words">{rule.rule}</p> : <p className="text-muted-foreground">Kein Regelvorschlag</p>}
-                  <p className="break-words text-xs text-muted-foreground">Aus dem Kommentar: „{rule.comment}“</p>
-                  {rule.check && <p className="text-xs tabular-nums text-muted-foreground">Gold-Eval ohne → mit Regel: {score(rule.check.baseline)} → {score(rule.check.candidate)}</p>}
-                  {rule.check?.worse?.length ? <p className="break-words text-xs text-muted-foreground">Schlechter bei: {rule.check.worse.map((label) => `„${label}“`).join(", ")}</p> : null}
-                  {rule.reason && <p className={cn("text-xs", rule.status === "rejected" || rule.status === "error" ? "text-warning" : "text-muted-foreground")}>{rule.reason}</p>}
-                </div>
-                {rule.status === "active" ? <Button type="button" size="sm" variant="outline" className="shrink-0" disabled={working === rule.id}
-                  onClick={() => onAction(rule.id, "disable")} aria-label={`Regel deaktivieren: ${rule.rule}`}><Ban aria-hidden="true" />Deaktivieren</Button>
-                  : rule.status === "disabled" && rule.check?.passed ? <Button type="button" size="sm" variant="outline" className="shrink-0" disabled={working === rule.id}
-                    onClick={() => onAction(rule.id, "enable")} aria-label={`Regel aktivieren: ${rule.rule}`}><Check aria-hidden="true" />Aktivieren</Button>
-                    : rule.status === "pending" || rule.status === "error" || rule.status === "rejected" || rule.status === "unusable"
-                      ? <Button type="button" size="sm" variant="ghost" className="shrink-0" disabled={working === rule.id || load.data.loop.startsWith("aus")}
-                        onClick={() => onAction(rule.id, "recheck")}><RefreshCw aria-hidden="true" />Erneut prüfen</Button> : null}
-              </li>)}
+                  <ChangeButton rule={rule} loop={load.data.loop} working={working} onAction={onAction} />
+                </li>;
+              })}
             </ul>}
     {load.state === "ready" && <p className="text-xs text-muted-foreground">Datei: <code className="break-all rounded bg-muted px-1.5 py-0.5">{load.data.file}</code> · Prüfung: {load.data.loop}</p>}
   </div>;
@@ -462,7 +498,7 @@ async function readPrompts(): Promise<PromptLoad> {
   }
 }
 
-const groupName = (group: PromptGroup) => group === "orchestrator" ? "Orchestrator" : group === "supervisor" ? "Supervisor" : agentName(group);
+const groupName = promptGroupName;
 
 /** Every agent's system prompt: pick one, edit it, save it or put it back to the default; the next chat run uses it. */
 function PromptEditor({ load, onChange }: { load: PromptLoad; onChange: (next: PromptLoad) => void }) {
@@ -612,14 +648,14 @@ function FeedbackView() {
   const [feedback] = useLoad<FeedbackLoad>(readFeedbackOverview, { state: "loading" });
   const [rules, setRules] = useLoad<RulesLoad>(readRulesOverview, { state: "loading" });
   const [working, setWorking] = useState<string>();
-  // While a rule is being checked in the background, the list refreshes itself every few seconds.
+  // While the review agent works in the background, the list refreshes itself every few seconds.
   const checking = rules.state === "ready" && rules.data.rules.some((rule) => rule.status === "checking");
   useEffect(() => {
     if (!checking) return;
     const timer = window.setInterval(() => void readRulesOverview().then(setRules), 5000);
     return () => window.clearInterval(timer);
   }, [checking, setRules]);
-  const ruleAction = async (id: string, action: "enable" | "disable" | "recheck") => {
+  const ruleAction = async (id: string, action: RuleAction) => {
     setWorking(id);
     try {
       await fetch("/api/assistant-rules", { method: "PATCH", headers: { "Content-Type": "application/json" }, cache: "no-store", body: JSON.stringify({ id, action }) });
@@ -631,8 +667,8 @@ function FeedbackView() {
   const activeCount = rules.state === "ready" ? rules.data.rules.filter((rule) => rule.status === "active").length : 0;
   return <>
     <Section id="orchestrator-feedback" title="Feedback" meta="👍/👎 aus dem Chat, für die Fehlersuche mit Copilot"><Feedback load={feedback} /></Section>
-    <Section id="orchestrator-rules" title="Regeln aus Feedback" meta={rules.state === "ready" ? `${activeCount} aktiv · Prüfung ${rules.data.loop}` : undefined}>
-      <Rules load={rules} working={working} onAction={(id, action) => void ruleAction(id, action)} />
+    <Section id="orchestrator-rules" title="Prüfungs-Agent" meta={rules.state === "ready" ? `${activeCount} aktiv · Prüfung ${rules.data.loop}` : undefined}>
+      <Learned load={rules} working={working} onAction={(id, action) => void ruleAction(id, action)} />
     </Section>
   </>;
 }

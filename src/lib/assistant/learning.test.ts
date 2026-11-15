@@ -38,8 +38,10 @@ describe("corrections", () => {
   it("recognises a correction of the previous answer in its many forms, and every correction the phrase learning knows", () => {
     for (const text of ["Nein das ist für American Express ich meine mein Raiffeisen Bankkonto das mich im quartal 36€ kostet ca.", "nicht im Oktober, sondern im September",
       "Doch, ich habe Netflix", "Es geht um die Miete", "Ich meinte die Versicherung", "Das ist falsch", "Du hast mich falsch verstanden", "eigentlich wollte ich den Strom",
-      "Nein, das meinte ich nicht", "falsch, ich wollte wissen wie viel ich für Essen ausgebe"]) expect(correctsPrevious(text), text).toBe(true);
-    for (const text of ["Wie viel hab ich im Oktober fürs Essen ausgegeben?", "Und im September?", "Lege ein Sparziel Japan an", "Danke!", "Was ist ein ETF?"])
+      "Nein, das meinte ich nicht", "falsch, ich wollte wissen wie viel ich für Essen ausgebe", "Also Raiffeisen jedes quartal meine ich",
+      "Das Girokonto meinte ich."]) expect(correctsPrevious(text), text).toBe(true);
+    for (const text of ["Wie viel hab ich im Oktober fürs Essen ausgegeben?", "Und im September?", "Lege ein Sparziel Japan an", "Danke!", "Was ist ein ETF?",
+      "Was meine ich mit Fixkosten?"])
       expect(correctsPrevious(text), text).toBe(false);
   });
 });

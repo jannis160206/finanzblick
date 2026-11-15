@@ -39,6 +39,13 @@ async function prepare(page: Page, width: number, theme: "light" | "dark") {
   });
   const at = "2026-10-15T11:00:00.000Z";
   await page.route("**/api/assistant-rules", (route) => route.fulfill({ json: { file: "data/assistant-rules.json", loop: "bereit", count: {}, rules: [
+    { id: "rule-0002", feedbackId: "fb-00000002", createdAt: at, updatedAt: at, appliedAt: at, status: "active", kind: "prompt",
+      comment: "Du sollst meine Verträge durchsuchen und nach einer günstigeren Alternative suchen.", question: "Lohnt sich ein anderes Konto?", answer: "Schau unter Verträge.",
+      rule: "Bei Fragen nach Alternativen hol die passenden Verträge und recherchiere günstigere Angebote im Web.", scope: "all", target: "routing",
+      prompt: { id: "voice.contracts", mode: "replace", before: "Behaupte nie, dass er ein gefragtes Angebot schon hat.",
+        after: "Bei Fragen nach Alternativen hol die passenden Verträge und recherchiere günstigere Angebote im Web." },
+      review: { fixed: true, note: "Holt jetzt die Verträge und sucht im Web nach Alternativen." }, votes: { up: 3, down: 1 },
+      check: { at, model: "deepseek-flash", passed: true, baseline: { passed: 85, total: 86, hard: 0 }, candidate: { passed: 86, total: 86, hard: 0 } } },
     { id: "rule-0001", feedbackId: "fb-00000001", createdAt: at, updatedAt: at, status: "active", comment: "Die Antwort beginnt mit einer Floskel und wiederholt sich.",
       question: "Was ist ein ETF?", answer: "Gute Frage! …", rule: "Beginne Antworten ohne Floskel und vermeide Wiederholungen.", scope: "all", target: "answer",
       check: { at, model: "deepseek-flash", passed: true, baseline: { passed: 85, total: 86, hard: 0 }, candidate: { passed: 85, total: 86, hard: 0 } } },
@@ -68,7 +75,7 @@ test.describe("assistant orchestrator admin", () => {
       const arrow = page.getByRole("button", { name: "Orchestrator-Unterseiten anzeigen" });
       await arrow.click();
       const pages = page.getByRole("list", { name: "Orchestrator-Unterseiten" });
-      await expect(pages.getByRole("link")).toHaveText(["Aufbau & Topologie", "Agenten & Prompts", "Letzte Läufe", "Werkzeuge", "Feedback & Regeln"]);
+      await expect(pages.getByRole("link")).toHaveText(["Aufbau & Topologie", "Agenten & Prompts", "Letzte Läufe", "Werkzeuge", "Feedback & Prüfung"]);
       await expect(page.getByRole("button", { name: "Orchestrator-Unterseiten ausblenden" })).toHaveAttribute("aria-expanded", "true");
       await page.getByRole("link", { name: "Assistent-Orchestrator" }).click();
       await expect(page).toHaveURL(/\/einstellungen\/orchestrator\/aufbau$/);
@@ -77,6 +84,7 @@ test.describe("assistant orchestrator admin", () => {
       const sub = page.getByRole("navigation", { name: "Orchestrator-Bereiche" });
       await expect(sub.getByRole("link", { name: "Aufbau & Topologie" })).toHaveAttribute("aria-current", "page");
       for (const name of ["Topologie", "Modelle", "Kosten"]) await expect(page.getByRole("heading", { level: 2, name, exact: true })).toBeVisible();
+      await expect(page.getByRole("group", { name: "Im Hintergrund" })).toContainText("Prüfungs-Agent");
       const tree = page.getByRole("group", { name: "Orchestrator-Baum" });
       await expect(tree).toBeVisible();
       await expect(tree.getByText("KI bereit · DeepSeek Flash · Qwen als Rückfall")).toBeVisible();
@@ -110,11 +118,16 @@ test.describe("assistant orchestrator admin", () => {
       await sub.getByRole("link", { name: "Werkzeuge" }).click();
       await expect(page.getByRole("list", { name: "Werkzeuge Gehalt & Steuern" })).toContainText("Gehalt");
 
-      await sub.getByRole("link", { name: "Feedback & Regeln" }).click();
-      const rules = page.getByRole("list", { name: "Regeln aus Feedback" });
+      await sub.getByRole("link", { name: "Feedback & Prüfung" }).click();
+      const rules = page.getByRole("list", { name: "Änderungen des Prüfungs-Agents" });
       await expect(rules).toContainText("Beginne Antworten ohne Floskel und vermeide Wiederholungen.");
       await expect(rules).toContainText("Gold-Eval ohne → mit Regel: 85/86 → 85/86");
       await expect(rules.getByRole("button", { name: /^Regel deaktivieren/ })).toBeVisible();
+      const change = rules.locator(":scope > li").first();
+      await expect(change).toContainText("Prompt geändert · Verträge · Stimme");
+      await expect(change).toContainText("Statt: „Behaupte nie, dass er ein gefragtes Angebot schon hat.“");
+      await expect(change).toContainText("Nachtest: behoben");
+      await expect(change.getByRole("button", { name: /^Änderung zurücknehmen/ })).toBeVisible();
       await expect(page.getByRole("button", { name: "Aktualisieren" })).toBeEnabled();
 
       // The bare address still works and opens the first subpage.

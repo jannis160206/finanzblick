@@ -1,12 +1,15 @@
 import { z } from "zod";
 import { contentWords } from "@/lib/knowledge-base/query";
+import { isPromptId, type PromptId } from "@/lib/ai/agent-prompts";
 import { looksInjected, maskContacts } from "@/lib/ai/untrusted";
+import type { StoredFeedback } from "./feedback";
 import { agentIds, type AgentId } from "./orchestrator";
 
 /**
- * Rules learned from 👎 comments: DeepSeek turns a concrete comment into one short rule, the gold eval decides whether
- * it may go live, and active rules are added to the prompts of the agents they concern. Everything lives in one local
- * JSON file that the admin view shows; each rule can be switched off there.
+ * What the assistant learned from feedback. The review agent turns a concrete 👎 comment into a one-sentence change of the
+ * prompt that caused it, tests it again and against the gold eval, and only then writes it into the agent's prompt. Older
+ * entries are rules that are added to the prompts of the agents they concern. Everything lives in one local JSON file that
+ * the admin view shows; each change can be taken back there.
  */
 
 export const RULES_FORMAT = "finanzblick-assistant-rules";
@@ -41,6 +44,16 @@ export const feedbackRuleSchema = z.object({
   target: z.enum(ruleTargets).optional(),
   // Why it is not active: too vague, not usable as a rule, worse in the eval, DeepSeek unavailable.
   reason: z.string().max(200).optional(),
+  // "prompt": a change the review agent wrote into an agent's prompt; without a kind, a rule added to the prompts (older entries).
+  kind: z.enum(["rule", "prompt"]).optional(),
+  // The change: a sentence appended to the prompt, or one sentence of it replaced. `rule` repeats the new sentence for display.
+  prompt: z.object({
+    id: z.custom<PromptId>((value) => isPromptId(value)), mode: z.enum(["append", "replace"]), before: z.string().max(600).optional(), after: z.string().max(240),
+  }).strict().optional(),
+  // The review agent asked the question again with the changed prompt and judged whether that fixes the complaint.
+  review: z.object({ fixed: z.boolean(), note: z.string().max(200), replay: z.string().max(400).optional() }).strict().optional(),
+  // When the change went live (again); the votes since then are counted for it.
+  appliedAt: z.string().max(40).optional(),
   // The gold eval without and with the rule; `passed` means the rule may be active.
   check: z.object({
     at: z.string().max(40), model: z.string().max(80), passed: z.boolean(), baseline: scoreSchema, candidate: scoreSchema,
@@ -62,8 +75,8 @@ export type RulesFile = z.infer<typeof rulesFileSchema>;
 export function rulesFile(rules: FeedbackRule[], now = new Date()): RulesFile {
   return {
     format: RULES_FORMAT, version: 1,
-    about: "Regeln, die der Finanz-Assistent aus 👎-Kommentaren gelernt hat. Aktiv ist eine Regel nur, wenn die Gold-Eval mit ihr gleich gut oder besser war. " +
-      "Ein- und ausschalten unter Einstellungen → Assistent-Orchestrator → Regeln aus Feedback.",
+    about: "Was der Prüfungs-Agent aus 👎-Kommentaren gelernt hat: Prompt-Änderungen (und ältere Regeln). Aktiv ist eine Änderung nur, wenn der Nachtest " +
+      "die Beschwerde behebt und die Gold-Eval gleich gut oder besser bleibt. Zurücknehmen unter Einstellungen → Assistent-Orchestrator → Feedback.",
     updatedAt: now.toISOString(),
     rules: rules.slice(-MAX_RULES),
   };
@@ -73,7 +86,7 @@ export function rulesFile(rules: FeedbackRule[], now = new Date()): RulesFile {
 export type RuleText = { text: string; scope: RuleScope; target: RuleTarget };
 
 export const activeRules = (rules: FeedbackRule[]): RuleText[] => rules
-  .filter((rule): rule is FeedbackRule & { rule: string } => rule.status === "active" && !!rule.rule)
+  .filter((rule): rule is FeedbackRule & { rule: string } => rule.status === "active" && !!rule.rule && rule.kind !== "prompt")
   .slice(-MAX_ACTIVE_RULES)
   .map((rule) => ({ text: rule.rule, scope: rule.scope ?? "all", target: rule.target ?? "answer" }));
 
@@ -102,7 +115,9 @@ export function cleanRule(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const text = value.replace(/^["„“'»«\s]+|["„“'»«\s]+$/g, "").replace(/\s+/g, " ").trim();
   if (text.length < 15 || text.length > 240 || !/\p{L}{4}/u.test(text)) return undefined;
-  if ((text.match(/[.!?](?:\s|$)/g) ?? []).length > 2) return undefined;
+  // "z. B." or "bzw." ends no sentence.
+  const plain = text.replace(/\b(?:z\.\s?b|d\.\s?h|u\.\s?a|bzw|ca|etc|inkl|exkl|evtl|ggf|usw|vgl|zzgl|mind|max|min|nr)\./giu, "");
+  if ((plain.match(/[.!?](?:\s|$)/g) ?? []).length > 2) return undefined;
   if (unsafeRule.test(text) || looksInjected(text) || maskContacts(text) !== text || /\d{5,}/.test(text)) return undefined;
   return /[.!?]$/.test(text) ? text : `${text}.`;
 }
@@ -116,6 +131,52 @@ export function sameRule(a: string, b: string): boolean {
 }
 
 export const statusLabel: Record<RuleStatus, string> = {
-  pending: "Wartet auf Prüfung", checking: "Wird geprüft", active: "Aktiv", rejected: "Abgelehnt", vague: "Zu vage", unusable: "Keine Regel",
-  disabled: "Deaktiviert", error: "Fehler",
+  pending: "Wartet auf Prüfung", checking: "Wird geprüft", active: "Aktiv", rejected: "Abgelehnt", vague: "Zu vage", unusable: "Keine Änderung",
+  disabled: "Zurückgenommen", error: "Fehler",
 };
+
+export type PromptEdit = NonNullable<FeedbackRule["prompt"]>;
+
+// A closing format instruction ("Antworte nur mit JSON …") stays last: a new sentence goes before it, where the model heeds it.
+const formatLine = /Antworte nur mit JSON/;
+
+/** The prompt with the learned change; undefined when the sentence to replace is not (or no longer) in it. */
+export function applyEdit(text: string, edit: PromptEdit): string | undefined {
+  const base = text.trim();
+  if (edit.mode === "append") {
+    const format = base.search(formatLine);
+    return format > 0 ? `${base.slice(0, format)}${edit.after} ${base.slice(format)}` : `${base} ${edit.after}`;
+  }
+  return edit.before && base.includes(edit.before) ? base.replace(edit.before, () => edit.after) : undefined;
+}
+
+/** The prompt without the learned change; undefined when it is no longer in it (someone edited it by hand). */
+export function revertEdit(text: string, edit: PromptEdit): string | undefined {
+  const base = text.trim();
+  if (!base.includes(edit.after)) return undefined;
+  if (edit.mode === "replace") return edit.before ? base.replace(edit.after, () => edit.before ?? "") : undefined;
+  const spaced = [`${edit.after} `, ` ${edit.after}`].find((part) => base.includes(part)) ?? edit.after;
+  return base.replace(spaced, "").trim();
+}
+
+/** The agent a prompt belongs to; the supervisor's prompts and the answer rules shape every agent's answers. */
+export const promptAgent = (id: PromptId): AgentId | undefined => {
+  const agent = id.split(".")[1];
+  return (agentIds as readonly string[]).includes(agent) ? agent as AgentId : undefined;
+};
+
+/**
+ * The 👍/👎 given while a learned change was live, on answers it could shape (its agent's, or every answer for the supervisor
+ * and the answer rules); computed from the feedback file whenever it is shown, so a changed vote never counts twice.
+ */
+export function votesSince(rule: FeedbackRule, entries: readonly StoredFeedback[]): { up: number; down: number } | undefined {
+  const from = rule.appliedAt ?? rule.check?.at;
+  if (!from || !rule.check?.passed || rule.status !== "active" && rule.status !== "disabled") return undefined;
+  const until = rule.status === "disabled" ? rule.updatedAt : undefined;
+  const agent = rule.prompt ? promptAgent(rule.prompt.id) : rule.scope && rule.scope !== "all" ? rule.scope : undefined;
+  const votes = entries.filter((entry) => {
+    const at = entry.updatedAt ?? entry.recordedAt;
+    return entry.id !== rule.feedbackId && at >= from && (!until || at <= until) && (!agent || entry.answer.agent.id === agent);
+  });
+  return { up: votes.filter((entry) => entry.rating === "like").length, down: votes.filter((entry) => entry.rating === "dislike").length };
+}

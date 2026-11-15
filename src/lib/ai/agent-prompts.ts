@@ -1,4 +1,4 @@
-import { agentIds, agentWords, type AgentId } from "@/lib/assistant/orchestrator";
+import { agentIds, agentLabel, agentWords, type AgentId } from "@/lib/assistant/orchestrator";
 
 /**
  * The editable system prompts of the orchestrator and its agents with their defaults. An admin may overwrite any of them
@@ -6,8 +6,8 @@ import { agentIds, agentWords, type AgentId } from "@/lib/assistant/orchestrator
  * JSON fields, the grounding of numbers and the data rule – the code always adds, so an edit can never remove it.
  */
 
-export type PromptGroup = "orchestrator" | "supervisor" | AgentId;
-export type PromptId = "orchestrator" | "supervisor" | "synthesis" | "answer-rules" | `voice.${AgentId}` | `tools.${AgentId}`;
+export type PromptGroup = "orchestrator" | "supervisor" | "review" | AgentId;
+export type PromptId = "orchestrator" | "supervisor" | "synthesis" | "answer-rules" | "review" | `voice.${AgentId}` | `tools.${AgentId}`;
 export type PromptOverrides = Partial<Record<PromptId, string>>;
 export type PromptMeta = { id: PromptId; group: PromptGroup; label: string; hint: string };
 
@@ -105,11 +105,23 @@ const answerRules = "Antworte auf Deutsch per Du, natürlich und direkt wie ein 
   "aus ihm, wiederhol nichts schon Gesagtes und frag nie nach, was dort schon steht. overview zeigt alle Daten des Nutzers im Überblick, Details zeigt " +
   "die Karte unter deiner Antwort. Aktuelle Werte aus dem Web nennst du mit Stand und Quelle.";
 
+const review = "Du bist der Prüfungs-Agent eines privaten Finanz-Assistenten. Ein Nutzer hat eine Antwort mit 👎 bewertet und gesagt, was ihm fehlt. " +
+  "Finde den System-Prompt, der daran schuld ist, und verbessere genau diesen mit einer kleinen Änderung, damit ähnliche Fragen künftig so beantwortet werden, " +
+  "wie der Nutzer es erwartet. Die Prompts: supervisor = plant, welche Daten, Werkzeuge oder Recherchen eine Antwort braucht (falsche oder fehlende Daten, " +
+  "keine Websuche, Rückfrage statt Antwort); synthesis = wie der Supervisor die Antwort aus den Ergebnissen schreibt (Aufbau, Kernaussage, nächster Schritt); " +
+  "answer-rules = Ton, Länge und Format jeder Antwort; voice.<agent> = Fachwissen und Stimme eines Spezialisten; tools.<agent> = Werkzeugwahl eines " +
+  "Spezialisten, wenn etwas angelegt oder geändert werden soll. Wähle eine art: ergaenzen = ein neuer Satz kommt dazu; ersetzen = ein Satz, der wörtlich " +
+  "im Prompt steht (alt), wird durch einen besseren ersetzt (neu); keine = der Kommentar betrifft nur Daten des Nutzers (etwa eine falsche Buchung), ist zu " +
+  "vage oder kein Prompt ist schuld. Der neue Satz ist eine allgemeine Anweisung für ähnliche Fragen und deckt alles ab, was der Nutzer verlangt (etwa erst seine " +
+  "Daten lesen und dann im Web recherchieren); ein Satz mit höchstens 200 Zeichen, ohne Namen, " +
+  "Beträge, Links oder Kontonummern; er hebt keine Sicherheitsregel auf und erlaubt nie, Zahlen zu erfinden. " +
+  "Antworte nur mit JSON: {\"prompt\": \"supervisor\", \"art\": \"ergaenzen\", \"alt\": null, \"neu\": \"…\", \"grund\": \"…\"}.";
+
 const toolGuide = (agent: AgentId) => `Nachrichten sind oft locker oder mit Tippfehlern geschrieben. Beispiele: ${examples[agent]}. ` +
   "Meinung, Rat, Erklärung oder Gefühle sind nie eine Änderung, sondern ask.";
 
 export const defaultPrompts = {
-  orchestrator, supervisor, synthesis, "answer-rules": answerRules,
+  orchestrator, supervisor, synthesis, "answer-rules": answerRules, review,
   ...Object.fromEntries(agentIds.flatMap((agent) => [[`voice.${agent}`, voices[agent]], [`tools.${agent}`, toolGuide(agent)]])),
 } as Record<PromptId, string>;
 
@@ -122,12 +134,27 @@ export const promptMeta: PromptMeta[] = [
     hint: "Entscheidet, welche Daten oder Recherchen eine Antwort braucht. {werkzeuge} und {rechner} setzt die App ein; das JSON-Format muss bleiben." },
   { id: "synthesis", group: "supervisor", label: "Antwort schreiben (DeepSeek V4 Pro)", hint: "Wie der Supervisor die Antwort aus den Rohdaten der Spezialisten formuliert." },
   { id: "answer-rules", group: "supervisor", label: "Antwortregeln (alle Agenten)", hint: "Ton, Länge und Umgang mit fehlenden Angaben für jede Antwort." },
+  { id: "review", group: "review", label: "Prüfung (DeepSeek V4 Pro)",
+    hint: "Liest 👎-Kommentare und passt den Prompt des zuständigen Agenten um einen Satz an. Das JSON-Format muss bleiben; seinen eigenen Prompt ändert er nie." },
   ...agentIds.flatMap((agent): PromptMeta[] => [
     { id: `voice.${agent}`, group: agent, label: "Stimme", hint: "Rolle, Fachwissen und Ton, mit denen der Spezialist antwortet." },
     { id: `tools.${agent}`, group: agent, label: "Werkzeugwahl",
       hint: "Hinweise und Beispiele für die Werkzeugwahl. Werkzeugliste, JSON-Felder und Datenregel hängt die App immer an." },
   ]),
 ];
+
+/** The owner of a prompt group as people read it. */
+export const promptGroupName = (group: PromptGroup): string => group === "orchestrator" ? "Orchestrator" : group === "supervisor" ? "Supervisor"
+  : group === "review" ? "Prüfungs-Agent" : group === "general" ? "Allgemeiner Chat" : agentLabel[group];
+
+/** "Supervisor · Planung (DeepSeek Flash)", "Verträge · Stimme": which prompt a change concerns. */
+export function promptLabel(id: PromptId): string {
+  const meta = promptMeta.find((item) => item.id === id);
+  return `${promptGroupName(meta?.group ?? "supervisor")} · ${meta?.label ?? id}`;
+}
+
+/** The prompts the review agent may change: every agent's, never its own or the local routing. */
+export const reviewTargets: readonly PromptId[] = promptIds.filter((id) => id !== "review" && id !== "orchestrator");
 
 /** The active text of one prompt: the admin's version, or the default when none is saved. */
 export const promptText = (id: PromptId, overrides?: PromptOverrides): string => overrides?.[id]?.trim() || defaultPrompts[id];

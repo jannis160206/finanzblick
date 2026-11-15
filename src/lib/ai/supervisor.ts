@@ -39,8 +39,9 @@ export type SupervisorInput = {
 /** How much of the conversation the supervisor and the answer see: the last eight messages. */
 export const HISTORY_MESSAGES = 8;
 // Corrections need the whole conversation understood: V4 Pro plans them, everything else the fast model.
-const correctionNote = "Korrektur: Die Nachricht korrigiert oder präzisiert deine vorige Antwort. Lies im Verlauf, worum es ging, behalte Thema, " +
-  "Zeitraum, Konto und Händler bei und ändere nur, was der Nutzer korrigiert; hol nur Daten, die dafür noch fehlen. Wähle art antwort – eine aktion nur, " +
+const correctionNote = "Korrektur: Die Nachricht korrigiert oder präzisiert deine vorige Antwort. Lies im Verlauf, was der Nutzer ursprünglich wollte, " +
+  "und erledige genau diese Aufgabe mit der Korrektur neu: Thema, Zeitraum, Konto und Händler bleiben, nur das Korrigierte ändert sich, und du holst alle " +
+  "Daten und Recherchen, die die ursprüngliche Aufgabe braucht (sucht er etwa ein günstigeres Angebot, auch web). Wähle art antwort – eine aktion nur, " +
   "wenn er ausdrücklich etwas anlegen, ändern oder löschen lassen will.";
 
 const team = agentIds.map((agent) => `${agentWords[agent]} (${agentLabel[agent]}): ` + agentTools(agent).filter((tool) => tool !== "ask")

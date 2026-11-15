@@ -69,7 +69,7 @@ Ist ein DeepSeek-Key hinterlegt, antworten DeepSeek-Modelle über die API; das l
 | Folgefragen | `deepseek-flash` | 2–3 Vorschläge zum selben Thema unter jeder Antwort; ohne DeepSeek feste Vorschläge zum Thema, nie Qwen |
 | Supervisor | `deepseek-flash` | jede Frage, die kein Befehl ist: sieht den Datenüberblick, wählt 0–4 Lese-Werkzeuge, lokales Wissen oder Websuchen, Aktion oder Rückfrage; ohne DeepSeek lokales Routing, nie Qwen |
 | Supervisor-Antwort | `deepseek-v4-pro` (ohne Denkmodus) | schreibt jede Analyse, Zusammenfassung, Bewertung, Recherche und Erklärung aus den Rohdaten der Spezialisten; Steuer-Analysen im Denkmodus; Smalltalk ohne Daten auf `deepseek-flash` |
-| Regel aus Feedback | `deepseek-v4-pro` | 👎-Kommentar → Regel, danach Gold-Eval auf Flash; ohne DeepSeek wartet sie |
+| Prüfungs-Agent | `deepseek-v4-pro` | 👎-Kommentar → Satz im Prompt des zuständigen Agenten, Nachtest, danach Gold-Eval auf Flash; ohne DeepSeek wartet er |
 | PDF-Kontoauszüge | lokal (Qwen) | nur mit `DEEPSEEK_DOCUMENTS=on` an DeepSeek |
 | Rückfall | Lokal (Qwen) | wenn DeepSeek nicht erreichbar ist oder ablehnt |
 

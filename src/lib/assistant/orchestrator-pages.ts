@@ -4,7 +4,7 @@ export const orchestratorPages = [
   { slug: "agenten", label: "Agenten & Prompts", description: "Spezialisten und ihre System-Prompts bearbeiten" },
   { slug: "laeufe", label: "Letzte Läufe", description: "Fragen mit Agent, Werkzeugen, Modellen und Dauer" },
   { slug: "werkzeuge", label: "Werkzeuge", description: "Welche Werkzeuge jeder Spezialist hat" },
-  { slug: "feedback", label: "Feedback & Regeln", description: "Feedback-Datei und gelernte Regeln" },
+  { slug: "feedback", label: "Feedback & Prüfung", description: "Feedback-Datei und Prüfungs-Agent" },
 ] as const;
 
 export type OrchestratorView = (typeof orchestratorPages)[number]["slug"];

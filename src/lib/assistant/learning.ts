@@ -27,7 +27,8 @@ export function correction(input: string): { text: string } | undefined {
 
 /**
  * A message that corrects or narrows the previous answer instead of asking something new: "Nein, ich meine mein
- * Raiffeisen-Konto", "nicht im Oktober, sondern im September", "Doch, ich habe Netflix", "Es geht um die Miete".
+ * Raiffeisen-Konto", "Also Raiffeisen jedes Quartal meine ich", "nicht im Oktober, sondern im September", "Doch, ich habe Netflix",
+ * "Es geht um die Miete".
  * The supervisor then keeps the earlier topic and only changes what is corrected.
  */
 export function correctsPrevious(input: string): boolean {
@@ -36,6 +37,7 @@ export function correctsPrevious(input: string): boolean {
   return /^(?:nein|nö|noe|nee|ne,|doch|falsch|stimmt (?:so )?nicht|nicht ganz|nicht (?:das|den|die|so)|eher nicht|passt nicht|eigentlich|gemeint war|(?:ich )?(?:meinte|meine|wollte)|das (?:meinte|wollte) ich)\b/.test(text)
     || /\b(?:ich mein(?:e|te)|meinte ich|gemeint (?:ist|war|hab\w*)|ich (?:rede|sprech\w*|frag\w*|wollte) (?:von|nach|über|wissen)|es geht (?:mir )?(?:um|nicht um)|eigentlich (?:wollte|meinte|ging)|falsch verstanden)\b/.test(text)
     || /\bnicht\b[^.?!]{1,80}\bsondern\b/.test(text)
+    || /\b(?:meine|meinte) ich(?: (?:damit|eigentlich|doch))?[\s.!]*$/.test(text)
     || /^(?:das|der|die|es) (?:ist|war) (?:doch |eigentlich )?(?:falsch|nicht richtig|nicht das|für)\b/.test(text);
 }
 

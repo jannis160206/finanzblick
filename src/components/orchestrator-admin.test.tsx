@@ -45,6 +45,9 @@ it("shows the structure as a tree from the orchestrator to the tools, the models
     .toEqual(["Arbeitnehmerveranlagung", "Home-Office-Rechner", "Gehaltsübersicht", "Abrechnungen bearbeiten(ändert Daten)"]);
   expect(tree.getByText("Plant:").parentElement?.textContent).toBe("Plant:DeepSeek Flash");
   expect(tree.getByText("Schreibt:").parentElement?.textContent).toBe("Schreibt:DeepSeek V4 Pro");
+  const review = within(tree.getByRole("group", { name: "Im Hintergrund" }));
+  expect(review.getByText("Prüfungs-Agent")).toBeTruthy();
+  expect(review.getByText("Prüft:").parentElement?.textContent).toBe("Prüft:DeepSeek V4 Pro");
 
   const perTask = within(screen.getByRole("list", { name: "Modell je Aufgabe" })).getAllByRole("listitem").map((item) => item.textContent);
   expect(perTask).toContain("SupervisorDeepSeek Flash");
@@ -151,16 +154,20 @@ it("says when DeepSeek or the whole AI is unavailable", async () => {
   expect(await screen.findByText("KI nicht erreichbar · nur Regeln")).toBeTruthy();
 });
 
-it("shows the feedback file for the admin only, and the rules learned from it with a switch", async () => {
+it("shows the feedback file for the admin only, and what the review agent changed with its checks, votes and a way back", async () => {
   const at = "2026-11-14T12:00:00.000Z";
   const base = { feedbackId: "fb-00000001", createdAt: at, updatedAt: at, question: "Welche Abos habe ich?", answer: "Netflix und Spotify." };
   let rules = [
-    { ...base, id: "rule-0001", status: "active", comment: "Mir fehlt der Jahresbetrag.", rule: "Nenne bei Abos auch den Jahresbetrag.", scope: "contracts", target: "answer",
+    { ...base, id: "rule-0001", status: "active", comment: "Such mir eine günstigere Alternative.", kind: "prompt", scope: "all", target: "routing", appliedAt: at,
+      rule: "Bei Fragen nach Alternativen hol die Verträge und recherchiere im Web.",
+      prompt: { id: "supervisor", mode: "append", after: "Bei Fragen nach Alternativen hol die Verträge und recherchiere im Web." },
+      review: { fixed: true, note: "Holt jetzt die Verträge und sucht im Web." }, votes: { up: 2, down: 0 },
       check: { at, model: "deepseek-flash", passed: true, baseline: { passed: 84, total: 86, hard: 0 }, candidate: { passed: 85, total: 86, hard: 0 } } },
     { ...base, id: "rule-0002", status: "rejected", comment: "Immer duzen bitte.", rule: "Sprich den Nutzer immer per Du an.", scope: "all", target: "answer",
       reason: "Gold-Eval mit Regel schlechter: 83/86 statt 84/86.",
       check: { at, model: "deepseek-flash", passed: false, baseline: { passed: 84, total: 86, hard: 0 }, candidate: { passed: 83, total: 86, hard: 0 } } },
     { ...base, id: "rule-0003", status: "vague", comment: "war schlecht", reason: "Zu vage – sag konkret, was falsch war oder gefehlt hat." },
+    { ...base, id: "rule-0004", status: "checking", comment: "Bitte mit Quellen." },
   ];
   const patches: unknown[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -181,16 +188,21 @@ it("shows the feedback file for the admin only, and the rules learned from it wi
   expect(feedback.getByRole("link", { name: "Herunterladen" }).getAttribute("href")).toBe("/api/assistant-feedback?download=1");
   expect(feedback.getByRole("list", { name: "Neuestes Feedback" }).textContent).toContain("Umsätze / query: „Wie viel für Essen?“ – Kommentar: „Zu hoch“");
 
-  const list = within(await screen.findByRole("list", { name: "Regeln aus Feedback" }));
-  const [active, rejected, vague] = list.getAllByRole("listitem");
-  expect(active.textContent).toContain("AktivAntworten · Verträge");
-  expect(active.textContent).toContain("Gold-Eval ohne → mit Regel: 84/86 → 85/86");
+  const list = within(await within(screen.getByRole("region", { name: "Prüfungs-Agent" })).findByRole("list", { name: "Änderungen des Prüfungs-Agents" }));
+  const [active, rejected, vague, checking] = list.getAllByRole("listitem");
+  expect(active.textContent).toContain("AktivPrompt ergänzt · Supervisor · Planung (DeepSeek Flash)");
+  expect(active.textContent).toContain("Nachtest: behoben – Holt jetzt die Verträge und sucht im Web.");
+  expect(active.textContent).toContain("Gold-Eval ohne → mit Änderung: 84/86 → 85/86");
+  expect(active.textContent).toContain("Seit der Änderung:Hilfreich: 2Nicht hilfreich: 0");
+  expect(rejected.textContent).toContain("Regel · Antworten · alle Bereiche");
   expect(rejected.textContent).toContain("Gold-Eval mit Regel schlechter: 83/86 statt 84/86.");
   expect(within(rejected).getByRole("button", { name: "Erneut prüfen" })).toBeTruthy();
   expect(within(vague).queryByRole("button")).toBeNull();
+  expect(checking.textContent).toContain("Der Prüfungs-Agent sieht sich den Kommentar an …");
+  expect(checking.textContent).not.toContain("Keine Änderung");
   expect(screen.getByText("1 aktiv · Prüfung bereit")).toBeTruthy();
-  fireEvent.click(within(active).getByRole("button", { name: "Regel deaktivieren: Nenne bei Abos auch den Jahresbetrag." }));
-  await waitFor(() => expect(within(screen.getByRole("list", { name: "Regeln aus Feedback" })).getAllByRole("listitem")[0].textContent).toContain("Deaktiviert"));
+  fireEvent.click(within(active).getByRole("button", { name: "Änderung zurücknehmen: Bei Fragen nach Alternativen hol die Verträge und recherchiere im Web." }));
+  await waitFor(() => expect(within(screen.getByRole("list", { name: "Änderungen des Prüfungs-Agents" })).getAllByRole("listitem")[0].textContent).toContain("Zurückgenommen"));
   expect(patches).toEqual([{ id: "rule-0001", action: "disable" }]);
   cleanup();
   vi.stubGlobal("fetch", vi.fn(async (url: string) => url === "/api/assistant-feedback" ? Response.json({ error: "nein" }, { status: 403 }) : Response.json(cloudStatus())));
@@ -208,6 +220,6 @@ it("folds the orchestrator's subpages out of the settings link with its arrow", 
   expect(arrow.getAttribute("aria-expanded")).toBe("true");
   expect(within(screen.getByRole("list", { name: "Orchestrator-Unterseiten" })).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
     ["Aufbau & Topologie", "/einstellungen/orchestrator/aufbau"], ["Agenten & Prompts", "/einstellungen/orchestrator/agenten"],
-    ["Letzte Läufe", "/einstellungen/orchestrator/laeufe"], ["Werkzeuge", "/einstellungen/orchestrator/werkzeuge"], ["Feedback & Regeln", "/einstellungen/orchestrator/feedback"],
+    ["Letzte Läufe", "/einstellungen/orchestrator/laeufe"], ["Werkzeuge", "/einstellungen/orchestrator/werkzeuge"], ["Feedback & Prüfung", "/einstellungen/orchestrator/feedback"],
   ]);
 });

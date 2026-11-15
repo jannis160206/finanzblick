@@ -4,7 +4,7 @@ import { readAiConfig } from "@/lib/ai/config";
 import { assistantCaller } from "@/lib/server/assistant-access";
 import { FeedbackFileError, feedbackDisplayPath, feedbackDocument, feedbackFilePath, readFeedback, recordFeedback } from "@/lib/server/feedback-store";
 import { accountErrorResponse, jsonResponse, readJsonBody } from "@/lib/server/http";
-import { learnRule, ruleJob, ruleLoopEnabled } from "@/lib/server/rule-loop";
+import { reviewFeedback, ruleJob, ruleLoopEnabled } from "@/lib/server/rule-loop";
 
 export const runtime = "nodejs";
 
@@ -25,8 +25,9 @@ function later(task: () => Promise<unknown>) {
 }
 
 /**
- * 👍/👎 with optional comment on an assistant answer: redacted and added to the single feedback file. A 👎 with a
- * comment also starts the feedback loop in the background (rule proposal, gold eval, activation only if not worse).
+ * 👍/👎 with optional comment on an assistant answer: redacted and added to the single feedback file, where the review agent counts
+ * it for the prompt changes that were live. A 👎 with a comment also starts the review agent in the background (prompt change,
+ * retest, gold eval, written into the prompt only if it fixes the complaint and the eval is not worse).
  */
 export async function POST(request: Request): Promise<Response> {
   try {
@@ -47,7 +48,7 @@ export async function POST(request: Request): Promise<Response> {
     };
     const count = await recordFeedback(stored);
     const job = ruleJob(stored);
-    if (job && ruleLoopEnabled()) later(() => learnRule(job));
+    if (job && ruleLoopEnabled()) later(() => reviewFeedback(job));
     return jsonResponse({ stored: true, count, ...(job && ruleLoopEnabled() ? { learning: true } : {}) });
   } catch (error) {
     return failed(error);
