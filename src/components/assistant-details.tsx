@@ -13,10 +13,12 @@ const ease = [0.32, 0.72, 0, 1] as const;
 const focusRing = "rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
 const fallbackTitle = (use: AssistantModelUse) => `DeepSeek nicht verfügbar${use.reason ? ` (${use.reason})` : ""} – das lokale Modell hat geantwortet`;
 
-/** One tool call in a line: outcome, name and the question it got; its result folds out on click. */
+/** One tool call in a line: outcome, name and a short input; it folds out to the full input and the shortened result. */
 function ToolRow({ call }: { call: AssistantToolCall }) {
   const [open, setOpen] = useState(false);
-  const result = useId();
+  const detail = useId();
+  const mode = useMotionMode();
+  const expandable = !!call.args || !!call.result;
   const head = <>
     {call.ok ? <Check aria-hidden="true" className="size-3 shrink-0 text-success" /> : <X aria-hidden="true" className="size-3 shrink-0 text-destructive" />}
     <span className="shrink-0 text-foreground/90">{callLabel(call.tool)}</span>
@@ -24,14 +26,24 @@ function ToolRow({ call }: { call: AssistantToolCall }) {
     {call.args && <>{" "}<span className="min-w-0 truncate text-muted-foreground">· {call.args}</span></>}
   </>;
   return <li data-call={call.tool}>
-    {call.result
-      ? <button type="button" aria-expanded={open} aria-controls={open ? result : undefined} onClick={() => setOpen((value) => !value)}
-        className={cn("flex min-h-6 w-full min-w-0 items-center gap-1.5 text-left transition-colors hover:text-foreground", focusRing)}>
+    {expandable
+      ? <button type="button" aria-expanded={open} aria-controls={open ? detail : undefined} onClick={() => setOpen((value) => !value)}
+        className={cn("flex min-h-6 w-full min-w-0 items-center gap-1.5 rounded-sm text-left transition-colors hover:text-foreground", focusRing)}>
         {head}
         <ChevronRight aria-hidden="true" className={cn("ml-auto size-3 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none", open && "rotate-90")} />
       </button>
       : <div className="flex min-h-6 min-w-0 items-center gap-1.5">{head}</div>}
-    {open && call.result && <p id={result} className="mb-1 ml-[1.125rem] break-words text-muted-foreground">{call.result}</p>}
+    <AnimatePresence initial={false}>
+      {open && <m.div id={detail} key="detail" className="overflow-hidden"
+        initial={mode === "full" ? { height: 0, opacity: 0 } : { opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+        exit={mode === "full" ? { height: 0, opacity: 0, transition: exitTween } : { opacity: 0, transition: { duration: mode === "none" ? 0 : 0.12 } }}
+        transition={{ duration: mode === "none" ? 0 : 0.2, ease }}>
+        <dl className="mb-1.5 ml-[1.125rem] mt-0.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 rounded-md bg-muted/40 px-2 py-1.5">
+          {call.args && <><dt className="text-muted-foreground">Eingabe</dt><dd className="break-words">{call.args}</dd></>}
+          {call.result && <><dt className="text-muted-foreground">Ergebnis</dt><dd className="line-clamp-4 break-words text-muted-foreground">{call.result}</dd></>}
+        </dl>
+      </m.div>}
+    </AnimatePresence>
   </li>;
 }
 

@@ -433,7 +433,7 @@ export function FinanceAssistant({ variant = "page", prompt }: { variant?: "page
     meta: Pick<AssistantMessage, "tool" | "asked" | "correcting" | "clarify" | "agent" | "via" | "ms" | "sources" | "links" | "knowledgeId"> = {}) => {
     const suggestions = result.choices?.length ? result.choices : result.suggestions;
     const message = {
-      id: newId(), role: "assistant" as const, text: result.text.slice(0, 2000), at: Date.now(), source,
+      id: newId(), role: "assistant" as const, text: result.text.slice(0, 4000), at: Date.now(), source,
       ...(result.card ? { card: result.card } : {}), ...(result.cards?.length ? { cards: result.cards.slice(0, 4) } : {}), ...(result.change ? { change: result.change } : {}),
       ...(result.undoId ? { undoId: result.undoId } : {}), ...(result.contractDraft ? { contractDraft: result.contractDraft } : {}),
       ...(result.change || result.undoId ? { status: "preview" as const } : result.contractDraft ? { status: "question" as const } : {}),

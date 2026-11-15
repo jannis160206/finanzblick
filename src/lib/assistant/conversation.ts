@@ -2,6 +2,7 @@ import { currency } from "@/lib/format";
 import { budgetLinesIn } from "./budget-plan";
 import { draftTools, type AssistantTool } from "./tools";
 import type { AgentResult } from "./agent";
+import { blocksToMarkdown, parseBlocks, type Block, type ListBlock } from "./markdown";
 
 // Tools that change data or start a form; never run as a side effect of a question like "Sollte ich …?".
 export const changingTools: readonly AssistantTool[] = [...draftTools, "edit", "booking", "batch", "rule", "remember", "forget", "undo", "reminder", "account_rule", "budget_plan",
@@ -57,9 +58,24 @@ const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+(?=[^a-zäöüß]
  */
 export function freshPart(answer: string, previous?: string): string {
   if (!previous) return answer;
-  const before = sentencesOf(previous).map(words);
-  return answer.split("\n\n").map((paragraph) => sentencesOf(paragraph).filter((sentence) => !before.some((old) => similar(words(sentence), old))).join(" ").trim())
-    .filter(Boolean).join("\n\n");
+  const before = sentencesOf(previous.replace(/\n+/g, " ")).map(words);
+  const fresh = (text: string) => text.split("\n").map((line) => sentencesOf(line).filter((sentence) => !before.some((old) => similar(words(sentence), old))).join(" ").trim())
+    .filter(Boolean).join("\n");
+  // Paragraphs and list items lose what was said before; tables, code and headings stay as they are.
+  const list = (block: ListBlock): ListBlock | undefined => {
+    const items = block.items.flatMap((item) => {
+      const text = fresh(item.text);
+      const sub = item.sub && list(item.sub);
+      return text || sub ? [{ text, ...(sub ? { sub } : {}) }] : [];
+    });
+    return items.length ? { ...block, items } : undefined;
+  };
+  const blocks = parseBlocks(answer).flatMap((block): Block[] => {
+    if (block.type === "paragraph" || block.type === "quote") { const text = fresh(block.text); return text ? [{ ...block, text }] : []; }
+    if (block.type === "list") { const kept = list(block); return kept ? [kept] : []; }
+    return [block];
+  });
+  return blocks.some((block) => block.type !== "heading" && block.type !== "rule") ? blocksToMarkdown(blocks) : "";
 }
 
 // A question rather than a command: "Wann bin ich pleite?", "Kommt noch was Großes?".

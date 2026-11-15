@@ -126,7 +126,7 @@ it("keeps how an answer came about behind a small closed Details link: models, c
   render(<AnswerDetails source="KI" prompt="Du bist Finanzblick und kennst Monatsplan, Konten und Sparziele des Nutzers."
     models={[{ provider: "deepseek", model: "deepseek-flash", task: "supervise" }, { provider: "deepseek", model: "deepseek-v4-pro", task: "synthesize" }]}
     calls={[{ tool: "query", ok: true, summary: "Ausgaben & Einnahmen", args: "Wie viel für Essen im Oktober?", result: "Essen im Oktober: 312 €" },
-      { tool: "web", ok: false, summary: "Websuche", args: "Bitcoin Kurs" }]} />);
+      { tool: "web", ok: false, summary: "Websuche", args: "Bitcoin Kurs" }, { tool: "free", ok: true, summary: "Antwort formulieren" }]} />);
   const toggle = screen.getByRole("button", { name: "Details" });
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(toggle.getAttribute("title")).toBe("DeepSeek V4 Pro");
@@ -135,14 +135,18 @@ it("keeps how an answer came about behind a small closed Details link: models, c
   fireEvent.click(toggle);
   const panel = within(screen.getByRole("region", { name: "Details zur Antwort" }));
   expect(panel.getByText(/^Modelle:/).closest("p")?.textContent).toBe("Modelle: DeepSeek Flash (Supervisor) · DeepSeek V4 Pro (Supervisor-Antwort)");
-  const [query, web] = within(panel.getByRole("list", { name: "Werkzeuge" })).getAllByRole("listitem");
+  const [query, web, free] = within(panel.getByRole("list", { name: "Werkzeuge" })).getAllByRole("listitem");
   expect(query.textContent).toBe("Ausgaben & Einnahmen (erfolgreich) · Wie viel für Essen im Oktober?");
   expect(web.textContent).toBe("Websuche (Fehler) · Bitcoin Kurs");
-  // The result only on click; a call without a result is no button.
+  // Input and result only on click; a call without either is no button.
   expect(panel.queryByText("Essen im Oktober: 312 €")).toBeNull();
-  expect(within(web).queryByRole("button")).toBeNull();
-  fireEvent.click(within(query).getByRole("button"));
-  expect(panel.getByText("Essen im Oktober: 312 €")).toBeTruthy();
+  expect(within(free).queryByRole("button")).toBeNull();
+  const row = within(query).getByRole("button");
+  fireEvent.click(row);
+  expect(row.getAttribute("aria-expanded")).toBe("true");
+  expect([...query.querySelectorAll("dt, dd")].map((item) => item.textContent)).toEqual(["Eingabe", "Wie viel für Essen im Oktober?", "Ergebnis", "Essen im Oktober: 312 €"]);
+  fireEvent.click(within(web).getByRole("button"));
+  expect([...web.querySelectorAll("dt, dd")].map((item) => item.textContent)).toEqual(["Eingabe", "Bitcoin Kurs"]);
   // The prompt is clamped to two lines until it is asked for in full.
   expect(panel.getByText(/^Du bist Finanzblick/).className).toContain("line-clamp-2");
   fireEvent.click(panel.getByRole("button", { name: "Ganzen Prompt zeigen" }));

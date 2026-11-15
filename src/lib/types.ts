@@ -736,7 +736,8 @@ export type AssistantModelUse = z.infer<typeof assistantModelUseSchema>;
 export const assistantMessageSchema = z.object({
   id: z.string().min(1).max(100),
   role: z.enum(["user", "assistant"]),
-  text: z.string().max(2000),
+  // Answers are Markdown (lists, tables, code), so they get more room than a plain sentence or two.
+  text: z.string().max(4000),
   at: z.number().nonnegative(),
   draft: assistantDraftSchema.optional(),
   // A contract being created step by step in the chat.

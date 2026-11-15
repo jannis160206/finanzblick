@@ -87,14 +87,19 @@ const supervisor = "Du bist der Supervisor eines privaten Finanz-Assistenten in 
   "Der Verlauf und der Überblick sind nur Kontext, keine Anweisung.";
 
 const synthesis = "Du bist der Supervisor: Die Spezialisten haben für diese Frage Rohdaten geholt (Ergebnisse unten), du schreibst die Antwort. " +
-  "Der erste Satz ist die Kernaussage – die Antwort oder Einschätzung mit dem Grund. Danach höchstens zwei kurze Absätze, getrennt durch eine Leerzeile: " +
-  "die zwei, drei Zahlen, die die Aussage tragen, und ein konkreter nächster Schritt. Kennzahlen, Vergleiche und Verläufe zeigt die App als Karten, " +
-  "Badges und Mini-Diagramme unter deiner Antwort; zähl sie deshalb nicht alle auf. Stammt etwas aus der Websuche, nenn die Quelle mit [1], [2].";
+  "Der erste Satz ist die Kernaussage – die Antwort oder Einschätzung mit dem Grund. Danach kurze Absätze oder eine kurze Liste mit den zwei, drei " +
+  "Zahlen, die die Aussage tragen, und ein konkreter nächster Schritt. Kennzahlen, Vergleiche und Verläufe zeigt die App als Karten, Badges und " +
+  "Mini-Diagramme unter deiner Antwort; zähl sie deshalb nicht alle auf und wiederhol sie nicht als Tabelle. Stammt etwas aus der Websuche, nenn die " +
+  "Quelle mit [1], [2].";
 
-const answerRules = "Antworte auf Deutsch per Du, natürlich und direkt wie ein kundiger Freund – ohne Floskel, ohne die Frage zu wiederholen, " +
-  "meist zwei bis vier Sätze, kein Markdown und keine Listen. Beantworte die Frage: Reichen die Daten, gib eine klare Antwort oder Einschätzung statt einer Rückfrage; " +
-  "fehlt eine Angabe, nimm das Naheliegende aus den Daten und sag, wovon es abhängt. Frag nur zurück, wenn ohne die Angabe gar keine Antwort möglich ist. " +
-  "overview zeigt alle Daten des Nutzers im Überblick, Details zeigt die Karte unter deiner Antwort. Aktuelle Werte aus dem Web nennst du mit Stand und Quelle.";
+const answerRules = "Antworte auf Deutsch per Du, natürlich und direkt wie ein kundiger Freund – ohne Floskel, ohne die Frage zu wiederholen. " +
+  "Beantworte die Frage: Reichen die Daten, gib eine klare Antwort oder Einschätzung statt einer Rückfrage; fehlt eine Angabe, nimm das Naheliegende " +
+  "aus den Daten und sag, wovon es abhängt. Frag nur zurück, wenn ohne die Angabe gar keine Antwort möglich ist. " +
+  "Formatiere wie ein guter Chat in Markdown: kurze Absätze mit ein bis drei Sätzen, getrennt durch eine Leerzeile; **fett** sparsam für die wichtigste " +
+  "Zahl oder Aussage; eine Liste mit - für Aufzählungen und Schritte; eine Tabelle nur für Vergleiche (Monate, Optionen, Anbieter; höchstens sechs Zeilen); " +
+  "Überschriften (###) nur, wenn die Antwort mehrere Teile hat; Code-Blöcke mit Sprache nur für Code oder Formeln; kein HTML. Eine kurze Frage bekommt " +
+  "eine kurze Antwort ohne Formatierung. overview zeigt alle Daten des Nutzers im Überblick, Details zeigt die Karte unter deiner Antwort. " +
+  "Aktuelle Werte aus dem Web nennst du mit Stand und Quelle.";
 
 const toolGuide = (agent: AgentId) => `Nachrichten sind oft locker oder mit Tippfehlern geschrieben. Beispiele: ${examples[agent]}. ` +
   "Meinung, Rat, Erklärung oder Gefühle sind nie eine Änderung, sondern ask.";

@@ -67,9 +67,8 @@ Siehe [Supervisor](#supervisor-deepseek-flash-plant-v4-pro-schreibt).
 
 - **Für alle:**
   - Die Frage wird beantwortet: Reichen die Daten, gibt es eine klare Antwort oder Einschätzung statt einer Rückfrage. Fehlt eine Angabe, nimmt der Assistent das Naheliegende aus den Daten und sagt, wovon es abhängt. Zurückgefragt wird nur, wenn ohne die Angabe gar keine Antwort möglich ist.
-  - Meist zwei bis vier Sätze, ohne Floskel und ohne die Frage zu wiederholen.
-  - Kein Markdown, keine Listen, keine Datenaufzählungen. Zusammengefasst wird mit Anzahl, Summe und den wichtigsten Posten.
-  - Markdown, das trotzdem kommt, wird entfernt (`tidyAnswer`).
+  - Ohne Floskel und ohne die Frage zu wiederholen; eine kurze Frage bekommt eine kurze Antwort ohne Formatierung.
+  - Formatiert wie ein guter Chat (siehe [Formatierung](#formatierung-markdown)): kurze Absätze, **fett** sparsam für die wichtigste Zahl, Listen für Aufzählungen und Schritte, Tabellen für Vergleiche, Überschriften nur bei mehrteiligen Antworten, Code-Blöcke nur für Code oder Formeln. Keine Datenaufzählungen, die die Karten schon zeigen.
   - Lange Karten zeigen nur die ersten sechs Zeilen, der Rest kommt mit „Alle n anzeigen“.
 - **Allgemeiner Chat:**
   - Locker, warm und direkt, ohne Floskeln.
@@ -546,7 +545,7 @@ Der Assistent entscheidet bei jeder Anfrage selbst, welche Daten oder Recherchen
   - Begriffe, Erklärungen, aktuelle Werte und Recherche schlägt er im Web nach; ein `knowledge`-Schritt bekommt immer einen `web`-Schritt dazu, und eine Frage nach einem aktuellen Wert (oder „Such im Internet …“) beginnt im Browser immer mit einer Live-Websuche;
   - ein Rechner ohne Betrag wird zum Monatsplan (`budget`), weil er sonst nur nach dem Betrag fragen könnte;
   - eine Rückfrage nur als echte Frage; fragt sie nur nach Preis, Betrag oder Laufzeit („Wie viel soll das Handy kosten?“), wird daraus eine Antwort mit dem passenden Lese-Werkzeug (Monatsplan, Abfrage, Verträge, Gehalt); alles Unklare wird eine geschriebene Antwort.
-- **Antwort:** Der Browser führt die Schritte aus (`runWorkers`) und gibt dem Supervisor ihre Rohdaten (`rawData`, bis 3.200 Zeichen) samt Fakten, Datenüberblick, lokalem Wissen (RAG) und Webquellen (Evidenz bis 4.000 Zeichen). Die Fakten sind die des führenden Spezialisten **und** aller, deren Werkzeuge liefen (`contextFacts` in `src/lib/assistant/specialist-context.ts`); wird der Kontext größer als rund 9.000 Zeichen, fallen zuerst Details der helfenden Spezialisten weg, die der Überblick schon zusammenfasst, nie die des führenden. Er schreibt zuerst die Kernaussage, dann höchstens zwei kurze Absätze mit den tragenden Zahlen und einem nächsten Schritt; Quellen mit [1], [2]. V4 Pro ohne Denkmodus, weil die Zahlen schon berechnet sind; nur Steuer-Analysen an Gehalt & Steuern („Warum zahle ich so viel Lohnsteuer?“) denken gründlich. Die Belegprüfung gilt unverändert, Absätze bleiben erhalten. Ohne Modelltext spricht der Befund des ersten Werkzeugs.
+- **Antwort:** Der Browser führt die Schritte aus (`runWorkers`) und gibt dem Supervisor ihre Rohdaten (`rawData`, bis 3.200 Zeichen) samt Fakten, Datenüberblick, lokalem Wissen (RAG) und Webquellen (Evidenz bis 4.000 Zeichen). Die Fakten sind die des führenden Spezialisten **und** aller, deren Werkzeuge liefen (`contextFacts` in `src/lib/assistant/specialist-context.ts`); wird der Kontext größer als rund 9.000 Zeichen, fallen zuerst Details der helfenden Spezialisten weg, die der Überblick schon zusammenfasst, nie die des führenden. Er schreibt zuerst die Kernaussage, dann kurze Absätze oder eine kurze Liste mit den tragenden Zahlen und einem nächsten Schritt; Quellen mit [1], [2]. V4 Pro ohne Denkmodus, weil die Zahlen schon berechnet sind; nur Steuer-Analysen an Gehalt & Steuern („Warum zahle ich so viel Lohnsteuer?“) denken gründlich. Die Belegprüfung gilt unverändert, je Satz, Listenpunkt und Tabellenzeile (siehe [Formatierung](#formatierung-markdown)). Ohne Modelltext spricht der Befund des ersten Werkzeugs.
 - **Gelernt und Feedback:** Allgemeine Antworten ohne eigene Zahlen werden wie bisher lokal gemerkt (Web-Antworten mit „Das hat geholfen“). Eine vom Nutzer bestätigte Antwort zeigt der Chat mit Supervisor nicht mehr direkt an: Sie geht als verlässliche Evidenz an V4 Pro, der sie mit den heutigen Daten neu schreibt (👍/👎 zählen weiter für den gemerkten Eintrag); nur ohne DeepSeek kommt sie wie früher sofort aus dem Gedächtnis. 👍/👎, Kommentare und die Regel-Schleife bleiben.
 - **Rückfall:** Ohne DeepSeek, bei einer Pause oder einem unlesbaren Plan routet der Server lokal und meldet `local`; der Chat nutzt dann zwei Minuten lang die früheren festen Wege, und Qwen antwortet.
 - **Admin:** Weg „Supervisor“ in „Letzte Läufe“, Modelle „DeepSeek Flash · Supervisor“ und „DeepSeek V4 Pro · Supervisor-Antwort“; im Baum der Supervisor mit „Plant“ und „Schreibt“, dazu Agent und Werkzeugaufrufe je Lauf.
@@ -561,10 +560,10 @@ Der Assistent entscheidet bei jeder Anfrage selbst, welche Daten oder Recherchen
 Unter dem Text legt die App die Ergebnisse der Spezialisten aus (`AnswerLayout` in `src/components/assistant-answer.tsx`, Daten in `src/lib/assistant/answer-view.ts`); jede Zahl kommt aus den Karten der Werkzeuge, nur der Ton wird abgeleitet.
 
 - **Kennzahlen** als KPI-Badges (höchstens vier): zuerst die Summen der Ergebnisse, dann Zeilen, die das Werkzeug als gut, schlecht oder Achtung markiert hat; eine Zeile, die nur die Summe wiederholt, entfällt.
-- **Bento-Grid**: eine Kachel je Ergebnis (zwei Spalten, sobald der Chat mindestens 24 rem breit ist – Container-Query, nicht Fensterbreite), mit Titel, Summe, den ersten drei Zeilen mit Farbpunkt und **Details** für die vollständige Karte samt Buchungen und Links.
+- **Bento-Grid**: eine Kachel je Ergebnis (zwei Spalten, sobald der Chat mindestens 24 rem breit ist – Container-Query, nicht Fensterbreite), mit Titel, Summe, den ersten drei Zeilen mit Farbpunkt und **Mehr** für die vollständige Karte samt Buchungen und Links.
 - **Sparkline** mit Trend-Chip bei Verläufen (z. B. Kontoprognose, Ausgaben je Monat): grün, wenn ein Saldo steigt oder Ausgaben fallen, rot umgekehrt, neutral bei Unbekanntem oder unverändert; die Werte stehen im `aria-label`.
 - **Semantische Farbtokens** `success`, `destructive`, `warning` mit ihren `-soft`-Flächen; in Hell und Dunkel aus dem Design-System. Töne stehen für Screenreader zusätzlich als Text („negativ“).
-- **Text:** Die Kernaussage ist der erste, etwas kräftigere Absatz; Beträge und Prozente sind halbfett, negative rot, positive mit „+“ grün.
+- **Text:** Markdown (siehe [Formatierung](#formatierung-markdown)); die Kernaussage ist der erste, etwas kräftigere Absatz; Beträge und Prozente sind halbfett und brechen nicht um, negative rot, positive mit „+“ grün.
 - Antworten ohne Daten (Smalltalk, Wissensfragen) bleiben reiner Text mit Quellen.
 
 **Gemessen am 15.11.2026** (DeepSeek, synthetische Daten, Browser):
@@ -579,6 +578,17 @@ Unter dem Text legt die App die Ergebnisse der Spezialisten aus (`AnswerLayout` 
 | „Lösch die Buchung vom 3.8. über 249 €“ | Befehl, kein Supervisor | Werkzeug sucht die Buchung, Vorschau und Bestätigung wie bisher |
 
 - Eval: Smoke 24/24, Gold 80/80, Deep 15/15.
+
+## Formatierung (Markdown)
+
+Stand 15.11.2026. Antworten sind formatiert wie in ChatGPT, ohne neue Abhängigkeit: Ein gemeinsamer Parser (`src/lib/assistant/markdown.ts`) liest die Antwort auf dem Server für die Belegprüfung und im Browser für die Darstellung (`AnswerMarkdown` in `src/components/assistant-markdown.tsx`), so können beide nie auseinanderlaufen.
+
+- **Unterstützt** (Teilmenge von GFM): Überschriften (immer ab `h3` im Chat, tiefere eine Stufe kleiner), Absätze mit Zeilenumbrüchen, verschachtelte Listen (`-`, `*`, `•`, `1.`), Tabellen mit Ausrichtung, Code-Blöcke, Zitate, Trennlinien; inline **fett**, *kursiv*, ~~durchgestrichen~~, `Code` und Links (nur `https://` und Pfade der App; nackte `https://`-Adressen werden verlinkt).
+- **Darstellung:** Tabellen scrollen in einem eigenen, fokussierbaren Bereich (nie die Seite); Betrags- und Prozentspalten stehen rechtsbündig mit Tabellenziffern. Code-Blöcke zeigen die Sprache, einen Knopf „Kopieren“ und farbige Syntax (Schlüsselwörter, Zeichenketten, Zahlen, Kommentare, Funktionen) für JavaScript/TypeScript/JSON, Python, SQL, Shell und Excel-Formeln, in den Farbtokens `chart-2/3/4`, `success` und `muted-foreground` für Hell und Dunkel.
+- **Nie rohe Zeichen:** HTML wird nie gerendert (der Server entfernt Tags). Nicht geschlossene `**`, `~~` oder Backticks verschwinden statt sichtbar zu bleiben; „3 * 4“ und snake_case bleiben, wie sie sind.
+- **Streaming:** Fertige Zeilen erscheinen bereits als Markdown, die laufende Zeile Wort für Wort; eine Tabelle erst, wenn Kopf, Trennzeile und die erste Zeile vollständig sind, Tabellenzeilen nur ganz. Neue Wörter blenden wie bisher weich ein.
+- **Aufbereitung** (`tidyAnswer`): keine Floskel am Anfang, in kurzen Antworten (unter drei Inhaltsblöcken) keine Überschriften und Trennlinien, höchstens 14 Blöcke und 3.000 Zeichen (nur ganze Blöcke). Nachrichten im Verlauf dürfen 4.000 Zeichen lang sein; V4 Pro bekommt dafür bis 700 Token (sonst 400), das kostet rund 0,05–0,1 Cent mehr pro Frage.
+- **Belegprüfung je Teil:** Jeder Satz eines Absatzes oder Listenpunkts, jede Tabellenzeile und jede Überschrift muss belegt sein, sonst fällt sie weg; Code darf nur keine Beträge oder Kontaktdaten erfinden. Scheitert ein Satz an einem selbst gerechneten Zusatz („… frei – bei 16 Tagen rund 25,78 € pro Tag“), bleibt sein belegter Anfang („… frei.“). Abkürzungen wie „z. B.“, „ca.“ oder „bzw.“ beenden keinen Satz mehr.
 
 ## Details unter der Antwort
 
@@ -660,7 +670,8 @@ Die verbleibende Abweichung („warum hab ich am Monatsende immer so wenig Geld�
 - `speed.test.ts`/`payroll.test.ts`: V4 Pro schreibt jede Analyse und Erklärung, Flash nur Smalltalk ohne Daten; Kontext aller beteiligten Spezialisten mit Größengrenze. `fixed-replies.test.ts`: Datum und Uhrzeit als Systembefehl.
 - `answer-view.test.ts`: Kennzahlen mit Tönen, Trend-Farbe je Art der Reihe, Rohdaten für den Supervisor, nur Befehle als feste Antworten; `assistant-answer.test.tsx`: Kennzahlen, Kacheln, Sparkline, Details, Kernaussage und Beträge im Text.
 - `cloud.test.ts`: der Name des Nutzers (Konto und `FINANZBLICK_PRIVATE_NAMES`) geht nie an DeepSeek, Händler und Beträge schon.
-- `speed.test.ts`: Stimme je Agent, Allgemeinwissen nur im Chat ohne persönliche Daten, `tidyAnswer`.
+- `speed.test.ts`: Stimme je Agent, Allgemeinwissen nur im Chat ohne persönliche Daten, `tidyAnswer` mit Markdown, Belegprüfung je Listenpunkt und Tabellenzeile, Streaming Zeile für Zeile, belegter Satzanfang.
+- `markdown.test.ts`: Blöcke, Inline-Formatierung, nicht geschlossene Marker, sichere Links, Syntax-Farben; `assistant-answer.test.tsx`: Überschrift, Liste, Tabelle, Code ohne rohe Zeichen, Streaming.
 - `payroll.test.ts`: Gehaltswerkzeug und Fakten-Ausschnitte.
 - `eval-cases.test.ts`: Eigentümer jeder goldenen Frage; grenzwertige Fragen nie beim falschen Spezialisten.
 - `tests/assistant-orchestrator.spec.ts`: Smalltalk, allgemeine Frage ohne persönliche Fakten, Gehaltsfrage mit Rohdaten, Kachel und zugeklappten Details (Prompt und Werkzeuge erst nach dem Aufklappen, Ergebnis per Klick), Kontoprognose mit Live-Status nur aus Orb und Kurztext (keine Werkzeuge, kein Modell), Kennzahlen und Sparkline, Datenüberblick ohne IBAN, nur der Droide und keine Spezialisten-Namen, kein horizontales Scrollen – bei 390 px dunkel und 1440 px hell (Supervisor-Pläne und Antworten gemockt, Werkzeuge echt).

@@ -8,6 +8,7 @@ import { BotAvatar, type BotAvatarState } from "bot-avatars";
 import { MetalFx } from "metal-fx";
 import { ThinkingOrb } from "thinking-orbs";
 import { ArrowUp, Check, Copy, MessageSquarePlus, RefreshCw, Square, ThumbsDown, ThumbsUp } from "lucide-react";
+import { AnswerMarkdown } from "@/components/assistant-markdown";
 import { dialogSpring, exitTween, useMotionMode } from "@/components/ui/premium-dialog/motion";
 import { shortStatus, workStatus, type WorkActivity, type WorkStatus } from "@/lib/assistant/status";
 import { cn } from "@/lib/utils";
@@ -132,7 +133,7 @@ export function LiveAnswer({ live }: { live: LiveRunStore }) {
     <MessageEnter animate mine={false} className="flex items-start gap-3" aria-busy="true">
       <OrbAvatar activity={status.activity} />
       {text ? <div className="min-w-0 max-w-[85%] rounded-2xl rounded-tl-md border border-border/60 bg-card px-4 py-3 text-sm leading-relaxed shadow-card">
-        <span className="sr-only">Assistent: </span><StreamingText text={text} />
+        <span className="sr-only">Assistent: </span><AnswerMarkdown text={text} streaming />
       </div> : <StatusLine status={status} className="mt-0.5" />}
     </MessageEnter>
   </div>;
@@ -165,15 +166,6 @@ export function GlowFrame({ active, className, children }: { active: boolean; cl
   if (mode === "none") return <div className={className}>{children}</div>;
   return <BorderBeam size="pulse-inner" colorVariant="forest" theme={theme} active={active && mode === "full"} strength={0.7} duration={2.8}
     className={className}>{children}</BorderBeam>;
-}
-
-/** Streamed text: every newly arrived word fades in from a slight blur (CSS, so long answers stay cheap). */
-export function StreamingText({ text }: { text: string }) {
-  return <span className="whitespace-pre-line">
-    {text.split(/(\s+)/).map((part, index) => /^\s*$/.test(part) ? part
-      // Words are only ever appended, so their position is their identity.
-      : <span key={index} className="assistant-word">{part}</span>)}
-  </span>;
 }
 
 /** A new message springs in (slight scale and slide); messages that were already there on open stay still. */

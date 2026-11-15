@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { rulesFor, type RuleText } from "@/lib/assistant/feedback-rules";
 import { detectSmallTalk } from "@/lib/assistant/smalltalk";
+import { blocksToMarkdown, parseBlocks, type Block, type ListBlock } from "@/lib/assistant/markdown";
 import { agentIds, chatRequest, type AgentId } from "@/lib/assistant/orchestrator";
 import { MAX_PROMPT_PREVIEW } from "@/lib/types";
 import { chat, chatStream, stripThinking, type ChatMessage, type ChatOptions } from "./client";
@@ -52,9 +53,9 @@ function answerMessages(input: AnswerRequest, facts: Record<string, unknown>, ev
   ];
 }
 
-// Specialists keep it short; the general chat gets a little more room and a livelier temperature, the supervisor the most room.
-const answerOptions = (agent: AgentId = "general", supervised = false) => supervised ? { maxTokens: 420, temperature: 0.3 }
-  : agent === "general" ? { maxTokens: 320, temperature: 0.4 } : { maxTokens: 300, temperature: 0.3 };
+// Room for a short list or a small comparison table; the general chat is a little livelier, the supervisor gets the most room.
+const answerOptions = (agent: AgentId = "general", supervised = false) => supervised ? { maxTokens: 700, temperature: 0.3 }
+  : agent === "general" ? { maxTokens: 400, temperature: 0.4 } : { maxTokens: 400, temperature: 0.3 };
 
 /**
  * Web search summaries and ordinary questions take the fast model, analyses and tax questions the thinking mode. The supervisor
@@ -105,35 +106,109 @@ export function answerCheck(agent: AgentId | undefined, facts: Record<string, un
   return (agent ?? "general") === "general" && !personal ? chatBacked : backed;
 }
 
-// Plain chat text: no Markdown emphasis, headings or list markers; paragraphs separated by a blank line stay (at most three).
-export function tidyAnswer(text: string): string {
-  const paragraphs = text.split(/\r?\n\s*\r?\n/).map((paragraph, index) => tidyParagraph(paragraph, index === 0)).filter(Boolean);
-  return [...paragraphs.slice(0, 2), paragraphs.slice(2).join(" ")].filter(Boolean).join("\n\n");
-}
+const MAX_ANSWER = 3000;
+const MAX_BLOCKS = 14;
+const HTML_TAG = /<\/?(?:p|b|i|u|em|strong|span|div|ul|ol|li|table|thead|tbody|tr|td|th|h[1-6]|code|pre|sup|sub|small|mark)\b[^>]*>/gi;
+const withoutHtml = (text: string) => text.replace(/<br\s*\/?>/gi, "\n").replace(HTML_TAG, "").replace(/\r\n?/g, "\n");
 
-function tidyParagraph(text: string, first: boolean): string {
-  const plain = text.split(/\r?\n/).map((line) => line.replace(/^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)/, "").trim()).filter(Boolean).join(" ")
-    .replace(/\*\*(.+?)\*\*|__(.+?)__/g, "$1$2").replace(/`([^`]*)`/g, "$1");
-  if (!first) return plain;
-  // Stock openers ("Kurz gesagt:", "Gute Frage!") and echoing the question ("Du willst wissen, …?") add nothing in a chat.
-  const rest = plain.replace(/^(?:kurz gesagt|kurz und knapp|gute frage|klar doch|na klar|gerne?)\s*[:!,.–-]\s*/i, "")
+// Stock openers ("Kurz gesagt:", "Gute Frage!") and echoing the question ("Du willst wissen, …?") add nothing in a chat.
+function dropOpener(text: string): string {
+  const rest = text.replace(/^(?:kurz gesagt|kurz und knapp|gute frage|klar doch|na klar|gerne?)\s*[:!,.–-]\s*/i, "")
     .replace(/^(?:(?:okay|ok|alles klar|klar),?\s+)?du (?:willst|möchtest|moechtest|fragst|fragst dich|meinst)\b[^?.!]{0,160}\?\s+(?=\S)/i, "")
     .replace(/^(?:wo|was|wie|wann|wer|warum|wieso|welche[rsmn]?|wofür|wohin)\b[^.!?]{0,80}\b(?:du|dein\w*|dich|dir)\b[^.!?]{0,40}\?\s+(?=\S)/i, "");
-  return rest === plain || !rest ? plain : rest.charAt(0).toUpperCase() + rest.slice(1);
+  return rest === text || !rest ? text : rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
-// Splits after ., ! or ? followed by a space; "8.279,28" and "8.11.2026" stay whole.
-// A dot before a lowercase word ("am 25.8. und …", "z. B. etwas") ends no sentence.
-const sentences = (text: string) => text.split(/(?<=[.!?])\s+(?=[^a-zäöüß])/).filter(Boolean);
+/**
+ * Chat Markdown, tidied: no HTML, no stock opener at the start, headings and rules only in an answer long enough to need
+ * them, at most 14 blocks. Paragraphs, lists, tables and code stay as the model wrote them.
+ */
+export function tidyAnswer(text: string): string {
+  let blocks = parseBlocks(withoutHtml(text).replace(/\n{3,}/g, "\n\n").trim());
+  if (blocks.filter((block) => block.type !== "heading" && block.type !== "rule").length < 3)
+    blocks = blocks.filter((block) => block.type !== "heading" && block.type !== "rule");
+  const first = blocks[0];
+  if (first?.type === "paragraph") blocks = [{ ...first, text: dropOpener(first.text) }, ...blocks.slice(1)];
+  return blocksToMarkdown(blocks.slice(0, MAX_BLOCKS));
+}
 
-// Sentences with an invented amount, link or account number are dropped; the rest of the answer survives, paragraph by paragraph.
-function groundedText(content: string, source: object, check: (sentence: string, source: object) => boolean = backed) {
-  const text = tidyAnswer(unwrapJson(stripThinking(content))).slice(0, 1400);
-  if (text.startsWith("{")) return undefined;
-  // Small models sometimes loop; a sentence said twice is kept once.
+// Splits after ., ! or ? followed by a space; "8.279,28" and "8.11.2026" stay whole. A dot before a lowercase word
+// ("am 25.8. und …") and the dot of an abbreviation ("z. B. 500 €", "ca. 40 %") end no sentence.
+const sentences = (text: string) =>
+  text.split(/(?<!\b(?:[zdu]|z\.\s?B|d\.\s?h|u\.\s?a|ca|inkl|exkl|ggf|evtl|bzw|bspw|vgl|Nr|max|mind|zzgl|abzgl)\.)(?<=[.!?])\s+(?=[^a-zäöüß])/).filter(Boolean);
+
+/**
+ * A sentence whose later clause adds an unbacked figure keeps the backed clauses before it: "Dir bleiben 412 € – bei 16
+ * Tagen rund 25,78 € pro Tag." becomes "Dir bleiben 412 €." Without a backed beginning of at least three words it goes.
+ */
+function backedPart(sentence: string, keep: (sentence: string) => boolean, close = true): string | undefined {
+  if (keep(sentence)) return sentence;
+  const parts = sentence.split(/(\s+[–—]\s+|;\s+)/);
+  let kept = "";
+  for (let index = 0; index < parts.length - 2; index += 2) {
+    const next = kept + (index ? parts[index - 1] : "") + parts[index];
+    if (!keep(next)) break;
+    kept = next;
+  }
+  const text = kept.replace(/[\s,:;–—-]+$/, "");
+  if (text.split(/\s+/).length < 3 || !/\p{L}/u.test(text)) return undefined;
+  return close ? `${text}.` : text;
+}
+
+/**
+ * Every sentence of a paragraph or list item, every table row and every heading must pass the check, or it is dropped
+ * (a sentence said twice is kept once); code only must not invent an amount or a contact. Headings left without text
+ * and rules at the edges go, too.
+ */
+function groundBlocks(blocks: readonly Block[], keep: (sentence: string) => boolean, keepCode: (code: string) => boolean): Block[] {
   const seen = new Set<string>();
-  const kept = text.split("\n\n").map((paragraph) => sentences(paragraph.replace(/\s+/g, " ").trim()).filter((sentence) => check(sentence, source))
-    .filter((sentence) => { const key = sentence.toLowerCase(); return !seen.has(key) && !!seen.add(key); }).join(" ").trim()).filter(Boolean).join("\n\n");
+  const prose = (text: string) => text.split("\n").map((line) => sentences(line.replace(/\s+/g, " ").trim())
+    .flatMap((sentence) => backedPart(sentence, keep) ?? [])
+    .filter((sentence) => { const key = sentence.toLowerCase(); return !seen.has(key) && !!seen.add(key); }).join(" ")).filter(Boolean).join("\n");
+  const list = (block: ListBlock): ListBlock | undefined => {
+    const items = block.items.flatMap((item) => {
+      const text = prose(item.text);
+      const sub = item.sub && list(item.sub);
+      return text || sub ? [{ text, ...(sub ? { sub } : {}) }] : [];
+    });
+    return items.length ? { ...block, items } : undefined;
+  };
+  const kept: Block[] = [];
+  for (const block of blocks) {
+    if (block.type === "paragraph" || block.type === "quote") {
+      const text = prose(block.text);
+      if (text) kept.push({ ...block, text });
+    } else if (block.type === "list") {
+      const items = list(block);
+      if (items) kept.push(items);
+    } else if (block.type === "table") {
+      const rows = block.rows.filter((cells) => keep(cells.join(" · ")));
+      if (rows.length && keep(block.header.join(" · "))) kept.push({ ...block, rows });
+    } else if (block.type === "code") {
+      if (block.code.trim() && keepCode(block.code)) kept.push(block);
+    } else if (block.type === "heading") {
+      if (keep(block.text)) kept.push(block);
+    } else kept.push(block);
+  }
+  return kept.filter((block, index) => block.type === "heading" ? !!kept[index + 1] && kept[index + 1].type !== "heading"
+    : block.type !== "rule" || (index > 0 && index < kept.length - 1));
+}
+
+// The answer up to the length limit, whole blocks only.
+function fitted(blocks: readonly Block[]): string {
+  const kept: Block[] = [];
+  for (const block of blocks) {
+    if (blocksToMarkdown([...kept, block]).length > MAX_ANSWER) break;
+    kept.push(block);
+  }
+  return kept.length ? blocksToMarkdown(kept) : blocksToMarkdown(blocks.slice(0, 1)).slice(0, MAX_ANSWER);
+}
+
+// An answer whose amounts, links and account numbers are all backed; whatever is not is dropped, block by block.
+function groundedText(content: string, source: object, check: (sentence: string, source: object) => boolean = backed) {
+  const raw = unwrapJson(stripThinking(content));
+  if (raw.startsWith("{")) return undefined;
+  const kept = fitted(groundBlocks(parseBlocks(tidyAnswer(raw)), (sentence) => check(sentence, source), (code) => chatBacked(code, source)));
   return kept.length >= 2 && /\p{L}/u.test(kept) ? kept : undefined;
 }
 
@@ -143,7 +218,7 @@ const echoes = (sentence: string, question: string) => !!question.trim() && plai
 
 function prepare(input: AnswerRequest) {
   const facts = cleanFacts(input.facts, 1500);
-  const evidence = input.evidence ? cleanUntrusted(input.evidence, 2500) : undefined;
+  const evidence = input.evidence ? cleanUntrusted(input.evidence, 4000) : undefined;
   const check = answerCheck(input.agent, facts, evidence);
   return { facts, evidence, source: backing(facts, evidence, input.question),
     check: (sentence: string, source: object) => !echoes(sentence, input.question) && check(sentence, source) };
@@ -164,18 +239,45 @@ const systemPrompt = (messages: ChatMessage[]) => (messages[0]?.role === "system
 /** `prompt` comes first, `model` names the model as soon as it accepted the question, before the first word. */
 export type AnswerEvent = { prompt: string } | { model: ModelUse } | { delta: string } | { replace: string } | { done: true; ok: boolean; text?: string };
 
-// Text that may already be shown: finished sentences that are backed, plus the whole words of the sentence being written while it is backed.
-export function visiblePrefix(content: string, source: object, check: (sentence: string, source: object) => boolean = backed): string {
-  // A trailing space marks the last word as complete; the tidying must keep it.
-  const text = `${tidyAnswer(content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, "").replace(/<[^>]*$/, ""))}${/\s$/.test(content) ? " " : ""}`
-    .replace(/\s+/g, " ").trimStart();
-  if (text.startsWith("{")) return "";
-  const parts = sentences(text.slice(0, 1200));
-  const open = /[.!?]$/.test(text.trimEnd()) && /\s$/.test(text) ? "" : parts.pop() ?? "";
-  const done = parts.filter((sentence) => check(sentence, source));
+// Finished sentences that are backed, plus the whole words of the sentence being written while it is backed.
+function partialProse(text: string, keep: (sentence: string) => boolean): string {
+  // A trailing space marks the last word as complete.
+  const flat = text.replace(/\s+/g, " ").trimStart();
+  const parts = sentences(flat.slice(0, 1200));
+  const open = /[.!?]$/.test(flat.trimEnd()) && /\s$/.test(flat) ? "" : parts.pop() ?? "";
+  const done = parts.flatMap((sentence) => backedPart(sentence, keep) ?? []);
   const words = open.slice(0, Math.max(0, open.lastIndexOf(" ")));
-  if (words && check(words, source)) done.push(words);
+  const shown = words ? backedPart(words, keep, false) : undefined;
+  if (shown) done.push(shown);
   return done.join(" ");
+}
+
+const LINE_MARKER = /^(\s*(?:#{1,6}\s+|[-*+•]\s+|\d{1,3}[.)]\s+|>\s?))/;
+
+/**
+ * Text that may already be shown while the answer streams: the finished lines as Markdown, grounded like the final answer,
+ * plus the backed words of the line being written. Table rows show once complete, a table once its header line is
+ * followed by the separator, code line by line.
+ */
+export function visiblePrefix(content: string, source: object, check: (sentence: string, source: object) => boolean = backed): string {
+  const raw = withoutHtml(content.replace(/<think>[\s\S]*?(?:<\/think>|$)/g, "").replace(/<[^>]*$/, ""));
+  const text = dropOpener(raw.trimStart());
+  if (text.startsWith("{")) return "";
+  const keep = (sentence: string) => check(sentence, source);
+  const cut = text.lastIndexOf("\n");
+  const closed = cut >= 0 ? text.slice(0, cut) : "";
+  const line = text.slice(cut + 1);
+  const parsed = parseBlocks(closed);
+  const shown = groundBlocks(parsed, keep, (code) => chatBacked(code, source))
+    .filter((block) => !(block.type === "paragraph" && /^\s*\|/.test(block.text)));
+  const before = blocksToMarkdown(shown);
+  const inCode = parsed.at(-1)?.type === "code" && (parsed.at(-1) as { open?: boolean }).open;
+  const marker = LINE_MARKER.exec(line)?.[1] ?? "";
+  const words = inCode || /^\s*(?:\||`{3}|~{3})/.test(line) ? "" : partialProse(line.slice(marker.length), keep);
+  const current = words ? `${marker.trimStart()}${words}` : "";
+  if (!current) return before;
+  if (!before) return current;
+  return `${before}${/\n\s*\n$/.test(text.slice(0, cut + 1)) ? "\n\n" : "\n"}${current}`;
 }
 
 // Streams the free answer word by word; a sentence that turns out unbacked disappears again via a `replace` event.

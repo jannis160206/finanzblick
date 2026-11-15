@@ -34,7 +34,7 @@ type Tokens = { calls: number; input: number; output: number; cached: number };
 const typicalQuestion: { model: string; input: number; cached: number; output: number }[] = [
   { model: "deepseek-flash", input: 3000, cached: 0, output: 120 },
   { model: "deepseek-flash", input: 800, cached: 0, output: 60 },
-  { model: "deepseek-v4-pro", input: 4000, cached: 0, output: 250 },
+  { model: "deepseek-v4-pro", input: 4000, cached: 0, output: 400 },
 ];
 
 /**

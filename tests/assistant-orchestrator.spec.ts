@@ -102,7 +102,8 @@ test.describe("assistant orchestrator", () => {
       await expect(call).toContainText("Gehaltsübersicht");
       await expect(call).toContainText("· Wie viel netto bekomme ich?");
       await call.getByRole("button").click();
-      await expect(call.locator("p")).not.toBeEmpty();
+      await expect(call.locator("dd").first()).toHaveText("Wie viel netto bekomme ich?");
+      await expect(call.locator("dt")).toHaveText(["Eingabe", "Ergebnis"]);
       await expect(panel.getByText("Du bist Finanzblick (Test-Prompt).")).toBeVisible();
       await details.click();
       await expect(panel).toHaveCount(0);

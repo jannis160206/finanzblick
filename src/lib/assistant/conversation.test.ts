@@ -12,6 +12,9 @@ describe("copied answers", () => {
       .toBe("Pfannkuchen macht man aus Mehl, Milch und Eiern.");
     expect(freshPart("Lies „Der Alchimist“ von Paulo Coelho, eine schöne Geschichte über Träume.", film)).toBe("Lies „Der Alchimist“ von Paulo Coelho, eine schöne Geschichte über Träume.");
     expect(freshPart("Klar.", undefined)).toBe("Klar.");
+    // Lists and tables keep their structure; only what was said before goes.
+    expect(freshPart("„Der kleine Prinz“ ist immer eine gute Wahl.\n\n- Pfannkuchen gelingen immer\n- Waffeln auch\n\n| Film | Länge |\n|---|---|\n| Prinz | 90 min |", film))
+      .toBe("- Pfannkuchen gelingen immer\n- Waffeln auch\n\n| Film | Länge |\n| --- | --- |\n| Prinz | 90 min |");
   });
 });
 

@@ -134,7 +134,7 @@ describe("agent answers", () => {
   it("lets the general chat use general knowledge without personal facts, but never an invented amount", async () => {
     const { calls, fetcher } = stub(() => completion("**Der Mount Everest** ist 8.849 Meter hoch. Du hast übrigens 5.000 € gespart."));
     const reply = await answerFreeQuestion({ question: "Wie hoch ist der Mount Everest?", facts: { today: "2026-11-11" }, agent: "general" }, { config, fetcher });
-    expect(reply.text).toBe("Der Mount Everest ist 8.849 Meter hoch.");
+    expect(reply.text).toBe("**Der Mount Everest** ist 8.849 Meter hoch.");
     expect(system(calls)).toContain("Rede locker");
   });
 
@@ -178,13 +178,37 @@ describe("agent answers", () => {
     expect(system(calls)).toContain("statt einer Rückfrage");
   });
 
-  it("turns Markdown and lists into plain chat text", () => {
-    expect(tidyAnswer("## Kurz gesagt\n- **Netflix** kostet 13,99 €\n- Spotify kostet `10,99 €`")).toBe("Kurz gesagt Netflix kostet 13,99 € Spotify kostet 10,99 €");
+  it("keeps chat Markdown, but no HTML and no heading in a short answer", () => {
+    expect(tidyAnswer("## Kurz gesagt\n- **Netflix** kostet 13,99 €\n- Spotify kostet `10,99 €`")).toBe("- **Netflix** kostet 13,99 €\n- Spotify kostet `10,99 €`");
+    expect(tidyAnswer("Dir bleiben <b>412 €</b>.<br>Gut so.")).toBe("Dir bleiben 412 €.\nGut so.");
+    const long = "Kurz gesagt: es reicht.\n\n### Fixkosten\nMiete 700 €.\n\n### Variable Kosten\nEssen 320 €.";
+    expect(tidyAnswer(long)).toBe("Es reicht.\n\n### Fixkosten\n\nMiete 700 €.\n\n### Variable Kosten\n\nEssen 320 €.");
     expect(tidyAnswer("Kurz gesagt: ein Fonds, der einen Index nachbaut.")).toBe("Ein Fonds, der einen Index nachbaut.");
     expect(tidyAnswer("Du willst wissen, wie das Wetter morgen wird? Da schaust du am besten in eine Wetter-App.")).toBe("Da schaust du am besten in eine Wetter-App.");
     expect(tidyAnswer("Gerne! Ein Klassiker ist Spaghetti aglio e olio.")).toBe("Ein Klassiker ist Spaghetti aglio e olio.");
     expect(tidyAnswer("Wo liegt dein Geld? Das meiste liegt am Notgroschen.")).toBe("Das meiste liegt am Notgroschen.");
     // "am 25.8. und …" is one sentence: the check sees it whole.
     expect(visiblePrefix("Dein Gehalt kam am 25.8. und war pünktlich. ", {}, (sentence) => sentence.includes("pünktlich")).trim()).toBe("Dein Gehalt kam am 25.8. und war pünktlich.");
+    // "z. B. 500 €" belongs to its sentence: an unbacked example goes with it, no lone "z. B." stays behind.
+    expect(visiblePrefix("Leg jeden Monat etwas zur Seite, z. B. 500 €. Gut so. ", { left: 412 }).trim()).toBe("Gut so.");
+    // A clause with a figure of its own making goes; the backed beginning of the sentence stays.
+    expect(visiblePrefix("Dir bleiben **412 €** frei – bei 16 Tagen rund 25,75 € pro Tag. ", { left: 412 }).trim()).toBe("Dir bleiben **412 €** frei.");
+    expect(visiblePrefix("Dir bleiben **412 €** frei – bei 16 Tagen rund 25,75 € pro ", { left: 412 })).toBe("Dir bleiben **412 €** frei");
+  });
+
+  it("checks every list item and table row on its own and streams Markdown line by line", async () => {
+    const facts = { rent: 700, food: 320, left: 412 };
+    const answer = ["Dir bleiben **412 €**.", "", "- Miete 700 €", "- Handy 999 €", "", "| Posten | Betrag |", "|---|---:|", "| Miete | 700 € |",
+      "| Urlaub | 2.500 € |", "| Essen | 320 € |"].join("\n");
+    const { fetcher } = stub(() => completion(answer));
+    const reply = await answerFreeQuestion({ question: "Was kostet mich der Monat?", facts, agent: "budget" }, { config, fetcher });
+    expect(reply.text).toBe("Dir bleiben **412 €**.\n\n- Miete 700 €\n\n| Posten | Betrag |\n| --- | ---: |\n| Miete | 700 € |\n| Essen | 320 € |");
+    // While it streams: finished lines grounded, the open line word by word, a table only once its separator is there.
+    expect(visiblePrefix("Dir bleiben 412 €.\n- Miete 700 €\n- Hand", facts)).toBe("Dir bleiben 412 €.\n\n- Miete 700 €");
+    expect(visiblePrefix("Dir bleiben 412 €.\n- Miete 700 €\n- Strom kostet ", facts)).toBe("Dir bleiben 412 €.\n\n- Miete 700 €\n- Strom kostet");
+    expect(visiblePrefix("Dir bleiben 412 €.\n\n| Posten | Betrag |\n", facts)).toBe("Dir bleiben 412 €.");
+    expect(visiblePrefix("Dir bleiben 412 €.\n\n| Posten | Betrag |\n|---|---|\n| Miete | 70", facts)).toBe("Dir bleiben 412 €.");
+    expect(visiblePrefix("Dir bleiben 412 €.\n\n| Posten | Betrag |\n|---|---|\n| Miete | 700 € |\n| Ess", facts))
+      .toBe("Dir bleiben 412 €.\n\n| Posten | Betrag |\n| --- | --- |\n| Miete | 700 € |");
   });
 });

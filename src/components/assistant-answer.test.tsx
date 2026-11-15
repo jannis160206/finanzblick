@@ -34,3 +34,31 @@ it("writes the key statement first and lets amounts stand out, a minus one in th
   expect([...container.querySelectorAll("span.font-semibold")].map((item) => [item.textContent, item.className.includes("text-destructive")]))
     .toEqual([["−1.989 €", true], ["412,50 €", false]]);
 });
+
+it("renders Markdown like a chat: headings, lists, a comparison table and highlighted code, never raw markers", () => {
+  const text = [
+    "Du gibst im November **weniger** aus als im Oktober.", "", "### Die größten Posten", "- Miete 700 €", "- *Lebensmittel* 320 €", "",
+    "| Monat | Ausgaben |", "|---|---|", "| Oktober | 1.240 € |", "| November | −1.180 € |", "", "```excel", "=SUMME(B2:B13)", "```",
+  ].join("\n");
+  const { container } = render(<AnswerProse text={text} />);
+  expect(container.textContent).not.toMatch(/\*\*|###|\|---|```/);
+  expect(screen.getByRole("heading", { level: 3, name: "Die größten Posten" })).toBeTruthy();
+  expect(within(container.querySelector("ul")!).getAllByRole("listitem").map((item) => item.textContent?.replace(/\u00a0/g, " "))).toEqual(["Miete 700 €", "Lebensmittel 320 €"]);
+  expect(container.querySelector("strong")?.textContent).toBe("weniger");
+  // The table scrolls on its own; amount columns are right-aligned with tabular figures.
+  const table = screen.getByRole("region", { name: "Tabelle: Monat, Ausgaben" });
+  expect(within(table).getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual(["Monat", "Ausgaben"]);
+  const amount = within(table).getAllByRole("cell")[1];
+  expect(amount.className).toContain("text-right");
+  expect(amount.className).toContain("tabular-nums");
+  // Code keeps its formula, coloured, with a copy button.
+  expect(container.querySelector("pre")?.textContent).toBe("=SUMME(B2:B13)");
+  expect(container.querySelector("pre .text-chart-2")?.textContent).toBe("SUMME");
+  expect(screen.getByRole("button", { name: "Kopieren" })).toBeTruthy();
+});
+
+it("lets streamed words fade in and hides a bold marker that is not closed yet", () => {
+  const { container } = render(<AnswerProse text={"Dir bleiben **412"} streaming />);
+  expect(container.textContent).toBe("Dir bleiben 412");
+  expect(container.querySelectorAll(".assistant-word").length).toBeGreaterThan(1);
+});

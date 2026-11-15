@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, Minus, TrendingDown, TrendingUp } from "lucide-react";
 import { ResultCard } from "@/components/assistant-cards";
+import { AnswerMarkdown } from "@/components/assistant-markdown";
 import type { AgentResult } from "@/lib/assistant/agent";
 import { answerKpis, splitTitle, tileLines, trendOf, type Kpi, type Tone } from "@/lib/assistant/answer-view";
 import { currency as format } from "@/lib/format";
@@ -23,20 +24,9 @@ const toneName: Record<Tone, string> = { positive: "positiv", negative: "negativ
 // "-0,00 €" from a rounded zero reads like a loss; it is shown as zero.
 const currency = (value: number) => format(value === 0 ? 0 : value);
 
-// Amounts and percentages in the text stand out; a minus one is negative, an explicit plus positive.
-const FIGURE = /((?:[+−-]\s?)?\d{1,3}(?:\.\d{3})*(?:,\d+)?\s?(?:€|EUR\b|Euro\b)|(?:[+−-]\s?)?\d+(?:,\d+)?\s?%)/g;
-function Figures({ text }: { text: string }) {
-  return <>{text.split(FIGURE).map((part, index) => index % 2 === 0 ? part
-    : <span key={index} className={cn("font-semibold tabular-nums", /^[−-]/.test(part.trim()) ? "text-destructive" : /^\+/.test(part.trim()) && "text-success")}>{part}</span>)}</>;
-}
-
-/** The written answer: the first paragraph is the key statement, at most two short paragraphs follow. */
-export function AnswerProse({ text }: { text: string }) {
-  const paragraphs = text.split(/\n{2,}/).map((item) => item.trim()).filter(Boolean);
-  return <div className="space-y-2">
-    {paragraphs.map((paragraph, index) => <p key={index} className={cn("whitespace-pre-line text-pretty", index === 0 && paragraphs.length > 1 ? "font-medium text-foreground" : "text-foreground/90")}>
-      <Figures text={paragraph} /></p>)}
-  </div>;
+/** The written answer as formatted Markdown: the key statement first, then short paragraphs, lists, tables or code. */
+export function AnswerProse({ text, streaming }: { text: string; streaming?: boolean }) {
+  return <AnswerMarkdown text={text} streaming={streaming} />;
 }
 
 export function KpiBadge({ kpi }: { kpi: Kpi }) {
