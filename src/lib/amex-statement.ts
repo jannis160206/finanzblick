@@ -118,6 +118,8 @@ export type AmexStatementRow = {
   partner: boolean;
   /** Already put aside on the Amex Rückzahlung pocket (same amount moved there). */
   reserved: boolean;
+  /** Imported, but still waiting in the review queue ("Prüfen"). */
+  review: boolean;
 };
 
 export type AmexStatement = {
@@ -126,9 +128,14 @@ export type AmexStatement = {
   status: "open" | "due" | "transferred";
   /** Amount Amex will debit for this statement. */
   total: number;
-  /** Sum of the imported bookings up to the 10th. */
+  /** Sum of the confirmed bookings up to the 10th. */
   booked: number;
-  /** Part of the Amex balance without imported single bookings yet. */
+  /** Sum of this statement's imported bookings that still wait in the review queue. */
+  pending: number;
+  pendingCount: number;
+  /** Bookings of this statement in the review queue whose amount or date could not be read. */
+  unreadable: number;
+  /** Part of the Amex balance that no imported booking explains. */
   missing: number;
   snapshotDate?: string;
   /** Purchases on the partner card. */
@@ -157,6 +164,46 @@ export type AmexStatement = {
 
 type Deposit = { row: Transaction; used: boolean };
 
+/**
+ * Imported Amex bookings that still wait in the review queue ("Prüfen"): they are on the bill, only not confirmed yet.
+ * Drafts that repair an existing booking and card repayments are left out; drafts without amount or date are only counted.
+ */
+function waitingBookings(state: AppState, known: ReadonlySet<string>, today: string) {
+  const drafts = (state.reviewQueue ?? []).flatMap((item) => item.kind === "booking" && !item.sourceRepair ? [item.draft] : [])
+    .filter((draft) => !known.has(draft.id) && (!draft.date || draft.date <= today));
+  const ready: AccountedTransaction[] = [];
+  const unreadable: { date: string; capturedAt?: string }[] = [];
+  for (const draft of drafts) {
+    if (!isAmexCard(draft as Transaction)) continue;
+    if (!draft.date || draft.amount === null) {
+      unreadable.push({ date: draft.date, ...(draft.amexCapturedAt ? { capturedAt: draft.amexCapturedAt } : {}) });
+      continue;
+    }
+    const row: Transaction = { ...draft, date: draft.date, amount: draft.amount };
+    if (!isAmexCardPayment(row) && !cardSettlement(row)) ready.push(row);
+  }
+  return { ready, unreadable };
+}
+
+/**
+ * Two or three own purchases that one transfer to the pocket covers to the cent (e.g. a big purchase and a small one of the
+ * same day moved together). Only for amounts with cents, so a round transfer never matches by chance.
+ */
+function coveredTogether(charges: readonly Transaction[], amount: number): Transaction[] | undefined {
+  if (amount % 100 === 0 || charges.length < 2) return undefined;
+  const pool = charges.slice(-30);
+  for (let a = 0; a < pool.length; a += 1) {
+    for (let b = a + 1; b < pool.length; b += 1) {
+      const pair = cents(-pool[a].amount) + cents(-pool[b].amount);
+      if (pair === amount) return [pool[a], pool[b]];
+      if (pair >= amount) continue;
+      for (let c = b + 1; c < pool.length; c += 1)
+        if (pair + cents(-pool[c].amount) === amount) return [pool[a], pool[b], pool[c]];
+    }
+  }
+  return undefined;
+}
+
 /** Exact amount or rounded up to the next euro – the way purchases are mirrored onto the pocket. */
 function mirrors(deposit: number, charge: number) {
   return deposit === charge || (charge % 100 !== 0 && deposit === Math.ceil(charge / 100) * 100);
@@ -172,7 +219,10 @@ export function amexStatement(
   today = state.settings.asOf,
 ): AmexStatement | null {
   // Card-side transfer credits stay in: they cancel their counterpart on the same statement.
-  const cards = bookings.filter((row) => isAmexCard(row) && row.date <= today && !isAmexCardPayment(row));
+  const known = new Set(bookings.map((row) => row.id));
+  const waiting = waitingBookings(state, known, today);
+  const waitingIds = new Set(waiting.ready.map((row) => row.id));
+  const cards = [...bookings.filter((row) => isAmexCard(row) && row.date <= today && !isAmexCardPayment(row)), ...waiting.ready];
   const snapshots = (state.amexBalanceSnapshots ?? []).filter((item) => item.date <= today);
   if (!cards.length && !snapshots.length) return null;
 
@@ -186,10 +236,15 @@ export function amexStatement(
   const cycle = due ? closed : open;
 
   const statementRows = cards.filter((row) => row.date >= cycle.start && row.date <= cycle.closing);
-  const booked = statementRows.reduce((total, row) => total - cents(row.amount), 0);
+  const booked = statementRows.filter((row) => !waitingIds.has(row.id)).reduce((total, row) => total - cents(row.amount), 0);
+  const inReview = statementRows.filter((row) => waitingIds.has(row.id));
+  const pending = inReview.reduce((total, row) => total - cents(row.amount), 0);
+  const unreadable = waiting.unreadable.filter((item) => item.date
+    ? item.date >= cycle.start && item.date <= cycle.closing
+    : !!item.capturedAt && item.capturedAt >= cycle.start && item.capturedAt <= cycle.closing).length;
   const snapshot = snapshots.filter((item) => item.periodStart === cycle.start)
     .sort((a, b) => b.date.localeCompare(a.date))[0];
-  let total = booked;
+  let total = booked + pending;
   if (snapshot) {
     const after = statementRows.filter((row) => row.date > snapshot.date)
       .reduce((sum, row) => sum - cents(row.amount), 0);
@@ -212,6 +267,7 @@ export function amexStatement(
   const deposits: Deposit[] = movements.filter((row) => row.amount > 0)
     .sort((a, b) => a.date.localeCompare(b.date)).map((row) => ({ row, used: false }));
   const reserved = new Set<string>();
+  const covered = new Set<string>();
   let nextReserved = 0;
   const own = cards.filter((row) => row.amount < 0 && !isAmexPartnerCard(row) && row.date >= cycle.start)
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -223,8 +279,21 @@ export function amexStatement(
       deposits.find((deposit) => window(deposit) && mirrors(cents(deposit.row.amount), amount));
     if (!match) continue;
     match.used = true;
+    covered.add(charge.id);
     if (charge.date <= cycle.closing) reserved.add(charge.id);
     else nextReserved += cents(match.row.amount);
+  }
+  for (const deposit of deposits.filter((item) => !item.used)) {
+    const near = own.filter((charge) => !covered.has(charge.id) && deposit.row.date >= shiftCalendarDate(charge.date, -2) &&
+      deposit.row.date <= shiftCalendarDate(charge.date, 14));
+    const together = coveredTogether(near, cents(deposit.row.amount));
+    if (!together) continue;
+    deposit.used = true;
+    for (const charge of together) {
+      covered.add(charge.id);
+      if (charge.date <= cycle.closing) reserved.add(charge.id);
+      else nextReserved += cents(-charge.amount);
+    }
   }
 
   // From the statement date on, money leaving the pocket goes to the giro for this bill;
@@ -247,6 +316,7 @@ export function amexStatement(
     amount: euros(-cents(booking.amount)),
     partner: isAmexPartnerCard(booking),
     reserved: reserved.has(booking.id),
+    review: waitingIds.has(booking.id),
   })).sort((a, b) => b.booking.date.localeCompare(a.booking.date) || b.amount - a.amount);
 
   return {
@@ -254,7 +324,10 @@ export function amexStatement(
     status,
     total: euros(total),
     booked: euros(booked),
-    missing: euros(Math.max(0, total - booked)),
+    pending: euros(pending),
+    pendingCount: inReview.length,
+    unreadable,
+    missing: euros(Math.max(0, total - booked - pending)),
     ...(snapshot ? { snapshotDate: snapshot.date } : {}),
     partner: euros(statementRows.filter(isAmexPartnerCard).reduce((sum, row) => sum - cents(row.amount), 0)),
     hasPocket,

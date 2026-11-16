@@ -109,6 +109,30 @@ describe("Amex statement and pocket share", () => {
     expect(result.snapshotDate).toBe("2026-11-11");
   });
 
+  it("counts bookings still waiting in the review list as part of the bill and matches a pocket transfer that covers two purchases", () => {
+    const review = (id: string, date: string, amount: number | null, patch: Partial<Transaction> = {}) => ({
+      kind: "booking" as const, id: `r-${id}`, message: "Amex-Screenshot: Angaben bestätigen.",
+      draft: { ...card(id, date, 0, { category: "Prüfen", amexSource: "screenshot", amexCapturedAt: "2026-11-05", ...patch }), amount },
+    });
+    const state = fixture([...purchases, card("amazon", "2026-10-19", -37.68), pocket("p-both", "2026-10-19", 1937.18)]);
+    state.amexBalanceSnapshots = [{ periodStart: "2026-10-11", date: "2026-11-05", balance: 2600 }];
+    state.reviewQueue = [
+      review("pc", "2026-10-19", -1899.5),
+      review("credit", "2026-11-02", 56),
+      review("unreadable", "2026-10-30", null),
+      // A card repayment and a repair of an existing booking are no new charges.
+      review("payment", "2026-10-17", 1446.65, { description: "ZAHLUNG/UBERWEISUNG ERHALTEN BESTEN DANK" }),
+      { ...review("repair", "2026-10-20", -900), sourceRepair: true },
+    ];
+    const result = statement(state)!;
+    expect(result).toMatchObject({ booked: 258.18, pending: 1843.5, pendingCount: 2, unreadable: 1 });
+    // Amex balance of 5.11. plus the purchase on the 10th; only what no booking explains is missing.
+    expect(result.total).toBe(2680.5);
+    expect(result.missing).toBe(578.82);
+    expect(result.rows.filter((row) => row.review).map((row) => row.booking.id)).toEqual(["credit", "pc"]);
+    expect(result.rows.filter((row) => row.reserved).map((row) => row.booking.id).sort()).toEqual(["amazon", "cutoff", "pc"]);
+  });
+
   it("counts a transfer from the pocket since the 10th and calms down once it covers the pocket share", () => {
     const partial = statement(fixture([...purchases, pocket("out-1", "2026-11-12", -100)]))!;
     expect(partial).toMatchObject({ status: "due", transferred: 100, fromPocket: 220.5, toTransfer: 120.5 });

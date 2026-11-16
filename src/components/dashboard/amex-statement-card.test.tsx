@@ -19,14 +19,16 @@ const booking = (id: string, amount: number, patch: Partial<Transaction> = {}): 
 
 function statement(patch: Partial<AmexStatement> = {}): AmexStatement {
   return {
-    cycle: { start: "2026-10-11", closing: "2026-11-10" }, status: "due", total: 3578.56, booked: 1151.43, missing: 2427.13,
+    cycle: { start: "2026-10-11", closing: "2026-11-10" }, status: "due", total: 3578.56, booked: 1151.43, pending: 2076.31, pendingCount: 4,
+    unreadable: 3, missing: 350.82,
     snapshotDate: "2026-11-05", partner: 280.43, hasPocket: true, pocketName: "Amex Rückzahlung", pocketBalance: 2801.35,
     nextReserved: 102.89, fromPocket: 2698.46, additional: 880.1, transferred: 0, toTransfer: 2698.46,
     expectedDebit: "2026-11-17", deadline: "2026-11-16", daysLeft: 3,
     schedule: { offsetDays: 7, basedOn: 6, recent: ["2026-09-17", "2026-10-19"] },
     rows: [
-      { booking: booking("Billa", -10.83, { date: "2026-11-10" }), amount: 10.83, partner: false, reserved: true },
-      { booking: booking("Kino", -15, { pocket: "AMEX Raphael" }), amount: 15, partner: true, reserved: false },
+      { booking: booking("Billa", -10.83, { date: "2026-11-10" }), amount: 10.83, partner: false, reserved: true, review: false },
+      { booking: booking("Kino", -15, { pocket: "AMEX Raphael" }), amount: 15, partner: true, reserved: false, review: false },
+      { booking: booking("Laptop", -1899.5, { date: "2026-10-19" }), amount: 1899.5, partner: false, reserved: true, review: true },
     ],
     lastDebit: { date: "2026-10-19", amount: 1446.65 },
     ...patch,
@@ -44,19 +46,23 @@ it("shows pocket share, additional payment and the transfer deadline, with the b
   expect(within(card).getByText("Zusätzlich noch zahlen")).toBeTruthy();
   expect(figures.map(plain)).toContain("880,10 €");
   expect(plain(card)).toContain("Bis Mo., 16. Nov. 2.698,46 € von Revolut „Amex Rückzahlung“ aufs Giro überweisen · in 3 Tagen");
-  const toggle = within(card).getByRole("button", { name: "Details und Buchungen (2)" });
+  const toggle = within(card).getByRole("button", { name: "Details und Buchungen (3)" });
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
   expect(within(card).queryByText("Billa")).toBeNull();
   fireEvent.click(toggle);
   expect(toggle.getAttribute("aria-expanded")).toBe("true");
   const details = document.getElementById(toggle.getAttribute("aria-controls")!)!;
-  expect(plain(details)).toContain("2.427,13 € laut Amex-Saldo vom 5.11.");
+  // Bookings still waiting in the review list are part of the bill, not "missing"; only the rest of the Amex balance is.
+  expect(plain(details)).toContain("2.076,31 € in 4 Buchungen warten noch auf deine Prüfung – jetzt prüfen.");
+  expect(within(details).getByRole("link", { name: "jetzt prüfen" }).getAttribute("href")).toBe("/umsaetze?pruefen=1");
+  expect(plain(details)).toContain("350,82 € laut Amex-Saldo vom 5.11. ohne Einzelbuchung – 3 Buchungen in der Prüfliste ohne lesbaren Betrag oder Datum.");
   expect(plain(details)).toContain("102,89 € im Pocket gehören zu Buchungen ab dem 11.11.");
   expect(plain(details)).toContain("Amex bucht meist 7 Tage nach dem 10. ab (zuletzt 17.9. und 19.10.)");
-  expect(plain(details)).toContain("1 von 2 Buchungen schon im Pocket zurückgelegt");
+  expect(plain(details)).toContain("2 von 3 Buchungen schon im Pocket zurückgelegt");
   const rows = within(details).getAllByRole("listitem").filter((item) => item.textContent?.includes("€") && item.querySelector("span"));
   expect(rows.some((row) => plain(row).includes("Billa") && plain(row).includes("im Pocket zurückgelegt"))).toBe(true);
   expect(rows.some((row) => plain(row).includes("Kino") && plain(row).includes("Raphael"))).toBe(true);
+  expect(rows.some((row) => plain(row).includes("Laptop") && plain(row).includes("Prüfen"))).toBe(true);
 });
 
 it("calms down once the pocket share is on the giro and while the statement is still running", () => {

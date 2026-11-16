@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { AnimatePresence, type Transition } from "motion/react";
 import { CalendarClock, Check, ChevronDown, Clock, CreditCard, PiggyBank } from "lucide-react";
 import { useFinance } from "@/components/finance-provider";
@@ -58,8 +59,19 @@ export function AmexStatementView({ statement: s, className }: { statement: Amex
   const details = (
     <div className="space-y-3 border-t border-border/60 px-4 py-3 sm:px-5">
       <FinancialData as="ul" className="space-y-1 text-xs leading-relaxed text-muted-foreground">
+        {s.pendingCount > 0 && (
+          <li>
+            {currency(s.pending)} in {s.pendingCount === 1 ? "einer Buchung wartet" : `${s.pendingCount} Buchungen warten`} noch auf deine Prüfung –{" "}
+            <Link href="/umsaetze?pruefen=1" className="font-medium text-foreground underline underline-offset-2 transition-colors duration-150 hover:text-primary motion-reduce:transition-none">jetzt prüfen</Link>.
+          </li>
+        )}
         {s.missing > 0.005 && s.snapshotDate && (
-          <li>{currency(s.missing)} laut Amex-Saldo vom {dayMonth(s.snapshotDate)} – Einzelbuchungen noch nicht importiert.</li>
+          <li>
+            {currency(s.missing)} laut Amex-Saldo vom {dayMonth(s.snapshotDate)} ohne Einzelbuchung –{" "}
+            {s.unreadable > 0
+              ? `${s.unreadable === 1 ? "eine Buchung" : `${s.unreadable} Buchungen`} in der Prüfliste ohne lesbaren Betrag oder Datum.`
+              : "noch nicht importiert."}
+          </li>
         )}
         {s.nextReserved > 0.005 && (
           <li>{currency(s.nextReserved)} im Pocket gehören zu Buchungen ab dem {dayMonth(shiftCalendarDate(s.cycle.closing, 1))} und bleiben für die nächste Abrechnung.</li>
@@ -77,13 +89,14 @@ export function AmexStatementView({ statement: s, className }: { statement: Amex
             {reserved > 0 ? `${reserved} von ${s.rows.length} Buchungen schon im Pocket zurückgelegt` : `${s.rows.length} Buchungen bis ${dayMonth(s.cycle.closing)}`}
           </p>
           <FinancialData as="ul" className="max-h-72 divide-y divide-border/50 overflow-y-auto overscroll-contain pr-1">
-            {s.rows.map(({ booking, amount, partner, reserved: inPocket }) => {
+            {s.rows.map(({ booking, amount, partner, reserved: inPocket, review }) => {
               const description = bookingDescription(booking);
               const name = booking.merchantAlias ? description : cleanMerchantName(description);
               return (
                 <li key={booking.id} className="flex items-center gap-3 py-1.5 text-sm">
                   <span className="w-11 shrink-0 text-xs tabular-nums text-muted-foreground">{dayMonth(booking.date)}</span>
                   <span className="min-w-0 flex-1 truncate" title={description}>{name}</span>
+                  {review && <span className="shrink-0 rounded-full bg-warning-soft px-1.5 text-2xs text-foreground">Prüfen</span>}
                   {partner && <span className="shrink-0 rounded-full bg-muted px-1.5 text-2xs text-muted-foreground">Raphael</span>}
                   {inPocket && (
                     <span title="Im Pocket zurückgelegt" className="shrink-0 text-primary">
