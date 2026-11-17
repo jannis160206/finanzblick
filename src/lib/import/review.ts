@@ -50,6 +50,7 @@ import { bankOperationReviewMessage } from "@/lib/bank-operation";
 import { applyNamedTransfer, isNamedTransfer } from "@/lib/transfers";
 import { confirmedScreenshotDateMatcher, legacyScreenshotIssues, reconcileScreenshotReviews, repairScreenshotReviewDrafts } from "./screenshot-review";
 import { amexBalancePeriodStart } from "@/lib/amex-statement";
+import { REFUND_REVIEW_MESSAGE, refundQuestion } from "@/lib/refund-link";
 import { reconcileAmexImports, screenshotPendingBalance, type AmexReconciliation } from "./amex-reconciliation";
 import { groupedScreenshotIssueKey, resolveGroupedScreenshotIssues } from "./amex-screenshot-reconciliation";
 import {
@@ -127,6 +128,9 @@ export function bookingReviewReason(state: AppState, row: AccountedTransaction, 
   if (isAmexScreenshot(row) && row.rawDetails?.includes("OCR-Händler unklar") &&
     !(row.reviewed && (hasManualCategory(row) || row.categoryOverride)))
     return "Amex-Screenshot: Händlertext unsicher erkannt – bitte mit dem Bild abgleichen.";
+  // A booked recent credit that could refund a purchase asks which one, until the user linked it or said it is none.
+  // An imported credit is booked first: it counts right away, only its purpose is asked afterwards.
+  if (acceptCategorized && row.amount > 0 && refundQuestion(state, row)) return REFUND_REVIEW_MESSAGE;
   const result = classify(row);
   if (isNamedTransfer(row)) return;
   if (hasManualCategory(row) && result.category !== "Prüfen") return;
@@ -921,9 +925,11 @@ export function commitStatementImport(
   // describes its own booking, not every other one of that merchant.
   const automaticCategory = (row: Transaction) =>
     !hasCategoryChoice(row) && row.automaticCategoryEvidence?.category === row.category;
+  // A merchant's refund never decides the category of that merchant's purchases.
   const choices = new Map(
     rows
       .filter((row) => (row.categoryOverride || hasManualCategory(row)) && row.category !== "Prüfen" && !row.aiAssigned &&
+        !(row.amount > 0 && canonicalCategory(row.category) === "Rückerstattungen") &&
         !automaticCategory(row) && isSpecificMerchantKey(merchantRuleKey(row)))
       .map((row) => [merchantRuleKey(row), row.category]),
   );

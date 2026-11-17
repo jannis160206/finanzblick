@@ -142,7 +142,12 @@ export function SharedCosts({ bookings, items, iconOnly = false }: { bookings: A
   const count = items.filter((item) => item.status === "Offen").length;
   const openItems = items.filter((item) => item.status === "Offen" && !paid.includes(item.bookingId));
   const pending = selected.length > 0 || paid.length > 0 || Object.keys(settlements).length > 0;
-  const incoming = open ? bookings.filter((row) => row.amount > 0 &&
+  // A refund the user linked to an own purchase is settled in the review, not with Raphael.
+  const ownRefund = (row: AccountedTransaction) => {
+    const source = row.sharedRefundFor ?? row.holidayRefundFor;
+    return !!source && !items.some((item) => item.bookingId === source);
+  };
+  const incoming = open ? bookings.filter((row) => row.amount > 0 && !ownRefund(row) &&
     (row.holidayRefundFor || row.holidayRefundPending || row.sharedRefundFor || row.sharedRefundUnlinked ||
       row.sharedRepaymentFor || isRaphaelPayment(row) ||
       (!classify(row).isTransfer && !["Gehalt", "Rufbereitschaft"].includes(classify(row).category) &&

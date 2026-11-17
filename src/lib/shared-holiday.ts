@@ -117,8 +117,9 @@ export function reconcileSharedHoliday(rows: (Transaction & SharedSettlementFiel
     const related = (merchant ? merchantPurchases.get(merchant) ?? [] : []).filter((purchase) => purchase.date <= row.date);
     const candidates = related.filter(available);
     const explicit = row.sharedRefundFor ? purchaseById.get(row.sharedRefundFor) : undefined;
+    // The user's own link may point to any purchase; a guessed one only settles shared purchases.
     const source = row.sharedRefundFor
-      ? explicit && byId.has(explicit.id) && available(explicit) ? explicit : undefined
+      ? explicit && available(explicit) ? explicit : undefined
       : candidates.length === 1 ? candidates[0] : undefined;
     if (!source) {
       if (row.sharedRefundFor || related.some((purchase) => byId.has(purchase.id)))
@@ -130,7 +131,11 @@ export function reconcileSharedHoliday(rows: (Transaction & SharedSettlementFiel
     const after = before + cents(row.amount);
     returned.set(source.id, after);
     const item = byId.get(source.id);
-    if (!item) continue;
+    if (!item) {
+      // A refund of an own purchase counts in full against that purchase's category.
+      if (row.sharedRefundFor) refunds.set(row.id, { bookingId: source.id, personal: cents(row.amount) / 100 });
+      continue;
+    }
     const gross = cents(source.amount);
     const own = Math.round(gross / 2);
     const ownReturned = Math.round(after * own / gross);

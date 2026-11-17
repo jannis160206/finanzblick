@@ -14,6 +14,7 @@ import { commitStatementImport, prepareStatementImport, queueLedgerReview } from
 import { parseAmexText } from "./amex-pdf";
 import { GET } from "@/app/api/ocr/[asset]/route";
 import { transactionSchema } from "@/lib/types";
+import { REFUND_REVIEW_MESSAGE } from "@/lib/refund-link";
 
 const exampleDirectory = process.env.AMEX_SCREENSHOT_DIR ?? path.join(process.cwd(), "import-example");
 const example = path.join(exampleDirectory, "WhatsApp Image 2026-10-05 at 09.43.39.jpeg");
@@ -78,7 +79,9 @@ it.skipIf(!existsSync(example))("recognizes both private local examples without 
       "AMAZON.DE WWW.AMAZON.DE", "AMZN MKTP DE AMZN.COM/BILL",
     ]);
     state = synchronizePlan(queueLedgerReview(commitStatementImport(state, prepared.automatic, [], prepared.metadata).state));
-    expect(state.reviewQueue).toEqual([]);
+    // The Entertainment credit is booked; only which streaming purchase it refunds is asked.
+    expect(state.reviewQueue?.map((item) => item.kind === "booking" && [item.draft.description, item.message])).toEqual([
+      ["Entertainment Gutschrift", REFUND_REVIEW_MESSAGE]]);
     expect(state.transactions.filter((row) => row.sharedWithRaphael).map((row) => row.amount)).toEqual([-126, -207.82, -164.9]);
     expect(state.transactions).toHaveLength(18);
     expect(state.amexBalanceSnapshots).toEqual(upper.amexBalanceSnapshots);

@@ -19,6 +19,8 @@ import {
 import { MotionBox } from "@/components/ui/premium-dialog/motion";
 import { MerchantMark } from "@/components/merchant-mark";
 import { BookingContractDialogs, type BookingContractMode } from "@/components/booking-contract-dialogs";
+import { RefundReview } from "@/components/refund-review";
+import { refundQuestion } from "@/lib/refund-link";
 import { canHoldContract } from "@/lib/contract-booking";
 import { useFinance } from "@/components/finance-provider";
 import { classify } from "@/lib/calc";
@@ -613,6 +615,9 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
   const skip = useCallback(() => {
     setUI({ open: false, drafts: {} });
   }, []);
+  // Credits the user said are no refund: reviewed like any booking, and never asked about again.
+  const [notRefunds, setNotRefunds] = useState<ReadonlySet<string>>(() => new Set());
+  const saveNotRefund = useCallback((row: Transaction, id: string) => saveBooking({ ...row, sharedRefundUnlinked: true }, id), [saveBooking]);
   const [contractFlow, setContractFlow] = useState<{
     booking: Transaction; mode: BookingContractMode; open: boolean; session: number;
   } | null>(null);
@@ -885,7 +890,28 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
               const suggestions = reviewSuggestions(ui.review, state.aiSuggestions);
               const suggestionOf = (id: string) => suggestions.find((entry) => entry.id === id);
               const { groups, singles } = groupReviews(ui.review, suggestions, reuploadOnly);
-              const renderItem = (item: ReviewItem) => item.kind === "booking" ? (
+              const refundOf = (item: Extract<ReviewItem, { kind: "booking" }>) => {
+                const draft = ui.drafts[item.id] ?? item.draft;
+                if (item.sourceRepair || notRefunds.has(item.id) || draft.amount === null || draft.amount <= 0 || !draft.date ||
+                  (isAmexScreenshot(item.draft) && item.message.startsWith("Amex-Screenshot:"))) return undefined;
+                const question = refundQuestion(state, { ...draft, date: draft.date, amount: draft.amount });
+                return question && { draft, question };
+              };
+              const renderItem = (item: ReviewItem) => {
+                const refund = item.kind === "booking" ? refundOf(item) : undefined;
+                return item.kind === "booking" && refund ? (
+                  <RefundReview
+                    key={item.id}
+                    item={item}
+                    draft={refund.draft}
+                    question={refund.question}
+                    disabled={ui.pending?.removeId === item.id}
+                    save={saveBooking}
+                    decline={() => setNotRefunds((current) => new Set([...current, item.id]))}
+                  />
+                ) : renderReview(item);
+              };
+              const renderReview = (item: ReviewItem) => item.kind === "booking" ? (
                 <BookingReview
                   key={item.id}
                   item={item}
@@ -893,7 +919,7 @@ function StatementImportWorkspace({ reviewRequest }: { reviewRequest: number }) 
                   changeDraft={changeDraft}
                   disabled={ui.pending?.removeId === item.id}
                   reuploadOnly={reuploadOnly(item)}
-                  save={saveBooking}
+                  save={notRefunds.has(item.id) ? saveNotRefund : saveBooking}
                   skip={skip}
                   suggestion={suggestionOf(item.id)}
                   onContract={ledgerRows.has(item.draft.id) && canHoldContract(ledgerRows.get(item.draft.id)!) ? openContract : undefined}
