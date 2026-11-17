@@ -24,7 +24,7 @@ for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
     state.reviewQueue = [];
     state.transactions = [
       row("trattoria", "2026-10-30", -48, "Trattoria Sole"),
-      row("sushi", "2026-10-25", -68.9, "Sushi Bar Mond"),
+      row("pizzeria", "2026-10-25", -52.5, "Pizzeria Luna"),
       row("gourmet", "2026-11-02", 48, "Gourmet Gutschrift", { category: "Rückerstattungen", reviewed: false, manualCategory: false }),
       row("baumarkt", "2026-09-21", -64.2, "Baumarkt Nord", { bank: "Raiffeisen", pocket: "Raiffeisen Giro", category: "Wohnen & Haushalt" }),
       row("baumarkt-back", "2026-10-02", 24.8, "Baumarkt Nord", { bank: "Raiffeisen", pocket: "Raiffeisen Giro", category: "Rückerstattungen",
@@ -41,8 +41,10 @@ for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
     await page.getByRole("button", { name: /^Zuordnung prüfen/ }).click();
     const dialog = page.getByRole("dialog", { name: "Kontoauszüge prüfen", exact: true });
 
-    // The Amex benefit credit: the restaurant with the same amount is suggested, another one can be picked from the list.
+    // The Amex benefit credit: restaurants on the card with the amount or a little more are listed, the exact one preselected.
     const gourmet = dialog.getByRole("region", { name: "Gutschrift prüfen: Gourmet Gutschrift", exact: true });
+    await expect(gourmet.getByRole("radio", { name: /^Trattoria Sole/ })).toBeChecked();
+    await expect(gourmet.getByRole("radio", { name: /^Pizzeria Luna/ })).not.toBeChecked();
     await expect(gourmet.getByText(/^Eigenanteil/)).toHaveText("Eigenanteil 0,00 €");
     await expect(gourmet).toContainText("War das eine Rückerstattung für Trattoria Sole vom");
     const merchant = dialog.getByRole("region", { name: "Gutschrift prüfen: Baumarkt Nord", exact: true });
@@ -54,9 +56,8 @@ for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
     await page.screenshot({ path: testInfo.outputPath(`refund-review-${width}-${theme}.png`) });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 
-    await gourmet.getByRole("button", { name: "Andere Buchung wählen" }).click();
-    await gourmet.getByRole("radio", { name: /^Sushi Bar Mond/ }).check();
-    await expect(gourmet.getByText(/^Eigenanteil/)).toHaveText("Eigenanteil 20,90 €");
+    await gourmet.getByRole("radio", { name: /^Pizzeria Luna/ }).check();
+    await expect(gourmet.getByText(/^Eigenanteil/)).toHaveText("Eigenanteil 4,50 €");
     await gourmet.getByRole("button", { name: "Rückerstattung übernehmen" }).click();
     await expect(gourmet).toHaveCount(0);
 
@@ -69,11 +70,11 @@ for (const [width, theme] of [[1440, "light"], [390, "dark"]] as const) {
 
     const saved = await stored(page);
     expect(saved.reviewQueue ?? []).toEqual([]);
-    expect(saved.transactions.find((item) => item.id === "gourmet")).toMatchObject({ category: "Rückerstattungen", sharedRefundFor: "sushi" });
+    expect(saved.transactions.find((item) => item.id === "gourmet")).toMatchObject({ category: "Rückerstattungen", sharedRefundFor: "pizzeria" });
     expect(saved.transactions.find((item) => item.id === "baumarkt-back")).toMatchObject({ category: "Einkommen", sharedRefundUnlinked: true });
     // The refund now lowers the restaurant it was for.
     expect(reconcileSharedHoliday(saved.transactions).bookings.find((item) => item.id === "gourmet")).toMatchObject({
-      category: "Restaurants", holidayRefundFor: "sushi" });
+      category: "Restaurants", holidayRefundFor: "pizzeria" });
     // Reloading rebuilds the review list: answered credits are not asked again.
     await page.reload();
     expect((await stored(page)).reviewQueue ?? []).toEqual([]);

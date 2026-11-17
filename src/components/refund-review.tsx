@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { ArrowRight, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { accountLabel } from "@/lib/accounts";
+import { isAmexCard, isAmexPartnerCard } from "@/lib/amex-balance";
 import { classify } from "@/lib/calc";
 import { currency, dateLabel } from "@/lib/format";
 import { bookingDescription } from "@/lib/import/merchant-description";
@@ -13,8 +14,9 @@ import { transactionSchema, type ReviewItem, type Transaction } from "@/lib/type
 import { cn } from "@/lib/utils";
 
 /**
- * A credit in "Kontoauszüge prüfen", laid out like a changed fixed cost: which purchase it refunds (picked from a list
- * when Amex does not say, as for benefit credits), what was paid and what stays the user's own cost after the refund.
+ * A credit in "Kontoauszüge prüfen", laid out like a changed fixed cost: which purchase it refunds, what was paid and what
+ * stays the user's own cost after the refund. Purchases of the same card or account with the credit's amount or a little
+ * less to a little more are listed below to pick from, the clearest one preselected.
  */
 export function RefundReview({ item, draft, question, disabled, save, decline }: {
   item: Extract<ReviewItem, { kind: "booking" }>;
@@ -25,8 +27,8 @@ export function RefundReview({ item, draft, question, disabled, save, decline }:
   /** "Keine Rückerstattung": the credit is reviewed like any other booking. */
   decline: () => void;
 }) {
-  const [picked, setPicked] = useState(question.suggested);
-  const [choosing, setChoosing] = useState(!question.suggested);
+  const [picked, setPicked] = useState(question.suggested ?? (question.candidates.length === 1 ? question.candidates[0].booking.id : undefined));
+  const choosing = question.candidates.length > 1;
   const hintId = useId();
   const credit = Math.abs(draft.amount ?? 0);
   const selected = question.candidates.find((candidate) => candidate.booking.id === picked);
@@ -34,8 +36,9 @@ export function RefundReview({ item, draft, question, disabled, save, decline }:
   const parsed = selected && draft.date
     ? transactionSchema.safeParse(linkedRefund({ ...draft, date: draft.date, amount: credit } as Transaction, selected.booking.id))
     : undefined;
-  const shown = choosing ? question.candidates : question.candidates.filter((candidate) => candidate.booking.id === picked);
   const name = bookingDescription(draft);
+  const card = { ...draft, amount: credit } as Transaction;
+  const searched = isAmexCard(card) ? isAmexPartnerCard(card) ? "der Amex-Partnerkarte" : "deiner Amex-Karte" : accountLabel(draft);
   return (
     <section className="space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-xs" aria-label={`Gutschrift prüfen: ${name}`}>
       <div className="flex items-start gap-3">
@@ -67,11 +70,13 @@ export function RefundReview({ item, draft, question, disabled, save, decline }:
       <fieldset className="min-w-0" aria-describedby={hintId}>
         <legend className="sr-only">Für welche Buchung war die Gutschrift?</legend>
         <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70">
-          {shown.map((candidate) => {
+          {question.candidates.map((candidate) => {
             const { booking } = candidate;
             const label = bookingDescription(booking);
-            const facts = [dateLabel(booking.date), accountLabel(booking), candidate.exact ? "gleicher Betrag" : "",
-              candidate.refunded ? `schon ${currency(candidate.refunded)} erstattet` : ""].filter(Boolean).join(" · ");
+            const facts = [dateLabel(booking.date), candidate.exact ? "gleicher Betrag"
+              : `${currency(Math.abs(candidate.difference))} ${candidate.difference > 0 ? "mehr" : "weniger"}`,
+            candidate.sameMerchant && question.kind === "merchant" ? "gleicher Händler" : "",
+            candidate.refunded ? `schon ${currency(candidate.refunded)} erstattet` : ""].filter(Boolean).join(" · ");
             const body = <>
               <div className="flex items-start justify-between gap-3">
                 <p className="min-w-0 break-words font-medium">{label}</p>
@@ -92,11 +97,6 @@ export function RefundReview({ item, draft, question, disabled, save, decline }:
           })}
         </div>
       </fieldset>
-      {!choosing && question.candidates.length > 1 && (
-        <Button type="button" variant="ghost" size="sm" className="-ml-2 text-muted-foreground" disabled={disabled} onClick={() => setChoosing(true)}>
-          Andere Buchung wählen
-        </Button>
-      )}
       <p className="text-sm">
         {selected
           ? <>War das eine Rückerstattung für {bookingDescription(selected.booking)} vom {dateLabel(selected.booking.date)}?</>
@@ -104,7 +104,7 @@ export function RefundReview({ item, draft, question, disabled, save, decline }:
       </p>
       <p id={hintId} className="text-xs text-muted-foreground">
         {question.kind === "benefit" && "Amex nennt bei dieser Gutschrift nicht, für welchen Einkauf sie war. "}
-        Die Gutschrift senkt dann die Ausgabe dieser Buchung.
+        Gesucht auf {searched}: gleicher Betrag oder etwas weniger bis etwas mehr. Die Gutschrift senkt dann die Ausgabe der gewählten Buchung.
       </p>
       <div className="flex flex-wrap justify-end gap-2 border-t border-border/60 pt-3">
         <Button variant="ghost" size="sm" disabled={disabled} onClick={decline}>

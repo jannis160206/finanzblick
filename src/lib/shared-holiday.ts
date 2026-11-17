@@ -117,9 +117,12 @@ export function reconcileSharedHoliday(rows: (Transaction & SharedSettlementFiel
     const related = (merchant ? merchantPurchases.get(merchant) ?? [] : []).filter((purchase) => purchase.date <= row.date);
     const candidates = related.filter(available);
     const explicit = row.sharedRefundFor ? purchaseById.get(row.sharedRefundFor) : undefined;
-    // The user's own link may point to any purchase; a guessed one only settles shared purchases.
+    // The user's own link may point to any purchase – an own one also when the credit is a little larger (exchange rate);
+    // a guessed link only settles shared purchases.
+    const open = (purchase: Transaction) => byId.has(purchase.id) ? available(purchase)
+      : purchase.date <= row.date && cents(purchase.amount) > (returned.get(purchase.id) ?? 0);
     const source = row.sharedRefundFor
-      ? explicit && available(explicit) ? explicit : undefined
+      ? explicit && open(explicit) ? explicit : undefined
       : candidates.length === 1 ? candidates[0] : undefined;
     if (!source) {
       if (row.sharedRefundFor || related.some((purchase) => byId.has(purchase.id)))
